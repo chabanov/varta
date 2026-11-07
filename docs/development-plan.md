@@ -2,7 +2,139 @@
 
 ## Status
 
-The v38 compiler/compatibility package is complete in the working tree:
+**Current checkpoint — combined package passed the pre-commit full gate.**
+Managed KV values and keys now materialize through async-safe guest callbacks in
+native HTTP v2. The shared codec retains validation, fair fuel and root ordering;
+ordinary native/browser execution uses immediate adapters of that same builder.
+Cancellation drops classified trees iteratively. Internal fiber-stack reservation
+also covers one-worker host policies without raising guest budgets or request
+admission. **137 distinct Rust tests pass (5 ignored)** across affected runtime,
+codec and native/Wasm parity scopes; strict affected Clippy and 18 Chrome KV
+scenarios pass. Native dev and source-free standalone restart checks pass. Cloud
+independently confirms canonical cross-request reads and authenticated HTTP
+create/list/restart/update/conflict/replay/anonymous-denial behavior. See the
+[KV evidence](evidence/2026-11-07-http-kv-async-verification.json).
+The final combined snapshot passes all 12 full gates: **4671 Rust tests
+(26 ignored), 190 Node tests**, core compatibility 246/248 with two known
+unsupported cases, and v39 3/3. Sources stayed unchanged during the run; see the
+[pre-commit evidence](evidence/2026-11-07-precommit-verification.json).
+
+**Preceding checkpoint — shadow/ring motion verified.** Native shadow transitions,
+shadow keyframes and stylesheet `transition` shorthand are implemented. One
+uninterrupted full run on unchanged inputs passed **4665 Rust tests (26
+ignored), 190 Node tests and all 12 gates**. The compatibility inventories remain
+246 passed / 2 known unsupported out of 248 for core v38 and 3/3 for v39.
+The shared CSS corpus has 480 decisions (454 admitted, 26 deliberate refusals).
+See the [motion evidence](evidence/2026-11-07-shadow-motion-verification.json).
+
+**Preceding finite Tailwind/CSS application package completed.** All 14 remaining
+application cases are admitted: **312/312**. The shared native/Wasm corpus has
+475 cases (451 admitted, 24 deliberately refused). Rendering adds atomic inline
+formatting, sticky/clamp/inset geometry, numeric features/accents/pretty wrapping,
+gradients, mirrored backdrop blur and opacity/rotation keyframes. Generated
+browser bundles retain their engine state/media bindings; real Chrome input/click
+and the Cloud Studio pilot pass.
+
+Consolidated verification covers **4632 Rust tests (26 ignored), 190 browser Node
+tests**, with the compatibility baseline unchanged at **246/2 out of 248**.
+There was **one full attempt**, followed by scoped corrections and completion of
+unfinished suites. The original full report remains failed: three system-font
+failures exposed a zero-work accounting regression; later scopes fixed it, mirror
+edges, keyframe emission cost and an obsolete rotate-refusal assertion. This is
+not an uninterrupted full pass of the final snapshot. The global source guard
+also observed two concurrently added cloud documents; hash reconstruction proves
+code stayed unchanged during that attempt. See [remainder verification](evidence/2026-11-07-tailwind-css-remainder-verification.json).
+
+**Preceding checkpoint:** the Tailwind/CSS shadow/ring and intrinsic-size package
+is implemented and verified. Exactly 11 application cases opened: the finite
+cross-host corpus then admitted **298/312**, with **14 refused**. Native and bridge
+comparisons against Chrome pass across 38 scenes at 1×, 1.25× and 2×.
+One uninterrupted full run on unchanged inputs passed **4602 Rust tests
+(26 ignored) and 189 browser Node tests**; compatibility still matches **246
+passed, 2 known unsupported / 248**. See the [CSS verification
+evidence](evidence/2026-11-07-tailwind-css-verification.json).
+
+**Subsequent scoped core fix:** tuple array callbacks now use the existing
+physical array representation. The Cloud regression prints `true`; its unmodified
+uarp-sdk passes check and the local five-request fixture (identity, quota, models,
+chat, authorization and 401). All 15 callback tests pass, including two new
+compile/Wasmtime/behavior regressions; affected strict Clippy passes. These are
+scoped checks after the CSS checkpoint, not another full gate. The separate live
+read-only acceptance remains with the application. See [tuple evidence](evidence/2026-11-07-tuple-callback-verification.json).
+
+The next independent SDK text-response blocker is also fixed: v38 async returns
+adopt a statically typed promise before widening its fulfilled value to the
+declared result. The unmodified `request<string>` local fixture and the prior
+five-request fixture pass check/dev. Scoped Promise/async/frame suites cover
+**63 distinct passing tests**, including Node-matched job order, suspended
+finalizer overrides, forced GC and frozen older-profile module bytes; affected
+strict Clippy passes. The application reports successful read-only account and
+model-list calls; quota schema investigation remains separate. No engine fix
+here performs live requests. See [typed promise evidence](evidence/2026-11-07-typed-async-return-verification.json).
+
+**SDK checked snapshots — implemented and checked after scoped corrections.** The owner
+selected contract A: validate declared fields recursively and retain all extra
+JSON data in an isolated result. The registered opt-in is
+`checked-f64-utf16-v39`; the [contract](architecture.md#checked-structural-snapshots-v39)
+keeps previous profiles and explicit checked JSON boundaries exact. Retained
+order/extras, typed mutations, nullable-field narrowing, data-property copies,
+shared serialization and GC are covered by 16 snapshot regressions. The unchanged
+SDK passes all 16 local quota checks and its original five-request fixture;
+native, standalone and Chrome acceptance pass. The Cloud application independently
+reports successful read-only service calls and one completed real generation.
+No application adapter, SDK source, capability or production budget is changed
+by this engine increment.
+
+One full attempt stopped on an obsolete profile-inheritance expectation.
+Scoped completion exposed and fixed the placement of a fixture in a frozen
+historical corpus and refreshed only the measured v38 JSON fuel expectations.
+Historical module hashes remain unchanged. The initial full report remains
+failed; subsequent checks are recorded separately in the
+[snapshot evidence](evidence/2026-11-07-checked-snapshot-verification.json).
+
+**Shadow/ring motion follow-up — implemented and verified.**
+Native `transition-shadow` and shadow keyframes now interpolate compatible lists,
+pad missing entries, retain live currentcolor and preserve interrupted/reversed
+motion. Inset mismatches do not start transitions; keyframes switch discretely.
+Stylesheet `transition` shorthand expands to the existing longhands and preserves
+variable/cascade semantics. Eight behavior regressions and two interpolation
+regressions cover actual paint, retained damage, geometry and fallback. The shared
+native/Wasm corpus now has 480 decisions (454 admitted, 26 deliberate refusals);
+the finite application corpus remains complete. Chrome comparison and full
+verification are recorded in the [motion evidence](evidence/2026-11-07-shadow-motion-verification.json).
+
+**Async HTTP/KV integration blocker — fixed.** The SDK-free repro first
+confirmed a successful write followed by a 500 on the next request, caused by a
+blocking guest allocator callback inside Wasmtime's async context. The shared
+suspendable builder and v2 async callbacks fix it in both v38 and v39. Request
+Stores remain isolated; stored values persist across requests/process restart.
+Nested records/arrays/dictionaries/unions, list keys, mismatch recovery, atomic
+updates, forced GC and read-only host ceilings have targeted regressions. The
+one-worker policy's separate fiber-pool exhaustion is fixed in the same package.
+Browser-host session integration remains separate application work.
+
+**Active work next:** broader CSS combinations/native tables, direct GPU effects
+and remaining S6–S8 acceptance have their own scope. The 312-case application
+corpus is complete, not all Tailwind/browser CSS.
+
+
+Complete constructor receivers are verified on base `1407f8eb`: all fields must
+already be assigned and the class must have no non-template descendants, checked
+after generic materialization. The increment admits publication, aliases,
+callbacks, method/getter/setter access and retained execution. Arbitrary partial
+initialization and shared polymorphic/generic method identity remain open.
+
+At the preceding constructor-only checkpoint, one uninterrupted full run passed
+**4589 Rust tests (26 ignored) and 189 browser Node tests** on unchanged inputs. It also covers the preceding class/function
+increment and its final tuple-adapter arity guard. The baseline matches: **246
+passed and 2 known unsupported out of 248 cases**, with 4 uncovered feature rows.
+See the [verification record](verification.md#current-verification-evidence--2026-11-07).
+
+The class/function foundation adds instance identity initializers, unbound method
+values with explicit receivers, tuple-rest calls and generic callback inference,
+plus finite signature adapters. These increments and the CSS follow-up are included in the combined verified package.
+
+The preceding v38 compiler/compatibility package was committed as `1407f8eb`:
 synchronous generator signature inference, compatible union-to-record views and
 pinned companion-module cases for initialization, re-exports and default exports.
 Consolidated verification passes 4584 Rust tests and 189 browser Node tests;
@@ -13,8 +145,9 @@ suites; production code stayed unchanged. See the
 [verification record](verification.md#current-verification-evidence--2026-11-07).
 The recovery checkpoint and counts below describe the preceding baseline.
 
-Status refreshed 2026-11-07. Local `main` is at `0ad37b9d`; the completed
-compiler/compatibility package and this status update are still uncommitted.
+Status refreshed 2026-11-07. The combined package is based on `1407f8eb` and
+includes class/function, complete-receiver, v39 snapshot, CSS and HTTP/KV changes.
+The preceding compiler/compatibility package was committed as `1407f8eb`.
 Its verified source snapshot is in the
 [follow-up record](evidence/2026-11-07-inference-verification.json).
 The preceding recovery code was verified at `5c23aec4` and recorded at
@@ -49,12 +182,12 @@ their current limitations and the evidence behind this checkpoint.
 
 | Item | Current state |
 | --- | --- |
-| Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
+| Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v39` (checked snapshots over the v38 foundation). V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Latest completed verification | Compiler/compatibility package in the working tree, based on `0ad37b9d`, macOS arm64: **4584 Rust tests passed, 0 unresolved failures, 26 ignored; 189 browser Node tests passed**. One full attempt, test-fixture relocation and completion of unfinished suites. [Evidence and scope](verification.md#current-verification-evidence--2026-11-07). Other platforms and remote CI not run |
+| Latest completed verification | Class/function and complete-constructor receiver increments on base `1407f8eb`, macOS arm64: one uninterrupted full run passed **4589 Rust tests, 26 ignored; 189 browser Node tests**, including the prior tuple-adapter arity guard. [Snapshots and scope](verification.md#current-verification-evidence--2026-11-07). Other platforms and remote CI not run |
 | Current GC / verification state | Weak tables use a heap-kind bit distinct from object integrity flags. The sealed/frozen WeakMap/WeakSet GC-stress regression and the completed combined verification pass. Accessor caches preserve frozen-object behavior; symbol keys and callable assignment share the merged paths. |
-| Compatibility inventory | Baseline matches: **243 cases, 241 passed, 2 known unsupported; 131 feature rows, 4 without cases**. Generator inference and union-to-record views close two gaps; new module snapshots cover initialization, re-exports and defaults. These are bounded inventory results ([inventory](../conformance/README.md)) |
+| Compatibility inventory | Baseline matches: **248 cases, 246 passed, 2 known unsupported; 131 feature rows, 4 without cases**. New cases cover initializer identity, method values, tuple rest, suspension and complete constructor receivers. This is a bounded inventory, not whole-language coverage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Connection and per-stream HTTP/2 write-idle bounds are implemented and covered by slow-reader tests. Open: h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -74,7 +207,7 @@ pushed by the recovery task; remote CI was not part of its verification.
 
 | Area | Current technical state | Remaining work |
 | --- | --- | --- |
-| Compiler and language | K9 A4/B/C integrated, plus verified working-tree synchronous generator inference and union-to-record views; overloads, module evaluation/TDZ, class values, accessors and suspension expressions | Decorator prerequisites, wider class-value transport, property descriptors/prototypes and remaining receiver/iterator semantics |
+| Compiler and language | K9 A4/B/C integrated, plus verified generator inference, union-to-record views, the checked class/function increment and complete constructor receivers; overloads, module evaluation/TDZ, class values, accessors and suspension expressions | Decorator prerequisites, wider class-value transport, property descriptors/prototypes and remaining receiver/iterator semantics |
 | Values and collection | Symbol keys, integrity levels, weak tables/ephemerons and weak-reference checkpoints; heap-kind/integrity flags separated | Sustained retained-root/leak/resource measurements and wider value interoperability |
 | Library | Console and Error additions, RegExp follow-ups, local-time Date and passive locale data integrated | Intl service APIs and toLocale* methods, Proxy/Reflect, structuredClone and complete conversion inventory |
 | UI | Shared Rust CSS engine, specification error recovery, TSX/reactive data attributes and native/browser rendering integrated | Remaining layout/paint/input/IME/accessibility behavior, real-window and cross-renderer/platform acceptance |
@@ -84,7 +217,7 @@ The current compiler package implements generator return inference and
 union-to-record views, with normal, rejection, collection-stress and source-free
 artifact regressions. Three new companion-module cases cover dependency-order
 initialization, live re-exports and default forwarding. The compatibility
-inventory now has 243 cases: 241 supported baselines, 2 known unsupported cases
+inventory now has 248 cases: 246 passed baselines, 2 known unsupported cases
 (property descriptors and standard decorators) and 4 uncovered feature rows.
 The combined baseline matches these counts; see the current verification evidence.
 
@@ -99,12 +232,12 @@ concrete compiler queue and the [broader delivery queue](#next-delivery-batches)
 for host/platform acceptance. GPU opacity groups and the native typed
 graphics/Three.js direction remain future work.
 
-### Next implementation package
+### Completed class/function checked increment — 2026-11-07
 
-The next bounded compiler package is **class/function prerequisites for standard
-decorators**. This is the recommended continuation of the accepted K9 work;
-it has not started. First record the completed, verified source snapshot in Git
-so the new batch has a reproducible baseline.
+The checked class/function increment is verified within the following bounds.
+The previous package was recorded in `1407f8eb` before this work. The single full
+run and the final focused arity correction are separately recorded in
+[verification](verification.md#current-verification-evidence--2026-11-07).
 
 | Sequence | Work | Exit evidence |
 | --- | --- | --- |
@@ -113,6 +246,16 @@ so the new batch has a reproducible baseline.
 | 3 | Tuple-typed rest parameters and inference for typed decorator signatures | Fixed/optional/rest tuple combinations, generic inference and arity/assignability errors; no implicit `any`; earlier profiles retain their meaning |
 | 4 | Consolidate contracts, diagnostics, inventory cases and documentation for the three related families | Focused checks during development; one full attempt after the complete package; correct a failure and rerun its affected scope, then finish unexecuted suites without restarting everything |
 
+The checked increment supports direct instance identity fields, earlier-field
+reads/captures, unbound non-generic/non-overloaded method values from receiver
+types without overriding descendants, and positional tuple-rest calls. Method
+values from a generic declaring class require a single specialization in the
+program so monomorphization does not split observable method identity. Required
+finite tuple adapters and callback inference work with matching explicit receivers.
+Polymorphic/generic method extraction, arbitrary initializer `this` escape and
+dynamic optional/variadic tuple-rest spreads remain refused. These bounds are in
+the [contract](architecture.md#classfunction-prerequisite-increment-expression_forms).
+
 This prerequisite package does not itself close the decorator case. The later
 standard-decorator package must also resolve private-member access from generated
 code, metadata symbols, context objects and replacement/initializer semantics,
@@ -120,6 +263,40 @@ then pin application order against the normative contract. Descriptor/prototype
 work is a separate object-semantics package: define representable descriptors,
 reflection and layout/GC/integrity interactions before promoting its known gap.
 Neither gap should be marked supported until its original case actually passes.
+
+### Next implementation package
+
+The finite [Tailwind/CSS application package](#active-tailwindcss-debt-package--2026-11-07)
+is complete, including the earlier 14 remainder cases. The subsequent shadow/ring
+motion package adds list interpolation, currentcolor, keyframes and transition
+shorthand with independent Chrome comparisons. Remaining CSS priorities are
+broader native combinations/table layout, direct GPU shadow/group effects,
+remaining S6–S8 acceptance and plugin/config extensibility. These require their
+own geometry, pixel, input and resource acceptance. The compiler queue below
+follows the CSS work.
+
+Next, complete the **receiver/initializer model** needed by decorators rather
+than promoting the decorator case from the checked increment alone:
+
+1. The complete-receiver path is implemented: all fields assigned at a use site,
+   no descendants after generic materialization; partial receivers remain guarded.
+   Next, specify and implement safe observation of partially initialized instances:
+   base/derived field-definition order, absent/undefined fields, abrupt completion,
+   lexical callbacks and escaped `this`. Extend construction only after its
+   storage/GC and checked-read rules prevent placeholder exposure.
+2. Define shared method identity across overriding and generic implementations,
+   separately from the signature used to invoke it. Cover polymorphic reads,
+   explicit/detached receivers, boxing, capture, comparison and stable identity;
+   keep unsupported cases diagnosed until that representation exists.
+3. Then address generic/overloaded method views and generated private lexical
+   access, followed by decorator context/metadata/replacement semantics with
+   tsc/Node application-order evidence. Property descriptors/prototypes remain
+   their own object-semantics package.
+
+Use focused behavior/caller checks while implementing the connected families,
+then one full run at the package boundary. New failures or counterexamples need
+scoped corrections and explicit evidence; do not relabel an earlier run as a
+fresh pass of changed code.
 
 The other remaining lanes are:
 
@@ -3262,7 +3439,7 @@ and current target evidence remain open. Earlier measurements retain their own
 scope and do not establish those outcomes.
 | Order | Batch | Exit criterion |
 | --- | --- | --- |
-| 1 | V38 semantic stabilization (CORE-01/02/03/10/15): synchronous generator inference and union-to-record views verified; next: class/function prerequisites, then descriptor and decorator packages | Node/tsc comparisons, positive and rejection cases, collection and source-free execution, preserved historical profiles; promote only observed passing compatibility cases |
+| 1 | V38 semantic stabilization (CORE-01/02/03/10/15): synchronous generator inference and union-to-record views verified; checked class/function increment verified; next: remaining receiver/initializer contexts, then descriptor and decorator packages | Node/tsc comparisons, positive and rejection cases, collection and source-free execution, preserved historical profiles; promote only observed passing compatibility cases |
 | 2 | V38 server and asynchronous lifetime acceptance (CORE-08/09/11/17): H1–H4 implemented, including Web Request/body, async/pooling, TLS/HTTP2 and connection/per-stream write-idle bounds | Updated Chrome streaming, sustained load/shutdown/resource evidence and Linux; separately implement h2c, HTTP/3 and certificate reload; preserve request isolation, permissions, budgets and cancellation |
 | 3 | Official browser delivery (P1/P9): metered bundles/effects, OPFS KV, replay, dev/reload and the browser oracle driver integrated; remaining streaming/pilot/target acceptance | Same supported artifacts and UARP session agree in Node, Chromium, Firefox and WebKit; fuel and host work are enforced, permission denials tested, bundle/startup costs measured |
 | 4 | Native targets (P3/P10–P10d): renderer, shells, bundles and headless layout comparison | Same console artifact completes the accepted session visibly on macOS and an actual Pi 5, with layout/accessibility agreement and measured startup, memory and input latency; Windows and target metadata have independent checks |
@@ -3395,7 +3572,7 @@ inferred from the current regression suite.
 | --- | --- | --- | --- | --- |
 | CORE-01 | Number, String and primitive semantics | Partial | Binary64/UTF-16, BigInt graphs, Symbol values, primitive coercions and checked numeric/string methods | Object ToPrimitive, wrappers/prototypes/descriptors, locale/Intl and full operator/conversion inventory |
 | CORE-02 | Objects, arrays and value graphs | Partial | Sparse/resizable arrays, dynamic-key dictionaries, classes/generics/private fields, structural views including compatible union sources, integrity levels, symbol keys and checked graph conversion | General dynamic properties/descriptors/prototypes and remaining identity/key-order semantics |
-| CORE-03 | Functions and control flow | Partial | Typed functions, closures, control flow, generators with v38 synchronous signature inference, async functions and async generators | Complete receiver/binding/call behavior, general iterables and remaining generator forms |
+| CORE-03 | Functions and control flow | Partial | Typed functions, complete constructor receivers, unbound checked method values, tuple-rest parameters/inference, closures, control flow, generators with v38 synchronous signature inference, async functions and async generators | Complete receiver/binding/call behavior, general iterables and remaining generator forms |
 | CORE-04 | Exceptions | Partial | Typed exceptions, Error subclasses, unknown catches and rooted propagation across suspension/finally | General thrown-value admission and complete error-family/propagation inventory |
 | CORE-05 | Standard collections and binary values | Partial | Map/Set, WeakMap/WeakSet, tuples, Uint8Array, encoding/base64 and v38 Web byte APIs | Full typed-array/ArrayBuffer/DataView contracts and ownership/interop inventory; general tagged collection values |
 | CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, v38 UTC/local-time Date with linked locale data, ES2025 Array/Set/iterator/JSON library methods (K9 D) and RegExp with the full ES2025 pattern language, run-time patterns, array match results and lazy `matchAll` and symbol protocols (K9 D3), plus Symbol and weak-reference APIs | General Math object/call semantics and the Intl/toLocale* APIs |
@@ -3407,7 +3584,7 @@ inferred from the current regression suite.
 | CORE-12 | ES modules and packages | Partial | Typed graphs, ordered effectful module evaluation with TDZ checks, constants/live bindings, re-exports/defaults, class/generic linking and text imports; v38 bare package specifiers resolved through `<config dir>/node_modules`, the `types` export and the `.d.ts.map` to shipped TypeScript sources ([contract](architecture.md#local-modules)); the pinned SDK checks when imported as `uarp-sdk` | Remaining module/loading semantics, `*` export patterns and other resolution policy expansion (owner decision), SDK-own-test/package acceptance |
 | CORE-13 | ABI and capability enforcement | Implemented for admitted native profiles | Version/signature/layout/resource checks, host ceilings and permission broker | Retain fail-closed guarantees for new boundaries; official non-Wasmtime host parity remains unclosed |
 | CORE-14 | Distribution | Partial | Independent launcher, portable Wasm, source-free native executable, official browser bundles and packaged varta-shell | Complete distribution/target acceptance, Windows/Pi/cross-target delivery, release policy and artifact authenticity |
-| CORE-15 | Conformance | Partial | Pinned ECMAScript 2025 checked-v38 inventory, isolated runner, reviewed timer grants and negative/differential/artifact tests; 243 inventory cases (241 supported baselines), pinned companion modules, 131 feature rows | Two known unsupported cases, four untested feature rows, broader granted KV/fetch cases, wider edition/history coverage, upstream harness and independent platform verification |
+| CORE-15 | Conformance | Partial | Pinned ECMAScript 2025 checked-v38 inventory, isolated runner, reviewed timer grants and negative/differential/artifact tests; 248 inventory cases (246 supported baselines), pinned companion modules, 131 feature rows | Two known unsupported cases, four untested feature rows, broader granted KV/fetch cases, wider edition/history coverage, upstream harness and independent platform verification |
 | CORE-16 | Performance and production readiness | Partial | Fuel profiler, deterministic golden fuel, codegen/JSON/GC measurements and regression checks | Reproducible startup/throughput/leak/peak-memory benchmarks on supported targets, fuzzing and independent security review |
 | CORE-17 | Application lifecycle | Partial; native foundation implemented | Long-lived instances, host tasks, per-turn budgets, permission decisions, bounded scripted network waits, request cancellation, a sampled native resource lifecycle and recorded network replay (native record/replay and the browser replay transport, wave 3 `w3-network-replay`) | Cross-host ordering beyond replayed network completions, Firefox/WebKit replay runs, complete owned shutdown and broader sustained lifetime/native RSS acceptance |
 | CORE-18 | View output | Partial; L0/TSX and official browser sessions implemented | L0 batch/event protocol, headless tree/cascade/accessibility, TSX with reactive data attributes, shared CSS engine/error recovery, official browser model/DOM/Worker, packaged resources, local dev/reload and experimental CPU native controls/layout | Remaining native L0 styling/layout, real-window console sessions, complete cross-renderer geometry/accessibility, actual Pi/other-target acceptance and measurements |
@@ -9318,6 +9495,38 @@ proposed in the S5 second-part record
   matching, removal, snapshot, name and count refusals. Browser model
   (`view-engine.test.mjs`): the same through the Wasm engine. Compiler:
   static and bound lowering, rejected names.
+
+#### Active Tailwind/CSS debt package — 2026-11-07
+
+The completed shadow/intrinsic increment opened 11 cases (287 → 298). The
+current remainder package implements the other 14, reaching **312/312** in this
+finite application corpus. Eight new targeted cases bring the shared decision
+corpus to 475. This is an application acceptance count, not global Tailwind/CSS
+completion. Consolidated acceptance is complete after one full attempt and
+scoped corrections/completion; see the current verification evidence.
+
+| Debt family | Current package |
+| --- | --- |
+| Atomic/sticky layout | `inline-block`, `inline-flex`, sticky placement, intrinsic sizing and baselines; iterative child-map ownership |
+| Clamping and clipping | Legacy vertical line clamp with actual ellipsis; inset clips including fixed descendants and `sr-only` |
+| Text and controls | Numeric OpenType features with inheritance/reset/cache behavior; best-effort pretty wrapping; checkbox/radio accents |
+| Generated images and filters | Linear gradients with premultiplied color interpolation; bounded backdrop-root blur with explicit software fallback |
+| Keyframes | Rust admission/selection, virtual-time native timelines, rotation paint/hits, browser CSSOM payload |
+| Applicability only | `table-layout: auto/fixed` is inert on supported non-table boxes; actual tables remain unsupported |
+
+The full Tailwind/Preflight check/dev/build/standalone fixture now includes the
+new utility families. Remaining native combinations are explicit in the
+[CSS contract](architecture.md#view-css-engine-k8-t2-and-t3). The preceding
+[shadow verification](evidence/2026-11-07-tailwind-css-verification.json) covers
+only its own snapshot. The remainder is recorded in the
+[consolidated verification](evidence/2026-11-07-tailwind-css-remainder-verification.json);
+that record preserves the failed original attempt and subsequent scoped checks.
+
+Keep valid unimplemented CSS refused rather than dropping it as unknown or
+counting parser admission as native rendering support. Remaining CSS beyond these
+candidates (including direct GPU shadows, broader S6–S8 work and plugin/config
+extensibility; shadow-list motion is implemented in the subsequent follow-up) keeps its
+own scope and acceptance criteria.
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 

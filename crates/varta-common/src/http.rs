@@ -560,7 +560,7 @@ mod tests {
     fn service_versions_preserve_legacy_profiles_and_gate_utf16_to_v38() {
         use crate::language::{LanguageProfile as P, SUPPORTED_PROFILES};
         for profile in SUPPORTED_PROFILES {
-            let expected = if *profile == P::CheckedF64Utf16V38 {
+            let expected = if matches!(*profile, P::CheckedF64Utf16V38 | P::CheckedF64Utf16V39) {
                 Some(UTF16_VERSION)
             } else if !profile.binary64() {
                 Some(VERSION)

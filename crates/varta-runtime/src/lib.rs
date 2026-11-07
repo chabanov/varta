@@ -1330,3 +1330,8 @@ pub fn encode_value_graph_with_functions(
 mod codegen_hotspot_tests;
 #[cfg(test)]
 mod codegen_v2_tests;
+
+#[cfg(test)]
+mod class_function_tests;
+#[cfg(test)]
+mod snapshot_tests;

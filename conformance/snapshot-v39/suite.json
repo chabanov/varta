@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "id": "checked-snapshots-v39",
+  "edition": "ECMAScript 2025",
+  "sourceModel": "checked-ts-main-v1",
+  "profile": "checked-f64-utf16-v39",
+  "features": [
+    {
+      "id": "checked-snapshots",
+      "title": "Isolated checked structural JSON snapshots retaining extras",
+      "core": [
+        "CORE-01",
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#checked-structural-snapshots-v39"
+    }
+  ],
+  "cases": [
+    {
+      "id": "retained-snapshot",
+      "feature": "checked-snapshots",
+      "path": "cases/retained-snapshot.ts",
+      "sha256": "2ba2eb9023b0d86813ccd9267a15d0df338a1f06367d91d3215c6fd95afa22c6",
+      "stdout": [
+        "varta log: {\"before\":true,\"n\":1,\"child\":{\"x\":2,\"extra\":3}}",
+        "varta log: [\"before\",\"n\",\"child\"]",
+        "varta log: 4 true false",
+        "varta log: {\"before\":true,\"n\":1,\"child\":{\"x\":4,\"extra\":3}}",
+        "varta log: strict parse",
+        "varta log: checked field"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "optional-nullable-record",
+      "feature": "checked-snapshots",
+      "path": "cases/optional-nullable-record.ts",
+      "sha256": "d3608bbedaac800714e030571b77f3221053aba51d169a03889c907d63528951",
+      "stdout": [
+        "varta log: false false",
+        "varta log: false false",
+        "varta log: true true",
+        "varta log: 0 0 5"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "data-property-keys",
+      "feature": "checked-snapshots",
+      "path": "cases/data-property-keys.ts",
+      "sha256": "75d53e39baf4353e6dce732e563a61dfeba56ea7b8287132ac47e5f2dc2fd179",
+      "stdout": [
+        "varta log: {\"n\":1,\"__proto__\":{\"kept\":true},\"child\":{\"x\":2,\"__proto__\":[3]},\"constructor\":\"data\"}",
+        "varta log: [\"n\",\"__proto__\",\"child\",\"constructor\"]",
+        "varta log: {\"n\":1,\"__proto__\":{\"kept\":true},\"child\":{\"x\":2,\"__proto__\":[3]},\"constructor\":\"data\"}",
+        "varta log: {\"n\":1,\"__proto__\":{\"kept\":true},\"child\":{\"x\":2,\"__proto__\":[3]},\"constructor\":\"data\"}",
+        "varta log: {\"n\":1,\"__proto__\":{\"kept\":true},\"child\":{\"x\":2,\"__proto__\":[3]},\"constructor\":\"data\"}",
+        "varta log: true",
+        "varta log: assign setter refused",
+        "varta log: ordinary setter refused"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    }
+  ]
+}

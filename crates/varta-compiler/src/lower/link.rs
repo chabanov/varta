@@ -382,6 +382,8 @@ fn lower_pass(
         initializers: constants.initializers,
         suspendable: BTreeMap::new(),
     };
+    classes::validate_method_values(&program.types)?;
+    classes::validate_constructor_receivers(&program.types)?;
     subtyping::resolve(&mut program)?;
     let missing = program.types.subtyping.take_missing_sites();
     if !missing.is_empty() {

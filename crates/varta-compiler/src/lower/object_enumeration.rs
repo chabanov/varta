@@ -175,6 +175,7 @@ impl Lower<'_> {
             .collect();
         let element = match kind {
             Kind::Keys => Type::String,
+            Kind::Values if self.types.profile.checked_snapshots() => Type::Unknown,
             Kind::Values if fields.is_empty() => Type::Undefined,
             Kind::Values => {
                 unions::intern(fields.iter().map(|field| field.ty).collect(), self.types)

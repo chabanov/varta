@@ -95,6 +95,10 @@ impl Lower<'_> {
             return Err(type_error("spread call requires a typed function"));
         };
         let signature = self.types.functions[id as usize].clone();
+        if signature.shape.rest && matches!(signature.params.last(), Some(Type::Tuple(_))) {
+            return Err(self.source.locate(unsupported("dynamic spread into a tuple-rest parameter; use a fixed tuple spread or explicit arguments"), call.span));
+        }
+
         let receiver_slot = receiver.as_ref().map(|_| 1);
         let mut operands = vec![target];
         operands.extend(receiver);
@@ -119,6 +123,14 @@ impl Lower<'_> {
                     None
                 };
                 let value = self.expr_expected(&arg.expr, expected)?;
+                let value = match value.ty {
+                    Type::Tuple(id) if self.types.profile.expression_forms() => Expr {
+                        span: value.span,
+                        ty: self.types.tuples[id as usize].array,
+                        kind: E::Reinterpret(Box::new(value)),
+                    },
+                    _ => value,
+                };
                 if !matches!(value.ty, Type::Array(_)) {
                     return Err(self.source.locate(
                         type_error("spread operand requires a narrowed checked array"),

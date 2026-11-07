@@ -281,6 +281,25 @@ impl Lower<'_> {
                 "dynamic this context for an arrow; use a function expression",
             ));
         }
+        if let Some(context) = expected
+            .as_ref()
+            .filter(|t| parameters::tuple_literal(arrow.params.iter(), t, self.types))
+        {
+            let params =
+                arguments::expanded(&context.params, &context.shape, self.types).map(|(p, _)| p);
+            return self.arrow_context(
+                arrow,
+                LiftContext {
+                    params,
+                    shape: None,
+                    result: Some(context.result),
+                    infer: false,
+                    receiver: None,
+                    lexical: true,
+                    self_name: None,
+                },
+            );
+        }
         // V38: a literal with extra optional, default or rest parameters
         // keeps its own signature; the context types the shared parameters
         // and the result, and the value converts through an adapter.

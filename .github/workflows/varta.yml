@@ -52,6 +52,8 @@ jobs:
         run: node --test crates/varta-common/browser/fuel.test.mjs crates/varta-project/src/browser/*.test.mjs
       - name: Checked core compatibility baseline (known gaps remain separate)
         run: cargo run -p varta-conformance --locked -- --json
+      - name: Checked structural snapshot contract
+        run: cargo run -p varta-conformance --locked -- --suite conformance/snapshot-v39/suite.json --require-supported --json
 
   browser:
     # The browser oracle gate: `python3 scripts/verify.py browser`. Skipped

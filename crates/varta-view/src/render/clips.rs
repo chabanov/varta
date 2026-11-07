@@ -34,6 +34,31 @@ pub(crate) fn same(left: &Option<Arc<Clip>>, right: &Option<Arc<Clip>>) -> bool 
     }
 }
 impl Clip {
+    pub(crate) fn translated(
+        source: &Arc<Self>,
+        dx: f32,
+        dy: f32,
+        parent: Option<Arc<Self>>,
+    ) -> Result<Arc<Self>, PaintError> {
+        let t = Transform::from_translate(dx, dy);
+        let path = source
+            .path
+            .as_deref()
+            .cloned()
+            .map(|p| p.transform(t).ok_or(PaintError::Dimensions))
+            .transpose()?;
+        let mut rect = source.rect;
+        rect.x += dx;
+        rect.y += dy;
+        let logical = source.logical_bounds.and_then(|b| b.transform(t));
+        Ok(Self::build(parent, path, rect, source.corners, logical))
+    }
+    pub(crate) fn same_shape(&self, other: &Self) -> bool {
+        self.rect == other.rect
+            && self.corners == other.corners
+            && self.logical_bounds == other.logical_bounds
+            && self.path == other.path
+    }
     /// Reuse validated source path storage while changing only inherited scope.
     pub(crate) fn reparent(source: &Arc<Self>, parent: Option<Arc<Self>>) -> Arc<Self> {
         let bounds = source.path.as_ref().and_then(|path| match &parent {

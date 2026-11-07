@@ -265,10 +265,22 @@ fn run_owned(
     }
     // The server engine: the module compiled again with the runtime's
     // settings, a pool of `workers` instance slots, linked once.
-    let engine = engine::engine(workers)?;
+    let asynchronous = contract.version == varta_common::http::UTF16_VERSION;
+    // Admission acquires both permits before creating a Store, so the memory
+    // ceiling also bounds how many outer/nested fiber pairs can be live.
+    let async_requests = if asynchronous {
+        workers.min(memory_pages / request_pages)
+    } else {
+        0
+    };
+    let engine = engine::engine(workers, async_requests)?;
     let module = crate::validate::module(&engine, bytes)?.0;
     let mut linker = wasmtime::Linker::new(&engine);
-    crate::host::register(&mut linker)?;
+    if asynchronous {
+        crate::host::register_async(&mut linker)?;
+    } else {
+        crate::host::register(&mut linker)?;
+    }
     let linked = linker.instantiate_pre(module.module())?;
     let _ticker = engine::Ticker::start(engine.clone()).map_err(HttpError::Io)?;
     let listener = TcpListener::bind(&contract.bind).map_err(HttpError::Io)?;

@@ -103,6 +103,8 @@ try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engin
       build(1,${JSON.stringify(fixture.nodes)});
       app.apply(codec.encodeViewBatch(ops));
       await new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done)));
+      if (${JSON.stringify((fixture.scroll??null))} !== null) { const [id,top]=${JSON.stringify((fixture.scroll??null))};app.inspectNode(id).scrollTop=top; }
+      if (${JSON.stringify((fixture.time??null))} !== null) { for(const id of Array.from({length:next-2},(_,i)=>i+2)) for(const animation of app.inspectNode(id).getAnimations()) {animation.pause();animation.currentTime=${JSON.stringify((fixture.time??null))};} }
       return Object.fromEntries(Array.from({length:next-2},(_,i)=>i+2).map(id=>{const r=app.inspectNode(id).getBoundingClientRect();return [id,{x:r.x,y:r.y,width:r.width,height:r.height}];}));
     })()`):await evaluate(`(async()=>{
       globalThis.app?.close();globalThis.app=undefined;document.body.replaceChildren();${loadFonts}
@@ -122,6 +124,8 @@ try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engin
         nodes.set(next++,e);parent.append(e);build(e,n.children);
         for(const [owner,text] of texts)if(owner===n.class)e.append(document.createTextNode(text));}};
       build(root,${JSON.stringify(fixture.nodes)});
+      if (${JSON.stringify((fixture.scroll??null))} !== null) { const [id,top]=${JSON.stringify((fixture.scroll??null))};nodes.get(id).scrollTop=top; }
+      if (${JSON.stringify((fixture.time??null))} !== null) { for(const e of nodes.values()) for(const animation of e.getAnimations()) {animation.pause();animation.currentTime=${JSON.stringify((fixture.time??null))};} }
       return Object.fromEntries([...nodes].map(([id,e])=>{const r=e.getBoundingClientRect();return [id,{x:r.x,y:r.y,width:r.width,height:r.height}];}));
     })()`);
     if(process.env.VARTA_CSS_PROBE_DEBUG)console.log(fixture.name,JSON.stringify(boxes),JSON.stringify(fixture.boxes));
@@ -138,11 +142,37 @@ try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engin
       for(let channel=0;channel<3;channel++){const delta=Math.abs(pixels[at+channel]-Math.min(255,fixture.raster[at+channel]+white));sum+=delta;maximum=Math.max(maximum,delta);pixelMax=Math.max(pixelMax,delta);count++;}
       if(pixelMax>1)differing++;
     }
+    // Effect probes sit outside the ordinary boxes too: a scene-wide mean
+    // or centre sample could miss a missing shadow/ring completely. Blurred
+    // probes use the Backgrounds 3 §6.1.2 channel tolerance; hard fills keep
+    // the ordinary one-step rounding bound.
+    for (const [cssX,cssY,tolerance] of fixture.pixelProbes??[]) {
+      assert(Number.isInteger(tolerance)&&tolerance>=0&&tolerance<=13);
+      const x=Math.floor(cssX*scale),y=Math.floor(cssY*scale);
+      assert(x>=0&&y>=0&&x<w&&y<h,`${fixture.name}: invalid effect probe`);
+      const at=(y*w+x)*4,white=255-fixture.raster[at+3];
+      const native=[0,1,2].map(c=>Math.min(255,fixture.raster[at+c]+white)),chrome=[...pixels.slice(at,at+3)];
+      assert(native.every((v,c)=>Math.abs(v-chrome[c])<=tolerance),`${fixture.name}: effect probe ${cssX},${cssY}: native ${native}, Chrome ${chrome}`);checks++;
+    }
+    // Hard boundaries can cover half a device pixel: Blink's aliased clip
+    // and our area coverage choose different samples. Keep the edge probe,
+    // bounding each channel by Chrome's immediate horizontal neighbours;
+    // the adjacent interior effect probe still requires an exact ring fill.
+    for(const [cssX,cssY] of fixture.edgeProbes??[]) {
+      const x=Math.floor(cssX*scale),y=Math.floor(cssY*scale),at=(y*w+x)*4;
+      assert(x>0&&x+1<w&&y>=0&&y<h);
+      const white=255-fixture.raster[at+3];
+      for(let c=0;c<3;c++) {
+        const samples=[pixels[at-4+c],pixels[at+c],pixels[at+4+c]],value=Math.min(255,fixture.raster[at+c]+white);
+        assert(value>=Math.min(...samples)-1&&value<=Math.max(...samples)+1,`${fixture.name}: edge probe ${cssX},${cssY} channel ${c}`);
+      }
+      checks++;
+    }
     const mean=sum/count;
     // Per element: the centre pixel natively and in Chrome, for diagnosis.
     if(process.env.VARTA_CSS_PROBE_DEBUG)for(const [id,box]of Object.entries(fixture.boxes)){
       const x=Math.floor((box.x+box.width/2)*scale),y=Math.floor((box.y+box.height/2)*scale),at=(y*w+x)*4;
-      if(x>=w||y>=h)continue;
+      if(x<0||y<0||x>=w||y>=h)continue;
       const white=255-fixture.raster[at+3];
       console.log(fixture.name,id,'native',[0,1,2].map(c=>Math.min(255,fixture.raster[at+c]+white)),'chrome',[...pixels.slice(at,at+3)]);
     }
@@ -157,7 +187,7 @@ try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engin
       for(const [id,box]of Object.entries(fixture.boxes)){
         if(box.width<1||box.height<1)continue;
         const x=Math.floor((box.x+box.width/2)*scale),y=Math.floor((box.y+box.height/2)*scale);
-        if(x>=w||y>=h)continue;
+        if(x<0||y<0||x>=w||y>=h)continue;
         const at=(y*w+x)*4,white=255-fixture.raster[at+3];
         const native=[0,1,2].map(c=>Math.min(255,fixture.raster[at+c]+white)),chrome=[...pixels.slice(at,at+3)];
         assert(native.every((value,c)=>Math.abs(value-chrome[c])<=MAX_CENTRE_RGB_DELTA),`${fixture.name} #${id}: centre native ${native}, Chrome ${chrome}`);checks++;

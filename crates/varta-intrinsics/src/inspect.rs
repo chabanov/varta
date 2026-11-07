@@ -1195,6 +1195,14 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             let value = self.resolve(dictionary.values.kind as u32, value)?;
             entries.push((self.string(key)?, value));
         }
+        self.dictionary_entries(entries, id, recurse)
+    }
+    fn dictionary_entries(
+        &mut self,
+        entries: Vec<(Text, Value)>,
+        id: u32,
+        recurse: usize,
+    ) -> Result<Text, EncodeError> {
         if entries.is_empty() {
             return Ok(ascii("{}"));
         }
@@ -1355,7 +1363,57 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
     }
     /// A record by its display: an object or class instance, an Error
     /// object, a Map, a Set or a Date.
+    fn snapshot_entries(
+        &mut self,
+        payload: u64,
+    ) -> Result<Option<Vec<(Text, Value)>>, EncodeError> {
+        if self.bounds.snapshots {
+            let mut fields = Vec::new();
+            varta_common::value::read_record_in(
+                self.memory,
+                payload,
+                VERSION,
+                &self.bounds,
+                |entry| fields.push(entry),
+                |_| {},
+            )
+            .map_err(layout)?;
+            fields.sort_by_key(|field| field.slot);
+            if let Some(snapshot) =
+                varta_common::value::snapshot_members(self.memory, &fields, VERSION, self.bounds)
+                    .map_err(layout)?
+            {
+                let mut entries = Vec::with_capacity(snapshot.order.len());
+                for member in snapshot.order {
+                    let (name, value) = if member < fields.len() {
+                        let field = fields[member];
+                        let key = self
+                            .memory
+                            .borrow(field.key, field.len)
+                            .ok_or(EncodeError::Layout)?;
+                        (utf16(&key), self.resolve(field.kind as u32, field.payload)?)
+                    } else {
+                        let (key, value) = snapshot
+                            .extras
+                            .entry(self.memory, member - fields.len())
+                            .map_err(layout)?
+                            .ok_or(EncodeError::Layout)?;
+                        (
+                            self.string(key)?,
+                            self.resolve(snapshot.extras.values.kind as u32, value)?,
+                        )
+                    };
+                    entries.push((name, value));
+                }
+                return Ok(Some(entries));
+            }
+        }
+        Ok(None)
+    }
     fn record_value(&mut self, payload: u64, id: u32, recurse: usize) -> Result<Text, EncodeError> {
+        if let Some(entries) = self.snapshot_entries(payload)? {
+            return self.dictionary_entries(entries, id, recurse);
+        }
         let record = self.record(payload, None)?;
         match record.display {
             RecordDisplay::Object | RecordDisplay::Class => self.object(record, id, recurse),

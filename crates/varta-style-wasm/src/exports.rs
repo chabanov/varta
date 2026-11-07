@@ -314,3 +314,11 @@ fn publish_fonts(state: &mut State) {
         .clone();
     session_of(state).set_fonts(alloc::sync::Arc::new(set));
 }
+
+/// Admitted keyframes only: the browser consumes the engine's CSSOM payload.
+#[unsafe(no_mangle)]
+pub extern "C" fn view_engine_animation_css() -> u32 {
+    let state = state();
+    state.output = session_of(state).animation_css().into_bytes();
+    state.output.len() as u32
+}

@@ -1,8 +1,25 @@
 //! Async functions (v34 `async_functions`, K4.4 step 4): `await` and the
 //! split of an `async function` into its wrapper and its scheduled body.
+use super::async_returns::{Exit, rewrite};
 use super::*;
 
 impl Lower<'_> {
+    pub(in crate::lower) fn accepts_async_promise(&self, ty: Type) -> bool {
+        let (Some(target), Type::Promise(source)) = (self.asynchronous, ty) else {
+            return false;
+        };
+        source == target
+            || self.types.profile.structural_subtyping()
+                && unions::widen(
+                    zero(
+                        swc_common::DUMMY_SP,
+                        stored(self.types.promises[source as usize].value),
+                    ),
+                    Some(self.result),
+                    self.types,
+                )
+                .is_ok_and(|value| value.ty == self.result)
+    }
     /// `await e` inside an async function body.
     pub(in crate::lower) fn await_expression(
         &mut self,
@@ -74,6 +91,15 @@ impl Lower<'_> {
         expr: &ast::Expr,
         result: Option<Type>,
     ) -> Result<Vec<S>> {
+        if result.is_some()
+            && self.asynchronous.is_some()
+            && self.types.profile.structural_subtyping()
+        {
+            return self.single(&ast::Stmt::Return(ast::ReturnStmt {
+                span: expr.span(),
+                arg: Some(Box::new(expr.clone())),
+            }));
+        }
         let value = self.expr_expected(expr, result.filter(|ty| *ty != Type::Void))?;
         let Some(result) = result else {
             return Ok(match value.ty {
@@ -113,102 +139,6 @@ impl Lower<'_> {
             ));
         }
         Ok(vec![S::Return(Some(value))])
-    }
-}
-
-/// Exit of a rewritten async body: a `return` stores its value and leaves
-/// the labelled body, which then settles the async function's promise.
-struct Exit {
-    label: u32,
-    value: Option<u32>,
-    promise: u32,
-    adopt: u32,
-    promise_ty: Type,
-}
-fn rewrite(body: Vec<S>, exit: &Exit) -> Vec<S> {
-    body.into_iter()
-        .map(|s| rewrite_statement(s, exit))
-        .collect()
-}
-fn rewrite_statement(statement: S, exit: &Exit) -> S {
-    match statement {
-        S::Return(None) => S::BreakLabel(exit.label),
-        S::Return(Some(value)) => {
-            let span = value.span;
-            let mut exit_body = if value.ty == exit.promise_ty {
-                vec![
-                    S::Set(exit.promise, value),
-                    S::Set(exit.adopt, boolean(span, true)),
-                ]
-            } else if let Some(slot) = exit.value {
-                vec![S::Set(slot, value)]
-            } else {
-                vec![S::Expr(value)]
-            };
-            exit_body.push(S::BreakLabel(exit.label));
-            S::Block(exit_body)
-        }
-        S::TryCatch {
-            body,
-            binding,
-            handler,
-            marker,
-        } => S::TryCatch {
-            body: rewrite(body, exit),
-            binding,
-            handler: rewrite(handler, exit),
-            marker,
-        },
-        S::TryFinally {
-            body,
-            finalizer,
-            marker,
-            completion,
-            exception,
-            result,
-        } => S::TryFinally {
-            body: rewrite(body, exit),
-            finalizer: rewrite(finalizer, exit),
-            marker,
-            completion,
-            exception,
-            result,
-        },
-        S::Block(body) => S::Block(rewrite(body, exit)),
-        S::Scope(slots, body) => S::Scope(slots, rewrite(body, exit)),
-        S::Label {
-            id,
-            iteration,
-            body,
-        } => S::Label {
-            id,
-            iteration,
-            body: rewrite(body, exit),
-        },
-        S::If(test, yes, no) => S::If(test, rewrite(yes, exit), rewrite(no, exit)),
-        S::While(test, body) => S::While(test, rewrite(body, exit)),
-        S::DoWhile(test, body) => S::DoWhile(test, rewrite(body, exit)),
-        S::For(init, test, update, body) => S::For(
-            rewrite(init, exit),
-            test,
-            rewrite(update, exit),
-            rewrite(body, exit),
-        ),
-        S::Switch {
-            value,
-            discriminant,
-            selected,
-            cases,
-        } => S::Switch {
-            value,
-            discriminant,
-            selected,
-            cases: cases
-                .into_iter()
-                .map(|(test, body)| (test, rewrite(body, exit)))
-                .collect(),
-        },
-        other => other,
     }
 }
 
@@ -298,13 +228,7 @@ impl Lower<'_> {
         let resolve = self.resolve_helper(span, id)?;
         let label = self.next_label;
         self.next_label += 1;
-        let exit = Exit {
-            label,
-            value: (value != Type::Void).then(|| self.hidden(value)),
-            promise: self.hidden(promise_ty),
-            adopt: self.hidden(Type::Boolean),
-            promise_ty,
-        };
+        let exit = Exit::new(self, label, value, promise_ty, &statements);
         let e = self.hidden(reason);
         let marker = self.hidden(Type::Number);
         let p = || local(span, promise, promise_ty);
@@ -316,6 +240,8 @@ impl Lower<'_> {
         if let Some(slot) = exit.value {
             body.push(S::Init(slot, zero(span, value)));
         }
+        body.extend(exit.initialize(span));
+        let settlement = exit.settlement(self, span, p(), fulfilled, (resolve, fulfill))?;
         body.extend([
             S::Init(exit.promise, zero(span, promise_ty)),
             S::Init(exit.adopt, boolean(span, false)),
@@ -326,15 +252,7 @@ impl Lower<'_> {
                         iteration: false,
                         body: rewrite(statements, &exit),
                     },
-                    S::If(
-                        local(span, exit.adopt, Type::Boolean),
-                        vec![invoke(
-                            span,
-                            resolve,
-                            vec![p(), local(span, exit.promise, promise_ty)],
-                        )],
-                        vec![invoke(span, fulfill, vec![p(), fulfilled])],
-                    ),
+                    settlement,
                 ],
                 binding: Some(e),
                 handler: vec![invoke(span, reject, vec![p(), local(span, e, reason)])],

@@ -765,7 +765,10 @@ impl Tree {
         if let Some(values) = self.render_reads.get(id, environment) {
             return values.get(&property).cloned();
         }
-        if let Some(value) = self.animations.overlay_property(id, property) {
+        if let Some(value) = self
+            .animations
+            .overlay_property(self, environment, id, property)
+        {
             return Some(value);
         }
         self.computed_static(id, environment).remove(&property)
@@ -781,7 +784,7 @@ impl Tree {
             return values.clone();
         }
         let mut values = self.computed_static(id, environment);
-        self.animations.overlay(id, &mut values);
+        self.animations.overlay(self, environment, id, &mut values);
         values
     }
     /// The computed values without transitions: what a style change compares

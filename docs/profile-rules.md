@@ -392,6 +392,14 @@ status, grants, helper purity and fatal budgets. Map traps fatally on a missing
 visited index until sparse array presence is implemented; never silently compact
 or fill holes. Typed thisArg is implemented below; borrowed/prototype APIs remain pending.
 
+For admitted tuples (v37+, including v38 `as const`), normalize the receiver
+through `physical_array` before constructing the callback wrapper. Infer the
+value from that storage's element union and the callback receiver as the same
+array type; do not copy storage or reevaluate the receiver. `filter` returns an
+array, never the source's fixed tuple shape. Optional/rest/trailing elements use
+the tuple's existing physical union. This preserves the current binding-level
+readonly policy; it does not introduce deep readonly array types.
+
 ### checked-f64-utf16-v13
 
 The sparse-array profile checked-f64-utf16-v13 uses host ABI v16/value v12/schema
@@ -1800,7 +1808,8 @@ Placeholders must stay unobservable: keep the syntactic constructor discipline
 (field-only `this`, top-level definite assignment, single top-level `super`, no
 escape/capture/method calls/returns/`new.target` other than the
 `error_subclasses` `new.target.name`, `this`-free initializers and
-parameter defaults) unless a flow analysis proves the same property. Readonly
+parameter defaults) unless the v38 checked initializer rules below or a flow
+analysis prove the same property. Readonly
 writes are allowed only in the declaring class's initializer through `this`;
 private/protected checks use `classes.context`. Class calls are user code: keep
 `flow::native` false for names declared by any class method and treat class
@@ -2455,6 +2464,15 @@ earlier profiles frozen, and add each stream's rules under its own heading here.
   promise into a new promise.
 - A promise inside `unknown` is never adopted silently: every path that would
   adopt one without a static `T` throws the documented `TypeError`.
+- V38 async returns retain a statically typed `Promise<U>` before contextual
+  widening to the declared `T`. Check the fulfilled-value conversion, not a
+  conversion of the promise handle. `async_returns` caches each source promise
+  in a typed local and selects the final completion after all finalizers, including
+  suspended finalizers. The typed adoption helper awaits the source, widens only
+  the fulfilled value, and rejects on source failure. Reuse the existing
+  adoption/reaction jobs; no extra promise or scheduling layer. Conditional
+  returns lower by arm; annotated async arrows use the same return lowering.
+  Keep actual unknown-held-promise guards and the pre-v38 path unchanged.
 - Combinators are guest code: one memoized job frame per combinator and
   element type, a private state record and ordinary helpers. Add no host
   import and no scheduler bound; keep the element snapshot and index-order
@@ -3569,7 +3587,18 @@ Normative contract: [architecture](architecture.md#kv-storage-kv).
 - The V8 codec (`kv::v8`) is strict: every Deno fixture value must re-encode
   byte-identically, unknown tags and malformed input fail with `V8Error`, and
   no partial value escapes. Add a tag only with a Deno-written fixture row.
-- Operations are synchronous host calls within the turn. Commits go through
+- Storage operations settle within the turn. Native HTTP v2 registers
+  `kv_key`/`kv_value` as async host callbacks and awaits the validated guest
+  allocator/retain exports with `call_async`; never use blocking Wasmtime
+  calls from a request fiber. Ordinary native execution, HTTP v1 and the
+  browser use immediate adapters of the same suspendable codec builder.
+  Validation, fuel charging and root/publication order stay shared. A
+  classified tree must drop iteratively if materialization is cancelled,
+  including before its future is first polled. Reserve at most two fiber
+  stacks per admitted v2 request (outer call plus one host-free helper),
+  retaining the existing slot reservation when larger; admission is bounded
+  by both worker slots and the server memory ceiling. This does not raise
+  guest budgets or admit another request. Commits go through
   `Database::commit_with`: lock probe, cutoff (`kv::COMMIT_RESERVE_MS` before
   the deadline), and the worker connection's commit hook (`Fence`) as the only
   place a guest commit is admitted. Never return before a commit the hook let
@@ -5183,6 +5212,54 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders),
   retained damage reuse across unchanged/changed frames; report fallback honestly
   rather than counting it as GPU composition. Direct GPU groups remain separate
   acceptance work.
+- Box-shadow paint must preserve CSS Backgrounds 3 layering, currentcolor,
+  signed offsets/spread, nonnegative blur, Gaussian sigma=blur/2 and rounded
+  knockout/padding clipping. Keep shadow ink in opacity-group and retained-damage
+  bounds across compositor tiles, without expanding layout/hit boxes. Broken
+  inline shadows share the continuous decoration strip and existing text-paint
+  allowance. Clip once; do not multiply silhouette antialias coverage by a mask
+  of the same ink bounds. Keep the software fallback explicit until direct GPU
+  acceptance exists. No blur-radius-sized allocation or unbounded pixel surface.
+- Shadow motion interpolates positions in order and pads only the shorter list
+  with transparent zero shadows of the corresponding inset kind. A paired inset
+  mismatch cancels transitions for the entire property; keyframes switch
+  discretely, not through a fabricated blur. Preserve premultiplied alpha,
+  nonnegative blur under easing overshoot, currentcolor liveness and exact
+  reversal endpoints. Keep dynamic color coefficients flat across interruptions
+  and share endpoint storage. Currentcolor lookup must read only animated color,
+  retaining prepared reads rather than recursively overlaying the sampled shadow.
+  Unresolved currentcolor mixes in native shadow keyframes fail explicitly.
+  `transition` is a mapped shorthand; preserve pending variables, reset all four
+  longhands and let ordinary cascade order select later longhands. Its list bound
+  is the existing eight-entry animation-list bound. Do not add wire IDs or budgets.
+- The remaining application CSS package uses the bounded contract in
+  `architecture.md` (2026-11-07). Keep numeric features in shape keys, font
+  shorthand resets and tab runs. Preserve semantic text under inset clips and
+  line clamps; hidden fragments must not retain pointer targets. Sticky must
+  remain in flow and obey scrollport/containing-block constraints. Atomic inline
+  construction stays iterative and consumes prepared child maps; never retain
+  one full subtree per depth. Pretty wrapping is UA best effort, with trials
+  charged before memo lookup. Gradients premultiply alpha and use the shared
+  Rust color conversion; no JS parser, per-background bitmap or new cache.
+  Resolve backdrop prefixes at the proper backdrop root before compositor
+  tiling. Clip the root image to the element border box and mirror its edges;
+  count complete periods analytically for huge radii. Use host length references
+  for blur units. Charge source traversal, capture, blur and owned
+  pixels to existing work/cache ceilings. Preserve old scopes and make direct
+  GPU fallback explicit. Keyframes select by layers/media/source order in Rust;
+  browser CSSOM receives only the checked keyframe payload. Keep ordinary guest
+  rules out of the platform cascade. Native animations use the supplied clock,
+  honor important declarations, and update both paint and hits. Select emitted
+  keyframe names in one pass, with no per-name full-sheet rescan. A zero-work
+  tab-feature plan must not charge an inactive standalone text request. Convert rotated
+  rectangles to paths before tiled replay; refuse samplers/scopes without valid
+  affine geometry. Do not admit keyframe variables/layout animation by ignoring
+  them. `table-layout` is inert on current non-table boxes, not table support.
+- Intrinsic width/height keywords use actual min/max-content measurements.
+  Fit-content clamps available space between those bounds in block/flex/grid/
+  absolute layout; measuring at available width alone is not equivalent. Keep
+  function-valued fit-content and intrinsic min/max constraints refused until
+  independently implemented and verified. Preserve ordinary auto-size behavior.
 - Inline background radii use slice geometry, not independently rounded line
   boxes. Assemble fragments in visual order, resolve/normalize radii against each
   fragment's border box and apply them to that full strip. Keep wide offsets and
@@ -5775,3 +5852,62 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders),
   retain synchronous policy behavior. A missing seam and synthetic activation
   both deny broad links. Platform/observer/abort failures must precede later OS
   effects; test with spies, not real external windows.
+
+### Class/function prerequisite increment (`expression_forms`)
+
+Contract: [class/function increment](architecture.md#classfunction-prerequisite-increment-expression_forms).
+
+- Keep all admission on v38. Tuple rest remains one physical array slot: shared
+  argument context/count/binding owns per-position checking and fresh packing.
+  Never pad an omitted tuple optional element or discard a variadic spread tail.
+- Keep finite tuple adapter source arity explicit; preserve receiver slots in
+  params, locals, capture offsets and forwarded calls. Optional/variadic tuple
+  adapters require identical parameter layouts. Changes to those layouts,
+  unrelated receivers and dynamic tuple-rest spreads fail with diagnostics.
+- Method values reference the implementation's canonical function, never a
+  virtual dispatcher or receiver-bound closure. Check access and validate the
+  read sites after generic class materialization; refuse polymorphic extraction
+  when descendants replace the method or multiple specializations of its
+  declaring generic class exist. Do not expose overload implementations or
+  misrepresent monomorphized bodies as distinct JavaScript identities.
+- `self: C = this` stores identity only. Track such fields throughout the
+  ancestry and refuse their reads during incomplete construction, including closures, so
+  placeholders cannot escape indirectly. Receiver-bearing function fields are
+  also unreadable while incomplete: an implicit receiver call could expose the partial
+  instance to the ordinary function body. Retain earlier-field checks and
+  pre-super/default restrictions; identity comparisons cannot pass `this` out.
+- A complete v38 receiver may escape or call members only when every declared
+  field is definitely assigned at the use site. Record newly admitted uses and
+  reject them if any descendant exists after all generic materialization. Do not
+  infer completeness from assignments inside branches/callees or apply the rule
+  before `super` or in parameter defaults. Keep partial receivers on the earlier
+  discipline; no runtime readiness marker or layout change is introduced.
+- New fixtures live in `class_function_cases`, outside the frozen pre-v38
+  corpus. Cover output against Node, rejection, old-profile hashes, collection,
+  suspension, source-free artifacts and compatibility inventory digests.
+
+## Checked structural snapshots (v39)
+
+- Read the [snapshot contract](architecture.md#checked-structural-snapshots-v39).
+  Gate the whole source graph by the registered profile and host ABI; old profiles
+  keep exact conversion, strict parsing/declared reads and record-union matching.
+- Retain extras and complete own-key order recursively. Use canonical ordinary
+  records/dictionaries/string vectors, with exact GC masks; metadata consumes the
+  existing field budget. Validate metadata in shared native/Wasm readers.
+- Copy input before conversion; no mutable child may leak from the input. Exact
+  typed values keep their established identity. Dictionary exposure must not
+  provide an unchecked write path to declared slots. Property copies are shallow
+  and have distinct converter keys.
+- Refuse getters before reading their values; reject cycles, holes and non-JSON
+  extras explicitly. Keep an original array handle for hole/identity checks before
+  kind-based boxing creates a view. Fatal fuel/memory limits never become checked
+  TypeErrors. Private prelude hooks are recognized only in the engine-owned source.
+- Run typed writes/deletes and their integrity checks before changing order.
+  Metadata stays hidden; enumeration and serialization include retained public
+  extras. Never loosen a strict converter to fix an SDK assertion.
+
+- Snapshot graph builders and fresh spread copies define own data properties.
+  Retain JSON `__proto__` as data without invoking a setter; keep ordinary writes
+  and `Object.assign` on the separate set protocol. Never cache both operations
+  under one dictionary-helper key. Historical case directories remain frozen;
+  new async-return fixtures live in `promise_return_cases`, outside their digest.

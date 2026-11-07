@@ -437,7 +437,10 @@ mod tests {
         assert_eq!(FROZEN.wasm_functions, 270);
         assert_eq!((FROZEN.union_members, FROZEN.json_union_members), (16, 7));
         for profile in crate::language::SUPPORTED_PROFILES {
-            let expected = if *profile == LanguageProfile::CheckedF64Utf16V38 {
+            let expected = if matches!(
+                *profile,
+                LanguageProfile::CheckedF64Utf16V38 | LanguageProfile::CheckedF64Utf16V39
+            ) {
                 WASM
             } else {
                 FROZEN
@@ -485,7 +488,10 @@ mod tests {
                 "{profile:?}"
             );
             let limits = profile.data();
-            if profile == LanguageProfile::CheckedF64Utf16V38 {
+            if matches!(
+                profile,
+                LanguageProfile::CheckedF64Utf16V38 | LanguageProfile::CheckedF64Utf16V39
+            ) {
                 assert_eq!(limits, DataLimits::V38);
             } else {
                 assert_eq!(limits, DataLimits::LEGACY, "{profile:?}");

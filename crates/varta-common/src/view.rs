@@ -77,6 +77,7 @@ pub(crate) mod prelude {
 }
 
 pub mod accessibility;
+pub mod animation;
 pub mod attributes;
 pub mod css;
 pub mod expansion;
@@ -452,6 +453,27 @@ coded! {
         ListStylePosition = 112 => "list-style-position",
         ListStyleImage = 113 => "list-style-image",
         Appearance = 114 => "appearance",
+        BoxShadow = 115 => "box-shadow",
+        FontVariantNumeric = 116 => "font-variant-numeric",
+        AccentColor = 117 => "accent-color",
+        ClipPath = 118 => "clip-path",
+        TextWrap = 119 => "text-wrap",
+        TextWrapMode = 120 => "text-wrap-mode",
+        TextWrapStyle = 121 => "text-wrap-style",
+        WebkitLineClamp = 122 => "-webkit-line-clamp",
+        WebkitBoxOrient = 123 => "-webkit-box-orient",
+        TableLayout = 124 => "table-layout",
+        BackgroundImage = 125 => "background-image",
+        BackdropFilter = 126 => "backdrop-filter",
+        AnimationName = 127 => "animation-name",
+        AnimationDuration = 128 => "animation-duration",
+        AnimationTimingFunction = 129 => "animation-timing-function",
+        AnimationDelay = 130 => "animation-delay",
+        AnimationIterationCount = 131 => "animation-iteration-count",
+        AnimationDirection = 132 => "animation-direction",
+        AnimationFillMode = 133 => "animation-fill-mode",
+        AnimationPlayState = 134 => "animation-play-state",
+
     }
 }
 
@@ -1045,6 +1067,7 @@ impl EventKind {
 /// Primitive CSS value types used by [`CssProperty::grammar`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CssValue {
+    Angle,
     Number,
     Integer,
     Length,
@@ -1060,6 +1083,7 @@ pub enum CssValue {
 }
 impl CssValue {
     pub const ALL: &[Self] = &[
+        Self::Angle,
         Self::Number,
         Self::Integer,
         Self::Length,
@@ -1076,6 +1100,7 @@ impl CssValue {
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
+            Self::Angle => "<angle>",
             Self::Number => "<number>",
             Self::Integer => "<integer>",
             Self::Length => "<length>",
@@ -1093,6 +1118,7 @@ impl CssValue {
     #[must_use]
     pub fn definition(self) -> &'static str {
         match self {
+            Self::Angle => "<number>`deg` | <number>`rad` | <number>`grad` | <number>`turn`",
             Self::Number => "`-`? digits [`.` digits], or `.` digits; no exponent",
             Self::Integer => "`-`? digits",
             Self::Length => "<number>`px` | <number>`rem` | `0`",
@@ -1121,7 +1147,9 @@ impl CssProperty {
     #[must_use]
     pub fn grammar(self) -> &'static str {
         match self {
-            Self::Display => "block | flex | grid | none | inline",
+            Self::Display => {
+                "block | flex | grid | none | inline | -webkit-box | inline-block | inline-flex"
+            }
             Self::Width | Self::Height | Self::MinWidth | Self::MinHeight => {
                 "auto | <length-percentage>"
             }
@@ -1149,7 +1177,7 @@ impl CssProperty {
             Self::FlexBasis => "auto | <length-percentage>",
             Self::GridTemplateColumns | Self::GridTemplateRows => "none | <track>+",
             Self::GridColumn | Self::GridRow => "<line> [/ <line>]?",
-            Self::Position => "static | relative | absolute | fixed",
+            Self::Position => "static | relative | absolute | fixed | sticky",
             Self::Top | Self::Right | Self::Bottom | Self::Left => "auto | <length-percentage>",
             Self::ZIndex => "auto | <integer>",
             Self::Overflow => "[visible | hidden | clip | scroll | auto]{1,2}",
@@ -1181,7 +1209,7 @@ impl CssProperty {
             Self::OverflowWrap => "normal | anywhere",
             Self::Cursor => "default | pointer | text | not-allowed",
             Self::Transform => {
-                "none | [translate(<length-percentage> [, <length-percentage>]?) | translateX(<length-percentage>) | translateY(<length-percentage>) | scale(<number> [, <number>]?)]+"
+                "none | [translate(<length-percentage> [, <length-percentage>]?) | translateX(<length-percentage>) | translateY(<length-percentage>) | scale(<number> [, <number>]?) | rotate(<angle>)]+"
             }
             Self::TransitionProperty => {
                 "none | all | [opacity | color | background-color | transform]#"
@@ -1237,6 +1265,33 @@ impl CssProperty {
             Self::Appearance => {
                 "none | auto | button | textfield | menulist-button | searchfield | textarea | checkbox | radio | menulist | listbox | meter | progress-bar"
             }
+            Self::FontVariantNumeric => {
+                "normal | [ [lining-nums | oldstyle-nums] || [proportional-nums | tabular-nums] || [diagonal-fractions | stacked-fractions] || ordinal || slashed-zero ]"
+            }
+            Self::AccentColor => "auto | <color>",
+            Self::ClipPath => "none | inset(<length-percentage>{1,4})",
+            Self::TextWrap => "[wrap | nowrap] || [auto | pretty]",
+            Self::TextWrapMode => "wrap | nowrap",
+            Self::TextWrapStyle => "auto | pretty",
+            Self::WebkitLineClamp => "none | <integer>",
+            Self::TableLayout => "auto | fixed",
+            Self::AnimationName => "[none | <custom-ident>]#",
+            Self::AnimationDuration => "<time>#",
+            Self::AnimationTimingFunction => "[linear | ease | ease-in | ease-out | ease-in-out]#",
+            Self::AnimationDelay => "<time>#",
+            Self::AnimationIterationCount => "[infinite | <number>]#",
+            Self::AnimationDirection => "[normal | reverse | alternate | alternate-reverse]#",
+            Self::AnimationFillMode => "[none | forwards | backwards | both]#",
+            Self::AnimationPlayState => "[running | paused]#",
+
+            Self::BackdropFilter => "none | blur(<length>?)",
+            Self::BackgroundImage => {
+                "none | linear-gradient([<color> <length-percentage>{0,2}]#) | linear-gradient([<angle> | to [[left | right] || [top | bottom]]] [in [srgb | srgb-linear | oklab]]? , [<color> <length-percentage>{0,2}]#) | linear-gradient(in [srgb | srgb-linear | oklab] , [<color> <length-percentage>{0,2}]#)"
+            }
+            Self::WebkitBoxOrient => "horizontal | vertical | inline-axis | block-axis",
+            Self::BoxShadow => {
+                "none | [<length>{2,4} [<color> || inset]? | <color> <length>{2,4} inset? | inset <length>{2,4} <color>? | <color> inset <length>{2,4} | inset <color> <length>{2,4}]#"
+            }
         }
     }
 }
@@ -1273,7 +1328,14 @@ impl CssProperty {
             | Self::BorderTopRightRadius
             | Self::BorderBottomRightRadius
             | Self::BorderBottomLeftRadius => Some("nonnegative; horizontal then vertical radius"),
-            Self::Visibility | Self::TextTransform | Self::PointerEvents => Some("inherited"),
+            Self::Visibility
+            | Self::TextTransform
+            | Self::PointerEvents
+            | Self::TextWrap
+            | Self::TextWrapMode
+            | Self::TextWrapStyle
+            | Self::FontVariantNumeric
+            | Self::AccentColor => Some("inherited"),
             Self::Content => Some("`::before` and `::after`; elements take `normal` and `none`"),
             Self::FontFeatureSettings | Self::FontVariationSettings => {
                 Some("inherited; four-character OpenType tags; nonnegative feature values")
@@ -1770,6 +1832,40 @@ mod tests {
             P::ListStylePosition => &["outside"],
             P::ListStyleImage => &["none"],
             P::Appearance => &["none", "auto", "button"],
+            P::FontVariantNumeric => &[
+                "normal",
+                "tabular-nums",
+                "oldstyle-nums tabular-nums ordinal",
+            ],
+            P::TextWrap => &["pretty", "wrap pretty", "nowrap"],
+            P::TextWrapMode => &["wrap", "nowrap"],
+            P::WebkitLineClamp => &["none", "2"],
+            P::TableLayout => &["auto", "fixed"],
+            P::AnimationName => &["none"],
+            P::AnimationDuration => &["1s"],
+            P::AnimationTimingFunction => &["linear"],
+            P::AnimationDelay => &["-1s"],
+            P::AnimationIterationCount => &["infinite"],
+            P::AnimationDirection => &["alternate"],
+            P::AnimationFillMode => &["both"],
+            P::AnimationPlayState => &["paused"],
+
+            P::BackdropFilter => &["none", "blur(8px)"],
+            P::BackgroundImage => &[
+                "none",
+                "linear-gradient(#f00, #00f)",
+                "linear-gradient(to bottom in oklab, #f00 0%, #00f 100%)",
+            ],
+            P::WebkitBoxOrient => &["vertical", "horizontal"],
+            P::TextWrapStyle => &["auto", "pretty"],
+            P::ClipPath => &["none", "inset(50%)", "inset(0 1px 2px 3px)"],
+            P::AccentColor => &["auto", "#f00", "currentcolor"],
+            P::BoxShadow => &[
+                "none",
+                "0 2px 4px #000",
+                "inset #f00 0 0 2px -1px",
+                "#f00 1px 2px inset, 0 0 transparent",
+            ],
         }
     }
 
@@ -1798,7 +1894,7 @@ mod tests {
         for (property, sample) in [
             (P::Transform, "scale()"),
             (P::Transform, "scale(1, 2, 3)"),
-            (P::Transform, "rotate(4deg)"),
+            (P::Transform, "rotate(4px)"),
             (P::Margin, "1px 2px 3px 4px 5px"),
             (P::Color, "#12"),
             (P::Color, "red"),

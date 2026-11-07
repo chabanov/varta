@@ -132,3 +132,24 @@ impl varta_kv_codec::guest::Guest for Host<'_, '_> {
         self.caller.data().deadline_error()
     }
 }
+
+impl varta_kv_codec::build::AsyncHeap for Host<'_, '_> {
+    async fn allocate_async(&mut self, len: usize) -> Result<usize, Self::Error> {
+        self.ensure_writer()?;
+        let Self { caller, writer, .. } = self;
+        writer
+            .as_ref()
+            .ok_or_else(|| error("missing allocation helper"))?
+            .block_async(caller, len)
+            .await
+    }
+    async fn retain_async(&mut self, handle: u64) -> Result<(), Self::Error> {
+        self.ensure_writer()?;
+        let Self { caller, writer, .. } = self;
+        writer
+            .as_ref()
+            .ok_or_else(|| error("missing retention helper"))?
+            .retain_handle_async(caller, handle)
+            .await
+    }
+}

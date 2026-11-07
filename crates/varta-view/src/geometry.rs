@@ -66,6 +66,8 @@ impl GeometryRequest {
 pub(crate) enum UsedDisplay {
     Block,
     Inline,
+    InlineBlock,
+    InlineFlex,
     Flex,
     Grid,
 }
@@ -75,6 +77,8 @@ impl UsedDisplay {
         match self {
             Self::Block => "block",
             Self::Inline => "inline",
+            Self::InlineBlock => "inline-block",
+            Self::InlineFlex => "inline-flex",
             Self::Flex => "flex",
             Self::Grid => "grid",
         }
@@ -88,6 +92,20 @@ pub(crate) fn used_display(tree: &Tree, environment: &Environment, id: u32) -> U
     }
     let cascaded = tree.computed_property(id, environment, CssProperty::Display);
     let inline = match cascaded.as_deref() {
+        Some("inline-flex") => {
+            return if crate::inline::blockified(tree, environment, id) {
+                UsedDisplay::Flex
+            } else {
+                UsedDisplay::InlineFlex
+            };
+        }
+        Some("inline-block") => {
+            return if crate::inline::blockified(tree, environment, id) {
+                UsedDisplay::Block
+            } else {
+                UsedDisplay::InlineBlock
+            };
+        }
         Some(value) if value.eq_ignore_ascii_case("flex") => return UsedDisplay::Flex,
         Some(value) if value.eq_ignore_ascii_case("grid") => return UsedDisplay::Grid,
         Some(value) => value.eq_ignore_ascii_case("inline"),

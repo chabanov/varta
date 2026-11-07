@@ -1400,18 +1400,19 @@ fn perform_final_layout_on_in_flow_children(
                     Some(container_inner_width),
                     |val, basis| tree.calc(val, basis),
                 )
-                .map(|resolution| match resolution {
-                    SizingKeywordResolution::Exact(width) => width,
-                    SizingKeywordResolution::Measure(item_available_width) => tree.measure_child_size(
-                        item.node_id,
-                        Size::NONE,
-                        parent_size,
-                        Size { width: item_available_width, height: AvailableSpace::MaxContent },
-                        SizingMode::InherentSize,
-                        crate::AbsoluteAxis::Horizontal,
-                        // Must match the value passed when laying the item out (see `Cache`)
-                        if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
-                    ),
+                .map(|resolution| {
+                    resolution.resolve(|item_available_width| {
+                        tree.measure_child_size(
+                            item.node_id,
+                            Size::NONE,
+                            parent_size,
+                            Size { width: item_available_width, height: AvailableSpace::MaxContent },
+                            SizingMode::InherentSize,
+                            crate::AbsoluteAxis::Horizontal,
+                            // Must match the value passed when laying the item out (see `Cache`)
+                            if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
+                        )
+                    })
                 });
 
                 let keyword_height = resolve_stretch_height(

@@ -1,0 +1,412 @@
+{
+  "mode": "one-uninterrupted-full-run",
+  "scope": "Shared CSS outer/inset shadows, native Tailwind rings, intrinsic width/height and fit-content resolution; includes the preceding uncommitted class/function and constructor receiver package",
+  "fullInvocationCount": 1,
+  "baseHead": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+  "applicationCorpus": {
+    "total": 312,
+    "before": {
+      "admitted": 287,
+      "refused": 25
+    },
+    "after": {
+      "admitted": 298,
+      "refused": 14
+    },
+    "changedCases": [
+      {
+        "case": "tailwind-app-88",
+        "classes": [
+          "focus-within:ring-2"
+        ]
+      },
+      {
+        "case": "tailwind-app-95",
+        "classes": [
+          "focus:ring-2"
+        ]
+      },
+      {
+        "case": "tailwind-app-120",
+        "classes": [
+          "has-checked:ring-1"
+        ]
+      },
+      {
+        "case": "tailwind-app-129",
+        "classes": [
+          "hover:shadow-md"
+        ]
+      },
+      {
+        "case": "tailwind-app-207",
+        "classes": [
+          "ring-1"
+        ]
+      },
+      {
+        "case": "tailwind-app-208",
+        "classes": [
+          "ring-2"
+        ]
+      },
+      {
+        "case": "tailwind-app-225",
+        "classes": [
+          "shadow-lg"
+        ]
+      },
+      {
+        "case": "tailwind-app-226",
+        "classes": [
+          "shadow-sm"
+        ]
+      },
+      {
+        "case": "tailwind-app-227",
+        "classes": [
+          "shadow-xl"
+        ]
+      },
+      {
+        "case": "tailwind-app-228",
+        "classes": [
+          "shadow-xs"
+        ]
+      },
+      {
+        "case": "tailwind-app-306",
+        "classes": [
+          "w-fit"
+        ]
+      }
+    ],
+    "scopeNote": "Finite application candidate corpus; not a percentage of all Tailwind functionality"
+  },
+  "crossHostCorpusCases": 467,
+  "chromeOracle": [
+    {
+      "mode": "platform",
+      "scale": 1.0,
+      "checks": 1423,
+      "scenes": 38,
+      "newScenes": [
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "intrinsic-box-sizes",
+          "rgbMeanDelta": 0.038,
+          "rgbMaxDelta": 13,
+          "pixelsOverOne": 648,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "intrinsic-height-and-stretch",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "box-shadows",
+          "rgbMeanDelta": 0.1392,
+          "rgbMaxDelta": 38,
+          "pixelsOverOne": 682,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "inline-box-shadows",
+          "rgbMeanDelta": 0.3325,
+          "rgbMaxDelta": 37,
+          "pixelsOverOne": 1115,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "platform",
+      "scale": 1.25,
+      "checks": 1423,
+      "scenes": 38,
+      "newScenes": [
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "intrinsic-box-sizes",
+          "rgbMeanDelta": 0.0452,
+          "rgbMaxDelta": 65,
+          "pixelsOverOne": 745,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "intrinsic-height-and-stretch",
+          "rgbMeanDelta": 0.0174,
+          "rgbMaxDelta": 54,
+          "pixelsOverOne": 32,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "box-shadows",
+          "rgbMeanDelta": 0.2193,
+          "rgbMaxDelta": 45,
+          "pixelsOverOne": 2694,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "inline-box-shadows",
+          "rgbMeanDelta": 0.5082,
+          "rgbMaxDelta": 128,
+          "pixelsOverOne": 2009,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "platform",
+      "scale": 2.0,
+      "checks": 1423,
+      "scenes": 38,
+      "newScenes": [
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "intrinsic-box-sizes",
+          "rgbMeanDelta": 0.0905,
+          "rgbMaxDelta": 64,
+          "pixelsOverOne": 1980,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "intrinsic-height-and-stretch",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "box-shadows",
+          "rgbMeanDelta": 0.0764,
+          "rgbMaxDelta": 41,
+          "pixelsOverOne": 892,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "inline-box-shadows",
+          "rgbMeanDelta": 0.2017,
+          "rgbMaxDelta": 66,
+          "pixelsOverOne": 1765,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "bridge",
+      "scale": 1.0,
+      "checks": 1435,
+      "scenes": 38,
+      "newScenes": [
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "intrinsic-box-sizes",
+          "rgbMeanDelta": 0.038,
+          "rgbMaxDelta": 13,
+          "pixelsOverOne": 648,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "intrinsic-height-and-stretch",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "box-shadows",
+          "rgbMeanDelta": 0.1392,
+          "rgbMaxDelta": 38,
+          "pixelsOverOne": 682,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "inline-box-shadows",
+          "rgbMeanDelta": 0.3325,
+          "rgbMaxDelta": 37,
+          "pixelsOverOne": 1115,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "bridge",
+      "scale": 1.25,
+      "checks": 1435,
+      "scenes": 38,
+      "newScenes": [
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "intrinsic-box-sizes",
+          "rgbMeanDelta": 0.0452,
+          "rgbMaxDelta": 65,
+          "pixelsOverOne": 745,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "intrinsic-height-and-stretch",
+          "rgbMeanDelta": 0.0174,
+          "rgbMaxDelta": 54,
+          "pixelsOverOne": 32,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "box-shadows",
+          "rgbMeanDelta": 0.2193,
+          "rgbMaxDelta": 45,
+          "pixelsOverOne": 2694,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "inline-box-shadows",
+          "rgbMeanDelta": 0.5082,
+          "rgbMaxDelta": 128,
+          "pixelsOverOne": 2009,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "bridge",
+      "scale": 2.0,
+      "checks": 1435,
+      "scenes": 38,
+      "newScenes": [
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "intrinsic-box-sizes",
+          "rgbMeanDelta": 0.0905,
+          "rgbMaxDelta": 64,
+          "pixelsOverOne": 1980,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "intrinsic-height-and-stretch",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "box-shadows",
+          "rgbMeanDelta": 0.0764,
+          "rgbMaxDelta": 41,
+          "pixelsOverOne": 892,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "inline-box-shadows",
+          "rgbMeanDelta": 0.2017,
+          "rgbMaxDelta": 66,
+          "pixelsOverOne": 1765,
+          "deviation": null
+        }
+      ]
+    }
+  ],
+  "sourceFreeTailwind": {
+    "test": "full_tailwind_application_applies",
+    "entry": "@import \"tailwindcss\"",
+    "checks": [
+      "check",
+      "dev",
+      "build --single",
+      "standalone native run after deleting src and varta.config.json"
+    ]
+  },
+  "sharedBrowserEngine": {
+    "bytes": 685261,
+    "previousBytes": 684582,
+    "sha256": "056fc1a713688f2e1b402469d8d38c8dcb947e4a57eeafcf7ee64062a5f64540"
+  },
+  "knownLimits": [
+    "Direct GPU shadow composition uses the explicit software fallback",
+    "Shadow-list transition interpolation is not implemented",
+    "Intrinsic min/max constraints and fit-content(...) remain refused",
+    "Hard-edge antialias sampling can differ by one device pixel; interior ring probes remain exact and blur probes allow at most 13/255 per channel",
+    "The 14 remaining application candidates remain refused; live-window and full multi-browser acceptance are separate scopes"
+  ],
+  "fullRun": {
+    "path": "target/verification/20261107-112710-lnvl_z_n/report.json",
+    "passed": true,
+    "sourceUnchanged": true,
+    "before": {
+      "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+      "sourceSha256": "6a9b2056b0d6d94a22cbf227471b7ceef53ec8ce2323ffa3515c6311b86df2ee"
+    },
+    "after": {
+      "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+      "sourceSha256": "6a9b2056b0d6d94a22cbf227471b7ceef53ec8ce2323ffa3515c6311b86df2ee"
+    },
+    "commands": 11,
+    "rustPassed": 4602,
+    "rustIgnored": 26,
+    "browserNodePassed": 189
+  },
+  "conformance": {
+    "counts": {
+      "total": 248,
+      "passed": 246,
+      "knownUnsupported": 2,
+      "unexpectedSupport": 0,
+      "regressions": 0,
+      "infrastructureFailures": 0
+    },
+    "baselineMatches": true,
+    "featureRows": 131,
+    "untestedFeatures": 4
+  },
+  "codeInputs": {
+    "path": "target/tailwind-debt-20261107/verified-inputs.json",
+    "files": 2488,
+    "sha256": "46fada2275d6d9ad7424ba347db3bded1647724cf12c7078f1ad471a875d5ed0",
+    "documentationOnlyAfterGate": true
+  },
+  "localLogs": "target/tailwind-debt-20261107"
+}

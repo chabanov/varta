@@ -57,6 +57,15 @@ fn parameter_annotation(params: &[ast::Param], index: usize) -> Option<&ast::TsT
             };
             match &*rest.type_ann.as_deref()?.type_ann {
                 ast::TsType::TsArrayType(array) => Some(&array.elem_type),
+                ast::TsType::TsTupleType(tuple) => {
+                    tuple
+                        .elem_types
+                        .get(index - position)
+                        .map(|e| match &*e.ty {
+                            ast::TsType::TsOptionalType(t) => &*t.type_ann,
+                            _ => &*e.ty,
+                        })
+                }
                 _ => None,
             }
         }
@@ -218,11 +227,33 @@ impl Inference {
                     return Ok(());
                 };
                 let signature = types.functions[id as usize].clone();
-                for (parameter, ty) in callback.params.iter().zip(signature.params) {
-                    if let ast::TsFnParam::Ident(binding) = parameter
-                        && let Some(annotation) = &binding.type_ann
-                    {
-                        self.unify(&annotation.type_ann, ty, types, depth + 1)?;
+                let mut index = 0;
+                for parameter in &callback.params {
+                    match parameter {
+                        ast::TsFnParam::Ident(binding)
+                            if binding.id.sym == "this" && types.profile.expression_forms() =>
+                        {
+                            if let (Some(ann), Some(ty)) = (&binding.type_ann, signature.receiver) {
+                                self.unify(&ann.type_ann, ty, types, depth + 1)?;
+                            }
+                        }
+                        ast::TsFnParam::Rest(rest) if types.profile.expression_forms() => {
+                            if let Some(ann) = &rest.type_ann {
+                                let tuple = type_level::parameters_tuple(&signature, index, types)?;
+                                self.unify(&ann.type_ann, tuple, types, depth + 1)?;
+                            }
+                        }
+                        ast::TsFnParam::Ident(binding) => {
+                            if let (Some(ann), Some(ty)) =
+                                (&binding.type_ann, signature.params.get(index))
+                            {
+                                self.unify(&ann.type_ann, *ty, types, depth + 1)?;
+                            }
+                            index += 1;
+                        }
+                        _ => {
+                            index += 1;
+                        }
                     }
                 }
                 self.unify(
@@ -514,11 +545,21 @@ impl Lower<'_> {
         signature: &Signature,
     ) -> Result<Vec<Expr>> {
         let span = call.span;
-        arguments::count(call.args.len(), &signature.shape)
-            .map_err(|e| self.source.locate(e, span))?;
+        arguments::typed_count(
+            call.args.len(),
+            &signature.params,
+            &signature.shape,
+            self.types,
+        )
+        .map_err(|e| self.source.locate(e, span))?;
         for (index, arg) in call.args.iter().enumerate().skip(values.len()) {
-            let context =
-                arguments::context(index, &signature.params, &signature.shape, self.types);
+            let context = arguments::call_context(
+                index,
+                call.args.len(),
+                &signature.params,
+                &signature.shape,
+                self.types,
+            );
             values.push(self.expr_expected(&arg.expr, context)?);
         }
         if self.types.profile.mixed_index_records() {
@@ -608,6 +649,26 @@ impl Lower<'_> {
                 value
             };
             values.push(value);
+        }
+        // A bare generic tuple rest parameter receives the remaining source
+        // argument types together, not one conflicting inference per element.
+        if self.types.profile.expression_forms()
+            && let Some((position, rest)) =
+                params.iter().enumerate().find_map(|(i, p)| match &p.pat {
+                    ast::Pat::Rest(r) => Some((i, r)),
+                    _ => None,
+                })
+            && let Some(ann) = &rest.type_ann
+            && matches!(&*ann.type_ann, ast::TsType::TsTypeRef(r) if r.type_params.is_none() && matches!(&r.type_name, ast::TsEntityName::Ident(n) if inference.names.contains(n.sym.as_ref())))
+        {
+            let elements = values
+                .iter()
+                .skip(position)
+                .map(|v| v.ty.erased())
+                .collect::<Vec<_>>();
+            let count = elements.len();
+            let tuple = tuples::intern(elements, count, false, self.types)?;
+            inference.unify(&ann.type_ann, tuple, self.types, 0)?;
         }
         // A contextual result type determines parameters the arguments did not.
         if let Some(expected) = expected

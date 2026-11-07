@@ -189,12 +189,21 @@ fn full_tailwind_application_applies() {
         r#"import css from "./app.css" with { type: "text" };
 export function main(): void {
   View.stylesheet(1, css);
-  View.mount(<main className="mx-auto max-w-md p-4"><button class="relative rounded-lg bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-indigo-300">Save</button><input class="block placeholder:text-gray-400" placeholder="Name" /></main>);
+  View.mount(<main className="mx-auto max-w-md p-4 [text-wrap:pretty]"><button class="relative w-fit rounded-lg bg-indigo-600 px-4 py-2 text-white shadow-sm transition-shadow duration-150 hover:shadow-md focus:ring-2 hover:bg-indigo-700 after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-indigo-300">Save</button><input class="block ring-1 placeholder:text-gray-400 accent-indigo-600" placeholder="Name" /><label class="sr-only">Name</label><section class="sticky top-0"><div class="inline-block table-auto"><button class="inline-flex tabular-nums">123</button></div><p class="line-clamp-2">Two lines of text</p><p class="line-clamp-3">Three lines of text</p><div class="h-4 w-4 animate-pulse bg-gradient-to-b from-indigo-500 to-blue-500"></div><div class="h-4 w-4 animate-spin bg-indigo-600"></div><div class="backdrop-blur">Blurred backdrop</div></section></main>);
+  console.log("tailwind-css-ready");
 }"#,
         "@import \"tailwindcss\";\n",
     );
     success(project.command(&["check"]));
-    success(project.command(&["dev"]));
+    assert!(success(project.command(&["dev"])).contains("tailwind-css-ready"));
+    success(project.command(&["build", "--single"]));
+    fs::remove_dir_all(project.root.join("src")).unwrap();
+    fs::remove_file(project.root.join("varta.config.json")).unwrap();
+    let output = Command::new(project.root.join("dist/app"))
+        .current_dir(&project.workspace)
+        .output()
+        .unwrap();
+    assert!(success(output).contains("tailwind-css-ready"));
 }
 
 /// Project stylesheets imported by the entry are read at build time through

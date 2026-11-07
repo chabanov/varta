@@ -1,0 +1,165 @@
+{
+  "date": "2026-11-07",
+  "scope": "V38 direct typed async promise returns widen fulfilled values after adoption, preserving finalizer completion and scheduler order",
+  "reproduction": {
+    "application": "/Users/snaga/Developer/Laboratory/cloud",
+    "entry": "tests/regressions/sdk-request-text.ts",
+    "config": "varta.sdk-request.config.json",
+    "before": "Compilation succeeded, then intended unknown-held-promise TypeError from premature contextual boxing of a statically typed Promise<string>",
+    "sdk": "uarp-sdk 0.13.2, unmodified",
+    "after": "PASS: typed SDK request<string> response"
+  },
+  "implementation": {
+    "sources": "Typed saved locals selected after finalizers; optional/rest language semantics unchanged",
+    "conversion": "Only fulfilled U is widened to declared T; incompatible conversions rejected statically",
+    "jobs": "Existing adoption job plus reaction, no extra promise wrapper",
+    "finalizers": "Normal or suspended finally can override a prior promise return with a value, same-type promise or other compatible promise",
+    "unknown": "Actual unknown-held-promise guard retained",
+    "compatibility": "New behavior gated on v38 structural_subtyping; frozen earlier-profile frame bytes pass",
+    "boundaries": "Direct typed promise returns, including conditional return arms and annotated async arrows; no general Promise variance or dynamic adoption policy expansion",
+    "abi_capabilities_budgets": "Unchanged"
+  },
+  "verification": {
+    "suites": {
+      "promise-tests": {
+        "passed": 26,
+        "names": [
+          "async_tests::promise_values_of_every_admitted_kind_match_node",
+          "program_limits_tests::promise_types_beyond_64_are_admitted",
+          "promise_tests::a_handler_added_during_the_checkpoint_withdraws_the_rejection",
+          "promise_tests::completed_frames_reject_their_last_token",
+          "promise_tests::fuel_exhaustion_inside_jobs_is_fatal_and_await_never_renews_it",
+          "promise_tests::late_and_duplicate_resumptions_are_rejected_by_generation",
+          "promise_tests::live_frames_are_released_and_bounded",
+          "promise_tests::promise_job_order_matches_node",
+          "promise_tests::promise_rejections_and_resolution_match_node",
+          "promise_tests::reports_beyond_the_retained_reasons_keep_only_their_tracking",
+          "promise_tests::scheduler_imports_require_the_v34_host_abi_and_no_capability",
+          "promise_tests::smoke_then_chain",
+          "promise_tests::unhandled_rejection_reasons_are_copied_and_reported_within_bounds",
+          "promise_tests::unhandled_rejections_terminate_after_the_checkpoint_with_the_first_reason",
+          "promise_tests::v38_long_error_rejection_fields_use_profile_limits_and_bounded_snapshots",
+          "promise_value_tests::promise_combinators_match_node_job_order_and_results",
+          "promise_value_tests::promise_value_language_guide_example_matches_node",
+          "promise_value_tests::promise_values_survive_a_collection_forced_before_every_job",
+          "promise_value_tests::promises_live_in_arrays_records_unions_unknown_and_dictionaries_like_node",
+          "promise_value_tests::promises_log_compare_stringify_and_resolve_like_node",
+          "promise_value_tests::typed_async_returns_adopt_before_widening_and_after_finalizers",
+          "promise_value_tests::typed_async_returns_reject_incompatible_fulfillment_types",
+          "promise_value_tests::unknown_promises_are_never_adopted_silently_and_rejections_stay_reported",
+          "subtyping_tests::promise_results_widen_to_unknown_and_records_read_as_json_objects",
+          "v34_cross_stream_tests::unknown_rejects_promises_and_dictionaries_reject_promise_values",
+          "v35_cross_stream_tests::promises_inside_dictionaries_and_mixed_records_match_node"
+        ],
+        "log": "target/sdk-promise-20261107/promise-tests.log"
+      },
+      "async-tests": {
+        "passed": 38,
+        "names": [
+          "async_generator_tests::abandoned_async_generators_are_collected_beyond_the_live_frame_table",
+          "async_generator_tests::async_generator_conformance_case_matches_node",
+          "async_generator_tests::async_generator_delegation_matches_node",
+          "async_generator_tests::async_generator_language_guide_example_matches_node",
+          "async_generator_tests::async_generator_methods_generics_and_closures_match_node",
+          "async_generator_tests::async_generator_request_queue_matches_node",
+          "async_generator_tests::async_generator_suspensions_have_bounded_measured_costs",
+          "async_generator_tests::async_generator_values_survive_a_collection_forced_before_every_job",
+          "async_generator_tests::async_generators_keep_the_fatal_and_rejection_contracts",
+          "async_generator_tests::for_await_sources_and_closing_match_node",
+          "async_generator_tests::reentrant_requests_and_injected_throws_match_node",
+          "async_method_tests::async_closure_captures_stay_shared_cells_in_liveness_frames",
+          "async_method_tests::async_closures_and_methods_keep_the_fatal_and_rejection_contracts",
+          "async_method_tests::async_closures_share_captured_bindings_across_await_like_node",
+          "async_method_tests::async_method_and_closure_job_order_matches_node",
+          "async_method_tests::async_method_language_guide_example_matches_node",
+          "async_method_tests::async_methods_overrides_super_and_statics_match_node",
+          "async_method_tests::receivers_and_captures_survive_a_collection_forced_before_every_job",
+          "async_tests::async_job_order_matches_node",
+          "async_tests::async_language_guide_examples_match_node",
+          "async_tests::await_positions_generics_retries_and_closures_match_node",
+          "async_tests::awaited_values_survive_a_collection_forced_before_every_job",
+          "async_tests::promise_values_of_every_admitted_kind_match_node",
+          "async_tests::suspended_frames_keep_their_values_across_forced_collections",
+          "class_generic_tests::generic_async_method_instances_match_node",
+          "dictionary_hashing_tests::hashed_dictionaries_live_in_closures_generators_and_async_frames",
+          "http_abi_tests::async_http_v2_effects_and_completion_helpers_are_checked_before_execution",
+          "iteration_protocol_tests::explicit_async_iterator_calls_match_node",
+          "program_limits_tests::unreachable_async_functions_and_their_frames_are_removed",
+          "promise_value_tests::typed_async_returns_adopt_before_widening_and_after_finalizers",
+          "promise_value_tests::typed_async_returns_reject_incompatible_fulfillment_types",
+          "server_tests::async_http_v2_awaits_owned_work_and_discards_background_timers",
+          "server_tests::async_http_v2_keeps_one_deadline_and_fuel_allowance_for_the_whole_request",
+          "server_tests::async_http_v2_waits_for_outbound_io_and_denies_without_a_socket",
+          "v34_cross_stream_tests::async_functions_return_dictionaries_of_wide_records_across_collections",
+          "v36_cross_stream_tests::async_generators_yield_function_values",
+          "v36_cross_stream_tests::for_await_over_a_sleeping_async_generator_matches_node",
+          "v37_integration_tests::classes_implement_async_iterable_through_their_async_iterator"
+        ],
+        "log": "target/sdk-promise-20261107/async-tests.log"
+      },
+      "frame-tests": {
+        "passed": 2,
+        "names": [
+          "frame_liveness_tests::earlier_profiles_keep_byte_identical_frame_modules",
+          "frame_liveness_tests::liveness_frames_cost_less_fuel_per_suspension_than_cell_frames"
+        ],
+        "log": "target/sdk-promise-20261107/frame-tests.log"
+      }
+    },
+    "distinct_tests": 63,
+    "node_reference": {
+      "version": "24.20.0",
+      "source": "target/sdk-promise-20261107/node-reference.ts",
+      "output": "target/sdk-promise-20261107/node-reference.log",
+      "exception": "Unknown-held-promise guard is the documented Varta deviation and is tested separately in the same source"
+    },
+    "strict_clippy": {
+      "command": "cargo clippy -p varta-compiler -p varta-runtime --all-targets --locked -- -D warnings",
+      "exit_code": 0
+    },
+    "build": {
+      "command": "cargo build -p varta -p varta-launcher --locked",
+      "exit_code": 0
+    },
+    "fixtures": {
+      "text_check": "passed",
+      "text_dev": "passed: fixture-ok",
+      "full_fixture_check": "passed",
+      "full_fixture_dev": "passed: identity, quota, models, chat, authorization and 401; 5 local requests",
+      "network": "No external network; injected local fetch; no network grants",
+      "cloud_or_sdk_source_edits": false
+    },
+    "full_gate": "No new full workspace gate. These scoped results follow the prior CSS full attempt and documented completion; no new full-pass claim."
+  },
+  "live_acceptance": {
+    "engine_fix_calls": "none",
+    "reported_by_application": "Account/person-bound read and model list (5 entries) passed before this fix. Quota nested-field checked-assertion diagnosis remains separate; a domain schema mismatch is not established.",
+    "application_recheck": "Peer independently accepted text check/dev and five-request fixture. Its authorized GET-only quota diagnostic now obtains and parses text through SDK. The typed quota assertion remains unresolved; only top-level type categories were reported, no payload/credential was provided."
+  },
+  "sha256": {
+    "crates/varta-compiler/src/lower/expr.rs": "699d5af073507395a5c6aaaa5b36074b53f7108a89b6b75857d5940c1e037d4f",
+    "crates/varta-compiler/src/lower/stmt.rs": "220208f25a22f0534da1ec6b24d4b0a98b42f310bc1b91f08f702698c3968251",
+    "crates/varta-compiler/src/lower/promises.rs": "c075e5e588ca3f5d76e304f6b8d9f449c9f6d8077bfe3789bc32accb2f9aeee1",
+    "crates/varta-compiler/src/lower/promises/async_functions.rs": "f30ea65e71f6bebf5d790567c7bc0f83b2e8f92886b5cf2fb593ac09afd7eb3f",
+    "crates/varta-compiler/src/lower/promises/async_returns.rs": "85377729c453915501b45763044f8d98fc0115be97ab38659df3b6a4f02aa47f",
+    "crates/varta-runtime/src/promise_value_tests.rs": "711020256eef79002a6d0a063861f3b0a4a2f33a9ea811604dc95739fec07329",
+    "crates/varta-runtime/src/promise_value_cases/typed-returns.ts": "94221832c09e27cee295318ec6a6588b002d9788658700e34b4987c8d8cfb850",
+    "target/debug/varta": "f55902ecee36ef930c9c38b85fc10ff71933389a31e486f4865607b6d4a3f31b",
+    "target/debug/varta-runtime": "2091e6f18056488fbc7b65ebdec91d5a6555bfd1faa433d731d35384df201357"
+  },
+  "logs_sha256": {
+    "target/sdk-promise-20261107/async-tests.log": "d4ba032c750f16b93f633bd8942ce2dce6032a74e1456f1891ab6a51d9769e89",
+    "target/sdk-promise-20261107/before.log": "14d501d45a6b7a99fa8f610d8742078d070b83cfab2d15bfc32a6fc51142ac80",
+    "target/sdk-promise-20261107/build.log": "1341038002379c5e430871f2ffcc6b13e7882e3ef1df1b1e5a5a030043018712",
+    "target/sdk-promise-20261107/clippy.log": "3e193e4e36b7aa38ddf0e27e023b807b2125d621699e3bdc024afd6a33a784d6",
+    "target/sdk-promise-20261107/compiler-check.log": "aad8a0aad839d2020d4eb72f71801baa58f517aba599901cd2b5874feeb5a41c",
+    "target/sdk-promise-20261107/frame-tests.log": "1915795264bf0092785da020f8b36f0f37f2011a4e4736d74a1f3e69ef6f1bf6",
+    "target/sdk-promise-20261107/full-fixture-check.log": "8146c4143af8de8fc2edf847ff5935c4a184ada59d7289453feba69951893899",
+    "target/sdk-promise-20261107/full-fixture-dev.log": "87f61ec4c8fc4ca015c846f24d68274837884b6994bb6c0f9bb998109ad8dd4a",
+    "target/sdk-promise-20261107/node-reference.log": "451cb95aff23959aa042e6dfce2b75f9cad6cc0fd489dc3c2a41ad88fcea0872",
+    "target/sdk-promise-20261107/promise-tests.log": "11085e72490b46b40407eec970fa70d5859d8355c4b6772334bb83ede9e9936b",
+    "target/sdk-promise-20261107/text-check.log": "e540dd41d6ef470363d3d5cbb15d1d3baa6988a493491a5b8dae055aeb0d089b",
+    "target/sdk-promise-20261107/text-dev.log": "c0bacd8d40aaf1d1dcfbde30f866b098a0b9e8f0cb953dc60e127746b9dbb2c2",
+    "target/sdk-promise-20261107/typed-returns.log": "cb151cdaf440974fb082bee01593bc5d27467052276d78fd48039765e99bca65"
+  }
+}

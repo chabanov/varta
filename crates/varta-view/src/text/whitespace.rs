@@ -52,8 +52,7 @@ const LINE_EPSILON: f32 = 1.0 / 1024.0;
 /// A feature that is already on by default. Giving it to a tab's range keeps
 /// that tab in its own shaping run whatever its spacing, so every pass shapes
 /// the surrounding text identically.
-const TAB_RUN_FEATURES: &str = "\"kern\" 1";
-
+///
 /// The style of one preserved tab: its byte offset and the spacing added to
 /// the space it shapes as.
 #[derive(Clone, Copy)]
@@ -64,9 +63,6 @@ pub(super) struct TabStyle {
 impl TabStyle {
     pub(super) fn range(self) -> std::ops::Range<usize> {
         self.index..self.index + 1
-    }
-    pub(super) fn features() -> parley::FontFeatures<'static> {
-        TAB_RUN_FEATURES.into()
     }
 }
 

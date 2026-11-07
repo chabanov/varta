@@ -13,6 +13,89 @@ fn lines(values: &[&str]) -> Vec<String> {
     values.iter().map(|s| format!("varta log: {s}")).collect()
 }
 #[test]
+fn tuple_callbacks_use_array_storage_and_infer_the_element_union() {
+    let source = r#"
+let evaluations = 0;
+function values(): [number, number] { evaluations++; return [1, 2]; }
+export function main(): void {
+ const tuple: [string, number] = ["a", 2];
+ console.log(JSON.stringify(tuple.map(value => typeof value)));
+ const filtered = tuple.filter(value => typeof value === "number");
+ console.log(JSON.stringify(filtered));
+ console.log(filtered.length);
+ console.log(JSON.stringify(values().map((value, index, array) => {
+   if (index === 0) { array[1] = 5; array.push(9); }
+   return value;
+ })));
+ console.log(evaluations);
+ console.log(tuple.every(value => typeof value === "string" || typeof value === "number"));
+ console.log(tuple.findIndex(value => value === 2));
+ console.log(tuple.findLastIndex(value => value === "a"));
+}
+"#;
+    let bytes = varta_compiler::compile_typescript_with_profile(
+        source,
+        LanguageProfile::CheckedF64Utf16V37,
+    )
+    .unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    let output = VartaRuntime::new().run_wasm_bytes(&bytes, &[]).unwrap();
+    assert_eq!(
+        output.lines,
+        lines(&[
+            "[\"string\",\"number\"]",
+            "[2]",
+            "1",
+            "[1,5]",
+            "1",
+            "1",
+            "1",
+            "0"
+        ])
+    );
+}
+
+#[test]
+fn const_tuple_callbacks_cover_global_keys_optional_rest_and_empty_tuples() {
+    let source = r#"
+const KEYS = ["type", "title", "status"] as const;
+function hasProblem(body: Record<string, unknown>): boolean {
+ return KEYS.some(key => key in body);
+}
+export function main(): void {
+ console.log(hasProblem({ status: 401 }));
+ console.log(hasProblem({ other: 1 }));
+ KEYS.forEach((key, index, array) => console.log(key === array[index]));
+ const optional: [number, number?] = [1];
+ console.log(JSON.stringify(optional.map(value => value)));
+ const rest: [number, ...number[], number] = [1, 2, 3, 4];
+ console.log(rest.reduce((sum, value) => sum + value, 0));
+ console.log(rest.reduceRight((sum, value) => sum * 10 + value, 0));
+ console.log(rest.find(value => value === 3));
+ console.log(rest.findLast(value => value === 3));
+ const empty = [] as const;
+ console.log(empty.some(() => true));
+ console.log(empty.every(() => false));
+ console.log(JSON.stringify(empty.filter(() => true)));
+}
+"#;
+    let bytes = varta_compiler::compile_typescript_with_profile(
+        source,
+        LanguageProfile::CheckedF64Utf16V38,
+    )
+    .unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    let output = VartaRuntime::new().run_wasm_bytes(&bytes, &[]).unwrap();
+    assert_eq!(
+        output.lines,
+        lines(&[
+            "true", "false", "true", "true", "true", "[1]", "10", "4321", "3", "3", "false",
+            "true", "[]"
+        ])
+    );
+}
+
+#[test]
 fn array_callbacks_infer_parameters_and_results_and_use_real_closures() {
     let output = run(r#"
 function double(value:number):number{return value*2;}

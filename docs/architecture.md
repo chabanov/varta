@@ -172,10 +172,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v36` | 32 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` | — |
 | `checked-f64-utf16-v37` | 33 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v17` | `json_parse_v18` | — |
 | `checked-f64-utf16-v38` | 34 | 18 | `varta.exception.version_v9` = 9 | `json_stringify_owned` | `json_parse_v19` | `simd128` |
+| `checked-f64-utf16-v39` | 35 | 18 | `varta.exception.version_v9` = 9 | `json_stringify_owned` | `json_parse_v19` | `simd128` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **3** advertises host ABI **34**, value ABI **18**, HTTP contract **2** and **41** language profiles (the rows above).
+Launcher protocol **3** advertises host ABI **35**, value ABI **18**, HTTP contract **2** and **42** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -5583,7 +5584,8 @@ generated resource classes; classes extending the native errors follow the
   statement. It may not escape, be captured by an arrow, receive a method or
   getter call, or reach `super.m`, because an override could observe a subclass
   placeholder. Statements before `super(...)`, parameter defaults and field
-  initializers cannot use `this`; field initializers cannot name constructor
+  initializers cannot use `this` under the original class profile (v38 adds
+  [checked initializer forms](#classfunction-prerequisite-increment-expression_forms)); field initializers cannot name constructor
   parameters or top-level constructor bindings. A derived constructor has exactly
   one top-level `super(...)` statement. Every own field without an initializer
   must be assigned by a top-level `this.f = …` statement; assignments inside
@@ -6708,6 +6710,15 @@ primitive.
   enclosing `finally` blocks run first; then the promise is fulfilled or
   adopts the returned promise, and an uncaught exception rejects it. A body
   without `await` is called directly.
+- **V38 typed return widening.** An async body may directly return a statically
+  typed `Promise<U>` when its fulfilled `U` converts to the declared `T`, including
+  `Promise<string>` returned from `Promise<unknown>`. Keep the source promise in
+  a typed saved local until all finalizers finish. The selected completion then
+  adopts the source through the existing adoption job/reaction; only its fulfilled
+  value is widened to `T`. Conditional return arms keep their own static types.
+  A finalizer may replace the completion with a value or another promise. This
+  adds no promise wrapper or scheduling turn, and does not permit adopting a
+  promise already hidden in `unknown`. Earlier profiles retain their path.
 - **`await`.** `await e` evaluates `e`, wraps a non-promise in a fulfilled
   promise (PromiseResolve: one job either way) and suspends. The suspension
   point marks the promise handled, withdraws its unhandled report and
@@ -7642,6 +7653,100 @@ from it` and the others listed below).
   declared read of a JSON value replaces the entry, so a reference taken
   earlier through a plain `Record<string, unknown>` alias is no longer the
   stored value; and assertions of JSON graphs return fresh values.
+
+##### Checked structural snapshots (v39)
+
+The owner selected contract A, an isolated checked copy, on 2026-11-07.
+`checked-f64-utf16-v39` opts the entire compiled source graph into this
+contract, including assertions in original typed dependencies. `policy: "strict"`
+and capabilities retain their meanings. Earlier profiles keep exact JSON-graph
+conversion. The [extra-field audit](evidence/2026-11-07-sdk-extra-field-audit.json)
+records the preceding compatibility gap. TypeScript itself erases assertions
+([handbook](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#type-assertions));
+Varta deliberately checks them at runtime.
+
+At an ordinary `unknown as T` assertion requiring conversion to declared records,
+validate every required/optional field recursively, including primitive kinds,
+literal/enum membership and nullable members. Missing optional fields stay absent;
+present `undefined` or `null` is accepted only when the declared type permits it.
+There are no defaults or coercion. Publish the result only after the whole check
+succeeds. A checked failure throws `TypeError`, leaves the input unchanged and
+exposes no partial result; fatal resource failures remain fatal.
+
+Retain every own JSON key recursively, its presence, value and own-key order.
+Declared children receive typed representations; extras remain `unknown` JSON
+data. `Object.keys`/`values`/`entries`, `for...in`, admitted object spreads and
+JSON serialization include extras, including nested records and array elements.
+Numeric keys enumerate first in ascending order; other keys retain creation order.
+V39 closed-record `Object.values` returns `unknown[]`, since dynamically retained
+properties can have types the static record does not declare. Typed writes affect
+the same result's serialization. Deleting optional fields and recreating them
+updates presence and key order; deleting required typed fields remains refused.
+Integrity checks run before order updates.
+Fresh JSON graph construction and object spreads use own-data-property creation,
+including a JSON `__proto__` key. They never invoke a prototype setter. Ordinary
+assignment and `Object.assign` retain the established refusal when a missing
+`__proto__` key would invoke that setter; define and set have distinct helper
+cache keys. Dictionary exposure preserves such data keys as well.
+Property-path guards narrow a stable snapshot data-field read at its call site;
+its physical-layout accessor keeps the full declared field signature. Getter and
+class views retain their existing admission rules and do not inherit this proof.
+
+Input graphs are copied. Two conversions of the same input create distinct
+snapshots, input mutations do not affect them, and snapshot mutations do not affect
+the input. Aliases of one result share its mutations. Mutable extra descendants
+are also isolated from the input. A cast back through `unknown` to
+`Record<string, unknown>` preserves all data through a fresh outer dictionary;
+its unchecked writes cannot corrupt declared slots. Nested typed records remain
+checked when exposed. Already proven exact typed values retain the established
+identity path. Snapshot conversion is decoding, not an identity-preserving live
+view. A live-view contract (B), package-scoped activation and unrestricted alias
+writes are deferred.
+
+The conversion admits finite acyclic JSON-shaped graphs and dense arrays.
+Cycles, non-finite numbers, sparse arrays, class instances, accessor objects and
+non-JSON extra values fail explicitly. Getters are refused before invocation.
+Shared input subgraphs may be copied per JSON occurrence, with expanded work paid
+from existing fuel/memory limits. Negative zero and UTF-16 keys are retained.
+Round trip means semantic JSON data, not original whitespace or escape/number
+spelling. Typed dictionary/array elements are boxed according to their runtime
+kinds before copying; mutable raw storage is never reinterpreted as typed cells.
+
+**Strict boundaries.** Explicit checked decoding (`varta.json.parse<T>` and the
+direct `JSON.parse(text) as T` path, including its generic fallback), mixed-record
+declared reads and record-union selection retain exact conversion. A target
+subgraph containing multiple record alternatives uses the existing strict
+matching/discriminant/ambiguity rules for that whole subgraph; extras there may
+still fail. Nullable single-record and primitive literal/enum unions work with
+their existing checks. Snapshot converters have distinct cache keys from strict
+build/read converters. Snapshot property-copy converters also have a separate key
+and preserve shallow typed-child identity.
+
+**Representation and hosts.** V39 requires host ABI 35; older hosts must reject
+it before effects. The value layout remains 18: an ordinary canonical typed
+record adds two compiler-only fields, `#index signature` (an extra-value
+dictionary) and `#snapshot order` (a string vector). Its canonical descriptor and
+reference mask trace both through existing GC paths. Logical typed views map
+public fields to their physical slots. All prior profiles disable interpretation
+of this metadata. New readers validate metadata kinds, dense unique order keys,
+field/extras collisions, complete public-member coverage and canonical dictionary
+storage. Numeric-key sorting applies after typed updates. No new heap kind,
+reference tag, capability or production budget is introduced. The existing record
+field ceiling includes both metadata slots.
+
+The linked intrinsic library obtains the snapshot-mode bit from the validated
+language contract through a closed linker accessor. Native fallback and shared
+Wasm serializers use the same metadata reader; inspection hides metadata.
+KV staging continues to refuse records with private state rather than silently
+losing extras. Convert a snapshot explicitly to JSON data before KV storage.
+General getter/proxy objects and unsupported spread/rest combinations remain
+outside this JSON-data assertion contract and must not be silently projected.
+
+Acceptance covers unmodified SDK synthetic extra-field variants, malformed
+required/optional/nullable/enum data, recursive retained enumeration and JSON,
+isolation and alias mutations, suspended forced GC, malicious metadata, fatal
+resource limits, source-free launchers and native/browser execution. Earlier
+profile digests and strict parse/read/union regression suites remain required.
 
 #### Timers (`timers`)
 
@@ -12037,6 +12142,91 @@ closures, so every host reader handles one shape.
   storage (created on first use). A source that is a view of other layouts
   is read through its layout copy (`layout_spreads`).
 
+#### Class/function prerequisite increment (`expression_forms`)
+
+V38 (2026-11-07) adds the following checked forms without a host import,
+value/frame layout or ABI change. Earlier profiles retain their diagnostics
+and module bytes. This is an increment toward standard decorators, not
+admission of decorator syntax.
+
+- **Instance identity in initializers.** Initializers already read/capture
+  earlier initialized fields in declaration order, with base initializers before
+  the body and derived initializers immediately after `super`. An initializer
+  exactly equal to `this` may now store the instance identity in a declared
+  field (`self: C = this`); strict identity comparisons of `this` are admitted
+  during initialization too. The object is the original most-derived instance.
+  No placeholder may escape: identity-holding fields, including inherited or
+  redeclared ones, and function fields with explicit dynamic receivers cannot
+  be read while the receiver is incomplete. The latter prevents
+  implicit receiver calls from passing an unfinished instance into a function.
+  Bare `this` in other escaping positions and calls/getters on `this` remain
+  refused until the complete-receiver rule below applies; pre-super access and
+  parameter-default access stay refused. Constructor-local names
+  remain invisible to field initializers. Earlier-field lexical captures keep
+  their existing checked discipline.
+- **Complete constructor receivers.** V38 additionally permits aliases,
+  publication, method/getter/setter access, receiver-bearing function fields and
+  lexical closures returning/calling `this` at a point where every field in the
+  class's complete field set is definitely assigned. This includes identity
+  fields and fields inherited after `super(...)`; field initializer expressions
+  see only earlier assignments. A redeclaration can observe an already assigned
+  inherited field of the same checked type before replacing it. The existing
+  top-level assignment discipline is conservative: assignments made only inside
+  branches or methods do not establish completeness. Every newly admitted use
+  records its source site. After all generic class materialization, compilation
+  requires that class to have **no non-template descendants**, including
+  non-generic declarations that are never constructed. A base constructor's completed static field set does
+  not prove a most-derived instance is ready. Before completeness, the existing
+  no-escape and earlier-field rules still apply; constructor returns and
+  pre-super/default uses remain refused. Abrupt completion after publication
+  preserves the already assigned object, as in Node. This is a compile-time
+  restriction with no new readiness flag, field layout or ABI. It does not admit
+  arbitrary observation of partially initialized instances or add object APIs
+  beyond their existing checked surface.
+- **Instance method values.** Reading a non-generic, non-overloaded method on
+  a class instance evaluates the receiver once and returns the canonical
+  function of its implementation, with no receiver capture or automatic bind.
+  The function's explicit receiver is its declaring class: use `f.call(object,
+  ...args)`; a detached `f(...)` with no compatible receiver is a type error.
+  Repeated/inherited reads share the implementation identity; a concrete
+  override has its own identity. A generic class may provide method values
+  when only one specialization of that method's declaring template is
+  materialized in the program. Multiple specializations are refused at the
+  final pass: distinct monomorphized bodies must not be exposed as different
+  identities of what is one JavaScript method. The final class pass refuses a static receiver type
+  with descendants that replace the method: a virtual-call dispatcher is not
+  that method's function identity. This check runs after generic subclasses
+  are materialized. The receiver type must have no overriding descendants.
+  Generic methods, overload views, structural-view extraction, static/super
+  method values and polymorphic extraction remain separate boundaries.
+- **Tuple rest parameters.** A v38 rest parameter may be a checked tuple:
+  required/optional positions, an array rest tail or a middle rest followed by
+  required trailing positions. The caller checks positional types and arity,
+  evaluates arguments once in order and builds a fresh tuple with the actual
+  supplied length; omitted optional positions are not padded into that tuple.
+  The ABI still takes one array handle for the rest slot. Optional prefixes
+  before trailing variadic positions are refused by name. Fixed required tuples
+  spread through the existing static expansion; optional/variadic tuple spreads
+  into tuple-rest signatures are refused, never shortened silently. A variadic
+  tuple can still spread into an ordinary array-rest signature through the
+  array snapshot path, preserving its entire tail.
+- **Inference and adapters.** A bare generic tuple rest infers the remaining
+  argument types as one tuple, and generic callback matching infers tuple-rest
+  arguments from the callback parameter list, including an explicit `this`.
+  Required finite tuple-rest signatures and contextually typed literals adapt
+  to/from compatible fixed signatures; packing a tuple requires matching fixed
+  arity. The existing variance rules apply and explicit receiver types must match. Adapters retain
+  their receiver slot through capture/suspension and keep the source call's
+  evaluation order. Optional/variadic tuple adapters require identical parameter
+  layouts; changing those layouts or adapting unrelated receiver types is refused
+  rather than losing argument count or binding behavior. Signature conversions
+  use the existing adapter-closure contract; retain the original method reference
+  for comparisons that require its canonical implementation identity.
+
+Execution, collection-stress and source-free regressions live in
+`class_function_tests` and the CLI smoke suite; compatibility cases cover each
+family and a method retained across `await`.
+
 #### Standard library (`standard_library`)
 
 Additions to v38 (K9 D, 2026-11-06) that complete the ECMAScript 2025
@@ -13206,7 +13396,8 @@ time (`new.target.name`, an Error subclass's `name`).
   base constructor adds before a subclass's own fields are defined is
   listed after those fields, where JavaScript lists it before them.
 - **Not admitted yet.** Standard decorators (they need the decorator
-  context objects, `this` in field initializers and method values) are
+  context objects, complete initializer contexts, polymorphic/generic method
+  values and metadata/replacement semantics) are
   refused by name (`decorator`). Legacy `experimentalDecorators` are not
   planned.
 
@@ -14293,6 +14484,18 @@ into the static type the program names. V37 and earlier profiles reject
   `build` and `guest` modules); the browser host runs the same crate compiled
   to wasm32 (`varta-kv-codec-wasm`, a checked-in build with a source
   fingerprint, `scripts/build-kv-codec.py`). Only the storage engine differs.
+- **Async HTTP materialization.** Native HTTP v2 awaits the checked allocator
+  and retain exports through async Wasmtime calls inside `kv_key`/`kv_value`.
+  Ordinary native execution, HTTP v1 and browser imports use immediate adapters
+  of the same suspendable builder. The checks, fuel charges, root-before-child
+  order and final publication are identical; cancellation drops the owned
+  classified tree iteratively, even for an unpolled future. Helpers have no
+  reachable host/indirect calls, so a request needs at most its outer fiber and
+  one nested helper fiber. With `W` worker slots, `M` admitted memory pages and
+  `R` pages reserved per request, the internal v2 stack pool is
+  `max(W, 2 * min(W, floor(M / R)))`; v1 retains `W`. Admission holds both
+  worker and memory permits until the Store is dropped. Guest budgets,
+  capability checks, commit fences and per-request Store isolation are unchanged.
 - **Browser host.** The official browser host stores KV databases in the
   origin private file system (OPFS) and implements the
   [embedding contract](embedding.md#kv-storage-v38) with the
@@ -16656,8 +16859,8 @@ those bounds and drops the inert page.
 #### Native CSS transitions
 
 The native view runs CSS Transitions 1 as Chrome 156 does for the subset's
-animatable properties: the paint-only `color`, `background-color` and
-`opacity`, and `transform` ([native transforms](#native-css-transforms)), whose
+animatable properties: the paint-only `color`, `background-color`, `box-shadow`
+and `opacity`, and `transform` ([native transforms](#native-css-transforms)), whose
 lists interpolate function by function when they pair (CSS Transforms 1 §9:
 the same length and the same primitive in each position, `translate()` and
 its one-axis forms being one primitive; `none` stands for the identity
@@ -16685,7 +16888,10 @@ matches or the current value already equals the new one. Removing
 No transition starts for an element's first style or across `display: none`.
 Colours interpolate in sRGB with premultiplied alpha, `opacity` linearly; an
 undeclared `background-color` is transparent, `opacity` 1 and `transform`
-`none`, and `color` inherits. Layout and paint read the current values; snapshots keep the
+`none`, `box-shadow` is an empty list, and `color` inherits. Shadow motion follows
+the list rules in the [CSS engine contract](#view-css-engine-k8-t2-and-t3),
+including transparent padding, live currentcolor and non-transitionable inset
+mismatches. Layout and paint read the current values; snapshots keep the
 static cascade. Pixels match Chrome with every transition paused at the same
 time since its style change, and box positions with Chrome's
 `getBoundingClientRect` during a translation (`native_transition_probe` with
@@ -16979,8 +17185,7 @@ the verification oracle, not the definition.
   metrics, a sum of lengths and percentages in other
   properties (`border-radius`, `transform`, `object-position`, grid tracks),
   and values of the specifications that native layout lacks
-  (`display: inline-block` and the other inner/outer display types,
-  `position: sticky`, intrinsic sizes,
+  (table/inline-grid display types and intrinsic min/max constraints,
   `white-space: pre-line | break-spaces`, `text-align: justify`, border
   styles other than `none`, `hidden` and `solid`).
 - **Layout and text properties (S4).** Mapped properties are expanded
@@ -17216,11 +17421,125 @@ the verification oracle, not the definition.
   and its other colours lowered, the renderer resolves it at used-value
   time against the element's color (in `color`, the parent's), and the
   bridge sets it as computed for Chrome to resolve.
-- **Not yet admitted:** `@keyframes`, `@container`, nesting, the rest of
-  S4 (`rotate`, line clamping, and the display types and sizes native
-  layout lacks: `inline-block`, `inline-flex`, `fit-content`, `sticky`),
-  `::marker`, `::selection`, `::first-line` and `::first-letter` (S5), and
-  the paint stages S6–S8.
+- **Shadows and intrinsic sizing (K8 T2 S6/S4 increment).** `box-shadow`
+  accepts bounded comma-separated outer/inset lists, signed offsets and spread,
+  nonnegative blur, CSS colors and an omitted `currentcolor`. The shared Rust
+  engine lowers lengths and color functions on both hosts. Native paint uses
+  Gaussian convolution with sigma equal to half the blur radius, rounded border
+  silhouettes and border-box knockout for outer shadows, and padding-box clipping
+  for inset shadows. Outer layers precede the background, inset layers follow it
+  and precede borders; the first listed shadow is on top. Broken inline decorations
+  use the continuous strip and omit ink at internal fragment edges. Paint bounds
+  include shadow overflow through opacity groups and retained damage, including
+  tile boundaries. Shadows change no layout or pointer bounds. Actual clip masks
+  must not apply the shadow's own antialias coverage a second time. These scenes
+  use the explicit software presentation fallback on the optional GPU backend;
+  direct GPU shadow rendering remains open.
+  Shadow-list motion uses the native animation clock for both transitions and
+  keyframes. Matching list positions interpolate signed offsets/spread, clamped
+  nonnegative blur and premultiplied sRGB color. `none` is an empty list; missing
+  positions are transparent zero shadows with the other endpoint's inset kind.
+  Any paired inset mismatch makes the whole property non-transitionable;
+  keyframes use a discrete switch at halfway instead. Reversal, retargeting,
+  delays and cancellation use the existing transition state machine. An omitted
+  color or `currentcolor` stays live, including during color animation, without
+  creating a shadow transition on a color-only change. A flat affine color
+  representation prevents interrupted transitions from retaining an expression
+  history. Endpoint lists share immutable storage; sampled lists stay bounded
+  by existing checked CSS token limits. Unresolved `currentcolor` mixes inside
+  animated shadow colors remain outside the native motion subset and keyframes
+  refuse them explicitly.
+  Stylesheets also admit `transition` as a mapped shorthand over the four
+  existing transition longhands, including pending `var()` substitution,
+  CSS-wide resets, comma lists of up to eight entries, signed delay and easing
+  functions. The first time is duration, the second delay; literal negative durations
+  and `none` combined with another list item are refused. The mapping adds no
+  wire property or host operation. Layout/hit geometry and static snapshots
+  remain unchanged by shadow motion; retained damage includes its changing ink.
+
+  `width`/`height` admit `min-content`, `max-content`, `fit-content` and `stretch`.
+  Fit-content measures both intrinsic bounds and clamps available space between
+  them, rather than using the longest line after wrapping. Block, flex, grid and
+  absolute sizing share this resolution. Intrinsic values on `min-width`,
+  `max-width`, `min-height`, `max-height`, and `fit-content(...)` remain refused.
+- **Remaining application CSS package (2026-11-07).** The checked subset adds
+  numeric font variants, control accents, inset clips, sticky boxes, atomic
+  inline formatting, legacy clamping, pretty wrapping, linear gradients,
+  backdrop blur and keyframe animation. These are bounded implementations;
+  admitting the finite application corpus does not imply all CSS/Tailwind.
+  - `font-variant-numeric` maps lining/oldstyle and proportional/tabular digits,
+    fractions, ordinal and slashed-zero to OpenType features in both ordinary
+    and rich text, including preserved tabs. It inherits, participates in shape
+    cache keys, and resets with `font`. An unsupported feature in a font has
+    no substitution, as in CSS Fonts. `accent-color` inherits; native checked
+    checkboxes/radios use it, with a contrasting mark and the existing disabled
+    theme. `auto` restores the platform palette. Other native control accents
+    remain subject to each control's separate implementation.
+  - `clip-path: inset(...)` accepts one to four length/percentage offsets;
+    opposing offsets are proportionally reduced when they exceed the box.
+    It clips own ink and all descendants, including fixed descendants, creates
+    a stacking context and preserves layout and accessible text. The rounded
+    `inset(... round ...)` form and arbitrary paths remain refused. This covers
+    Tailwind's current `sr-only` utility.
+  - `position: sticky` remains in flow, follows its nearest scrollport and
+    stops at the containing block's edge; it establishes a zero-level stacking
+    context. Existing native scrolling remains vertical. Atomic `inline-block`
+    and `inline-flex` boxes lay out their children separately, measure intrinsic
+    bounds, share one shaping allowance and enter the containing line as atomic
+    boxes with baseline/vertical-align geometry. Construction is iterative;
+    prepared descendant maps are moved into their parents. Unresolved containing
+    widths in flex/grid distributions, positioned/transformed atomic roots and
+    other combinations without correct placement are explicitly refused.
+  - Vertical `display: -webkit-box; -webkit-box-orient: vertical` with a positive
+    `-webkit-line-clamp` projects the visible line prefix and a shaped ellipsis,
+    preserves prior line breaks and removes hidden pointer fragments. Source
+    text remains available to accessibility. Decorated/edged/atomic clamped
+    flows remain refused. `text-wrap: pretty` uses a bounded best-effort orphan
+    reduction pass; its line choices need not equal Chrome's UA strategy.
+    `text-wrap-mode` and `text-wrap-style` preserve shorthand/cascade order with
+    `white-space`. `table-layout: auto | fixed` has no effect on the supported
+    non-table boxes: native table tags and table layout are still unsupported.
+  - One `background-image: linear-gradient(...)` accepts angle/side/corner
+    directions, at least two color stops, double positions, hard stops and
+    missing-position fixup, with sRGB, linear sRGB or Oklab interpolation.
+    Interpolation premultiplies alpha. The generated image fills/repeats at the
+    padding box and clips to the rounded border box, including transparent
+    borders. Multiple image layers, radial/repeating gradient functions and
+    non-replaced inline gradient decorations remain refused.
+  - `backdrop-filter: blur(...)` and its `-webkit-` alias resolve the already
+    painted backdrop-root prefix before tiled composition. The source is clipped
+    to the element border box and extended by mirrored samples, as specified by
+    [Filter Effects 2](https://drafts.csswg.org/filter-effects-2/#BackdropFilterProperty).
+    A variance-matched three-box Gaussian approximation counts complete mirror
+    periods without radius-sized work/storage, including huge radii. Own content draws
+    afterwards; clipping and opacity apply once. Capture/blur work shares the
+    existing frame preparation allowance and retained pixels count toward the
+    existing scene byte limit. Nested groups do not allocate a viewport layer
+    per source depth. Transformed/captured-inline backdrop roots and unsupported
+    fixed/absolute containing-block combinations are refused. Other filters and
+    direct GPU filter composition remain open.
+  - `@keyframes` is checked in Rust, selects one complete rule by layer/media/
+    source order, cascades duplicate offsets and ignores important keyframe
+    declarations. The `animation` shorthand maps onto its eight ordinary
+    longhands; lists are bounded to eight animations. Native timelines use the
+    host-supplied monotonic animation clock, implicit endpoints, delays,
+    iteration counts, direction, fill and pause state. They animate opacity,
+    colors and matching transform lists, including `rotate(<angle>)`; ordinary
+    `!important` declarations and running transitions retain their precedence.
+    Visual boxes and pointer regions follow the affine transform. Rotated
+    rectangles become paths before tiled replay; unsupported rotated images,
+    mixed-color border fields and external curved clip scopes fail explicitly.
+    Keyframe variables, custom declarations, layout-property animation,
+    composition modes, animation events and general matrix interpolation remain
+    outside this increment. The browser bridge copies only Rust-selected,
+    admitted keyframe rules into a dedicated CSSOM sheet; guest style rules
+    still never enter the browser cascade. Both hosts share parsing, admission,
+    cascade and keyframe selection. Browser keyframe emission selects all names
+    in one traversal rather than rescanning every definition for each name. Pixel shaders and grouped effects keep
+    explicit software presentation until direct GPU acceptance exists.
+- **Not yet admitted:** `@container`, nesting, unsupported table/inline-grid
+  formatting, `::marker`, `::selection`, `::first-line`, `::first-letter`,
+  general filter/image/animation surfaces and the remaining S6–S8 stages.
 
 **Browser bridge (K8 T3).** The official browser host runs the engine as
 `view-engine.wasm`: `varta-style-wasm`, a `wasm32` shim of `varta-style`
@@ -17331,8 +17650,8 @@ vector preparation of positioned frames without opacity groups is
 pixel-identical to the CPU reference, and frames with opacity groups keep the
 existing explicit CPU fallback. Budgets, command limits and the guest ABI are
 unchanged. A positioned or z-indexed box inside an inline formatting context is
-refused by inline layout; `position: sticky` and other containing-block
-creating properties are not admitted. Chrome snaps scrolled content to whole
+refused by inline layout. Sticky is admitted as specified in the later
+application CSS package; unsupported containing-block combinations remain refused. Chrome snaps scrolled content to whole
 device pixels while native paint keeps fractional scroll offsets, so the
 oracle's scroll offsets are whole device pixels at its scales.
 
@@ -17995,10 +18314,12 @@ of 39,152 candidates runs as a manual test (`oracle_full`, ignored).
 
 **Application status.** Track T2 widens the engine grammar
 ([view CSS engine](#view-css-engine-k8-t2-and-t3)). Static Tailwind class
-tokens (`w-1/2`) and utilities built from them apply since T2 S1–S3; a full
-`@import "tailwindcss"` build is still refused, and the CLI tests assert its
-precise first violation (the theme layer's `:root, :host` selector list,
-stage S5). The end-to-end application test is ignored until S5.
+tokens (`w-1/2`) and utilities built from them apply since T2 S1–S3. Since
+T2 S5's pseudo-element/error-handling work, the full `@import "tailwindcss"`
+entry with Preflight passes `check` and `dev` in the active CLI regression
+`full_tailwind_application_applies`. That fixture does not establish support for
+every utility: admission and native painting still depend on the implemented CSS
+surface. See the [current Tailwind/CSS debt record](development-plan.md#active-tailwindcss-debt-package--2026-11-07).
 
 ## Source diagnostics
 

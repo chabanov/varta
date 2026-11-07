@@ -10,13 +10,105 @@ pub(super) fn context(
     if index < shape.fixed_count() {
         params.get(index).copied()
     } else if shape.rest {
-        let Type::Array(id) = *params.last()? else {
-            return None;
-        };
-        Some(types.arrays[id as usize])
+        match *params.last()? {
+            Type::Array(id) => Some(types.arrays[id as usize]),
+            Type::Tuple(id) => tuple_position(id, index - shape.fixed_count(), None, types),
+            _ => None,
+        }
     } else {
         None
     }
+}
+/// The source argument type of a tuple rest parameter. Trailing elements
+/// of a variadic tuple are selected using the total argument count.
+fn tuple_position(
+    id: u32,
+    index: usize,
+    count: Option<usize>,
+    types: &ir::ValueTypes,
+) -> Option<Type> {
+    let t = &types.tuples[id as usize];
+    if index < t.elements.len() {
+        return t.elements.get(index).copied();
+    }
+    if let Some(count) = count {
+        let trailing = count.saturating_sub(t.trailing.len());
+        if index >= trailing {
+            return t.trailing.get(index - trailing).copied();
+        }
+    }
+    t.rest
+}
+pub(super) fn call_context(
+    index: usize,
+    count: usize,
+    params: &[Type],
+    shape: &ir::ParameterShape,
+    types: &ir::ValueTypes,
+) -> Option<Type> {
+    if shape.rest
+        && index >= shape.fixed_count()
+        && let Some(Type::Tuple(id)) = params.last()
+    {
+        tuple_position(
+            *id,
+            index - shape.fixed_count(),
+            Some(count - shape.fixed_count()),
+            types,
+        )
+    } else {
+        context(index, params, shape, types)
+    }
+}
+pub(super) fn typed_count(
+    count: usize,
+    params: &[Type],
+    shape: &ir::ParameterShape,
+    types: &ir::ValueTypes,
+) -> Result<()> {
+    self::count(count, shape)?;
+    if shape.rest
+        && let Some(Type::Tuple(id)) = params.last()
+    {
+        let tuple = &types.tuples[*id as usize];
+        let tail = count.saturating_sub(shape.fixed_count());
+        if tail < tuple.required + tuple.trailing.len()
+            || tuple.rest.is_none() && tail > tuple.elements.len() + tuple.trailing.len()
+        {
+            return Err(invalid("tuple rest argument count mismatch"));
+        }
+    }
+    Ok(())
+}
+/// A required finite tuple rest has the same source arity as fixed
+/// parameters; adapters use this view without changing its physical tuple slot.
+pub(super) fn expanded(
+    params: &[Type],
+    shape: &ir::ParameterShape,
+    types: &ir::ValueTypes,
+) -> Option<(Vec<Type>, ir::ParameterShape)> {
+    if !shape.rest {
+        return None;
+    }
+    let Type::Tuple(id) = *params.last()? else {
+        return None;
+    };
+    let tuple = &types.tuples[id as usize];
+    if tuple.rest.is_some() || !tuple.trailing.is_empty() || tuple.required != tuple.elements.len()
+    {
+        return None;
+    }
+    let mut values = params[..shape.fixed_count()].to_vec();
+    values.extend(&tuple.elements);
+    let mut optional = shape.optional[..shape.fixed_count()].to_vec();
+    optional.extend(std::iter::repeat_n(false, tuple.elements.len()));
+    Some((
+        values,
+        ir::ParameterShape {
+            optional,
+            rest: false,
+        },
+    ))
 }
 pub(super) fn accepts(expected: Type, actual: Type, types: &ir::ValueTypes) -> bool {
     nominal_accepts(expected, actual, types) || subtyping::assignable(expected, actual, types)
@@ -54,11 +146,11 @@ impl Lower<'_> {
         params: &[Type],
         shape: &ir::ParameterShape,
     ) -> Result<Vec<Expr>> {
-        count(args.len(), shape)?;
+        typed_count(args.len(), params, shape, self.types)?;
         args.iter()
             .enumerate()
             .map(|(index, arg)| {
-                let expected = context(index, params, shape, self.types);
+                let expected = call_context(index, args.len(), params, shape, self.types);
                 if self.unknown_reason(&arg.expr, expected)? {
                     // `reject(reason)` with an `unknown` reason (v36): checked
                     // like a thrown `unknown` value.
@@ -84,7 +176,8 @@ impl Lower<'_> {
         shape: &ir::ParameterShape,
         span: swc_common::Span,
     ) -> Result<Vec<Expr>> {
-        count(values.len(), shape)?;
+        typed_count(values.len(), params, shape, self.types)?;
+        let total = values.len();
         let mut values = values.into_iter();
         let mut result = Vec::new();
         for ty in params.iter().take(shape.fixed_count()) {
@@ -109,23 +202,37 @@ impl Lower<'_> {
             let ty = *params
                 .last()
                 .ok_or_else(|| invalid("missing rest parameter"))?;
-            let Type::Array(id) = ty else {
-                return Err(invalid("invalid rest parameter type"));
+            let array = match ty {
+                Type::Array(_) => ty,
+                Type::Tuple(id) => self.types.tuples[id as usize].array,
+                _ => return Err(invalid("invalid rest parameter type")),
+            };
+            let Type::Array(id) = array else {
+                return Err(invalid("invalid rest array"));
             };
             let element = self.types.arrays[id as usize];
             let mut tail = Vec::new();
-            for value in values {
-                let value = unions::widen(value, Some(element), self.types)?;
-                if value.ty != element {
+            for (index, value) in values.enumerate() {
+                let expected = call_context(
+                    shape.fixed_count() + index,
+                    total,
+                    params,
+                    shape,
+                    self.types,
+                )
+                .unwrap_or(element);
+                let value = unions::widen(value, Some(expected), self.types)?;
+                if value.ty != expected {
                     return Err(self.source.locate(
                         type_error(format!(
-                            "rest argument mismatch: expected {element}, found {}",
+                            "rest argument mismatch: expected {expected}, found {}",
                             value.ty
                         )),
                         value.span,
                     ));
                 }
-                tail.push(Some(value));
+                let value = self.physical_array(value)?;
+                tail.push(Some(unions::widen(value, Some(element), self.types)?));
             }
             if tail.len() > self.types.profile.data().array_elements {
                 return Err(invalid("rest array exceeds element bound"));

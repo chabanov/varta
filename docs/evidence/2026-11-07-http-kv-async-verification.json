@@ -1,0 +1,225 @@
+{
+  "date": "2026-11-07",
+  "baseHead": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+  "scope": "Managed KV key/value materialization in isolated native async HTTP v2 request Stores; shared synchronous/asynchronous codec and bounded nested fiber stack reservation.",
+  "profileOrAbiChanged": false,
+  "productionGuestBudgetsRaised": false,
+  "workerOrMemoryAdmissionRaised": false,
+  "dependenciesChanged": false,
+  "applicationOrSdkSourceChangedByEngineTask": false,
+  "reproduction": {
+    "before": "POST 201, subsequent GET 500: cannot do blocking call from an async context",
+    "profilesVerified": [
+      "checked-f64-utf16-v38",
+      "checked-f64-utf16-v39"
+    ],
+    "beforeLog": "target/http-kv-async-20261107/repro-before.log",
+    "singleWorkerBefore": "GET 500: maximum concurrent limit of 1 for fibers reached",
+    "singleWorkerBeforeLog": "target/http-kv-async-20261107/pool-before.log",
+    "singleWorkerAfterLog": "target/http-kv-async-20261107/pool-after.log"
+  },
+  "implementation": {
+    "sharedBuilder": "AsyncHeap allocation/retain yields; existing APIs poll the same sequence through an immediate heap adapter.",
+    "nativeHttpV2": "kv_key and kv_value use async host callbacks and validated TypedFunc::call_async for allocator/retain. Ordinary native, legacy HTTP and browser use immediate adapters.",
+    "preserved": [
+      "schema/descriptor validation",
+      "classification fuel before allocation",
+      "guest root-before-child order",
+      "publication only after ready/deadline/descriptor checks",
+      "recoverable mismatch channel",
+      "commit fences",
+      "per-request Store isolation",
+      "capability intersection"
+    ],
+    "cancellation": "Owned classified JsonValue tree drops iteratively, including unpolled and allocation-suspended futures.",
+    "internalFiberStackReservation": {
+      "v2": "max(W, 2 * min(W, floor(M / R)))",
+      "v1": "W",
+      "symbols": "W = worker slots; M = admitted memory pages; R = reserved pages per request. Admission holds both permits before Store creation and until Store drop.",
+      "reason": "One outer request fiber plus one nested host-free allocator/retain helper; validated helpers cannot reenter the host or indirect-call.",
+      "existingDefaultReservationPreserved": true
+    }
+  },
+  "regressions": {
+    "newHttpKvTests": 4,
+    "httpCoverage": [
+      "cross-request record read and process/server restart in v38/v39",
+      "nested records/arrays/dictionaries/unions/optional fields and list keys with forced GC",
+      "mismatch catch followed by valid read; atomic version update",
+      "read-only host ceiling refuses writes without persistence",
+      "single-worker bounded stack pool"
+    ],
+    "newCodecTests": 2,
+    "codecCoverage": [
+      "identical yielding/immediate bytes, handles and heap events; root before child allocation",
+      "8192-level tree on 64-KiB thread stack: unpolled and suspended cancellation"
+    ]
+  },
+  "verification": {
+    "precedingFullGate": "2026-11-07-shadow-motion-verification.json",
+    "precedingFullNotRelabelled": true,
+    "distinctScopedRustPassed": 137,
+    "rustIgnored": 5,
+    "runtime": {
+      "passed": 99,
+      "ignored": 5,
+      "log": "target/http-kv-async-20261107/runtime-sealed.log",
+      "command": "cargo test -p varta-runtime --lib --locked -- server_tests kv:: frozen_profile_tests::v37_v36_and_legacy_modules_and_diagnostics_stay_byte_identical fuel_determinism_tests::fuel_is_identical_on_every_host"
+    },
+    "codec": {
+      "passed": 32,
+      "log": "target/http-kv-async-20261107/codec-cancellation-final.log"
+    },
+    "nativeWasmCodecParityAndFingerprint": {
+      "passed": 6,
+      "log": "target/http-kv-async-20261107/wasm-parity-final.log"
+    },
+    "affectedStrictClippy": {
+      "passed": true,
+      "log": "target/http-kv-async-20261107/clippy-sealed.log",
+      "command": "cargo clippy -p varta-kv-codec -p varta-runtime --all-targets --locked --no-deps -- -D warnings"
+    },
+    "cliAndCompanionBuild": {
+      "passed": true,
+      "log": "target/http-kv-async-20261107/build-pool-sealed.log"
+    },
+    "localPackageProbe": {
+      "passed": true,
+      "dev": [
+        "POST 201",
+        "GET 200",
+        "POST 200"
+      ],
+      "sourceFreeStandaloneAfterRestart": [
+        "POST 200",
+        "GET 200",
+        "POST 200"
+      ],
+      "explicitPinnedRootHostPolicy": true,
+      "bothProcessesStopped": true,
+      "log": "target/http-kv-async-20261107/package-smoke-pool-sealed.log"
+    },
+    "chromeKv": {
+      "passed": 18,
+      "nativeBrowserExactUsage": [
+        "fuel",
+        "host calls",
+        "microtasks",
+        "output",
+        "turns"
+      ],
+      "log": "target/http-kv-async-20261107/chrome-kv-sealed.log",
+      "fixtureCorrection": "Explicit test-only 8-MiB and 8-million-fuel ceilings for fatal fixtures, matching native regression fixtures; production budgets unchanged."
+    },
+    "documentation": {
+      "passed": 14,
+      "logs": [
+        "target/http-kv-async-20261107/documentation.log",
+        "target/http-kv-async-20261107/architecture-documentation.log"
+      ]
+    },
+    "otherBlobFingerprints": {
+      "passed": 2,
+      "logs": [
+        "target/http-kv-async-20261107/intrinsics-fingerprint.log",
+        "target/http-kv-async-20261107/view-fingerprint.log"
+      ]
+    },
+    "formatAndDiffCheck": true,
+    "fullWorkspaceRunAtScopedCheckpoint": false,
+    "subsequentPreCommitFullGate": {
+      "passed": true,
+      "evidence": "2026-11-07-precommit-verification.json",
+      "rustPassed": 4671,
+      "rustIgnored": 26,
+      "nodePassed": 190
+    }
+  },
+  "browserCodec": {
+    "sourceFingerprint": "93848ae452cc303a",
+    "target": "wasm32-wasip2",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "bytes": 287255
+  },
+  "independentCloudAcceptance": {
+    "reportedBy": "authorized cooperating Cloud chat; safe evidence files inspected locally",
+    "canonicalNoSdkNoCredentialsNoExternalNetwork": true,
+    "canonicalStatuses": [
+      "POST 200 (existing record)",
+      "GET 200",
+      "POST 200 replay"
+    ],
+    "offlineSdkIdentityAndIsolatedRealKv": true,
+    "authenticatedHttp": [
+      "concurrent create 200/201",
+      "own list 200",
+      "fresh process read 200/revision 1",
+      "PATCH 200/revision 2",
+      "stale PATCH 409",
+      "receipt replay 200/revision 2",
+      "anonymous 401"
+    ],
+    "liveServiceRequestsMadeByEngineTask": 0,
+    "llmRequestsForThisHttpAcceptance": 0,
+    "otpEmailsSent": 0,
+    "serversStoppedByCloud": true,
+    "evidence": [
+      {
+        "path": "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/http-kv-record-fixed.json",
+        "sha256": "753ff4a8dc255610ed978f5b55c8cd22e04f1c6eb60925f1fc3143e80b9086db"
+      },
+      {
+        "path": "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/projects-http-final.json",
+        "sha256": "571820088eee29a7a265902fa77dd5c1b8fd37fd9aea88d17e47d16a8af33d6f"
+      }
+    ]
+  },
+  "limits": [
+    "Database I/O remains within the initiating turn; this does not add nonblocking SQLite I/O, watch or queues.",
+    "Browser host-owned session integration remains separate application work.",
+    "No cross-platform full pass is claimed; the subsequent local full gate is recorded separately."
+  ],
+  "logs": "target/http-kv-async-20261107",
+  "codeInputs": {
+    "path": "target/http-kv-async-20261107/final-code-inputs.json",
+    "files": 2501,
+    "sha256": "8030e8a00419535e0b7e34ca207763ce60909fc85d3353a56989d600ec06ce09",
+    "changedFromPrecedingCssCheckpoint": [
+      "crates/varta-kv-codec/src/build.rs",
+      "crates/varta-kv-codec/src/build/heap.rs",
+      "crates/varta-kv-codec/src/build_tests.rs",
+      "crates/varta-kv-codec/src/guest.rs",
+      "crates/varta-kv-codec/src/guest/owned.rs",
+      "crates/varta-kv-codec/src/guest/sync.rs",
+      "crates/varta-kv-codec/src/lib.rs",
+      "crates/varta-project/src/browser/kv-codec.json",
+      "crates/varta-project/src/browser/kv-codec.wasm",
+      "crates/varta-runtime/src/host.rs",
+      "crates/varta-runtime/src/json_parse/guest.rs",
+      "crates/varta-runtime/src/json_parse/heap.rs",
+      "crates/varta-runtime/src/kv/decode.rs",
+      "crates/varta-runtime/src/kv/mod.rs",
+      "crates/varta-runtime/src/server/engine.rs",
+      "crates/varta-runtime/src/server/mod.rs",
+      "crates/varta-runtime/src/server_tests.rs",
+      "crates/varta-runtime/src/server_tests/kv.rs",
+      "scripts/test-browser-kv.mjs"
+    ]
+  },
+  "logSha256": {
+    "repro-before.log": "e0806d5b46aad298e95a85dd244fc1d3654f5b74ab2ea03338f79755e8189994",
+    "pool-before.log": "e15f473bd4b70766b0c4dde0cf19f9f9616afabe288a6b811c87164900828787",
+    "pool-after.log": "c9561ce3731197e92cd265dd8bbfde206fb3860545069c5c0a345cefa2491694",
+    "runtime-sealed.log": "c5ca12f9abadee82c030d6dafc4295ecbf7ac09cca3a8d83a9465b6b2e97f558",
+    "codec-cancellation-final.log": "d84cbdca715536e4f98edcd6922cccb38536061262b7d4c60680a613e449ba7c",
+    "wasm-parity-final.log": "f422d85119a5ec8f44930dc994475a96f14a096ef6eaa07050f7ceac98a70b3e",
+    "clippy-sealed.log": "923a487aaf62e574d530bb4e7f92684ff7e99ace3998749300f49a643e636507",
+    "build-pool-sealed.log": "dac2f0c0fa743f9582d6d6d28bf98742d324eba02902290e6c20e803718c9ddf",
+    "package-smoke-pool-sealed.log": "6f77dd5de9cb9c30a90b1f0f9814fd799dc201137e06044aa0e1053d3c7d0c3a",
+    "chrome-kv-sealed.log": "0b2277b7ae4b237903bfb87593bc087faa033e16f364f3e83ad2896fc21ff898",
+    "documentation.log": "f9d2c1bf24c60748c456db151634d75dec8010b2fe85f80c0d34dd5ce0ebc3dd",
+    "architecture-documentation.log": "9827495e48d8667b21c3b0f28968e21c4f5d16ddf15b73d4b4d65f9ff734c2f2",
+    "intrinsics-fingerprint.log": "744cd1d2f509500f2cc34950038354d5c513552cb6e96d322950567b4dd2ee46",
+    "view-fingerprint.log": "844ad784fdcd20a8166a2b45b6daef4d9cce4b8c4707f938cff78477e12687d0"
+  }
+}

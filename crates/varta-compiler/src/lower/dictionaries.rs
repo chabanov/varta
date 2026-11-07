@@ -594,9 +594,18 @@ impl Lower<'_> {
     /// position. The expression's value is the stored `T`.
     pub(super) fn dictionary_store(
         &mut self,
+        block: Block,
+        value: Expr,
+        expected: Type,
+    ) -> Result<Expr> {
+        self.dictionary_store_mode(block, value, expected, false)
+    }
+    pub(super) fn dictionary_store_mode(
+        &mut self,
         mut block: Block,
         value: Expr,
         expected: Type,
+        define: bool,
     ) -> Result<Expr> {
         let span = block.span;
         let element = block.dictionary.value;
@@ -693,19 +702,23 @@ impl Lower<'_> {
         insert.push(self.set_index(block.keys(), at(position), block.key()));
         insert.push(self.set_index(block.values(), at(position), local(span, output, element)));
         // An absent `__proto__` key would invoke the prototype setter.
-        let proto = S::If(
-            binary(
-                ast::BinaryOp::EqEqEq,
-                block.key(),
-                Expr {
-                    span,
-                    ty: Type::String,
-                    kind: E::String(self.types.profile.string_bytes(PROTO)),
-                },
-            ),
-            vec![S::Throw(proto)],
-            vec![],
-        );
+        let proto = if define {
+            S::Block(Vec::new())
+        } else {
+            S::If(
+                binary(
+                    ast::BinaryOp::EqEqEq,
+                    block.key(),
+                    Expr {
+                        span,
+                        ty: Type::String,
+                        kind: E::String(self.types.profile.string_bytes(PROTO)),
+                    },
+                ),
+                vec![S::Throw(proto)],
+                vec![],
+            )
+        };
         let absent = match dictionary_hashing::Hashed::of(block.dictionary) {
             Some(hashed) => self.hashed_insert(&block, output, hashed, proto)?,
             None => {

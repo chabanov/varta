@@ -333,7 +333,7 @@ impl Lower<'_> {
         let message = format!("type assertion to {name} failed");
         // Build the real conversion before registering the optimization, so
         // unsupported assertion targets keep their established diagnostics.
-        let fallback = self.assert_value(ordinary, target, name, &message, span)?;
+        let fallback = self.assert_value_strict(ordinary, target, name, &message, span)?;
         self.types.direct_json_targets.insert(target);
         let attempt = Expr {
             span,
@@ -515,7 +515,7 @@ impl Lower<'_> {
             }
             let (found, index, mut block) = self.dictionary_lookup(receiver, key)?;
             let converted =
-                self.assert_value(found, field.ty, &field.name, SCHEMA_MISMATCH, span)?;
+                self.assert_value_strict(found, field.ty, &field.name, SCHEMA_MISMATCH, span)?;
             let absent = if field.optional {
                 vec![]
             } else {

@@ -98,6 +98,10 @@ impl Lower<'_> {
         }
         let base = self.expr(&member.obj)?;
         let base = tagged_templates::plain(base, self.types);
+        // Tuples share array storage. Traverse that storage with its admitted
+        // element union, keeping evaluation, identity and the live backing once.
+        // Results such as filter are arrays, not the source's fixed tuple shape.
+        let base = self.physical_array(base)?;
         let Type::Array(id) = base.ty else {
             return Err(type_error(
                 "array callback requires a narrowed array receiver",

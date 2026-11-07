@@ -11,6 +11,7 @@ mod css_engine;
 mod css_pseudo;
 mod css_s4;
 mod css_s5;
+mod css_shadows;
 mod dialog;
 mod expansion_work;
 mod fallback;
@@ -24,6 +25,7 @@ mod inline_opacity;
 mod inline_outline;
 mod inline_round;
 mod inline_spacing;
+mod intrinsic_sizes;
 mod lengths;
 mod naming_work;
 mod opacity;
@@ -76,3 +78,29 @@ fn every_case_file_is_registered() {
         "declare every integration case file as a module"
     );
 }
+
+#[path = "css_typography_controls.rs"]
+mod css_typography_controls;
+
+#[path = "css_clipping.rs"]
+mod css_clipping;
+
+#[path = "css_sticky.rs"]
+mod css_sticky;
+
+#[path = "css_line_clamp.rs"]
+mod css_line_clamp;
+
+#[path = "css_atomic_inline.rs"]
+mod css_atomic_inline;
+
+#[path = "css_gradients.rs"]
+mod css_gradients;
+
+#[path = "css_backdrop.rs"]
+mod css_backdrop;
+
+#[path = "css_animations.rs"]
+mod css_animations;
+
+mod css_shadow_motion;

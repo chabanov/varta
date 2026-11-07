@@ -22,6 +22,38 @@ impl Rgba {
 const fn rgba(red: u8, green: u8, blue: u8, alpha: u8) -> Rgba {
     Rgba([red, green, blue, alpha])
 }
+impl Rgba {
+    fn from_color(value: Color) -> Self {
+        Self(
+            [value.red(), value.green(), value.blue(), value.alpha()]
+                .map(|v| (v * f32::from(u8::MAX)).round() as u8),
+        )
+    }
+}
+// UI 4 permits the UA to select contrasting foregrounds. Compare WCAG
+// luminance after the accent has composited over the control's white fill.
+fn contrast(color: Color) -> Rgba {
+    const WEIGHTS: [f64; 3] = [0.2126, 0.7152, 0.0722];
+    const DARK: Rgba = rgba(0, 0, 0, OPAQUE);
+    const LUMINANCE_OFFSET: f64 = 0.05;
+    let channels = [color.red(), color.green(), color.blue()];
+    let luminance: f64 = channels
+        .into_iter()
+        .zip(WEIGHTS)
+        .map(|(c, w)| {
+            let c = f64::from(c * color.alpha() + 1.0 - color.alpha());
+            w * if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        })
+        .sum();
+    let white = (1.0 + LUMINANCE_OFFSET) / (luminance + LUMINANCE_OFFSET);
+    let black = (luminance + LUMINANCE_OFFSET) / LUMINANCE_OFFSET;
+    if white >= black { CHECKMARK } else { DARK }
+}
+
 const OPAQUE: u8 = u8::MAX;
 /// `kBorderWidth` of the theme frame, in CSS pixels.
 const FRAME_WIDTH: f32 = 1.0;
@@ -205,6 +237,7 @@ fn device_rect(rect: BoxRect, scale: f32) -> BoxRect {
 pub(super) struct State {
     pub checked: bool,
     pub disabled: bool,
+    pub accent: Option<Color>,
 }
 
 /// Paint themed control `id` into its snapped border box `rect`.
@@ -273,7 +306,7 @@ fn checkable(
     let accent = if state.disabled {
         FRAME_DISABLED
     } else {
-        ACCENT
+        state.accent.map_or(ACCENT, Rgba::from_color)
     };
     let background = if state.disabled {
         FIELD_FILL_DISABLED
@@ -344,7 +377,7 @@ fn checkable(
         if state.disabled {
             FIELD_FILL_DISABLED
         } else {
-            CHECKMARK
+            state.accent.map_or(CHECKMARK, contrast)
         }
         .color(),
     );

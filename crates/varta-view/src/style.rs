@@ -119,6 +119,17 @@ pub(crate) fn initial_override(
     use varta_common::view::CssProperty as P;
     let text = match property {
         P::Color => "#000000",
+        P::FontVariantNumeric => "normal",
+        P::TextWrap => "wrap auto",
+        P::TextWrapMode => "wrap",
+        P::TextWrapStyle => "auto",
+        P::AnimationName | P::AnimationFillMode => "none",
+        P::AnimationDuration | P::AnimationDelay => "0s",
+        P::AnimationTimingFunction => "ease",
+        P::AnimationIterationCount => "1",
+        P::AnimationDirection => "normal",
+        P::AnimationPlayState => "running",
+        P::AccentColor => "auto",
         P::FontSize => "medium",
         P::FontWeight | P::FontStyle | P::LineHeight | P::WhiteSpace | P::OverflowWrap => "normal",
         P::TextAlign => "start",

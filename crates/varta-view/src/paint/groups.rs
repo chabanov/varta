@@ -11,8 +11,8 @@ pub(super) struct RelativeClip {
 }
 
 pub(super) struct Scope {
-    node: u32,
-    start: Option<usize>,
+    pub(super) node: u32,
+    pub(super) start: Option<usize>,
     inherited: BoxRect,
     base: Option<Arc<Clip>>,
     pub hidden: bool,
@@ -75,7 +75,7 @@ impl Surface<'_> {
         let mut missing = Vec::new();
         let mut current = Some(source.clone());
         while let Some(clip) = current {
-            if Arc::ptr_eq(&clip, &base) {
+            if Arc::ptr_eq(&clip, &base) || clip == base {
                 let mut result = None;
                 for source in missing.into_iter().rev() {
                     result = Some(Clip::reparent(&source, result));
@@ -196,6 +196,9 @@ impl Surface<'_> {
                     | Primitive::Path(..)
                     | Primitive::Border(_)
                     | Primitive::Image(_)
+                    | Primitive::Shadow(_)
+                    | Primitive::Gradient(_)
+                    | Primitive::Backdrop(_)
             ) {
                 raw = merge(raw, draw.bounds)?;
                 let mut bounds = Some(draw.bounds);

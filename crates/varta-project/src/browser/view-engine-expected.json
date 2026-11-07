@@ -1,4 +1,46 @@
 {
+  "animation-keyframes": {
+    "computed": {
+      "animation-delay": "0s, 0s",
+      "animation-direction": "normal, normal",
+      "animation-duration": "2s, 1s",
+      "animation-fill-mode": "none, none",
+      "animation-iteration-count": "infinite, infinite",
+      "animation-name": "pulse, spin",
+      "animation-play-state": "running, running",
+      "animation-timing-function": "cubic-bezier(.4,0,.6,1), linear"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "backdrop-alias": {
+    "computed": {
+      "backdrop-filter": "blur(8px)"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "backdrop-negative-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
   "bad-class": {
     "computed": {},
     "statuses": [
@@ -359,6 +401,19 @@
       5
     ]
   },
+  "gradient-stops": {
+    "computed": {
+      "background-image": "linear-gradient(45deg in oklab, rgba(255, 0, 0, 1) 0% 30%, transparent, rgba(0, 0, 255, 1) 100%)"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
   "important": {
     "computed": {
       "color": "#111",
@@ -441,7 +496,9 @@
     ]
   },
   "inline-display-inline-block": {
-    "computed": {},
+    "computed": {
+      "display": "inline-block"
+    },
     "statuses": [
       0,
       0,
@@ -450,7 +507,9 @@
       0,
       0,
       0,
-      2
+      0,
+      0,
+      0
     ]
   },
   "inline-font-family-inherit": {
@@ -628,6 +687,24 @@
       0
     ]
   },
+  "keyframe-layout-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "keyframe-variable-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
   "keywords": {
     "computed": {
       "color": "initial",
@@ -654,6 +731,22 @@
       0,
       0,
       0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "legacy-clamp": {
+    "computed": {
+      "-webkit-box-orient": "vertical",
+      "-webkit-line-clamp": "3",
+      "display": "-webkit-box",
+      "overflow": "hidden"
+    },
+    "statuses": [
       0,
       0,
       0,
@@ -711,6 +804,19 @@
       0,
       0,
       5
+    ]
+  },
+  "numeric-variants": {
+    "computed": {
+      "font-variant-numeric": "oldstyle-nums tabular-nums slashed-zero"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
     ]
   },
   "property": {
@@ -2196,6 +2302,7 @@
       "font-feature-settings": "inherit",
       "font-size": "inherit",
       "font-style": "inherit",
+      "font-variant-numeric": "inherit",
       "font-variation-settings": "inherit",
       "font-weight": "inherit",
       "letter-spacing": "inherit",
@@ -2231,6 +2338,7 @@
       "font-feature-settings": "normal",
       "font-size": "12px",
       "font-style": "italic",
+      "font-variant-numeric": "normal",
       "font-variation-settings": "normal",
       "font-weight": "bold",
       "line-height": "1.5"
@@ -2288,6 +2396,26 @@
     "pseudo": {
       "color": "color-mix(in oklab, currentcolor 50%, transparent)",
       "opacity": "1"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "shadow-keyframes": {
+    "computed": {
+      "animation-delay": "0s",
+      "animation-direction": "normal",
+      "animation-duration": "1s",
+      "animation-fill-mode": "forwards",
+      "animation-iteration-count": "1",
+      "animation-name": "ring",
+      "animation-play-state": "running",
+      "animation-timing-function": "linear"
     },
     "statuses": [
       0,
@@ -2699,7 +2827,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-121": {
@@ -2825,7 +2955,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-13": {
@@ -2857,7 +2989,9 @@
     ]
   },
   "tailwind-app-131": {
-    "computed": {},
+    "computed": {
+      "display": "inline-block"
+    },
     "statuses": [
       0,
       0,
@@ -2865,11 +2999,15 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-132": {
-    "computed": {},
+    "computed": {
+      "display": "inline-flex"
+    },
     "statuses": [
       0,
       0,
@@ -2877,7 +3015,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-133": {
@@ -2994,7 +3134,16 @@
     ]
   },
   "tailwind-app-14": {
-    "computed": {},
+    "computed": {
+      "animation-delay": "0s",
+      "animation-direction": "normal",
+      "animation-duration": "2s",
+      "animation-fill-mode": "none",
+      "animation-iteration-count": "infinite",
+      "animation-name": "pulse",
+      "animation-play-state": "running",
+      "animation-timing-function": "cubic-bezier(0.4, 0, 0.6, 1)"
+    },
     "statuses": [
       0,
       0,
@@ -3002,7 +3151,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-140": {
@@ -3135,7 +3286,12 @@
     ]
   },
   "tailwind-app-148": {
-    "computed": {},
+    "computed": {
+      "-webkit-box-orient": "vertical",
+      "-webkit-line-clamp": "2",
+      "display": "-webkit-box",
+      "overflow": "hidden"
+    },
     "statuses": [
       0,
       0,
@@ -3143,11 +3299,18 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-149": {
-    "computed": {},
+    "computed": {
+      "-webkit-box-orient": "vertical",
+      "-webkit-line-clamp": "3",
+      "display": "-webkit-box",
+      "overflow": "hidden"
+    },
     "statuses": [
       0,
       0,
@@ -3155,11 +3318,22 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-15": {
-    "computed": {},
+    "computed": {
+      "animation-delay": "0s",
+      "animation-direction": "normal",
+      "animation-duration": "1s",
+      "animation-fill-mode": "none",
+      "animation-iteration-count": "infinite",
+      "animation-name": "spin",
+      "animation-play-state": "running",
+      "animation-timing-function": "linear"
+    },
     "statuses": [
       0,
       0,
@@ -3167,7 +3341,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-150": {
@@ -3851,7 +4027,9 @@
     ]
   },
   "tailwind-app-19": {
-    "computed": {},
+    "computed": {
+      "backdrop-filter": "blur(8px)"
+    },
     "statuses": [
       0,
       0,
@@ -3859,7 +4037,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-190": {
@@ -4031,7 +4211,11 @@
     ]
   },
   "tailwind-app-2": {
-    "computed": {},
+    "computed": {
+      "text-wrap": "pretty",
+      "text-wrap-mode": "wrap",
+      "text-wrap-style": "pretty"
+    },
     "statuses": [
       0,
       0,
@@ -4039,7 +4223,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-20": {
@@ -4172,7 +4358,9 @@
     ]
   },
   "tailwind-app-207": {
-    "computed": {},
+    "computed": {
+      "box-shadow": "0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 0 0 1px currentcolor, 0 0 rgba(0, 0, 0, 0)"
+    },
     "statuses": [
       0,
       0,
@@ -4180,11 +4368,15 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-208": {
-    "computed": {},
+    "computed": {
+      "box-shadow": "0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 0 0 2px currentcolor, 0 0 rgba(0, 0, 0, 0)"
+    },
     "statuses": [
       0,
       0,
@@ -4192,7 +4384,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-209": {
@@ -4468,7 +4662,9 @@
     ]
   },
   "tailwind-app-225": {
-    "computed": {},
+    "computed": {
+      "box-shadow": "0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)"
+    },
     "statuses": [
       0,
       0,
@@ -4476,11 +4672,15 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-226": {
-    "computed": {},
+    "computed": {
+      "box-shadow": "0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1)"
+    },
     "statuses": [
       0,
       0,
@@ -4488,11 +4688,15 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-227": {
-    "computed": {},
+    "computed": {
+      "box-shadow": "0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)"
+    },
     "statuses": [
       0,
       0,
@@ -4500,11 +4704,15 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-228": {
-    "computed": {},
+    "computed": {
+      "box-shadow": "0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 0 rgba(0, 0, 0, 0), 0 1px 2px 0 rgba(0, 0, 0, 0.05)"
+    },
     "statuses": [
       0,
       0,
@@ -4512,7 +4720,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-229": {
@@ -4540,7 +4750,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-230": {
@@ -5115,7 +5327,18 @@
     ]
   },
   "tailwind-app-262": {
-    "computed": {},
+    "computed": {
+      "border-width": "0",
+      "clip-path": "inset(50%)",
+      "height": "1px",
+      "margin": "-1px",
+      "overflow": "hidden",
+      "padding": "0",
+      "position": "absolute",
+      "text-wrap-mode": "nowrap",
+      "white-space": "nowrap",
+      "width": "1px"
+    },
     "statuses": [
       0,
       0,
@@ -5123,11 +5346,15 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-263": {
-    "computed": {},
+    "computed": {
+      "position": "sticky"
+    },
     "statuses": [
       0,
       0,
@@ -5135,7 +5362,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-264": {
@@ -5155,7 +5384,9 @@
     ]
   },
   "tailwind-app-265": {
-    "computed": {},
+    "computed": {
+      "table-layout": "auto"
+    },
     "statuses": [
       0,
       0,
@@ -5163,11 +5394,15 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-266": {
-    "computed": {},
+    "computed": {
+      "font-variant-numeric": "tabular-nums"
+    },
     "statuses": [
       0,
       0,
@@ -5175,7 +5410,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-267": {
@@ -5852,6 +6089,7 @@
     "computed": {
       "overflow": "hidden",
       "text-overflow": "ellipsis",
+      "text-wrap-mode": "nowrap",
       "white-space": "nowrap"
     },
     "statuses": [
@@ -5899,7 +6137,9 @@
     ]
   },
   "tailwind-app-306": {
-    "computed": {},
+    "computed": {
+      "width": "fit-content"
+    },
     "statuses": [
       0,
       0,
@@ -5907,7 +6147,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-307": {
@@ -5928,6 +6170,7 @@
   },
   "tailwind-app-308": {
     "computed": {
+      "text-wrap-mode": "nowrap",
       "white-space": "nowrap"
     },
     "statuses": [
@@ -6138,7 +6381,9 @@
     ]
   },
   "tailwind-app-4": {
-    "computed": {},
+    "computed": {
+      "accent-color": "rgba(79, 57, 246, 1)"
+    },
     "statuses": [
       0,
       0,
@@ -6146,7 +6391,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-40": {
@@ -6922,7 +7169,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-89": {
@@ -7032,7 +7281,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-96": {
@@ -7087,6 +7338,56 @@
       0,
       0,
       0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "transition-shorthand": {
+    "computed": {
+      "transition-delay": "-20ms, 0s",
+      "transition-duration": "100ms, 1s",
+      "transition-property": "box-shadow, opacity",
+      "transition-timing-function": "steps(2,jump-end), ease"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "transition-shorthand-negative-duration-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "transition-shorthand-none-list-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "transition-shorthand-variable": {
+    "computed": {
+      "transition-delay": "10ms",
+      "transition-duration": "100ms",
+      "transition-property": "box-shadow",
+      "transition-timing-function": "linear"
+    },
+    "statuses": [
       0,
       0,
       0,

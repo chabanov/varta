@@ -22,6 +22,10 @@ use varta_common::{
     value::*,
 };
 
+mod heap;
+pub use heap::AsyncHeap;
+pub(crate) use heap::{Synchronous, run_sync};
+
 /// The array meta words: the element kind, then the length.
 const META_WORD_BYTES: usize = size_of::<u32>();
 
@@ -96,8 +100,34 @@ enum Task<'a> {
     Entries(&'a [(Vec<u16>, JsonValue)], bool, ValueKind, Destination),
 }
 
-/// Build `value` of `schema` and return its retained payload.
+/// Synchronous construction through the same state machine and immediate heap.
 pub fn value<H: Heap>(
+    heap: &mut H,
+    schema: &JsonSchema,
+    value: &JsonValue,
+    limits: DataLimits,
+) -> Result<u64, BuildError<H::Error>> {
+    run_sync(value_async(&mut Synchronous(heap), schema, value, limits))
+}
+/// Synchronous publication through the same checked allocation sequence.
+pub fn publish<H: Heap>(
+    heap: &mut H,
+    data: &[u8],
+    flag: i32,
+    link: u32,
+    root: bool,
+) -> Result<u64, H::Error> {
+    run_sync(publish_async(
+        &mut Synchronous(heap),
+        data,
+        flag,
+        link,
+        root,
+    ))
+}
+
+/// Build `value` of `schema` and return its retained payload.
+pub async fn value_async<H: AsyncHeap>(
     heap: &mut H,
     schema: &JsonSchema,
     value: &JsonValue,
@@ -114,12 +144,13 @@ pub fn value<H: Heap>(
     while let Some(task) = tasks.pop() {
         let (payload, destination) = match task {
             Task::Value(value, destination) => (
-                node(heap, schema, value, destination, &mut tasks, limits)?,
+                node(heap, schema, value, destination, &mut tasks, limits).await?,
                 destination,
             ),
-            Task::Key(units, destination) => (string(heap, units, destination)?, destination),
+            Task::Key(units, destination) => (string(heap, units, destination).await?, destination),
             Task::Entries(entries, keys, kind, destination) => {
-                let (handle, slots) = vector(heap, kind, entries.len(), destination, limits)?;
+                let (handle, slots) =
+                    vector(heap, kind, entries.len(), destination, limits).await?;
                 for (index, (key, value)) in entries.iter().enumerate().rev() {
                     let slot = Destination::Slot(slots + index * ARRAY_SLOT_BYTES);
                     tasks.push(if keys {
@@ -143,14 +174,14 @@ pub fn value<H: Heap>(
 /// Allocate, stamp and publish a block of `data`: retained when it is the
 /// root, stored into its parent's slot otherwise. Nothing allocates in
 /// between.
-pub fn publish<H: Heap>(
+pub async fn publish_async<H: AsyncHeap>(
     heap: &mut H,
     data: &[u8],
     flag: i32,
     link: u32,
     root: bool,
 ) -> Result<u64, H::Error> {
-    let ptr = heap.allocate(data.len())?;
+    let ptr = heap.allocate_async(data.len()).await?;
     heap.write(ptr, data)?;
     let header = ptr - abi::STRING_HEADER_BYTES;
     heap.word(
@@ -160,12 +191,12 @@ pub fn publish<H: Heap>(
     heap.word(header + HEAP_LINK_OFFSET, link)?;
     let handle = ((data.len() as u64) << i32::BITS) | ptr as u64;
     if root {
-        heap.retain(handle)?;
+        heap.retain_async(handle).await?;
     }
     Ok(handle)
 }
 
-fn placed<H: Heap>(
+async fn placed<H: AsyncHeap>(
     heap: &mut H,
     data: &[u8],
     flag: i32,
@@ -173,27 +204,31 @@ fn placed<H: Heap>(
     destination: Destination,
 ) -> Result<u64, H::Error> {
     match destination {
-        Destination::Root => publish(heap, data, flag, link, true),
+        Destination::Root => publish_async(heap, data, flag, link, true).await,
         Destination::Slot(at) => {
-            let handle = publish(heap, data, flag, link, false)?;
+            let handle = publish_async(heap, data, flag, link, false).await?;
             heap.slot(at, handle)?;
             Ok(handle)
         }
     }
 }
 
-fn string<H: Heap>(heap: &mut H, units: &[u16], destination: Destination) -> Result<u64, H::Error> {
+async fn string<H: AsyncHeap>(
+    heap: &mut H,
+    units: &[u16],
+    destination: Destination,
+) -> Result<u64, H::Error> {
     if units.is_empty() {
         return Ok(0);
     }
     let bytes: Vec<u8> = units.iter().flat_map(|unit| unit.to_le_bytes()).collect();
-    placed(heap, &bytes, 0, 0, destination)
+    placed(heap, &bytes, 0, 0, destination).await
 }
 
 /// A vector of `count` zero slots, all present: the identity cell first, then
 /// its backing, published into the cell at once. Returns the cell handle and
 /// the address of the backing's first slot.
-fn vector<H: Heap>(
+async fn vector<H: AsyncHeap>(
     heap: &mut H,
     kind: ValueKind,
     count: usize,
@@ -208,7 +243,7 @@ fn vector<H: Heap>(
     cell.extend((kind as u32).to_le_bytes());
     cell.extend(length.to_le_bytes());
     cell.extend(0u64.to_le_bytes());
-    let handle = placed(heap, &cell, HEAP_VECTOR_FLAG, 1, destination)?;
+    let handle = placed(heap, &cell, HEAP_VECTOR_FLAG, 1, destination).await?;
     let capacity = array_capacity(count);
     let bitmap = ARRAY_META_BYTES + capacity * ARRAY_SLOT_BYTES;
     let mut data = alloc::vec![0; bitmap + DataLimits::sparse_bitmap_bytes(capacity)];
@@ -223,11 +258,12 @@ fn vector<H: Heap>(
         HEAP_ARRAY_FLAG | HEAP_SPARSE_FLAG,
         u32::from(kind.is_reference()),
         Destination::Slot(handle as u32 as usize + VECTOR_STORAGE_OFFSET as usize),
-    )?;
+    )
+    .await?;
     Ok((handle, storage as u32 as usize + ARRAY_META_BYTES))
 }
 
-fn node<'a, H: Heap>(
+async fn node<'a, H: AsyncHeap>(
     heap: &mut H,
     schema: &JsonSchema,
     value: &'a JsonValue,
@@ -240,10 +276,10 @@ fn node<'a, H: Heap>(
         JsonValue::I32(n) => *n as i64 as u64,
         JsonValue::Float64(bits) => *bits,
         JsonValue::Boolean(b) => u64::from(*b),
-        JsonValue::String16(units) => string(heap, units, destination)?,
+        JsonValue::String16(units) => string(heap, units, destination).await?,
         JsonValue::String(text) => {
             let units: Vec<u16> = text.encode_utf16().collect();
-            string(heap, &units, destination)?
+            string(heap, &units, destination).await?
         }
         JsonValue::Union { value, .. } => {
             let kind = match &**value {
@@ -267,7 +303,8 @@ fn node<'a, H: Heap>(
                 HEAP_UNION_FLAG,
                 u32::from(kind.is_reference()),
                 destination,
-            )?;
+            )
+            .await?;
             let slot = handle as u32 as usize + UNION_META_BYTES;
             tasks.push(Task::Value(value, Destination::Slot(slot)));
             handle
@@ -277,7 +314,7 @@ fn node<'a, H: Heap>(
                 return Err(BuildError::Invalid("array type"));
             };
             let kind = schema.types[element as usize].kind();
-            let (handle, slots) = vector(heap, kind, values.len(), destination, limits)?;
+            let (handle, slots) = vector(heap, kind, values.len(), destination, limits).await?;
             for (index, value) in values.iter().enumerate().rev() {
                 tasks.push(Task::Value(
                     value,
@@ -311,7 +348,7 @@ fn node<'a, H: Heap>(
                 .enumerate()
                 .filter(|(_, (_, kind))| kind.is_reference())
                 .fold(0u32, |edges, (slot, _)| edges | 1 << slot);
-            let handle = placed(heap, &data, HEAP_RECORD_FLAG, edges, destination)?;
+            let handle = placed(heap, &data, HEAP_RECORD_FLAG, edges, destination).await?;
             let slot = |name: &str| {
                 let index = storage
                     .iter()
@@ -389,7 +426,7 @@ fn node<'a, H: Heap>(
             for slot in order {
                 data.extend((slot as u32).to_le_bytes());
             }
-            let handle = placed(heap, &data, HEAP_RECORD_FLAG, link, destination)?;
+            let handle = placed(heap, &data, HEAP_RECORD_FLAG, link, destination).await?;
             for (index, value) in values.iter().enumerate().rev() {
                 tasks.push(Task::Value(
                     value,

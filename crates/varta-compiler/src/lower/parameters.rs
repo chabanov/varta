@@ -184,12 +184,27 @@ pub(super) fn analyze(
                 ));
             }
         }
-        if rest && !matches!(body, Type::Array(_)) {
+        if rest
+            && !matches!(body, Type::Array(_))
+            && !(types.profile.expression_forms() && matches!(body, Type::Tuple(_)))
+        {
             return Err(locate(
                 source,
                 type_error("rest parameter requires a checked array type"),
                 at,
             ));
+        }
+        if rest && let Type::Tuple(id) = body {
+            let tuple = &types.tuples[id as usize];
+            if tuple.required < tuple.elements.len() && !tuple.trailing.is_empty() {
+                return Err(locate(
+                    source,
+                    unsupported(
+                        "tuple-rest parameter with an optional prefix before trailing elements",
+                    ),
+                    at,
+                ));
+            }
         }
         let incoming = if optional {
             unions::intern(vec![body, Type::Undefined], types).map_err(|e| locate(source, e, at))?
@@ -317,4 +332,29 @@ impl Lower<'_> {
             body,
         )])
     }
+}
+
+/// Tuple-rest source and context signatures may have different physical
+/// parameter counts. Infer literals using their logical positional context,
+/// then adapt their own signature instead of forcing the context's ABI shape.
+pub(super) fn tuple_literal<'a>(
+    mut params: impl Iterator<Item = &'a ast::Pat>,
+    context: &ir::FunctionType,
+    types: &ir::ValueTypes,
+) -> bool {
+    if !types.profile.expression_forms() {
+        return false;
+    }
+    let context_tuple = context.shape.rest && matches!(context.params.last(), Some(Type::Tuple(_)));
+    let source_tuple = params.any(|p| match p {
+        ast::Pat::Rest(rest) => rest.type_ann.as_ref().is_some_and(|ann| {
+            matches!(&*ann.type_ann, ast::TsType::TsTupleType(_))
+                || matches!(
+                    generics::parameter(&ann.type_ann, types),
+                    Some(Type::Tuple(_))
+                )
+        }),
+        _ => false,
+    });
+    context_tuple || source_tuple
 }

@@ -440,6 +440,42 @@ impl Lower<'_> {
                         member.prop.span(),
                     ))
                 }
+                Some(method) if read && !method.getter && self.types.profile.expression_forms() => {
+                    self.check_access(
+                        method.owner,
+                        method.access,
+                        class,
+                        &name,
+                        member.prop.span(),
+                    )?;
+                    self.types.classes.method_values.push((
+                        class,
+                        name.clone(),
+                        self.source.clone(),
+                        member.span,
+                    ));
+                    if self
+                        .types
+                        .overloads
+                        .method(method.owner, &name, false)
+                        .is_some()
+                    {
+                        return Err(self.source.locate(
+                            unsupported(
+                                "overloaded class method value requires a concrete overload view",
+                            ),
+                            member.span,
+                        ));
+                    }
+                    let reference = self.function_reference(&method.signature, member.span)?;
+                    // Getting a method evaluates its receiver, but does not
+                    // capture/bind it: calls use the explicit this parameter.
+                    Ok(Expr {
+                        span: member.span,
+                        ty: reference.ty,
+                        kind: E::Sequence(Box::new(value), Box::new(reference)),
+                    })
+                }
                 Some(method) => Err(self.source.locate(
                     if method.getter {
                         type_error(format!("class getter {name} has no setter"))

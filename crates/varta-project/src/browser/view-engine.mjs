@@ -120,6 +120,7 @@ export function createViewEngine(module, { fontMetrics } = {}) {
     focus: (focused) => exports.view_engine_focus(focused),
     /** The committed computed values of element `id`: property name to CSS text. */
     computed: (id) => output(exports.view_engine_computed(id)),
+    animationCss() { const length = exports.view_engine_animation_css(); return decoder.decode(new Uint8Array(exports.memory.buffer, exports.view_engine_output(), length)); },
     /** The pseudo-elements the committed sheets select, by name. */
     pseudoElements() { const bits = exports.view_engine_pseudo_elements(); return PSEUDO_ELEMENTS.filter((_, index) => bits & (1 << index)); },
     /** The committed computed values of pseudo-element `kind` (a name of

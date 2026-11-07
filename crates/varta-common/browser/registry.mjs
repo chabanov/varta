@@ -950,7 +950,8 @@ export const registry = freeze({
     {
       "admittedUnder": [
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "time.now",
       "instanceBookkeeping": false,
@@ -1075,7 +1076,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "env.get",
       "instanceBookkeeping": false,
@@ -1158,7 +1160,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "env.has",
       "instanceBookkeeping": false,
@@ -1239,7 +1242,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "env.print",
       "instanceBookkeeping": false,
@@ -1259,7 +1263,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "env.get",
       "instanceBookkeeping": false,
@@ -1281,7 +1286,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": true,
@@ -1300,7 +1306,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": true,
@@ -1322,7 +1329,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": true,
@@ -1343,7 +1351,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": true,
@@ -1364,7 +1373,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": true,
@@ -1443,7 +1453,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "fs.print",
       "instanceBookkeeping": false,
@@ -1524,7 +1535,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "fs.read",
       "instanceBookkeeping": false,
@@ -1547,7 +1559,8 @@ export const registry = freeze({
     {
       "admittedUnder": [
         "checked-i32-utf8-v1",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -1604,7 +1617,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "net.listen",
       "instanceBookkeeping": false,
@@ -1621,7 +1635,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -1640,7 +1655,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -2531,7 +2547,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -2550,7 +2567,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "kv.write",
       "instanceBookkeeping": false,
@@ -2572,7 +2590,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -2594,7 +2613,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -2617,7 +2637,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "kv.read",
       "instanceBookkeeping": false,
@@ -2639,7 +2660,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "kv.read",
       "instanceBookkeeping": false,
@@ -2661,7 +2683,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -2685,7 +2708,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -2704,7 +2728,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -2784,7 +2809,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -2843,7 +2869,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -2862,7 +2889,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -2942,7 +2970,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -3000,7 +3029,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -3020,7 +3050,8 @@ export const registry = freeze({
     {
       "admittedUnder": [
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -3039,7 +3070,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -3119,7 +3151,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "net.fetch",
       "instanceBookkeeping": false,
@@ -3202,7 +3235,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "net.get",
       "instanceBookkeeping": false,
@@ -3225,7 +3259,8 @@ export const registry = freeze({
     {
       "admittedUnder": [
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -3266,7 +3301,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "net.request",
       "instanceBookkeeping": false,
@@ -3289,7 +3325,8 @@ export const registry = freeze({
     {
       "admittedUnder": [
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -3311,7 +3348,8 @@ export const registry = freeze({
     {
       "admittedUnder": [
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -3333,7 +3371,8 @@ export const registry = freeze({
     {
       "admittedUnder": [
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -4162,7 +4201,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -4558,7 +4598,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": true,
@@ -4580,7 +4621,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": true,
@@ -4996,7 +5038,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "process.exit",
       "instanceBookkeeping": false,
@@ -5054,7 +5097,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "process.exit",
       "instanceBookkeeping": false,
@@ -5077,7 +5121,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -5100,7 +5145,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -5126,7 +5172,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -5149,7 +5196,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -5220,7 +5268,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -5462,7 +5511,8 @@ export const registry = freeze({
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "time.now",
       "instanceBookkeeping": false,
@@ -5483,7 +5533,8 @@ export const registry = freeze({
       "admittedUnder": [
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -5526,7 +5577,8 @@ export const registry = freeze({
     {
       "admittedUnder": [
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": "time.timer",
       "instanceBookkeeping": false,
@@ -5551,7 +5603,8 @@ export const registry = freeze({
       "admittedUnder": [
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -5574,7 +5627,8 @@ export const registry = freeze({
       "admittedUnder": [
         "checked-f64-utf16-v36",
         "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -7589,7 +7643,8 @@ export const registry = freeze({
     },
     {
       "admittedUnder": [
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v38",
+        "checked-f64-utf16-v39"
       ],
       "capability": null,
       "instanceBookkeeping": false,
@@ -9827,6 +9882,73 @@ export const registry = freeze({
       ],
       "toolEntries": false,
       "valueAbi": 18
+    },
+    {
+      "acceptance": {
+        "catalogs": [
+          {
+            "frames": false,
+            "version": 1
+          },
+          {
+            "frames": true,
+            "version": 3
+          }
+        ],
+        "functionLimitCountsImports": true,
+        "helperAllowance": 13,
+        "maxDefinedFunctions": 1000000,
+        "values": [
+          18
+        ]
+      },
+      "admittedImports": 55,
+      "exceptionChannel": true,
+      "exceptionVersion": {
+        "global": "varta.exception.version_v9",
+        "value": 9
+      },
+      "fairFuel": true,
+      "frames": {
+        "catalog": 3
+      },
+      "hostAbi": 35,
+      "httpVersion": 2,
+      "name": "checked-f64-utf16-v39",
+      "numbers": "binary64",
+      "scheduler": true,
+      "schedulerLimits": {
+        "held": 131072,
+        "queueError": "microtask queue exceeds 131072 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "instance exceeds 9007199254740991 promise serials",
+        "serials": 9007199254740991,
+        "timerError": "execution exceeds 65536 pending timers",
+        "timers": 65536
+      },
+      "simd128": true,
+      "strings": "UTF-16LE",
+      "supportedKinds": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "toolEntries": false,
+      "valueAbi": 18
     }
   ],
   "scheduler": {
@@ -11513,7 +11635,7 @@ export const registry = freeze({
     "css": [
       {
         "code": 1,
-        "grammar": "block | flex | grid | none | inline",
+        "grammar": "block | flex | grid | none | inline | -webkit-box | inline-block | inline-flex",
         "name": "display",
         "note": null
       },
@@ -11705,7 +11827,7 @@ export const registry = freeze({
       },
       {
         "code": 33,
-        "grammar": "static | relative | absolute | fixed",
+        "grammar": "static | relative | absolute | fixed | sticky",
         "name": "position",
         "note": null
       },
@@ -11891,7 +12013,7 @@ export const registry = freeze({
       },
       {
         "code": 64,
-        "grammar": "none | [translate(<length-percentage> [, <length-percentage>]?) | translateX(<length-percentage>) | translateY(<length-percentage>) | scale(<number> [, <number>]?)]+",
+        "grammar": "none | [translate(<length-percentage> [, <length-percentage>]?) | translateX(<length-percentage>) | translateY(<length-percentage>) | scale(<number> [, <number>]?) | rotate(<angle>)]+",
         "name": "transform",
         "note": null
       },
@@ -12193,6 +12315,126 @@ export const registry = freeze({
         "code": 114,
         "grammar": "none | auto | button | textfield | menulist-button | searchfield | textarea | checkbox | radio | menulist | listbox | meter | progress-bar",
         "name": "appearance",
+        "note": null
+      },
+      {
+        "code": 115,
+        "grammar": "none | [<length>{2,4} [<color> || inset]? | <color> <length>{2,4} inset? | inset <length>{2,4} <color>? | <color> inset <length>{2,4} | inset <color> <length>{2,4}]#",
+        "name": "box-shadow",
+        "note": null
+      },
+      {
+        "code": 116,
+        "grammar": "normal | [ [lining-nums | oldstyle-nums] || [proportional-nums | tabular-nums] || [diagonal-fractions | stacked-fractions] || ordinal || slashed-zero ]",
+        "name": "font-variant-numeric",
+        "note": "inherited"
+      },
+      {
+        "code": 117,
+        "grammar": "auto | <color>",
+        "name": "accent-color",
+        "note": "inherited"
+      },
+      {
+        "code": 118,
+        "grammar": "none | inset(<length-percentage>{1,4})",
+        "name": "clip-path",
+        "note": null
+      },
+      {
+        "code": 119,
+        "grammar": "[wrap | nowrap] || [auto | pretty]",
+        "name": "text-wrap",
+        "note": "inherited"
+      },
+      {
+        "code": 120,
+        "grammar": "wrap | nowrap",
+        "name": "text-wrap-mode",
+        "note": "inherited"
+      },
+      {
+        "code": 121,
+        "grammar": "auto | pretty",
+        "name": "text-wrap-style",
+        "note": "inherited"
+      },
+      {
+        "code": 122,
+        "grammar": "none | <integer>",
+        "name": "-webkit-line-clamp",
+        "note": null
+      },
+      {
+        "code": 123,
+        "grammar": "horizontal | vertical | inline-axis | block-axis",
+        "name": "-webkit-box-orient",
+        "note": null
+      },
+      {
+        "code": 124,
+        "grammar": "auto | fixed",
+        "name": "table-layout",
+        "note": null
+      },
+      {
+        "code": 125,
+        "grammar": "none | linear-gradient([<color> <length-percentage>{0,2}]#) | linear-gradient([<angle> | to [[left | right] || [top | bottom]]] [in [srgb | srgb-linear | oklab]]? , [<color> <length-percentage>{0,2}]#) | linear-gradient(in [srgb | srgb-linear | oklab] , [<color> <length-percentage>{0,2}]#)",
+        "name": "background-image",
+        "note": null
+      },
+      {
+        "code": 126,
+        "grammar": "none | blur(<length>?)",
+        "name": "backdrop-filter",
+        "note": null
+      },
+      {
+        "code": 127,
+        "grammar": "[none | <custom-ident>]#",
+        "name": "animation-name",
+        "note": null
+      },
+      {
+        "code": 128,
+        "grammar": "<time>#",
+        "name": "animation-duration",
+        "note": null
+      },
+      {
+        "code": 129,
+        "grammar": "[linear | ease | ease-in | ease-out | ease-in-out]#",
+        "name": "animation-timing-function",
+        "note": null
+      },
+      {
+        "code": 130,
+        "grammar": "<time>#",
+        "name": "animation-delay",
+        "note": null
+      },
+      {
+        "code": 131,
+        "grammar": "[infinite | <number>]#",
+        "name": "animation-iteration-count",
+        "note": null
+      },
+      {
+        "code": 132,
+        "grammar": "[normal | reverse | alternate | alternate-reverse]#",
+        "name": "animation-direction",
+        "note": null
+      },
+      {
+        "code": 133,
+        "grammar": "[none | forwards | backwards | both]#",
+        "name": "animation-fill-mode",
+        "note": null
+      },
+      {
+        "code": 134,
+        "grammar": "[running | paused]#",
+        "name": "animation-play-state",
         "note": null
       }
     ],

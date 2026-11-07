@@ -289,14 +289,23 @@ impl Lower<'_> {
                 .map(|o| {
                     o.generic
                         .is_none()
-                        .then(|| arguments::context(index, &o.params, &o.shape, self.types))
+                        .then(|| {
+                            arguments::call_context(
+                                index,
+                                args.len(),
+                                &o.params,
+                                &o.shape,
+                                self.types,
+                            )
+                        })
                         .flatten()
                 })
                 .collect();
             let expected = match contexts.first().copied().flatten() {
                 Some(first) if contexts.iter().all(|c| *c == Some(first)) => Some(first),
-                _ => arguments::context(
+                _ => arguments::call_context(
                     index,
+                    args.len(),
                     &implementation.params,
                     &implementation.shape,
                     self.types,
@@ -336,15 +345,21 @@ impl Lower<'_> {
                 }
                 None => overload,
             };
-            if arguments::count(values.len(), &overload.shape).is_err() {
+            if arguments::typed_count(values.len(), &overload.params, &overload.shape, self.types)
+                .is_err()
+            {
                 continue;
             }
             let mut typed = Vec::new();
             let mut matches = true;
             for (index, (value, arg)) in values.iter().zip(args).enumerate() {
-                let Some(param) =
-                    arguments::context(index, &overload.params, &overload.shape, self.types)
-                else {
+                let Some(param) = arguments::call_context(
+                    index,
+                    values.len(),
+                    &overload.params,
+                    &overload.shape,
+                    self.types,
+                ) else {
                     matches = false;
                     break;
                 };

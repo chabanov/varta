@@ -1,11 +1,14 @@
 //! Bounded CPU painting for an explicitly limited subset of the view tree.
+pub(crate) mod backdrop;
 pub(crate) mod border;
 mod border_partition;
 mod clip_curve;
+mod clip_path;
 mod corner_arc;
 mod corner_clip;
 pub(crate) mod corners;
 mod curve_region;
+pub(crate) mod gradient;
 mod groups;
 mod image;
 mod inline_decor;
@@ -18,6 +21,7 @@ mod overlay_scrollbar;
 mod scroll;
 mod scrollbar;
 mod select;
+pub(crate) mod shadow;
 mod snap;
 mod text_geometry;
 mod theme;
@@ -143,7 +147,7 @@ fn pointer_cursor(tree: &Tree, env: &Environment, id: u32) -> PointerCursor {
             if value == style::INHERIT {
                 continue;
             }
-            if value == "auto" {
+            if value.eq_ignore_ascii_case("auto") {
                 break;
             }
             return match value.as_str() {
@@ -573,6 +577,9 @@ impl Surface<'_> {
             Primitive::Path(path, _) => path.bounds(),
             Primitive::Border(border) => border.path.bounds(),
             Primitive::Image(image) => image.rect,
+            Primitive::Shadow(shadow) => shadow.bounds,
+            Primitive::Gradient(gradient) => gradient.bounds,
+            Primitive::Backdrop(backdrop) => backdrop.bounds,
             Primitive::BeginGroup { .. } | Primitive::EndGroup => {
                 unreachable!("group markers are recorded by scope")
             }
@@ -611,7 +618,11 @@ impl Surface<'_> {
         }
         // Cache capacity never changes content admission. A large scene flushes
         // to the ordinary full-frame path instead of retaining an unbounded list.
-        let Some(mut pixels) = Pixmap::new(self.width, self.height) else {
+        let Some(mut pixels) = self
+            .pixels
+            .take()
+            .or_else(|| Pixmap::new(self.width, self.height))
+        else {
             self.failure = Some(PaintError::Dimensions);
             return;
         };
@@ -648,8 +659,8 @@ impl Surface<'_> {
     fn device_transform(&self, affine: crate::transform::Affine) -> Transform {
         Transform::from_row(
             affine.scale_x,
-            0.0,
-            0.0,
+            affine.skew_y,
+            affine.skew_x,
             affine.scale_y,
             affine.x * self.scale,
             affine.y * self.scale,
@@ -669,13 +680,37 @@ impl Surface<'_> {
             .then_some(total)
     }
     /// Maps the draws recorded since `start` through `affine` (CSS pixels).
-    fn end_transform(&mut self, start: usize, affine: crate::transform::Affine) {
+    fn end_transform(&mut self, node: u32, start: usize, affine: crate::transform::Affine) {
         self.affines.pop();
         let device = self.device_transform(affine);
         let Some(recording) = self.commands.as_mut() else {
             return;
         };
         for draw in recording.commands.iter_mut().skip(start) {
+            let before = draw.bytes();
+            if device.kx != 0.0 || device.ky != 0.0 {
+                match &draw.primitive {
+                    Primitive::Rect(rect) => {
+                        draw.primitive = Primitive::Path(
+                            std::sync::Arc::new(PathBuilder::from_rect(*rect)),
+                            FillRule::Winding,
+                        )
+                    }
+                    // These samplers currently require an axis-aligned source.
+                    Primitive::Image(_) | Primitive::Border(_) => {
+                        self.failure = Some(PaintError::Unsupported(node));
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            recording.bytes = recording
+                .bytes
+                .saturating_sub(before)
+                .saturating_add(draw.bytes());
+            if recording.bytes > scene::MAX_SCENE_BYTES {
+                recording.cacheable = false;
+            }
             draw.transform = device.pre_concat(draw.transform);
             if let Some(bounds) = draw.bounds.transform(device) {
                 draw.bounds = bounds;
@@ -945,10 +980,12 @@ fn clipped(a: BoxRect, b: BoxRect) -> Option<Rect> {
 /// The used `color` of `id`: the nearest author color, or a form control's
 /// user-agent color (`buttontext`/`fieldtext`, or its disabled color),
 /// which stops inheritance from outside the control.
-fn current_color(tree: &Tree, env: &Environment, id: u32) -> Option<Color> {
+pub(crate) fn current_color(tree: &Tree, env: &Environment, id: u32) -> Option<Color> {
     for ancestor in tree.path(id) {
-        let computed = tree.computed_read(ancestor, env);
-        let value = computed.get(&CssProperty::Color);
+        // A shadow sample may ask for currentcolor. Read only color so the
+        // lookup cannot overlay that same shadow again; retain prepared reads.
+        let value = tree.computed_property(ancestor, env, CssProperty::Color);
+        let value = value.as_deref();
         // Cascade 5 §7.3.2: `inherit` takes the parent's color, past this
         // element's user-agent color.
         if value.is_some_and(|value| value == style::INHERIT) {
@@ -1001,6 +1038,25 @@ fn mixed_color(value: &str, current: Color) -> Option<Color> {
 
 /// The used color of a computed color value of element `id`:
 /// `currentcolor` and mixes with it resolve against its `color`.
+fn control_accent(tree: &Tree, env: &Environment, id: u32) -> Result<Option<Color>, PaintError> {
+    for ancestor in tree.path(id) {
+        let properties = tree.computed_read(ancestor, env);
+        if let Some(value) = properties.get(&CssProperty::AccentColor) {
+            if value == style::INHERIT {
+                continue;
+            }
+            return if value == "auto" {
+                Ok(None)
+            } else {
+                used_color(tree, env, id, value)
+                    .map(Some)
+                    .ok_or(PaintError::Unsupported(id))
+            };
+        }
+    }
+    Ok(None)
+}
+
 fn used_color(tree: &Tree, env: &Environment, id: u32, value: &str) -> Option<Color> {
     if value == "currentcolor" {
         current_color(tree, env, id)
@@ -2741,6 +2797,7 @@ fn clip_scopes(
     surface: &mut Surface,
 ) -> Result<Scopes, PaintError> {
     let mut scopes = Scopes::default();
+    let mut paths = BTreeMap::new();
     for (id, placement) in order.elements() {
         let Some(element) = tree.element(id) else {
             continue;
@@ -2748,6 +2805,28 @@ fn clip_scopes(
         surface.active_clip = placement
             .scope
             .and_then(|scope| scopes.children.get(&scope).cloned());
+        // Clip paths apply to every DOM descendant, including absolute/fixed
+        // descendants whose containing block skips an intermediate ancestor.
+        for ancestor in tree.path(id).into_iter().skip(1).rev() {
+            if let Some(path) = paths.get(&ancestor) {
+                surface.active_clip = Some(clip_path::combine(surface.active_clip.take(), path));
+            }
+        }
+        if let Some(raw) = tree.computed_read(id, env).get(&CssProperty::ClipPath)
+            && !raw.eq_ignore_ascii_case("none")
+        {
+            let rect = clip_path::inset(raw, geometry[&id].rect, units)
+                .ok_or(PaintError::Unsupported(id))?;
+            let physical = scaled_rect(rect, surface.scale);
+            let shape = Clip::new(
+                None,
+                Corners::default().path(physical),
+                physical,
+                Corners::default(),
+            );
+            surface.active_clip = Some(clip_path::combine(surface.active_clip.take(), &shape));
+            paths.insert(id, shape);
+        }
         if let Some(clip) = &surface.active_clip {
             scopes.own.insert(id, clip.clone());
         }
@@ -2916,7 +2995,7 @@ fn rasterize_inner_scoped(
         width,
         height,
         scale,
-        commands: retained.then(Recording::default),
+        commands: Some(Recording::default()),
         active_clip: None,
         clip_masks: None,
         failure: None,
@@ -3084,27 +3163,25 @@ fn rasterize_inner_scoped(
             )?;
             pixmap.end_group(id)?;
             if let Some((_, start, hits, affine)) = transform_scopes.pop_if(|scope| scope.0 == id) {
-                pixmap.end_transform(start, affine);
+                pixmap.end_transform(id, start, affine);
                 if hit_clips.range(hits..).next().is_some() {
                     return Err(PaintError::Unsupported(id));
-                }
-                for (_, rect) in &mut hit_regions[hits..] {
-                    *rect = affine.rect(*rect);
                 }
                 let device = crate::transform::Affine {
                     x: affine.x * scale,
                     y: affine.y * scale,
                     ..affine
                 };
-                for (_, region) in rounded_regions.range_mut(hits..) {
-                    let inline_decor::Region::Box(bounds, radii) = region else {
-                        return Err(PaintError::Unsupported(id));
-                    };
-                    *bounds = device.rect(*bounds);
-                    for [x, y] in &mut radii.0 {
-                        *x *= affine.scale_x;
-                        *y *= affine.scale_y;
-                    }
+                for (offset, (_, rect)) in hit_regions[hits..].iter_mut().enumerate() {
+                    let index = hits + offset;
+                    let region = rounded_regions.remove(&index).unwrap_or_else(|| {
+                        inline_decor::Region::Box(scaled_rect(*rect, scale), Corners::default())
+                    });
+                    rounded_regions.insert(
+                        index,
+                        inline_decor::Region::Transformed(device.inverse(), Box::new(region)),
+                    );
+                    *rect = affine.rect(*rect);
                 }
             }
             if group_clips.last().is_some_and(|(group, _)| *group == id) {
@@ -3400,9 +3477,23 @@ fn rasterize_inner_scoped(
             let start = pixmap.begin_transform(id, affine)?;
             transform_scopes.push((id, start, hit_regions.len(), affine));
         }
-        if opacity != 1.0 {
+        if opacity != 1.0
+            || clip_path::establishes(&properties)
+            || backdrop::establishes(&properties)
+        {
             pixmap.begin_group(id, opacity, geometry[&id].clip)?;
             group_clips.push((id, geometry[&id].clip));
+        }
+        if backdrop::establishes(&properties) {
+            backdrop::paint(
+                &mut pixmap,
+                &properties,
+                id,
+                paint_rect,
+                paint_radii,
+                units,
+                &mut text_work,
+            )?;
         }
         if id != ROOT_NODE
             && let Some(rect) = clipped(geometry[&id].rect, geometry[&id].clip)
@@ -3429,6 +3520,15 @@ fn rasterize_inner_scoped(
                 },
             ));
         }
+        let shadow_box = shadow::PaintBox {
+            rect: paint_rect,
+            corners: paint_radii,
+            widths,
+            clip: geometry[&id].clip,
+        };
+        if properties.contains_key(&CssProperty::BoxShadow) {
+            shadow::paint(&mut pixmap, (tree, &env, id), shadow_box, false)?;
+        }
         if let Some(kind) = control.filter(|_| themed) {
             theme::paint(
                 &mut pixmap,
@@ -3438,6 +3538,7 @@ fn rasterize_inner_scoped(
                 theme::State {
                     checked: element.checked,
                     disabled: element.disabled(),
+                    accent: control_accent(tree, &env, id)?,
                 },
             )?;
         } else if let Some(color) = properties
@@ -3468,6 +3569,12 @@ fn rasterize_inner_scoped(
                     );
                 }
             }
+        }
+        if properties.contains_key(&CssProperty::BackgroundImage) {
+            gradient::paint(&mut pixmap, (tree, &env, id), shadow_box)?;
+        }
+        if properties.contains_key(&CssProperty::BoxShadow) {
+            shadow::paint(&mut pixmap, (tree, &env, id), shadow_box, true)?;
         }
         if !themed && let Some(colors) = border_colors(tree, &env, id, widths)? {
             let bounds = geometry[&id];
@@ -3634,6 +3741,8 @@ mod flow_text_tests {
             line_height: None,
             weight: style::NORMAL_FONT_WEIGHT,
             italic: false,
+            numeric: crate::text::numeric::Numeric::default(),
+            pretty: false,
             letter_spacing: 0.0,
             white_space: WhiteSpaceMode::Pre,
             break_anywhere: false,

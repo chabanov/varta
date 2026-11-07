@@ -24,6 +24,9 @@ enum Component {
     Style,
     /// The `<color>` of a border or outline shorthand.
     Color,
+    WrapMode,
+    WrapStyle,
+    WhiteSpaceMode,
 }
 
 const SIDES: [P; 4] = [P::BorderTop, P::BorderRight, P::BorderBottom, P::BorderLeft];
@@ -57,6 +60,11 @@ fn covered(shorthand: P) -> Vec<(P, Component)> {
             .collect::<Vec<_>>()
     };
     match shorthand {
+        P::TextWrap => vec![
+            (P::TextWrapMode, Component::WrapMode),
+            (P::TextWrapStyle, Component::WrapStyle),
+        ],
+        P::WhiteSpace => vec![(P::TextWrapMode, Component::WhiteSpaceMode)],
         P::Margin => boxed(&[P::MarginTop, P::MarginRight, P::MarginBottom, P::MarginLeft]),
         P::Padding => boxed(&[
             P::PaddingTop,
@@ -109,7 +117,9 @@ fn covered(shorthand: P) -> Vec<(P, Component)> {
 }
 
 /// The shorthands of [`covered`], in registry order.
-const SHORTHANDS: [P; 14] = [
+const SHORTHANDS: [P; 16] = [
+    P::TextWrap,
+    P::WhiteSpace,
     P::Margin,
     P::Padding,
     P::Gap,
@@ -159,6 +169,28 @@ fn component(value: &Computed, wanted: Component) -> Option<Computed> {
     let parts = split(text)?;
     match wanted {
         Component::Whole => Some(value.clone()),
+        Component::WhiteSpaceMode => Some(Computed::Value(
+            if matches!(text.to_ascii_lowercase().as_str(), "nowrap" | "pre") {
+                "nowrap"
+            } else {
+                "wrap"
+            }
+            .into(),
+        )),
+        Component::WrapMode => Some(Computed::Value(
+            parts
+                .iter()
+                .find(|p| matches!(p.to_ascii_lowercase().as_str(), "wrap" | "nowrap"))
+                .map_or("wrap", String::as_str)
+                .to_ascii_lowercase(),
+        )),
+        Component::WrapStyle => Some(Computed::Value(
+            parts
+                .iter()
+                .find(|p| matches!(p.to_ascii_lowercase().as_str(), "auto" | "pretty"))
+                .map_or("auto", String::as_str)
+                .to_ascii_lowercase(),
+        )),
         Component::Box(index, longhands) => {
             let at = match (longhands, parts.len()) {
                 (_, 1) => 0,
@@ -202,7 +234,11 @@ pub(crate) fn resolve(
         }
     }
     for (longhand, (rank, shorthand, how)) in best {
-        if ranks.get(&longhand).is_none_or(|own| *own > rank) {
+        let text_wrap = matches!(
+            how,
+            Component::WrapMode | Component::WrapStyle | Component::WhiteSpaceMode
+        );
+        if ranks.get(&longhand).map_or(!text_wrap, |own| *own > rank) {
             continue;
         }
         match out.get(&shorthand).and_then(|value| component(value, how)) {

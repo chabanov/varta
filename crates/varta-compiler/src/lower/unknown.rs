@@ -420,7 +420,16 @@ impl Lower<'_> {
             self.expr_preserving(&assertion.expr)?
         };
         let message = format!("type assertion to {name} failed");
-        self.assert_value(value, target, &name, &message, assertion.span)
+        // Even when a pattern/union target cannot use the checked decoder,
+        // its direct JSON.parse assertion keeps the strict graph fallback.
+        let strict_json = matches!(operand, ast::Expr::Call(call)
+            if matches!(&call.callee, ast::Callee::Expr(callee)
+                if expr::callee_name(callee).as_deref() == Some("JSON.parse")));
+        if strict_json {
+            self.assert_value_strict(value, target, &name, &message, assertion.span)
+        } else {
+            self.assert_value(value, target, &name, &message, assertion.span)
+        }
     }
     /// Convert `value` to `target`, testing the value at run time unless the
     /// conversion is an upcast. `message` is the `TypeError` message.
@@ -431,6 +440,27 @@ impl Lower<'_> {
         name: &str,
         message: &str,
         span: Span,
+    ) -> Result<Expr> {
+        self.assert_value_mode(value, target, name, message, span, true)
+    }
+    pub(super) fn assert_value_strict(
+        &mut self,
+        value: Expr,
+        target: Type,
+        name: &str,
+        message: &str,
+        span: Span,
+    ) -> Result<Expr> {
+        self.assert_value_mode(value, target, name, message, span, false)
+    }
+    fn assert_value_mode(
+        &mut self,
+        value: Expr,
+        target: Type,
+        name: &str,
+        message: &str,
+        span: Span,
+        snapshot: bool,
     ) -> Result<Expr> {
         // `x as void` (v38, `request<void>` instances): the value is
         // evaluated and discarded; `void` has no value to check.
@@ -566,6 +596,9 @@ impl Lower<'_> {
         }
         // V36 converts JSON-graph values to records, arrays and dictionaries.
         if declared_fields::applies(source, target, self.types) {
+            if snapshot && snapshots::applies(target, self.types) {
+                return self.converted_snapshot(value, target, message, span);
+            }
             return self.converted_value(value, target, message, span);
         }
         let cell_ty = if source.is_cell() {

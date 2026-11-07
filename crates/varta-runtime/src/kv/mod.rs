@@ -20,6 +20,7 @@
 //! `KV_ENTRY` per entry a read returns, and the checked JSON rates for the
 //! schema and the values a decode builds.
 mod clock;
+mod decode;
 pub(crate) mod store;
 
 use crate::{RuntimeContext, permission::Decision};
@@ -455,51 +456,10 @@ fn entry_at(state: &Kv, index: f64) -> Result<&Entry, wasmtime::Error> {
         .ok_or_else(|| fatal("entry index"))
 }
 
-/// The key or value of an entry decoded into the module's checked schema
-/// (`varta_kv_codec::guest::decode`).
-fn decoded(
-    caller: &mut Caller<'_, RuntimeContext>,
-    index: f64,
-    schema_ptr: i32,
-    schema_len: i32,
-    key: bool,
-) -> Result<i64, wasmtime::Error> {
-    caller.data_mut().tick()?;
-    let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT) else {
-        return Err(fatal("missing memory"));
-    };
-    let context = caller.data();
-    // The entry is copied out of the instance state the decode writes to;
-    // a missing one fails once the schema is checked.
-    let entry = entry_at(&context.kv, index).ok().map(|entry| {
-        if key {
-            (entry.key.clone(), None)
-        } else {
-            (Vec::new(), Some(stored(&entry.value)))
-        }
-    });
-    let deadline = Deadline(context.deadline);
-    let mut host = crate::json_parse::guest::Host::new(caller, memory);
-    let module = host.module();
-    let entry = entry.as_ref().map(|(key, value)| match value {
-        Some(value) => guest::Entry::Value(value),
-        None => guest::Entry::Key(key),
-    });
-    guest::decode(
-        &mut host,
-        module,
-        &deadline,
-        (schema_ptr, schema_len),
-        entry,
-        |bytes, limits| {
-            varta_common::json::JsonSchema::from_bytes_within(bytes, limits)
-                .map_err(|error| error.to_string())
-        },
-    )
-    .map(|value| value as i64)
-}
-
-pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
+pub(crate) fn register(
+    linker: &mut Linker<RuntimeContext>,
+    asynchronous: bool,
+) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
         varta_common::abi::HOST_MODULE,
         HostOperation::KvOpen.name(),
@@ -535,20 +495,31 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                 .map_err(|error| error.into_trap(fatal))
         },
     )?;
-    linker.func_wrap(
-        varta_common::abi::HOST_MODULE,
-        HostOperation::KvKey.name(),
-        |mut caller: Caller<'_, RuntimeContext>, index: f64, ptr: i32, len: i32| {
-            decoded(&mut caller, index, ptr, len, true)
-        },
-    )?;
-    linker.func_wrap(
-        varta_common::abi::HOST_MODULE,
-        HostOperation::KvValue.name(),
-        |mut caller: Caller<'_, RuntimeContext>, index: f64, ptr: i32, len: i32| {
-            decoded(&mut caller, index, ptr, len, false)
-        },
-    )?;
+    for (operation, key) in [
+        (HostOperation::KvKey, true),
+        (HostOperation::KvValue, false),
+    ] {
+        if asynchronous {
+            linker.func_wrap_async(
+                varta_common::abi::HOST_MODULE,
+                operation.name(),
+                move |mut caller: Caller<'_, RuntimeContext>,
+                      (index, ptr, len): (f64, i32, i32)| {
+                    Box::new(async move {
+                        decode::decoded_async(&mut caller, index, ptr, len, key).await
+                    })
+                },
+            )?;
+        } else {
+            linker.func_wrap(
+                varta_common::abi::HOST_MODULE,
+                operation.name(),
+                move |mut caller: Caller<'_, RuntimeContext>, index: f64, ptr: i32, len: i32| {
+                    decode::decoded(&mut caller, index, ptr, len, key)
+                },
+            )?;
+        }
+    }
     linker.func_wrap(
         varta_common::abi::HOST_MODULE,
         HostOperation::KvText.name(),

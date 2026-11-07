@@ -151,10 +151,36 @@ impl Lower<'_> {
                         ret.arg.as_deref().map(|expr| self.expr(expr)).transpose()?,
                     ));
                 }
+                let typed_async =
+                    self.types.profile.structural_subtyping() && self.asynchronous.is_some();
+                if typed_async
+                    && let Some(ast::Expr::Cond(branch)) = ret.arg.as_deref().map(unparen)
+                {
+                    // Keep each arm's static promise type until after finally,
+                    // rather than merging promises into an unknown cell.
+                    return self.statement(&ast::Stmt::If(ast::IfStmt {
+                        span: ret.span,
+                        test: branch.test.clone(),
+                        cons: Box::new(ast::Stmt::Return(ast::ReturnStmt {
+                            span: branch.cons.span(),
+                            arg: Some(branch.cons.clone()),
+                        })),
+                        alt: Some(Box::new(ast::Stmt::Return(ast::ReturnStmt {
+                            span: branch.alt.span(),
+                            arg: Some(branch.alt.clone()),
+                        }))),
+                    }));
+                }
                 let mut value = ret
                     .arg
                     .as_deref()
-                    .map(|expr| self.expr_expected(expr, Some(self.result)))
+                    .map(|expr| {
+                        if typed_async {
+                            self.async_return_expression(expr)
+                        } else {
+                            self.expr_expected(expr, Some(self.result))
+                        }
+                    })
                     .transpose()?;
                 // `return e` in an async generator awaits `e` (v36).
                 if self.async_body().is_some() {
@@ -193,9 +219,9 @@ impl Lower<'_> {
                     }
                 }
                 // An async body may also return a promise to adopt (v34).
-                let adopted = self
-                    .asynchronous
-                    .is_some_and(|id| value.as_ref().is_some_and(|v| v.ty == Type::Promise(id)));
+                let adopted = value
+                    .as_ref()
+                    .is_some_and(|v| self.accepts_async_promise(v.ty));
                 if !adopted && value.as_ref().map_or(Type::Void, |e| e.ty) != self.result {
                     let (expected, found) =
                         self.mismatch(self.result, value.as_ref().map_or(Type::Void, |v| v.ty));

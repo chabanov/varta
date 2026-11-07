@@ -14,6 +14,64 @@ enum Member {
 type Entries = Vec<(Option<u32>, u64, u32, u64)>;
 
 impl Encoder<'_, '_> {
+    fn record_snapshot(
+        &mut self,
+        packed: u64,
+        depth: usize,
+        fields: &[RecordEntry],
+        snapshot: SnapshotMembers,
+    ) -> Result<(), wasmtime::Error> {
+        let ptr = packed as u32 as usize;
+        if self.path.contains(&ptr) {
+            return Err(error("cyclic object"));
+        }
+        self.path.push(ptr);
+        self.write(b"{")?;
+        let mut written = false;
+        for member in snapshot.order {
+            let (name, kind, payload) = if member < fields.len() {
+                let field = fields[member];
+                let name = std::str::from_utf8(self.bytes(field.key, field.len)?)
+                    .map_err(|_| error("invalid field UTF-8"))?;
+                (
+                    name.encode_utf16().collect::<Vec<_>>(),
+                    field.kind as u32,
+                    field.payload,
+                )
+            } else {
+                let (key, value) = snapshot
+                    .extras
+                    .entry(self.data, member - fields.len())
+                    .map_err(wasmtime::Error::new)?
+                    .ok_or_else(|| error("missing snapshot member"))?;
+                let units = varta_common::text::units(
+                    self.bytes(key as u32 as usize, (key >> i32::BITS) as usize)?,
+                )
+                .map_err(|_| error("invalid UTF-16 byte length"))?;
+                (units, snapshot.extras.values.kind as u32, value)
+            };
+            let (kind, payload) = self.resolve(kind, payload)?;
+            if kind == ValueKind::Undefined as u32 {
+                self.visit(depth + 1)?;
+                if payload != 0 {
+                    return Err(error("noncanonical undefined"));
+                }
+                continue;
+            }
+            if written {
+                self.write(b",")?;
+            }
+            written = true;
+            varta_common::text::write_json(&mut self.output, &name)
+                .map_err(|_| error("output byte limit"))?;
+            self.write(b":")?;
+            self.value(kind, payload, depth + 1)?;
+        }
+        self.write(b"}")?;
+        self.path.pop();
+        Ok(())
+    }
+
     /// The present entries of the index dictionary `packed` of a class
     /// instance (holes of an indexed dictionary skipped).
     fn index_entries(&mut self, packed: u64) -> Result<Entries, wasmtime::Error> {
@@ -45,6 +103,24 @@ impl Encoder<'_, '_> {
         packed: u64,
         depth: usize,
     ) -> Result<(), wasmtime::Error> {
+        if self.module.snapshots {
+            let mut fields = Vec::new();
+            read_record_in(
+                self.data,
+                packed,
+                self.version,
+                &self.module,
+                |field| fields.push(field),
+                |_| {},
+            )
+            .map_err(wasmtime::Error::new)?;
+            fields.sort_by_key(|field| field.slot);
+            if let Some(snapshot) = snapshot_members(self.data, &fields, self.version, self.module)
+                .map_err(wasmtime::Error::new)?
+            {
+                return self.record_snapshot(packed, depth, &fields, snapshot);
+            }
+        }
         let max = max_record_fields(self.version);
         let (ptr, length) =
             self.managed(packed, HEAP_RECORD_FLAG, record_bytes(self.version, max))?;

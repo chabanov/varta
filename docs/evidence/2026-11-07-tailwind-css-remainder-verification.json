@@ -1,0 +1,3154 @@
+{
+  "date": "2026-11-07",
+  "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+  "scope": "Remaining 14 finite application Tailwind/CSS candidates, implemented as one package. This is not full CSS or Tailwind compatibility.",
+  "previousEvidence": "docs/evidence/2026-11-07-tailwind-css-verification.json",
+  "applicationCorpus": {
+    "total": 312,
+    "previousAdmitted": 298,
+    "admitted": 312,
+    "refused": [],
+    "opened": [
+      "[text-wrap:pretty]",
+      "accent-indigo-600",
+      "animate-pulse",
+      "animate-spin",
+      "backdrop-blur",
+      "bg-gradient-to-b",
+      "inline-block",
+      "inline-flex",
+      "line-clamp-2",
+      "line-clamp-3",
+      "sr-only",
+      "sticky",
+      "table-auto",
+      "tabular-nums"
+    ],
+    "tableLayoutApplicability": "table-layout is inert on current non-table boxes; native table layout is still unsupported"
+  },
+  "sharedCorpus": {
+    "cases": 475,
+    "nativeWasmAgreement": true,
+    "newCases": 8,
+    "accepted": 451,
+    "refused": 24
+  },
+  "browserModule": {
+    "sourceFingerprint": "3438b6c5c9b68c7c",
+    "target": "wasm32-wasip2",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "bytes": 706967
+  },
+  "chrome": [
+    {
+      "mode": "bridge",
+      "scale": 1.25,
+      "scenes": 49,
+      "checks": 1598,
+      "log": "target/tailwind-css-remainder-20261107/chrome-bridge-1.25.log",
+      "sha256": "7990af051926d0861e87c615d1bcf532e297a35a81e4bcf12c8af2f0181c0492",
+      "observations": [
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "accent-controls",
+          "rgbMeanDelta": 0.0536,
+          "rgbMaxDelta": 64,
+          "pixelsOverOne": 274,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "linear-gradients",
+          "rgbMeanDelta": 0.0297,
+          "rgbMaxDelta": 10,
+          "pixelsOverOne": 32,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "backdrop-blur",
+          "rgbMeanDelta": 0.0385,
+          "rgbMaxDelta": 49,
+          "pixelsOverOne": 364,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "screen-reader-only",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "numeric-font-variants",
+          "rgbMeanDelta": 0.3033,
+          "rgbMaxDelta": 110,
+          "pixelsOverOne": 462,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "line-clamp",
+          "rgbMeanDelta": 0.9616,
+          "rgbMaxDelta": 221,
+          "pixelsOverOne": 1680,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "atomic-inlines",
+          "rgbMeanDelta": 0.0856,
+          "rgbMaxDelta": 127,
+          "pixelsOverOne": 563,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "sticky-scroll",
+          "rgbMeanDelta": 0.1279,
+          "rgbMaxDelta": 128,
+          "pixelsOverOne": 250,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "pretty-wrap",
+          "rgbMeanDelta": 1.3514,
+          "rgbMaxDelta": 255,
+          "pixelsOverOne": 972,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "animation-pulse",
+          "rgbMeanDelta": 0.0333,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "animation-spin",
+          "rgbMeanDelta": 0.1111,
+          "rgbMaxDelta": 64,
+          "pixelsOverOne": 556,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "intrinsic-box-sizes",
+          "rgbMeanDelta": 0.0452,
+          "rgbMaxDelta": 65,
+          "pixelsOverOne": 745,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "intrinsic-height-and-stretch",
+          "rgbMeanDelta": 0.0174,
+          "rgbMaxDelta": 54,
+          "pixelsOverOne": 32,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "box-shadows",
+          "rgbMeanDelta": 0.2193,
+          "rgbMaxDelta": 45,
+          "pixelsOverOne": 2694,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "inline-box-shadows",
+          "rgbMeanDelta": 0.5082,
+          "rgbMaxDelta": 128,
+          "pixelsOverOne": 2009,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "escaped-classes",
+          "rgbMeanDelta": 0.0027,
+          "rgbMaxDelta": 31,
+          "pixelsOverOne": 1,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "layers",
+          "rgbMeanDelta": 0.004,
+          "rgbMaxDelta": 63,
+          "pixelsOverOne": 8,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "registered-properties",
+          "rgbMeanDelta": 0.0002,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "theme-colours",
+          "rgbMeanDelta": 0.0105,
+          "rgbMaxDelta": 61,
+          "pixelsOverOne": 16,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "colour-functions",
+          "rgbMeanDelta": 0.0172,
+          "rgbMaxDelta": 63,
+          "pixelsOverOne": 44,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "out-of-gamut",
+          "rgbMeanDelta": 0.0109,
+          "rgbMaxDelta": 63,
+          "pixelsOverOne": 20,
+          "deviation": "CSS Color 4 §14.2 gamut mapping natively; Chrome clips per channel"
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "math-and-units",
+          "rgbMeanDelta": 0.0063,
+          "rgbMaxDelta": 20,
+          "pixelsOverOne": 46,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "media-features",
+          "rgbMeanDelta": 0.0018,
+          "rgbMaxDelta": 79,
+          "pixelsOverOne": 3,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "reduced-motion",
+          "rgbMeanDelta": 0.0007,
+          "rgbMaxDelta": 79,
+          "pixelsOverOne": 1,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "comments-and-escapes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "css-wide-keywords",
+          "rgbMeanDelta": 0.0089,
+          "rgbMaxDelta": 42,
+          "pixelsOverOne": 23,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "importance",
+          "rgbMeanDelta": 0.0056,
+          "rgbMaxDelta": 63,
+          "pixelsOverOne": 10,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "conditional-rules",
+          "rgbMeanDelta": 0.0061,
+          "rgbMaxDelta": 63,
+          "pixelsOverOne": 12,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "named-colours-and-mixes",
+          "rgbMeanDelta": 0.0083,
+          "rgbMaxDelta": 63,
+          "pixelsOverOne": 20,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "multi-colour-mixes",
+          "rgbMeanDelta": 0.0027,
+          "rgbMaxDelta": 63,
+          "pixelsOverOne": 6,
+          "deviation": "CSS Color 5 §3 mixes one or more colours; Chrome mixes exactly two and drops the declaration"
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "font-relative-units",
+          "rgbMeanDelta": 0.002,
+          "rgbMaxDelta": 39,
+          "pixelsOverOne": 4,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "percentage-length-math",
+          "rgbMeanDelta": 0.0036,
+          "rgbMaxDelta": 61,
+          "pixelsOverOne": 12,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "platform-font-units",
+          "rgbMeanDelta": 0.0058,
+          "rgbMaxDelta": 64,
+          "pixelsOverOne": 10,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "font-metric-references",
+          "rgbMeanDelta": 0.0013,
+          "rgbMaxDelta": 16,
+          "pixelsOverOne": 1,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "packaged-font-units",
+          "rgbMeanDelta": 0.0026,
+          "rgbMaxDelta": 32,
+          "pixelsOverOne": 5,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "logical-and-mapped",
+          "rgbMeanDelta": 0.0029,
+          "rgbMaxDelta": 71,
+          "pixelsOverOne": 7,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "individual-transforms",
+          "rgbMeanDelta": 0.0267,
+          "rgbMaxDelta": 64,
+          "pixelsOverOne": 130,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "letter-spacing",
+          "rgbMeanDelta": 0.0242,
+          "rgbMaxDelta": 38,
+          "pixelsOverOne": 154,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "complex-selectors",
+          "rgbMeanDelta": 0.0132,
+          "rgbMaxDelta": 67,
+          "pixelsOverOne": 18,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "border-sides",
+          "rgbMeanDelta": 0.0249,
+          "rgbMaxDelta": 79,
+          "pixelsOverOne": 145,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "corner-radii",
+          "rgbMeanDelta": 0.0724,
+          "rgbMaxDelta": 144,
+          "pixelsOverOne": 429,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "overflow-axes",
+          "rgbMeanDelta": 0.4433,
+          "rgbMaxDelta": 90,
+          "pixelsOverOne": 1200,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "visibility",
+          "rgbMeanDelta": 0.0016,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 6,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "text-transform",
+          "rgbMeanDelta": 0.0002,
+          "rgbMaxDelta": 7,
+          "pixelsOverOne": 1,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "attribute-selectors",
+          "rgbMeanDelta": 0.0087,
+          "rgbMaxDelta": 37,
+          "pixelsOverOne": 69,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "has-selectors",
+          "rgbMeanDelta": 0.0091,
+          "rgbMaxDelta": 47,
+          "pixelsOverOne": 90,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "input-pseudo-classes",
+          "rgbMeanDelta": 0.0127,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 127,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "box-sizing",
+          "rgbMeanDelta": 0.0041,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 16,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "generated-boxes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "bridge",
+      "scale": 1,
+      "scenes": 49,
+      "checks": 1598,
+      "log": "target/tailwind-css-remainder-20261107/chrome-bridge-1.log",
+      "sha256": "a0879cfc47fe27430eba926aa2e8b22aa69039035333f7d2ddec236a89cad45d",
+      "observations": [
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "accent-controls",
+          "rgbMeanDelta": 0.0532,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 197,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "linear-gradients",
+          "rgbMeanDelta": 0.0296,
+          "rgbMaxDelta": 8,
+          "pixelsOverOne": 26,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "backdrop-blur",
+          "rgbMeanDelta": 0.019,
+          "rgbMaxDelta": 7,
+          "pixelsOverOne": 96,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "screen-reader-only",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "numeric-font-variants",
+          "rgbMeanDelta": 0.1248,
+          "rgbMaxDelta": 46,
+          "pixelsOverOne": 276,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "line-clamp",
+          "rgbMeanDelta": 1.1559,
+          "rgbMaxDelta": 221,
+          "pixelsOverOne": 1136,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "atomic-inlines",
+          "rgbMeanDelta": 0.0701,
+          "rgbMaxDelta": 42,
+          "pixelsOverOne": 360,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "sticky-scroll",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "pretty-wrap",
+          "rgbMeanDelta": 1.2731,
+          "rgbMaxDelta": 255,
+          "pixelsOverOne": 747,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "animation-pulse",
+          "rgbMeanDelta": 0.0333,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "animation-spin",
+          "rgbMeanDelta": 0.0803,
+          "rgbMaxDelta": 71,
+          "pixelsOverOne": 210,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "intrinsic-box-sizes",
+          "rgbMeanDelta": 0.038,
+          "rgbMaxDelta": 13,
+          "pixelsOverOne": 648,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "intrinsic-height-and-stretch",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "box-shadows",
+          "rgbMeanDelta": 0.1392,
+          "rgbMaxDelta": 38,
+          "pixelsOverOne": 682,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "inline-box-shadows",
+          "rgbMeanDelta": 0.3325,
+          "rgbMaxDelta": 37,
+          "pixelsOverOne": 1115,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "escaped-classes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "layers",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "registered-properties",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "theme-colours",
+          "rgbMeanDelta": 0.0042,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "colour-functions",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "out-of-gamut",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": "CSS Color 4 §14.2 gamut mapping natively; Chrome clips per channel"
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "math-and-units",
+          "rgbMeanDelta": 0.0072,
+          "rgbMaxDelta": 26,
+          "pixelsOverOne": 36,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "media-features",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "reduced-motion",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "comments-and-escapes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "css-wide-keywords",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "importance",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "conditional-rules",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "named-colours-and-mixes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "multi-colour-mixes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": "CSS Color 5 §3 mixes one or more colours; Chrome mixes exactly two and drops the declaration"
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "font-relative-units",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "percentage-length-math",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "platform-font-units",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "font-metric-references",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "packaged-font-units",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "logical-and-mapped",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "individual-transforms",
+          "rgbMeanDelta": 0.001,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "letter-spacing",
+          "rgbMeanDelta": 0.0239,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 60,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "complex-selectors",
+          "rgbMeanDelta": 0.0037,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "border-sides",
+          "rgbMeanDelta": 0.0018,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 7,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "corner-radii",
+          "rgbMeanDelta": 0.0348,
+          "rgbMaxDelta": 110,
+          "pixelsOverOne": 169,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "overflow-axes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "visibility",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "text-transform",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "attribute-selectors",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "has-selectors",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "input-pseudo-classes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "box-sizing",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "generated-boxes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "bridge",
+      "scale": 2,
+      "scenes": 49,
+      "checks": 1598,
+      "log": "target/tailwind-css-remainder-20261107/chrome-bridge-2.log",
+      "sha256": "0595b1f7dbe5e88b450f9501504a676afba973e734f376d64aa0aaf2e54d4af4",
+      "observations": [
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "accent-controls",
+          "rgbMeanDelta": 0.0427,
+          "rgbMaxDelta": 108,
+          "pixelsOverOne": 473,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "linear-gradients",
+          "rgbMeanDelta": 0.0281,
+          "rgbMaxDelta": 10,
+          "pixelsOverOne": 63,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "backdrop-blur",
+          "rgbMeanDelta": 0.0236,
+          "rgbMaxDelta": 7,
+          "pixelsOverOne": 1247,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "screen-reader-only",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "numeric-font-variants",
+          "rgbMeanDelta": 0.1497,
+          "rgbMaxDelta": 94,
+          "pixelsOverOne": 830,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "line-clamp",
+          "rgbMeanDelta": 1.0006,
+          "rgbMaxDelta": 221,
+          "pixelsOverOne": 2720,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "atomic-inlines",
+          "rgbMeanDelta": 0.042,
+          "rgbMaxDelta": 74,
+          "pixelsOverOne": 696,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "sticky-scroll",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "pretty-wrap",
+          "rgbMeanDelta": 1.3094,
+          "rgbMaxDelta": 255,
+          "pixelsOverOne": 2378,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "animation-pulse",
+          "rgbMeanDelta": 0.0333,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "animation-spin",
+          "rgbMeanDelta": 0.0445,
+          "rgbMaxDelta": 60,
+          "pixelsOverOne": 505,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "intrinsic-box-sizes",
+          "rgbMeanDelta": 0.0905,
+          "rgbMaxDelta": 64,
+          "pixelsOverOne": 1980,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "intrinsic-height-and-stretch",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "box-shadows",
+          "rgbMeanDelta": 0.0764,
+          "rgbMaxDelta": 41,
+          "pixelsOverOne": 892,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "inline-box-shadows",
+          "rgbMeanDelta": 0.2017,
+          "rgbMaxDelta": 66,
+          "pixelsOverOne": 1765,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "escaped-classes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "layers",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "registered-properties",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "theme-colours",
+          "rgbMeanDelta": 0.0042,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "colour-functions",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "out-of-gamut",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": "CSS Color 4 §14.2 gamut mapping natively; Chrome clips per channel"
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "math-and-units",
+          "rgbMeanDelta": 0.0062,
+          "rgbMaxDelta": 31,
+          "pixelsOverOne": 105,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "media-features",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "reduced-motion",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "comments-and-escapes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "css-wide-keywords",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "importance",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "conditional-rules",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "named-colours-and-mixes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "multi-colour-mixes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": "CSS Color 5 §3 mixes one or more colours; Chrome mixes exactly two and drops the declaration"
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "font-relative-units",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "percentage-length-math",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "platform-font-units",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "font-metric-references",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "packaged-font-units",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "logical-and-mapped",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "individual-transforms",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "letter-spacing",
+          "rgbMeanDelta": 0.0239,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 240,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "complex-selectors",
+          "rgbMeanDelta": 0.0037,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "border-sides",
+          "rgbMeanDelta": 0.0009,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 14,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "corner-radii",
+          "rgbMeanDelta": 0.0169,
+          "rgbMaxDelta": 76,
+          "pixelsOverOne": 376,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "overflow-axes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "visibility",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "text-transform",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "attribute-selectors",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "has-selectors",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "input-pseudo-classes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "box-sizing",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "generated-boxes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "bridge",
+      "scale": 1.25,
+      "scenes": 3,
+      "checks": 62,
+      "log": "target/tailwind-css-remainder-20261107/chrome-edge-bridge-1.25.log",
+      "sha256": "0a717a9b9d00bca283f525d111eea0139dc655e8ff7ad52386ecab240b00309e",
+      "observations": [
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "backdrop-mirror-edges",
+          "rgbMeanDelta": 0.1637,
+          "rgbMaxDelta": 60,
+          "pixelsOverOne": 2100,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "backdrop-mirror-ramp",
+          "rgbMeanDelta": 0.1566,
+          "rgbMaxDelta": 60,
+          "pixelsOverOne": 2114,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1.25,
+          "case": "backdrop-blur",
+          "rgbMeanDelta": 0.037,
+          "rgbMaxDelta": 49,
+          "pixelsOverOne": 234,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "bridge",
+      "scale": 1,
+      "scenes": 3,
+      "checks": 62,
+      "log": "target/tailwind-css-remainder-20261107/chrome-edge-bridge-1.log",
+      "sha256": "fd069091d0a4178158af50f687572e058168894a24012de5cf14894090edb6ee",
+      "observations": [
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "backdrop-mirror-edges",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "backdrop-mirror-ramp",
+          "rgbMeanDelta": 0.0259,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 1,
+          "case": "backdrop-blur",
+          "rgbMeanDelta": 0.0166,
+          "rgbMaxDelta": 4,
+          "pixelsOverOne": 12,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "bridge",
+      "scale": 2,
+      "scenes": 3,
+      "checks": 62,
+      "log": "target/tailwind-css-remainder-20261107/chrome-edge-bridge-2.log",
+      "sha256": "f730b5459d4b823c10d34dda89a967daaa0e7b76f941cf4b0790d74e33b53984",
+      "observations": [
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "backdrop-mirror-edges",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "backdrop-mirror-ramp",
+          "rgbMeanDelta": 0.0306,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "bridge",
+          "scale": 2,
+          "case": "backdrop-blur",
+          "rgbMeanDelta": 0.0218,
+          "rgbMaxDelta": 4,
+          "pixelsOverOne": 1025,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "platform",
+      "scale": 1.25,
+      "scenes": 3,
+      "checks": 62,
+      "log": "target/tailwind-css-remainder-20261107/chrome-edge-platform-1.25.log",
+      "sha256": "fbe5475666cc1c3053846f5d2b0e8a645c360ce871b290bfe60c26535da80fa6",
+      "observations": [
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "backdrop-mirror-edges",
+          "rgbMeanDelta": 0.1637,
+          "rgbMaxDelta": 60,
+          "pixelsOverOne": 2100,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "backdrop-mirror-ramp",
+          "rgbMeanDelta": 0.1566,
+          "rgbMaxDelta": 60,
+          "pixelsOverOne": 2114,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "backdrop-blur",
+          "rgbMeanDelta": 0.037,
+          "rgbMaxDelta": 49,
+          "pixelsOverOne": 234,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "platform",
+      "scale": 1,
+      "scenes": 3,
+      "checks": 62,
+      "log": "target/tailwind-css-remainder-20261107/chrome-edge-platform-1.log",
+      "sha256": "f74144461dfc42ef2a5ae5e7584f02d9344dfecaeaaffd282d47d7fd11a6820b",
+      "observations": [
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "backdrop-mirror-edges",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "backdrop-mirror-ramp",
+          "rgbMeanDelta": 0.0259,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "backdrop-blur",
+          "rgbMeanDelta": 0.0166,
+          "rgbMaxDelta": 4,
+          "pixelsOverOne": 12,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "platform",
+      "scale": 2,
+      "scenes": 3,
+      "checks": 62,
+      "log": "target/tailwind-css-remainder-20261107/chrome-edge-platform-2.log",
+      "sha256": "b3a1631106d77b89470bf088b67ec97b0e122ad5170f978fc01520268682d0ae",
+      "observations": [
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "backdrop-mirror-edges",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "backdrop-mirror-ramp",
+          "rgbMeanDelta": 0.0306,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "backdrop-blur",
+          "rgbMeanDelta": 0.0218,
+          "rgbMaxDelta": 4,
+          "pixelsOverOne": 1025,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "platform",
+      "scale": 1.25,
+      "scenes": 49,
+      "checks": 1586,
+      "log": "target/tailwind-css-remainder-20261107/chrome-platform-1.25.log",
+      "sha256": "0f7ead32e9014a659a9102403767a89933ede613cde96b7fb7a59d4e796a8adc",
+      "observations": [
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "accent-controls",
+          "rgbMeanDelta": 0.0536,
+          "rgbMaxDelta": 64,
+          "pixelsOverOne": 274,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "linear-gradients",
+          "rgbMeanDelta": 0.0297,
+          "rgbMaxDelta": 10,
+          "pixelsOverOne": 32,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "backdrop-blur",
+          "rgbMeanDelta": 0.0385,
+          "rgbMaxDelta": 49,
+          "pixelsOverOne": 364,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "screen-reader-only",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "numeric-font-variants",
+          "rgbMeanDelta": 0.3033,
+          "rgbMaxDelta": 110,
+          "pixelsOverOne": 462,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "line-clamp",
+          "rgbMeanDelta": 0.9616,
+          "rgbMaxDelta": 221,
+          "pixelsOverOne": 1680,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "atomic-inlines",
+          "rgbMeanDelta": 0.0856,
+          "rgbMaxDelta": 127,
+          "pixelsOverOne": 563,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "sticky-scroll",
+          "rgbMeanDelta": 0.1279,
+          "rgbMaxDelta": 128,
+          "pixelsOverOne": 250,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "pretty-wrap",
+          "rgbMeanDelta": 1.3514,
+          "rgbMaxDelta": 255,
+          "pixelsOverOne": 972,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "animation-pulse",
+          "rgbMeanDelta": 0.0333,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "animation-spin",
+          "rgbMeanDelta": 0.1111,
+          "rgbMaxDelta": 64,
+          "pixelsOverOne": 556,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "intrinsic-box-sizes",
+          "rgbMeanDelta": 0.0452,
+          "rgbMaxDelta": 65,
+          "pixelsOverOne": 745,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "intrinsic-height-and-stretch",
+          "rgbMeanDelta": 0.0174,
+          "rgbMaxDelta": 54,
+          "pixelsOverOne": 32,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "box-shadows",
+          "rgbMeanDelta": 0.2193,
+          "rgbMaxDelta": 45,
+          "pixelsOverOne": 2694,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "inline-box-shadows",
+          "rgbMeanDelta": 0.5082,
+          "rgbMaxDelta": 128,
+          "pixelsOverOne": 2009,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "escaped-classes",
+          "rgbMeanDelta": 0.0027,
+          "rgbMaxDelta": 31,
+          "pixelsOverOne": 1,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "layers",
+          "rgbMeanDelta": 0.004,
+          "rgbMaxDelta": 63,
+          "pixelsOverOne": 8,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "registered-properties",
+          "rgbMeanDelta": 0.0002,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "theme-colours",
+          "rgbMeanDelta": 0.0224,
+          "rgbMaxDelta": 61,
+          "pixelsOverOne": 16,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "colour-functions",
+          "rgbMeanDelta": 0.0329,
+          "rgbMaxDelta": 63,
+          "pixelsOverOne": 44,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "out-of-gamut",
+          "rgbMeanDelta": 0.5881,
+          "rgbMaxDelta": 81,
+          "pixelsOverOne": 5308,
+          "deviation": "CSS Color 4 §14.2 gamut mapping natively; Chrome clips per channel"
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "math-and-units",
+          "rgbMeanDelta": 0.0063,
+          "rgbMaxDelta": 20,
+          "pixelsOverOne": 46,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "media-features",
+          "rgbMeanDelta": 0.0018,
+          "rgbMaxDelta": 79,
+          "pixelsOverOne": 3,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "reduced-motion",
+          "rgbMeanDelta": 0.0007,
+          "rgbMaxDelta": 79,
+          "pixelsOverOne": 1,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "comments-and-escapes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "css-wide-keywords",
+          "rgbMeanDelta": 0.0089,
+          "rgbMaxDelta": 42,
+          "pixelsOverOne": 23,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "importance",
+          "rgbMeanDelta": 0.0056,
+          "rgbMaxDelta": 63,
+          "pixelsOverOne": 10,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "conditional-rules",
+          "rgbMeanDelta": 0.0061,
+          "rgbMaxDelta": 63,
+          "pixelsOverOne": 12,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "named-colours-and-mixes",
+          "rgbMeanDelta": 0.0118,
+          "rgbMaxDelta": 63,
+          "pixelsOverOne": 20,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "multi-colour-mixes",
+          "rgbMeanDelta": 2.2447,
+          "rgbMaxDelta": 255,
+          "pixelsOverOne": 1824,
+          "deviation": "CSS Color 5 §3 mixes one or more colours; Chrome mixes exactly two and drops the declaration"
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "font-relative-units",
+          "rgbMeanDelta": 0.002,
+          "rgbMaxDelta": 39,
+          "pixelsOverOne": 4,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "percentage-length-math",
+          "rgbMeanDelta": 0.0036,
+          "rgbMaxDelta": 61,
+          "pixelsOverOne": 12,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "platform-font-units",
+          "rgbMeanDelta": 0.0058,
+          "rgbMaxDelta": 64,
+          "pixelsOverOne": 10,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "font-metric-references",
+          "rgbMeanDelta": 0.0013,
+          "rgbMaxDelta": 16,
+          "pixelsOverOne": 1,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "packaged-font-units",
+          "rgbMeanDelta": 0.0026,
+          "rgbMaxDelta": 32,
+          "pixelsOverOne": 5,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "logical-and-mapped",
+          "rgbMeanDelta": 0.0029,
+          "rgbMaxDelta": 71,
+          "pixelsOverOne": 7,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "individual-transforms",
+          "rgbMeanDelta": 0.0267,
+          "rgbMaxDelta": 64,
+          "pixelsOverOne": 130,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "letter-spacing",
+          "rgbMeanDelta": 0.0242,
+          "rgbMaxDelta": 38,
+          "pixelsOverOne": 154,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "complex-selectors",
+          "rgbMeanDelta": 0.0132,
+          "rgbMaxDelta": 67,
+          "pixelsOverOne": 18,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "border-sides",
+          "rgbMeanDelta": 0.0249,
+          "rgbMaxDelta": 79,
+          "pixelsOverOne": 145,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "corner-radii",
+          "rgbMeanDelta": 0.0724,
+          "rgbMaxDelta": 144,
+          "pixelsOverOne": 429,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "overflow-axes",
+          "rgbMeanDelta": 0.4433,
+          "rgbMaxDelta": 90,
+          "pixelsOverOne": 1200,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "visibility",
+          "rgbMeanDelta": 0.0016,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 6,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "text-transform",
+          "rgbMeanDelta": 0.0002,
+          "rgbMaxDelta": 7,
+          "pixelsOverOne": 1,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "attribute-selectors",
+          "rgbMeanDelta": 0.0087,
+          "rgbMaxDelta": 37,
+          "pixelsOverOne": 69,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "has-selectors",
+          "rgbMeanDelta": 0.0091,
+          "rgbMaxDelta": 47,
+          "pixelsOverOne": 90,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "input-pseudo-classes",
+          "rgbMeanDelta": 0.0127,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 127,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "box-sizing",
+          "rgbMeanDelta": 0.0041,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 16,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1.25,
+          "case": "generated-boxes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "platform",
+      "scale": 1,
+      "scenes": 49,
+      "checks": 1586,
+      "log": "target/tailwind-css-remainder-20261107/chrome-platform-1.log",
+      "sha256": "69311ebfc32290145b68cba3e2117520393ed6c7cdb2b60c1f06ce9f98560de8",
+      "observations": [
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "accent-controls",
+          "rgbMeanDelta": 0.0532,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 197,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "linear-gradients",
+          "rgbMeanDelta": 0.0296,
+          "rgbMaxDelta": 8,
+          "pixelsOverOne": 26,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "backdrop-blur",
+          "rgbMeanDelta": 0.019,
+          "rgbMaxDelta": 7,
+          "pixelsOverOne": 96,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "screen-reader-only",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "numeric-font-variants",
+          "rgbMeanDelta": 0.1248,
+          "rgbMaxDelta": 46,
+          "pixelsOverOne": 276,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "line-clamp",
+          "rgbMeanDelta": 1.1559,
+          "rgbMaxDelta": 221,
+          "pixelsOverOne": 1136,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "atomic-inlines",
+          "rgbMeanDelta": 0.0701,
+          "rgbMaxDelta": 42,
+          "pixelsOverOne": 360,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "sticky-scroll",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "pretty-wrap",
+          "rgbMeanDelta": 1.2731,
+          "rgbMaxDelta": 255,
+          "pixelsOverOne": 747,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "animation-pulse",
+          "rgbMeanDelta": 0.0333,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "animation-spin",
+          "rgbMeanDelta": 0.0803,
+          "rgbMaxDelta": 71,
+          "pixelsOverOne": 210,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "intrinsic-box-sizes",
+          "rgbMeanDelta": 0.038,
+          "rgbMaxDelta": 13,
+          "pixelsOverOne": 648,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "intrinsic-height-and-stretch",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "box-shadows",
+          "rgbMeanDelta": 0.1392,
+          "rgbMaxDelta": 38,
+          "pixelsOverOne": 682,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "inline-box-shadows",
+          "rgbMeanDelta": 0.3325,
+          "rgbMaxDelta": 37,
+          "pixelsOverOne": 1115,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "escaped-classes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "layers",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "registered-properties",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "theme-colours",
+          "rgbMeanDelta": 0.0167,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "colour-functions",
+          "rgbMeanDelta": 0.0167,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "out-of-gamut",
+          "rgbMeanDelta": 0.5792,
+          "rgbMaxDelta": 72,
+          "pixelsOverOne": 3200,
+          "deviation": "CSS Color 4 §14.2 gamut mapping natively; Chrome clips per channel"
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "math-and-units",
+          "rgbMeanDelta": 0.0072,
+          "rgbMaxDelta": 26,
+          "pixelsOverOne": 36,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "media-features",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "reduced-motion",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "comments-and-escapes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "css-wide-keywords",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "importance",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "conditional-rules",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "named-colours-and-mixes",
+          "rgbMeanDelta": 0.0037,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "multi-colour-mixes",
+          "rgbMeanDelta": 2.2444,
+          "rgbMaxDelta": 255,
+          "pixelsOverOne": 1080,
+          "deviation": "CSS Color 5 §3 mixes one or more colours; Chrome mixes exactly two and drops the declaration"
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "font-relative-units",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "percentage-length-math",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "platform-font-units",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "font-metric-references",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "packaged-font-units",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "logical-and-mapped",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "individual-transforms",
+          "rgbMeanDelta": 0.001,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "letter-spacing",
+          "rgbMeanDelta": 0.0239,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 60,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "complex-selectors",
+          "rgbMeanDelta": 0.0037,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "border-sides",
+          "rgbMeanDelta": 0.0018,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 7,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "corner-radii",
+          "rgbMeanDelta": 0.0348,
+          "rgbMaxDelta": 110,
+          "pixelsOverOne": 169,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "overflow-axes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "visibility",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "text-transform",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "attribute-selectors",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "has-selectors",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "input-pseudo-classes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "box-sizing",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 1,
+          "case": "generated-boxes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        }
+      ]
+    },
+    {
+      "mode": "platform",
+      "scale": 2,
+      "scenes": 49,
+      "checks": 1586,
+      "log": "target/tailwind-css-remainder-20261107/chrome-platform-2.log",
+      "sha256": "e7fc4fbcce080b6fc45b7b5547848c05ab774183f85795910a2358974d502577",
+      "observations": [
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "accent-controls",
+          "rgbMeanDelta": 0.0427,
+          "rgbMaxDelta": 108,
+          "pixelsOverOne": 473,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "linear-gradients",
+          "rgbMeanDelta": 0.0281,
+          "rgbMaxDelta": 10,
+          "pixelsOverOne": 63,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "backdrop-blur",
+          "rgbMeanDelta": 0.0236,
+          "rgbMaxDelta": 7,
+          "pixelsOverOne": 1247,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "screen-reader-only",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "numeric-font-variants",
+          "rgbMeanDelta": 0.1497,
+          "rgbMaxDelta": 94,
+          "pixelsOverOne": 830,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "line-clamp",
+          "rgbMeanDelta": 1.0006,
+          "rgbMaxDelta": 221,
+          "pixelsOverOne": 2720,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "atomic-inlines",
+          "rgbMeanDelta": 0.042,
+          "rgbMaxDelta": 74,
+          "pixelsOverOne": 696,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "sticky-scroll",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "pretty-wrap",
+          "rgbMeanDelta": 1.3094,
+          "rgbMaxDelta": 255,
+          "pixelsOverOne": 2378,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "animation-pulse",
+          "rgbMeanDelta": 0.0333,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "animation-spin",
+          "rgbMeanDelta": 0.0445,
+          "rgbMaxDelta": 60,
+          "pixelsOverOne": 505,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "intrinsic-box-sizes",
+          "rgbMeanDelta": 0.0905,
+          "rgbMaxDelta": 64,
+          "pixelsOverOne": 1980,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "intrinsic-height-and-stretch",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "box-shadows",
+          "rgbMeanDelta": 0.0764,
+          "rgbMaxDelta": 41,
+          "pixelsOverOne": 892,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "inline-box-shadows",
+          "rgbMeanDelta": 0.2017,
+          "rgbMaxDelta": 66,
+          "pixelsOverOne": 1765,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "escaped-classes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "layers",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "registered-properties",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "theme-colours",
+          "rgbMeanDelta": 0.0167,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "colour-functions",
+          "rgbMeanDelta": 0.0167,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "out-of-gamut",
+          "rgbMeanDelta": 0.5792,
+          "rgbMaxDelta": 72,
+          "pixelsOverOne": 12800,
+          "deviation": "CSS Color 4 §14.2 gamut mapping natively; Chrome clips per channel"
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "math-and-units",
+          "rgbMeanDelta": 0.0062,
+          "rgbMaxDelta": 31,
+          "pixelsOverOne": 105,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "media-features",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "reduced-motion",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "comments-and-escapes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "css-wide-keywords",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "importance",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "conditional-rules",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "named-colours-and-mixes",
+          "rgbMeanDelta": 0.0037,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "multi-colour-mixes",
+          "rgbMeanDelta": 2.2444,
+          "rgbMaxDelta": 255,
+          "pixelsOverOne": 4320,
+          "deviation": "CSS Color 5 §3 mixes one or more colours; Chrome mixes exactly two and drops the declaration"
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "font-relative-units",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "percentage-length-math",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "platform-font-units",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "font-metric-references",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "packaged-font-units",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "logical-and-mapped",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "individual-transforms",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "letter-spacing",
+          "rgbMeanDelta": 0.0239,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 240,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "complex-selectors",
+          "rgbMeanDelta": 0.0037,
+          "rgbMaxDelta": 1,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "border-sides",
+          "rgbMeanDelta": 0.0009,
+          "rgbMaxDelta": 51,
+          "pixelsOverOne": 14,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "corner-radii",
+          "rgbMeanDelta": 0.0169,
+          "rgbMaxDelta": 76,
+          "pixelsOverOne": 376,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "overflow-axes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "visibility",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "text-transform",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "attribute-selectors",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "has-selectors",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "input-pseudo-classes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "box-sizing",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        },
+        {
+          "mode": "platform",
+          "scale": 2,
+          "case": "generated-boxes",
+          "rgbMeanDelta": 0,
+          "rgbMaxDelta": 0,
+          "pixelsOverOne": 0,
+          "deviation": null
+        }
+      ]
+    }
+  ],
+  "thresholds": {
+    "sceneMeanRgbDelta": 2,
+    "boxCentreRgbDelta": 1,
+    "boxCssPixels": 0.02,
+    "backdropProbeChannelDelta": 6,
+    "gradientProbeChannelDelta": 2,
+    "rotationProbeChannelDelta": 1,
+    "existingShadowThresholdsUnchanged": true,
+    "negativeOffscreenCentres": "Both lower and upper viewport bounds are checked before indexing raster pixels."
+  },
+  "standalone": "The expanded full Tailwind/Preflight fixture passes check/dev/build --single and executes after removing source/configuration; includes all new utility families and actual gradient stops/keyframes.",
+  "focusedChecks": {
+    "nativeCss": 64,
+    "nativeKeyframeFollowup": 6,
+    "commonView": 64,
+    "style": 30,
+    "nodeEngine": 5,
+    "documentationTable": 1,
+    "note": "Scopes overlap; these counts are not added to consolidated totals. Scoped corrections and completion cover the final CSS inputs; the original full report remains failed.",
+    "backdropFollowup": 9,
+    "standaloneMeasurement": 1,
+    "bundledBindings": 1,
+    "nativeViewFinal": 679,
+    "styleFinal": 31
+  },
+  "full": {
+    "attempts": 1,
+    "report": "target/verification/20261107-125114-_6c3r9ao/report.json",
+    "before": {
+      "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+      "sourceSha256": "3c8abaa19dde768a2ce2b9e2f8a6119772180ee6e3f4fba3b90847c40eaa62eb"
+    },
+    "after": {
+      "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+      "sourceSha256": "366ff258f922abc4963a8e7df19410d5e65f5f6e01464c742aa4e743041628b9"
+    },
+    "sourceUnchanged": false,
+    "passed": false,
+    "commandsAttempted": 9,
+    "failures": [
+      "shell::fallback::tests::a_system_set_draws_the_gear_with_the_platform_face",
+      "shell::fallback::tests::emoji_advances_and_line_heights_are_chromes",
+      "shell::system_fonts::tests::every_generic_family_maps_to_a_file_with_its_family"
+    ],
+    "rustPassedInCompletedSuitesBeforeFailure": 902,
+    "partialFailingSuite": {
+      "passed": 137,
+      "failed": 3,
+      "ignored": 1,
+      "countedOnlyThroughItsSuccessfulRerun": true
+    }
+  },
+  "consolidated": {
+    "status": "passed after scoped corrections and completion of unfinished suites",
+    "notAnUninterruptedFullPass": true,
+    "rustPassed": 4632,
+    "rustIgnored": 26,
+    "nodePassed": 190,
+    "continuation": [
+      {
+        "log": "target/tailwind-css-remainder-20261107/remaining-tests.log",
+        "passed": 3050,
+        "ignored": 24
+      },
+      {
+        "log": "target/tailwind-css-remainder-20261107/view-final.log",
+        "passed": 679,
+        "ignored": 0
+      },
+      {
+        "log": "target/tailwind-css-remainder-20261107/doctests-final.log",
+        "passed": 0,
+        "ignored": 0
+      },
+      {
+        "log": "target/tailwind-css-remainder-20261107/bundle-bindings-final.log",
+        "passed": 1,
+        "ignored": 0
+      }
+    ],
+    "originalFullReportRemainsFailed": true,
+    "interruptedContinuation": {
+      "log": "target/tailwind-css-remainder-20261107/remaining-tests.log",
+      "failure": "transform::tests::translations_resolve_against_the_border_box_and_compose",
+      "cause": "Obsolete assertion still required rotate(4deg) to be refused. Updated to accept rotation and refuse rotate(4px).",
+      "resolution": "target/tailwind-css-remainder-20261107/view-final.log"
+    }
+  },
+  "sourceAudit": {
+    "after": {
+      "reconstructed": "366ff258f922abc4963a8e7df19410d5e65f5f6e01464c742aa4e743041628b9",
+      "recorded": "366ff258f922abc4963a8e7df19410d5e65f5f6e01464c742aa4e743041628b9",
+      "matches": true
+    },
+    "before": {
+      "reconstructed": "3c8abaa19dde768a2ce2b9e2f8a6119772180ee6e3f4fba3b90847c40eaa62eb",
+      "recorded": "3c8abaa19dde768a2ce2b9e2f8a6119772180ee6e3f4fba3b90847c40eaa62eb",
+      "matches": true
+    },
+    "sourceChangesDuringFullRun": [
+      "docs/varta-cloud/architecture.md",
+      "docs/varta-cloud/development-plan.md"
+    ],
+    "codeUnchangedDuringFullRun": true
+  },
+  "postAttemptCorrections": [
+    "Skip zero-work tab-feature charging in standalone text measurement.",
+    "Mirror the clipped backdrop border-box image; resolve blur units through host metrics; huge radii use analytic mirror periods.",
+    "Emit all winning keyframe names in one traversal.",
+    "Update the obsolete rotate-refusal assertion to require rotate support and keep malformed-angle rejection.",
+    "Preserve ENGINE_STATES/ENGINE_INPUTS in generated Worker/DOM lexical module bindings.",
+    "The three failed system-font tests now pass in the completed desktop suite; no font or shaping budget was increased."
+  ],
+  "browserDelivery": {
+    "generatedBundle": "Actual Chrome trusted click/input, persistent closure state, DOM updates and denial behavior passed.",
+    "bindingsRegression": "Both generated lexical module variants execute against the actual Wasm engine.",
+    "cloudMinimalProbe": "target/tailwind-css-remainder-20261107/cloud-mount-result.json",
+    "cloudStudioAcceptance": "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/browser-recheck.json",
+    "note": "Studio input/click confirmed by the user-authorized peer through CDP/AX; closed shadow DOM explains why ordinary outer innerHTML appears empty.",
+    "generatedBundleLog": "target/tailwind-css-remainder-20261107/browser-delivery.log",
+    "bindingsLog": "target/tailwind-css-remainder-20261107/bundle-bindings-final.log"
+  },
+  "limits": [
+    "No production resource ceiling increased.",
+    "Direct GPU gradients/backdrop and grouped effects use explicit software presentation.",
+    "Atomic roots with unresolved placement/transform combinations are refused.",
+    "Decorated/edged/atomic clamped flows remain refused.",
+    "Pretty wrapping is a bounded best-effort UA strategy, not exact Chrome line choice.",
+    "Keyframe variables, custom/layout property animation, general matrix interpolation and some transformed samplers/scopes remain refused.",
+    "Broader CSS/Tailwind and full Firefox/WebKit/window/AT/GPU acceptance remain separate work."
+  ],
+  "conformance": {
+    "counts": {
+      "total": 248,
+      "passed": 246,
+      "knownUnsupported": 2,
+      "unexpectedSupport": 0,
+      "regressions": 0,
+      "infrastructureFailures": 0
+    },
+    "baselineMatches": true,
+    "featureRows": 131,
+    "untestedFeatures": 4
+  },
+  "codeInputs": {
+    "path": "target/tailwind-css-remainder-20261107/verified-inputs.json",
+    "files": 2512,
+    "sha256": "9315d5b79cc78eff4d757120df1751c13f6a8d328a4168ed3f2c2ce32d0f5c37",
+    "documentationOnlyAfterGate": false
+  },
+  "localLogs": "target/tailwind-css-remainder-20261107",
+  "finalCodeInputs": {
+    "path": "target/tailwind-css-remainder-20261107/final-code-inputs.json",
+    "files": 2462,
+    "sha256": "73b96577e7a0e436cf5fa6f02a6e6e3cc449bdb853a2a594ede1911c13767bc6",
+    "changedAfterFullAttempt": [
+      "crates/varta-desktop/examples/native_css_engine_probe.rs",
+      "crates/varta-project/src/browser/bundle.rs",
+      "crates/varta-project/src/browser/view-engine.json",
+      "crates/varta-project/src/browser/view-engine.wasm",
+      "crates/varta-style/src/animations.rs",
+      "crates/varta-view/src/paint.rs",
+      "crates/varta-view/src/paint/backdrop.rs",
+      "crates/varta-view/src/text.rs",
+      "crates/varta-view/src/transform.rs",
+      "crates/varta-view/tests/css_backdrop.rs"
+    ],
+    "allLaterDocumentationChangesAreSeparate": true
+  },
+  "scopedFollowupLogs": {
+    "clippy-final.log": "target/tailwind-css-remainder-20261107/clippy-final.log",
+    "bundle-clippy.log": "target/tailwind-css-remainder-20261107/bundle-clippy.log",
+    "wasm-build-final.log": "target/tailwind-css-remainder-20261107/wasm-build-final.log",
+    "remaining-tests.log": "target/tailwind-css-remainder-20261107/remaining-tests.log",
+    "view-final.log": "target/tailwind-css-remainder-20261107/view-final.log",
+    "doctests-final.log": "target/tailwind-css-remainder-20261107/doctests-final.log",
+    "bundle-bindings-final.log": "target/tailwind-css-remainder-20261107/bundle-bindings-final.log",
+    "node-final.log": "target/tailwind-css-remainder-20261107/node-final.log",
+    "conformance-final.log": "target/tailwind-css-remainder-20261107/conformance-final.log",
+    "tailwind-final.log": "target/tailwind-css-remainder-20261107/tailwind-final.log",
+    "browser-delivery.log": "target/tailwind-css-remainder-20261107/browser-delivery.log"
+  }
+}

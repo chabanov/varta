@@ -43,7 +43,7 @@
 //   bound, with the largest budgets: decoded whole, it builds past a v38
 //   guest's memory and the run fails fatally, after the same logs and
 //   usage as native;
-// - diamond-fuel: the same read under production budgets ends with the
+// - diamond-fuel: the same read under explicit metered test budgets ends with the
 //   fatal fuel exhaustion while the codec classifies it (it pays as it
 //   goes), after the same logs and usage as native;
 //   in every diamond case the Chrome process tree's resident memory grows
@@ -53,7 +53,7 @@
 //   to native;
 // - decode-fuel: three such arrays read one per turn, then a getMany of
 //   all three in one turn ends with the fatal fuel exhaustion while they
-//   are classified, after the same logs and usage as native.
+//   are classified under explicit metered test fuel, after the same logs and usage as native.
 //
 //   node scripts/test-browser-kv.mjs <varta-executable> [--playwright <module> <firefox|webkit>]
 //
@@ -246,8 +246,15 @@ const PLANTED_LEVELS = [BUILT_DIAMOND, DIAMOND_FITS, DIAMOND_FITS + 1, FAR_DIAMO
 // Test-only budgets (CLAUDE.md §11), requested by the package and allowed
 // by both hosts: the engine's most fuel per turn and its longest turn
 // deadline (`budget::MAX_DEADLINE_PER_TURN_MS`), so the largest decodes
-// finish whatever the machine's load; the memory stays the production one.
+// finish whatever the machine's load; ordinary cases keep production memory.
 const LARGEST_BUDGETS = {fuelPerTurn: registry.maxTurnFuel, deadlinePerTurnMs: 60 * 1000};
+// The fatal fixtures were measured at these earlier ceilings, as in
+// varta-runtime/src/kv/kv_extent_tests.rs. Production defaults grew later;
+// pin only these tests explicitly, through both package and host ceilings.
+const METERED_MEMORY_BYTES = 8 * 1024 * 1024;
+const METERED_TURN_FUEL = 8_000_000;
+const BOUND_BUDGETS = {...LARGEST_BUDGETS, memoryBytes: METERED_MEMORY_BYTES};
+const METERED_BUDGETS = {...LARGEST_BUDGETS, fuelPerTurn: METERED_TURN_FUEL};
 // How much the Chrome process tree's resident memory may grow over a
 // diamond run: generous for a page, its Worker and their wasm memories,
 // a small fraction of what building the far diamond took.
@@ -545,12 +552,12 @@ export async function runKv(varta, driver) {
     const TIMED = {...GRANTS, time: {timer: true}};
     await add('diamond', diamondProgram(DIAMOND_STEPS), TIMED);
     await add('diamond-built', diamondProgram(DIAMOND_BUILT_STEPS), TIMED, undefined, LARGEST_BUDGETS);
-    await add('diamond-bound', diamondProgram(DIAMOND_BOUND_STEPS), TIMED, undefined, LARGEST_BUDGETS);
-    // The same program as diamond-bound under production budgets (each
+    await add('diamond-bound', diamondProgram(DIAMOND_BOUND_STEPS), TIMED, undefined, BOUND_BUDGETS);
+    // The same program as diamond-bound under metered test fuel (each
     // run first replaces the container with the planted one).
-    await add('diamond-fuel', diamondProgram(DIAMOND_BOUND_STEPS), TIMED);
+    await add('diamond-fuel', diamondProgram(DIAMOND_BOUND_STEPS), TIMED, undefined, METERED_BUDGETS);
     await add('unshared', UNSHARED, TIMED);
-    await add('decode-fuel', DECODE_FUEL, TIMED);
+    await add('decode-fuel', DECODE_FUEL, TIMED, undefined, METERED_BUDGETS);
     const {server, origin} = await serveBundles(bundles);
     const page = async (name) => driver.page(`${origin}/${name}/blank.html`);
     const same = (label, browser, native) => {
@@ -722,7 +729,7 @@ export async function runKv(varta, driver) {
       // with the largest budgets one level below the bound reads back
       // whole, and the worst accepted value (the diamond at the bound)
       // decodes whole and builds past the guest's memory, fatally alike.
-      // Under production fuel the same read ends while it is classified.
+      // Under metered test fuel the same read ends while it is classified.
       for (const [name, label, logs, fails] of [
         ['diamond', 'diamond', diamondLogs()],
         ['diamond-built', 'diamond built', diamondBuiltLogs()],
@@ -767,11 +774,11 @@ export async function runKv(varta, driver) {
         pass('unshared');
       }
       {
-        const native = nativeRun(varta, directories.get('decode-fuel'), false, true);
+        const native = nativeRun(varta, directories.get('decode-fuel'), true, true);
         assert.deepEqual(native.logs, Array.from({length: DECODE_FUEL_VALUES}, () => `${LOG_PREFIX}read ${DECODE_FUEL_NUMBERS}`));
         assert.match(native.failure ?? '', /exhausted its fuel budget/);
         const tab = await page('decode-fuel');
-        const browser = await tab.evaluate(runExpression('decode-fuel'));
+        const browser = await tab.evaluate(runExpression('decode-fuel', `{budgetCeiling:${JSON.stringify(METERED_BUDGETS)}}`));
         failsAlike('getMany past its fuel', browser, native);
         await tab.close();
         pass('decode-fuel');

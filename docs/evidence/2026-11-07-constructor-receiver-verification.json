@@ -1,0 +1,65 @@
+{
+  "mode": "one-uninterrupted-full-run",
+  "scope": "Class/function checked increment and complete constructor receivers; includes the preceding tuple-adapter arity guard",
+  "fullInvocationCount": 1,
+  "baseHead": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+  "fullRun": {
+    "path": "target/verification/20261107-091011-2res_qhv/report.json",
+    "passed": true,
+    "sourceUnchanged": true,
+    "before": {
+      "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+      "sourceSha256": "9226eae9ee6f31f4efb6395f829fadfaa4819c11015e42cc707fdf1c4a36e717"
+    },
+    "after": {
+      "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+      "sourceSha256": "9226eae9ee6f31f4efb6395f829fadfaa4819c11015e42cc707fdf1c4a36e717"
+    },
+    "rustPassed": 4589,
+    "rustIgnored": 26,
+    "browserNodePassed": 189
+  },
+  "conformance": {
+    "counts": {
+      "total": 248,
+      "passed": 246,
+      "knownUnsupported": 2,
+      "unexpectedSupport": 0,
+      "regressions": 0,
+      "infrastructureFailures": 0
+    },
+    "baselineMatches": true,
+    "featureRows": 131,
+    "untestedFeatures": 4
+  },
+  "constructorFixture": {
+    "path": "crates/varta-runtime/src/class_function_cases/constructor_receivers.ts",
+    "sha256": "85ed37d6ba64446ba11387fe57e37b845ef6b44634c48315e68470564b512818",
+    "oracleCommand": "node --input-type=module -e \"const m=await import('./conformance/cases/class-constructor-receivers.ts');await m.main();\"",
+    "nodeVersion": "v24.20.0",
+    "expectedLines": 15
+  },
+  "coveredBoundaries": [
+    "All class fields must be definitely assigned at the use site",
+    "Aliases, publication, method/getter/setter/private method access and dynamic-receiver function fields",
+    "Lexical receiver retention across collection and async execution",
+    "Base/derived initialization, inherited-field redeclaration, generic specializations and abrupt completion after publication",
+    "Late generic descendants rejected before execution; pre-super/default/partial receivers and constructor returns remain refused",
+    "v37/v36/legacy module and diagnostic fingerprints unchanged",
+    "Dev execution and source-free Wasm, native companion and standalone artifacts"
+  ],
+  "codeInputs": {
+    "path": "target/constructor-receiver-package-20261107/verified-code-inputs.json",
+    "files": 2459,
+    "sha256": "ec04d45f12693fc2e374124a0ba56f9536c68590a548452e01a35c240a8d3249",
+    "unchangedAfterGate": true
+  },
+  "passed": true,
+  "limitations": [
+    "Local macOS arm64 only; no remote CI or cross-platform acceptance",
+    "The complete receiver rule requires no non-template descendants, even if a non-generic descendant is never constructed",
+    "Arbitrary partial-instance observation and assignments proven only through branches/callees remain outside this increment",
+    "Polymorphic/generic method identity, decorator semantics and property descriptors remain open",
+    "No new runtime readiness flag, layout, ABI, dependency or production-budget change"
+  ]
+}

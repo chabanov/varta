@@ -3,6 +3,8 @@ mod cache;
 pub(crate) mod edges;
 pub(crate) mod fallback;
 pub(crate) mod field_display;
+pub(crate) mod numeric;
+mod pretty;
 pub(crate) mod transform;
 pub(crate) mod whitespace;
 use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
@@ -136,6 +138,8 @@ pub(crate) struct TextOptions {
     pub line_height: Option<LineHeight>,
     pub weight: f32,
     pub italic: bool,
+    pub numeric: numeric::Numeric,
+    pub pretty: bool,
     /// The used `letter-spacing` in CSS pixels (CSS Text 3 §8.2), added
     /// after every typographic character unit.
     pub letter_spacing: f32,
@@ -860,6 +864,8 @@ impl TextMeasurer {
                 line_height: None,
                 weight: 400.0,
                 italic: false,
+                numeric: crate::text::numeric::Numeric::default(),
+                pretty: false,
                 letter_spacing: 0.0,
                 white_space: WhiteSpaceMode::Normal,
                 break_anywhere: false,
@@ -889,6 +895,8 @@ impl TextMeasurer {
                 line_height: None,
                 weight: 400.0,
                 italic: false,
+                numeric: crate::text::numeric::Numeric::default(),
+                pretty: false,
                 letter_spacing: 0.0,
                 white_space: WhiteSpaceMode::Normal,
                 break_anywhere: false,
@@ -967,6 +975,9 @@ impl TextMeasurer {
         if !spans.is_empty() {
             self.charge_inline_work(spans.len())?;
         }
+        if options.pretty && max_width.is_some() {
+            self.charge_inline_work(text.len().saturating_mul(pretty::PASSES))?;
+        }
         let request = cache::Request {
             text,
             width: max_width,
@@ -1010,6 +1021,11 @@ impl TextMeasurer {
                         .any(|span| !span.range.is_empty() && span.options.white_space.wraps());
                 let min_width = if wraps { widths.min } else { widths.max };
                 layout.break_all_lines(max_width);
+                if options.pretty
+                    && let Some(width) = max_width
+                {
+                    pretty::improve(&mut layout, width);
+                }
                 // Alignment needs the definite line width; intrinsic measurement
                 // (no width) keeps every line at the start edge.
                 if let (Some(alignment), Some(_)) = (options.align.parley(), max_width) {
@@ -1219,6 +1235,10 @@ impl TextMeasurer {
         self.layout.set_shaping_operation_ceiling(
             scoped.then_some(remaining.min(u32::MAX as usize) as u32),
         );
+        let tab_work = tabs.len().saturating_mul(spans.len());
+        if tab_work != 0 {
+            self.charge_inline_work(tab_work)?;
+        }
         let family_names: Vec<_> = families
             .iter()
             .map(|name| FontFamilyName::Named(Cow::Borrowed(name.as_str())))
@@ -1240,6 +1260,7 @@ impl TextMeasurer {
             FontStyle::Normal
         }));
         builder.push_default(StyleProperty::LetterSpacing(options.letter_spacing));
+        builder.push_default(StyleProperty::FontFeatures(options.numeric.features(false)));
         if !options.white_space.wraps() {
             builder.push_default(StyleProperty::TextWrapMode(TextWrapMode::NoWrap));
         }
@@ -1270,6 +1291,10 @@ impl TextMeasurer {
             );
             builder.push(StyleProperty::FontSize(style.size), range.clone());
             builder.push(optical_size(style.size), range.clone());
+            builder.push(
+                StyleProperty::FontFeatures(style.numeric.features(false)),
+                range.clone(),
+            );
             builder.push(
                 StyleProperty::FontWeight(FontWeight::new(style.weight)),
                 range.clone(),
@@ -1320,7 +1345,14 @@ impl TextMeasurer {
         for &tab in tabs {
             builder.push(StyleProperty::WordSpacing(tab.spacing), tab.range());
             builder.push(
-                StyleProperty::FontFeatures(whitespace::TabStyle::features()),
+                StyleProperty::FontFeatures(
+                    spans
+                        .iter()
+                        .rev()
+                        .find(|s| s.range.contains(&tab.index))
+                        .map_or(options.numeric, |s| s.options.numeric)
+                        .features(true),
+                ),
                 tab.range(),
             );
         }
@@ -1397,6 +1429,23 @@ impl TextMeasurer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn standalone_measurement_does_not_charge_an_inactive_zero_work_tab_plan() {
+        let mut font = TextMeasurer::new(
+            include_bytes!("../../varta-style/tests/fixtures/case.ttf").to_vec(),
+            "Varta Case",
+        )
+        .unwrap();
+        let plain = font
+            .measure_with_family_list("aaa", 16.0, None, "Varta Case")
+            .unwrap();
+        assert_eq!(plain.width, 24.0);
+        assert_eq!(
+            font.measure_with_family_list("aaa", 16.0, None, "Varta Case")
+                .unwrap(),
+            plain
+        );
+    }
 
     fn cluster_measurer() -> TextMeasurer {
         TextMeasurer::new(
@@ -1866,6 +1915,8 @@ mod tests {
                 line_height: None,
                 weight: 400.0,
                 italic: false,
+                numeric: crate::text::numeric::Numeric::default(),
+                pretty: false,
                 letter_spacing: 0.0,
                 white_space: WhiteSpaceMode::NoWrap,
                 break_anywhere: false,
@@ -2124,6 +2175,8 @@ mod tests {
                         line_height: None,
                         weight: 400.0,
                         italic: false,
+                        numeric: crate::text::numeric::Numeric::default(),
+                        pretty: false,
                         letter_spacing: 0.0,
                         white_space: WhiteSpaceMode::NoWrap,
                         break_anywhere: false,

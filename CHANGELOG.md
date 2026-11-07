@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+- Fix managed KV reads in async HTTP request Stores by awaiting checked guest
+  allocator/retain callbacks through the shared codec. Bound nested fiber-stack
+  capacity by request admission, including one-worker policies; cancelled decode
+  trees drop iteratively. Guest budgets, grants and value ABI are unchanged.
+
+- Add native shadow-list transitions/keyframes and checked `transition` shorthand,
+  with live currentcolor, list padding, discrete inset keyframes and retained ink.
+
+- V39 checked structural snapshots validate SDK response fields recursively and
+  retain extra JSON fields in an isolated graph. Enumeration, spreads, typed
+  updates/deletes, JSON, GC and inspection preserve retained data/order. The new
+  whole-graph opt-in keeps existing profiles, explicit JSON decoding and record
+  unions strict. Native, standalone and Chrome checks use an unchanged SDK.
+
+- V38 async returns preserve typed promise sources until adoption, then widen
+  their fulfilled values to the declared result. This fixes typed SDK text
+  responses returned through `Promise<unknown>`, retaining finalizer overrides,
+  microtask order and the guard against unknown-held promises.
+
+- Array callback methods accept admitted tuple receivers, including v38 `as
+  const` keys, using existing array storage and its element union. Filtering
+  returns an array; receiver evaluation and live backing semantics are retained.
+
+- Remaining application Tailwind/CSS utilities: numeric font variants, checkable
+  accents, inset clipping, sticky placement, atomic inline-block/flex, legacy
+  line clamping, best-effort pretty wrapping, linear gradients, mirrored backdrop
+  blur, opacity/rotation keyframes and their browser CSSOM payload. Keyframe
+  emission avoids repeated full-sheet scans; direct text measurement preserves
+  its standalone use. Generated browser modules retain engine state/media
+  bindings used by input and font handling. `table-layout` is inert on current non-table boxes; native
+  tables and broader CSS combinations remain outside this increment.
+
+- Native CSS shadows and Tailwind rings: shared outer/inset grammar, Gaussian
+  blur, rounded and sliced inline geometry, opacity groups and retained damage.
+  Intrinsic width/height keywords now use content measurements; fit-content
+  clamps min/max-content in block, flex, grid and absolute layout. Direct GPU
+  shadows and intrinsic min/max constraints remain unsupported.
+
+- V38 complete constructor receivers: after definite assignment of every field,
+  classes without descendants can publish/capture `this`, call methods/getters
+  and read identity/receiver-bearing function fields. A final check includes late
+  generic subclasses; incomplete, pre-super and default receivers stay refused.
+
+- V38 class/function increment: checked instance identity fields, unbound
+  instance method values with explicit receivers, tuple-rest argument packing,
+  generic inference and finite fixed-signature adapters. Earlier profiles and
+  construction safety remain checked; decorators are still unsupported.
+
 - V38 infers synchronous generator signatures for checked yield/return types,
   and converts compatible record/class unions to shared record views without
   copying. Earlier profiles retain their annotation/admission rules.

@@ -56,6 +56,9 @@ pub const NET_REQUEST_VERSION: u32 = 33;
 /// a [`STATIC_SECTION`] extension after the root stack, with the managed heap
 /// after it, admitted for host ABI 34 profiles only.
 pub const PROGRAM_LIMITS_VERSION: u32 = 34;
+/// V39: checked snapshots for external JSON graphs. A distinct host ABI
+/// makes hosts without the snapshot contract reject before guest effects.
+pub const CHECKED_SNAPSHOT_VERSION: u32 = 35;
 #[must_use]
 pub fn supported(version: u32) -> bool {
     matches!(
@@ -94,6 +97,7 @@ pub fn supported(version: u32) -> bool {
             | TIMERS_VERSION
             | NET_REQUEST_VERSION
             | PROGRAM_LIMITS_VERSION
+            | CHECKED_SNAPSHOT_VERSION
     )
 }
 mod static_region;

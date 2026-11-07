@@ -39,6 +39,9 @@ pub(crate) enum Primitive {
     Border(Arc<crate::paint::border::Border>),
     /// A packaged image drawn into its rectangle; replayed in software only.
     Image(crate::image::ImageDraw),
+    Shadow(Arc<crate::paint::shadow::Shadow>),
+    Gradient(Arc<crate::paint::gradient::Gradient>),
+    Backdrop(Arc<crate::paint::backdrop::Backdrop>),
     BeginGroup {
         opacity: f32,
         additive: bool,
@@ -64,6 +67,9 @@ impl Draw {
                 | Primitive::Image(_)
                 | Primitive::BeginGroup { .. }
                 | Primitive::EndGroup => 0,
+                Primitive::Gradient(gradient) => gradient.bytes(),
+                Primitive::Backdrop(backdrop) => backdrop.bytes(),
+                Primitive::Shadow(shadow) => std::mem::size_of_val(shadow.as_ref()),
                 Primitive::Path(path, _) => {
                     std::mem::size_of_val(path.points()) + path.verbs().len()
                 }
@@ -325,6 +331,39 @@ impl Masks {
             Primitive::Path(path, rule) => {
                 image.fill_path(path, &paint, *rule, draw.transform, mask)
             }
+            Primitive::Shadow(shadow) => shadow.draw(
+                image,
+                crate::paint::shadow::Raster {
+                    transform: draw.transform,
+                    origin: (0, 0),
+                    dirty,
+                    color: draw.color,
+                    blend,
+                    mask,
+                },
+            ),
+            Primitive::Backdrop(backdrop) => backdrop.draw(
+                image,
+                crate::paint::shadow::Raster {
+                    transform: draw.transform,
+                    origin: (0, 0),
+                    dirty,
+                    color: draw.color,
+                    blend,
+                    mask,
+                },
+            ),
+            Primitive::Gradient(gradient) => gradient.draw(
+                image,
+                crate::paint::shadow::Raster {
+                    transform: draw.transform,
+                    origin: (0, 0),
+                    dirty,
+                    color: draw.color,
+                    blend,
+                    mask,
+                },
+            ),
             Primitive::Image(source) => crate::image::draw_image(
                 image,
                 source,
@@ -398,7 +437,12 @@ impl Scene {
         let grouped = commands.iter().any(|draw| {
             matches!(
                 draw.primitive,
-                Primitive::BeginGroup { .. } | Primitive::EndGroup | Primitive::Image(_)
+                Primitive::BeginGroup { .. }
+                    | Primitive::EndGroup
+                    | Primitive::Image(_)
+                    | Primitive::Shadow(_)
+                    | Primitive::Gradient(_)
+                    | Primitive::Backdrop(_)
             )
         });
         if self.record_only && !grouped {

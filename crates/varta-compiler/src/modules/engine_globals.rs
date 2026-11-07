@@ -270,7 +270,11 @@ mod tests {
             let folded = NODE_24
                 .iter()
                 .any(|(name, _)| kind(name, profile).is_some());
-            assert_eq!(folded, profile == V38, "{profile:?}");
+            assert_eq!(
+                folded,
+                matches!(profile, V38 | LanguageProfile::CheckedF64Utf16V39),
+                "{profile:?}"
+            );
         }
     }
 }

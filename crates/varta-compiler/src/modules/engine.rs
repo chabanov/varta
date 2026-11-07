@@ -1007,7 +1007,21 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 28] = [
+/// V39 JSON-graph validation/copy, reached only by compiler assertion lowering.
+pub(crate) const SNAPSHOT: Prelude = Prelude {
+    path: "<varta>/builtins/snapshot.ts",
+    source: include_str!("../prelude/snapshot.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::checked_snapshots,
+    extended: None,
+    loads: &[],
+    lifted: None,
+    required: Some(|_, profile| profile.checked_snapshots()),
+};
+pub(crate) const PRELUDES: [&Prelude; 29] = [
+    &SNAPSHOT,
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -1284,7 +1298,11 @@ pub(super) fn implicit_imports(
     }
     let admitted: Vec<&Prelude> = PRELUDES
         .into_iter()
-        .filter(|prelude| (prelude.admitted)(profile) && Path::new(prelude.path) != path)
+        .filter(|prelude| {
+            (prelude.admitted)(profile)
+                && Path::new(prelude.path) != path
+                && (prelude.path != SNAPSHOT.path || !is_prelude(path))
+        })
         .collect();
     if admitted.is_empty() {
         return Vec::new();
@@ -1359,12 +1377,16 @@ pub(super) fn implicit_imports(
                     })
             }));
             // A load trigger imports the module without a binding.
-            let span = bindings.first().map(|binding| binding.span).or_else(|| {
-                prelude
-                    .loads
-                    .iter()
-                    .find_map(|name| references.found.get(*name).copied())
-            })?;
+            let span = bindings
+                .first()
+                .map(|binding| binding.span)
+                .or_else(|| {
+                    prelude
+                        .loads
+                        .iter()
+                        .find_map(|name| references.found.get(*name).copied())
+                })
+                .or(required)?;
             Some(Dependency {
                 target: PathBuf::from(prelude.path),
                 bindings,

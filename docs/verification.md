@@ -8,6 +8,193 @@ any previous check whose scope includes those inputs.
 
 ## Current verification evidence — 2026-11-07
 
+**Combined package — final full gate passed before commit.** One uninterrupted
+run on unchanged sources passed all 12 commands: **4671 Rust tests (26 ignored)**,
+**190 Node tests**, core compatibility 246 passed / 2 known unsupported out of 248,
+and v39 3/3. This includes the later async HTTP/KV correction as well as compiler,
+checked snapshots and CSS work. Only documentation/evidence changed after the
+run. Earlier full/scoped reports remain unchanged; see the [pre-commit evidence](evidence/2026-11-07-precommit-verification.json).
+
+
+**Async HTTP/KV correction — scoped verification after the CSS full gate.**
+The runtime HTTP/KV/frozen-profile/deterministic-fuel union passes **99 tests
+(5 ignored)**, the shared codec passes **32**, and native/Wasm codec parity and
+fingerprint checks pass **6**: **137 distinct passing tests**. Four HTTP KV
+regressions cover cross-request/restart reads (v38/v39), nested managed values
+and list keys under forced GC, mismatch recovery/atomic updates, read-only host
+ceilings and the single-worker fiber pool. Codec tests compare yielding and
+immediate heap bytes/events/root order, and cancel an 8192-level classified tree
+on a 64-KiB stack both before polling and during allocation.
+
+Affected strict Clippy passes. The current browser codec passes 18 real Chrome
+KV scenarios with exact native/browser fuel, host-call, microtask, output and
+turn accounting. Fatal-budget fixtures now explicitly request their historical
+8-MiB or 8-million-fuel test ceilings rather than relying on production defaults.
+CLI/companion builds and native dev/source-free standalone restart probes pass.
+Cloud independently reports canonical and authenticated HTTP acceptance with
+restart, updates/conflicts, receipt replay and anonymous denial; this engine task
+made no external service calls. The previous CSS full report remains unchanged
+and does not verify the later KV source. See the
+[KV evidence](evidence/2026-11-07-http-kv-async-verification.json).
+
+
+**Shadow/ring motion follow-up — full gate passed.** One uninterrupted run on
+unchanged inputs passed all 12 commands, **4665 Rust tests (26 ignored)**
+and **190 Node tests**. Core conformance remains 246 passed / 2 known unsupported
+out of 248; the separate v39 contract suite passes 3/3.
+
+Eight new native behavior
+regressions and two list-interpolation regressions cover actual pixels, list
+padding, alpha/blur, live currentcolor, reversal/cancellation, keyframes,
+retained damage and scaled software fallback. Two common regressions cover
+full-precision color parsing and transition shorthand/cascade rules. The
+shared native/Wasm corpus has 480 decisions; all five additions have explicit
+positive/refusal outcomes. Virtual-time Chrome compares 13 motion cases at
+three device scales, including actual exterior shadow pixels: 1485 motion checks
+and 156 bridge/platform checks all pass. See the
+[motion evidence](evidence/2026-11-07-shadow-motion-verification.json).
+
+To reproduce the motion oracle at one scale (repeat at `1.25` and `2`):
+
+```bash
+cargo run -p varta-view --example native_shadow_motion_probe --locked -- 1 > target/shadow-motion.json
+node scripts/test-native-shadow-motion.mjs target/shadow-motion.json
+```
+
+
+**V39 checked structural snapshots — consolidated verification.** All 16 snapshot
+runtime cases pass, including forced GC between jobs, hostile metadata, strict
+old-profile/parse boundaries, nullable property guards, data keys such as
+`__proto__`, mutation/alias order, getters and fatal fuel. The affected object,
+dictionary, snapshot, typed async return, frozen-profile and deterministic-fuel
+scope passes 129 tests (1 ignored); the compiler passes 188 (2 ignored).
+All 238 common unit tests and 14 documentation tests pass. Affected strict Clippy
+and all three checked-in Wasm fingerprints pass. The unchanged 328-file SDK
+passes 16 synthetic quota checks and the original five-request local fixture;
+native development, standalone execution and Chrome acceptance pass. The
+separate v39 inventory passes 3/3; core v38 remains 246 passed and 2 known
+unsupported out of 248.
+
+Consolidated scopes cover **4653 distinct Rust tests (26 ignored)** and **190
+Node tests**, counting overlapping checks once. One full attempt stopped on an obsolete folded-global inheritance assertion.
+The remaining suites then exposed two runtime test issues: a new fixture had
+been placed in the frozen historical corpus, and measured v38 JSON fuel changed
+by the profile-gated serializer checks. The fixture moved outside that corpus
+without repinning historical module digests; only the two measured v38 JSON
+fuel expectations were refreshed. The failed cases and remaining suites passed
+through scoped completion; this is not an uninterrupted full pass. The original
+failed report is preserved. No external service requests were made by this task;
+independent Cloud acceptance includes authorized GETs and a completed generation.
+See [snapshot evidence](evidence/2026-11-07-checked-snapshot-verification.json).
+
+
+**SDK extra-field compatibility audit (no engine changes):** the synthetic quota
+probe passes 14 of 16 direct/SDK checks and exits 1 on the two expected extra-key
+failures. An engine-only probe confirms typed width assignment and baseline
+JSON conversion succeed; extra keys, wrong types and missing fields fail.
+`checked_conversions_deviate_from_node` passes. This confirms the existing
+contract before the owner selected checked snapshots in a separately versioned
+profile. The later implementation has separate verification below. No full test run was needed for this read-only audit. See
+[audit evidence](evidence/2026-11-07-sdk-extra-field-audit.json).
+
+**Subsequent typed async return correction:** 26 Promise-filtered, 38
+async-filtered and 2 frame tests pass (**63 distinct tests**, three overlap),
+including the new Node-matched return/finalizer/GC regression and incompatible
+result rejection. Older-profile frame digests remain identical. Affected strict
+Clippy and the CLI/companion build pass. The unmodified SDK's text-response and
+five-request fixtures both pass check/dev with local fetch and no network grants.
+No new full gate was run. See [typed promise evidence](evidence/2026-11-07-typed-async-return-verification.json).
+
+**Subsequent tuple callback correction:** all 15 array callback runtime tests
+pass, including two new compile/Wasmtime/behavior regressions. Strict Clippy
+passes for the compiler/runtime with all targets. Rebuilt CLI and companion
+check/run both the Cloud minimal const-tuple case and the unmodified SDK's
+five-request local fixture, without external network. This changes compiler
+inputs after the CSS checkpoint below; these are scoped results and no new
+full workspace pass is claimed. See [tuple evidence](evidence/2026-11-07-tuple-callback-verification.json).
+
+**Tailwind/CSS remainder completed — consolidated evidence, not a new
+uninterrupted full pass.** The package admits **312/312** finite application
+candidates; native/Wasm agree over 475 shared decisions (451 admitted/24 refused).
+One full attempt (`target/verification/20261107-125114-_6c3r9ao/report.json`)
+passed the checks/builds, then stopped at three desktop font tests after 902
+Rust tests in completed suites (137 additional successes in the failing group
+are counted only through its successful rerun). Its global source guard also failed: two cloud documents
+were added concurrently. Exact hash reconstruction accounts for those additions
+and proves code stayed unchanged during the attempt.
+
+Scoped continuation fixes zero-work standalone shaping charges, mirrored
+backdrop edges/host units, repeated keyframe-name scans, generated browser
+bindings and an obsolete rotate-refusal assertion. Already completed unaffected
+suites were retained; unfinished suites, the corrected native view suite,
+remaining doctests and the new bundle regression completed separately. The
+combined nonduplicated result is **4632 Rust tests passed, 26 ignored; 190 browser
+Node tests passed**. The original failed report is preserved; no second full gate
+was started. Current code/build input hashes and the exact scope split are in
+[the remainder record](evidence/2026-11-07-tailwind-css-remainder-verification.json).
+
+The 49-scene native/Chrome comparison passed in both platform and bridge modes
+at 1×/1.25×/2×. Corrective comparisons reran backdrop blur and two new mirror-edge
+scenes in both modes at all scales, bringing effective scene coverage to 51.
+Bounds remain 2/255 scene-mean RGB, 1/255 box centres and the existing explicit
+probe tolerances; this does not claim exact whole-frame parity. Real generated
+loader/Worker input/click/denial delivery and Cloud Studio input/save pass.
+The expanded Tailwind/Preflight fixture also passes check/dev/build/standalone
+with the rebuilt current tools. Compatibility matches **246 passed/2 known
+unsupported out of 248**, 131 feature rows, 4 uncased. Production ceilings stay
+unchanged; broader tables/filter/animation/GPU/platform acceptance stays open.
+
+- **Tailwind/CSS shadows and intrinsic sizes, completed 2026-11-07:** one
+  uninterrupted full run (`target/verification/20261107-112710-lnvl_z_n/report.json`)
+  passed all 11 commands on unchanged inputs: **4602 Rust tests, 26 ignored;
+  189 browser Node tests**. Compatibility matches: **246 passed and 2 known
+  unsupported out of 248**, 131 feature rows and 4 without cases. This run also
+  includes the preceding class/function and complete-constructor-receiver work.
+  The finite application corpus improved from 287/312 to **298/312**; exactly
+  ten shadow/ring cases and `w-fit` opened, with 14 cases still refused. All
+  467 shared CSS cases agree between native and Wasm. The 38-scene Chrome oracle
+  passed in platform and bridge modes at 1×, 1.25× and 2× (1423/1435 checks per
+  mode/scale); outside-box probes cover shadow/ring ink. Hard-edge AA can differ
+  within one device pixel, and Gaussian probes have a channel bound of 13/255;
+  this is not exact whole-frame raster parity. The full Tailwind/Preflight entry
+  also passes source-free standalone execution. Direct GPU shadows, shadow-list
+  interpolation and broader CSS remain open. See the [CSS evidence](evidence/2026-11-07-tailwind-css-verification.json).
+  Only documentation changed after the gate; no second full run was started.
+
+- **Complete constructor receivers, completed 2026-11-07:** one uninterrupted
+  full run (`target/verification/20261107-091011-2res_qhv/report.json`) passed all
+  commands on unchanged inputs: **4589 Rust tests, 26 ignored; 189 browser Node
+  tests**. The baseline matches: **246 passed and 2 known unsupported out of 248**,
+  with 131 feature rows and 4 without cases. This run includes the preceding
+  class/function increment and its tuple-adapter arity correction; no code fix
+  followed this gate. The new cases cover complete-receiver publication, aliases,
+  methods/getters/setters, private methods, dynamic-receiver function fields,
+  generic specializations, inherited redeclarations, late generic descendants,
+  abrupt completion, async retention, collection and source-free execution.
+  See the [constructor receiver evidence](evidence/2026-11-07-constructor-receiver-verification.json).
+  This is the preceding checkpoint; newer CSS code is covered by the later
+  record above. Earlier records below retain their original scope.
+
+- **Class/function checked increment, completed 2026-11-07:** initializer
+  identities, unbound instance method values and tuple-rest calls/inference pass
+  their scoped, collection, suspension and source-free checks. One full run
+  (`target/verification/20261107-081149-1sydq6ck/report.json`) passed all commands
+  on unchanged inputs: **4588 Rust tests, 26 ignored; 189 browser Node tests**.
+  Its compatibility baseline matches: **245 passed, 2 known unsupported out of
+  247**, with 131 feature rows and 4 without cases.
+- **Final adapter correction after that run:** a compile-only probe showed that
+  a required variadic tuple function could be assigned to a zero-argument tuple
+  callback. The compiler now requires identical parameter layouts for optional/
+  variadic tuple adapters. Only `lower/subtyping.rs` and its runtime regression
+  test changed after the full run. The final code passed the core check,
+  **41 affected runtime tests**, historical hashes and strict affected-package
+  Clippy. The four new compatibility sources are identical to the runtime
+  fixtures re-executed after this correction; the remaining inventory has no
+  newly admitted tuple-rest calls. There was no second full run. The original
+  full report describes the pre-correction snapshot, not an uninterrupted full
+  pass of the final code. See the [class/function evidence](evidence/2026-11-07-class-function-verification.json)
+  for both snapshots, the exact delta and local logs. Final engine inputs remain
+  unchanged by the subsequent documentation updates.
 - **Compiler/compatibility follow-up, completed 2026-11-07:** synchronous
   generator inference, union-to-record views and pinned companion modules pass
   consolidated verification: **4584 Rust tests passed, 0 unresolved failures,

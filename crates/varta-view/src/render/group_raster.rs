@@ -211,6 +211,39 @@ impl Raster {
                 draw.transform.post_concat(origin),
                 mask,
             ),
+            Primitive::Shadow(shadow) => shadow.draw(
+                image,
+                crate::paint::shadow::Raster {
+                    transform: draw.transform,
+                    origin: (x, y),
+                    dirty,
+                    color: draw.color,
+                    blend,
+                    mask,
+                },
+            ),
+            Primitive::Backdrop(backdrop) => backdrop.draw(
+                image,
+                crate::paint::shadow::Raster {
+                    transform: draw.transform,
+                    origin: (x, y),
+                    dirty,
+                    color: draw.color,
+                    blend,
+                    mask,
+                },
+            ),
+            Primitive::Gradient(gradient) => gradient.draw(
+                image,
+                crate::paint::shadow::Raster {
+                    transform: draw.transform,
+                    origin: (x, y),
+                    dirty,
+                    color: draw.color,
+                    blend,
+                    mask,
+                },
+            ),
             Primitive::Image(source) => crate::image::draw_image(
                 image,
                 source,

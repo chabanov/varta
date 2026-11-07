@@ -474,6 +474,9 @@ impl Session {
     /// The committed computed values of element `id` (empty for a text
     /// node or an unknown id).
     #[must_use]
+    pub fn animation_css(&self) -> String {
+        self.committed.styles.animation_css(&self.environment)
+    }
     pub fn computed(&self, id: u32) -> BTreeMap<CssProperty, Computed> {
         if self.committed.element(id).is_none() {
             return BTreeMap::new();

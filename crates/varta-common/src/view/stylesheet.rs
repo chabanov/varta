@@ -166,6 +166,21 @@ impl Rule {
     }
 }
 
+/// A CSS Animations keyframe. Declarations are restricted to the native
+/// interpolable paint/transform properties and per-segment timing functions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Keyframe {
+    pub offset: f64,
+    pub declarations: Vec<(CssProperty, String)>,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct Keyframes {
+    pub name: String,
+    pub frames: Vec<Keyframe>,
+    pub media: Vec<MediaQueryList>,
+    pub layer: Option<usize>,
+}
+
 /// What a stylesheet violates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Violation {
@@ -192,7 +207,7 @@ pub enum Violation {
     #[error("a property the specifications define that the view does not implement yet")]
     UnsupportedProperty,
     #[error(
-        "the value is valid CSS that the native renderer cannot render yet (for example a sum of a percentage and a length outside box geometry, `display: inline-block`, or a counter in `content`)"
+        "the value is valid CSS that the native renderer cannot render yet (for example a sum of a percentage and a length outside box geometry, `display: table`, or a counter in `content`)"
     )]
     Unrenderable,
     #[error("`font-family` names the CSS-wide keyword `{0}`, which the subset does not admit")]
@@ -204,7 +219,7 @@ pub enum Violation {
     #[error("unterminated rule")]
     Unterminated,
     #[error(
-        "at-rule outside the subset (admitted: @media, @supports, @layer, @property) or in a context that does not admit it"
+        "at-rule outside the subset (admitted: @media, @supports, @layer, @property, @keyframes) or in a context that does not admit it"
     )]
     AtRule,
     #[error("invalid @layer name list")]
@@ -242,6 +257,7 @@ pub struct ParsedStylesheet {
     pub layer_declarations: Vec<LayerDeclaration>,
     /// `@property` registrations in stylesheet order.
     pub properties: Vec<Registration>,
+    pub keyframes: Vec<Keyframes>,
 }
 
 /// Where a rule list is parsed.
@@ -268,6 +284,7 @@ struct Parser<'a> {
     unconditional: BTreeSet<usize>,
     anonymous: usize,
     properties: Vec<Registration>,
+    keyframes: Vec<Keyframes>,
 }
 
 impl Parser<'_> {
@@ -341,6 +358,7 @@ impl Parser<'_> {
         self.at += 1;
         match name {
             "media" => self.media_rule(context),
+            "keyframes" => self.keyframes_rule(context),
             "layer" => self.layer_rule(context),
             "property" if context.depth == 0 => self.property_rule(),
             "supports" => self.supports_rule(context),
@@ -394,6 +412,106 @@ impl Parser<'_> {
             self.rule_list(end, &inner)?;
         }
         self.at = end + 1;
+        Ok(())
+    }
+    fn keyframes_rule(&mut self, context: &Context) -> Parsed<()> {
+        self.skip();
+        let name = match self.peek() {
+            Some(Token::Ident(n))
+                if !css::CSS_WIDE_KEYWORDS
+                    .iter()
+                    .chain(["none", "default"].iter())
+                    .any(|k| n.eq_ignore_ascii_case(k)) =>
+            {
+                n.clone()
+            }
+            _ => return self.fail(Violation::Declaration),
+        };
+        self.at += 1;
+        self.skip();
+        if self.peek() != Some(&Token::OpenCurly) {
+            return self.fail(Violation::Expected("{"));
+        }
+        let close = self.block_end(self.at + 1).ok_or(StylesheetError {
+            violation: Violation::Unterminated,
+            offset: self.offset(self.at),
+        })?;
+        self.at += 1;
+        let mut frames = Vec::new();
+        while self.at < close {
+            self.skip();
+            if self.at >= close {
+                break;
+            }
+            let open = self.prelude(false)?;
+            let offsets =
+                super::animation::offsets(&self.tokens[self.at..open]).ok_or(StylesheetError {
+                    violation: Violation::Declaration,
+                    offset: self.offset(self.at),
+                })?;
+            let end = self.block_end(open + 1).ok_or(StylesheetError {
+                violation: Violation::Unterminated,
+                offset: self.offset(open),
+            })?;
+            let mut declarations = Vec::new();
+            for (name, first, last, important) in self.declarations(open + 1, end)? {
+                if important {
+                    continue;
+                }
+                let raw = self.value_text(first, last);
+                // Native keyframe variables/custom definitions and layout animation
+                // remain explicit refusals, not browser-only implementations.
+                if css::contains_variable(&raw) {
+                    return self.fail_at(first, Violation::Unrenderable);
+                }
+                for (name, value) in
+                    declaration(&name, &raw).map_err(|violation| StylesheetError {
+                        violation,
+                        offset: self.offset(first),
+                    })?
+                {
+                    let Some(p) = name.property() else {
+                        return self.fail_at(first, Violation::Unrenderable);
+                    };
+                    if !matches!(
+                        p,
+                        CssProperty::Opacity
+                            | CssProperty::BoxShadow
+                            | CssProperty::Transform
+                            | CssProperty::Color
+                            | CssProperty::BackgroundColor
+                            | CssProperty::AnimationTimingFunction
+                    ) {
+                        return self.fail_at(first, Violation::Unrenderable);
+                    }
+                    let _lowered =
+                        css::lower(p, &value, &css::Context::NOMINAL).ok_or(StylesheetError {
+                            violation: Violation::Unrenderable,
+                            offset: self.offset(first),
+                        })?;
+                    self.charge(value.len() + super::DRAFT_STYLESHEET_NODE_WORK)?;
+                    declarations.push((p, value));
+                }
+            }
+            for offset in offsets {
+                self.node()?;
+                self.charge(declarations.iter().map(|(_, v)| v.len()).sum())?;
+                frames.push(Keyframe {
+                    offset,
+                    declarations: declarations.clone(),
+                });
+            }
+            self.at = end + 1;
+        }
+        let layer =
+            (!context.layer.is_empty()).then(|| self.declare(&context.layer, &context.media));
+        self.keyframes.push(Keyframes {
+            name,
+            frames,
+            media: context.media.clone(),
+            layer,
+        });
+        self.at = close + 1;
         Ok(())
     }
     fn media_rule(&mut self, context: &Context) -> Parsed<()> {
@@ -1093,6 +1211,7 @@ pub fn parse_with_work_limit(
         unconditional: BTreeSet::new(),
         anonymous: 0,
         properties: Vec::new(),
+        keyframes: Vec::new(),
     };
     let top = Context {
         media: Vec::new(),
@@ -1106,6 +1225,7 @@ pub fn parse_with_work_limit(
         layers: parser.layers,
         layer_declarations: parser.layer_declarations,
         properties: parser.properties,
+        keyframes: parser.keyframes,
     })
 }
 

@@ -22,6 +22,8 @@ fn options(white_space: WhiteSpaceMode) -> TextOptions {
         line_height: None,
         weight: 400.0,
         italic: false,
+        numeric: crate::text::numeric::Numeric::default(),
+        pretty: false,
         letter_spacing: 0.0,
         white_space,
         break_anywhere: false,

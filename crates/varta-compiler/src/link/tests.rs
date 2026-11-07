@@ -109,6 +109,7 @@ const COMMON_CORE: &[&str] = &[
     "crates/varta-common/src/value/symbol.rs",
     "crates/varta-common/src/value/vector.rs",
     "crates/varta-common/src/value/dictionary.rs",
+    "crates/varta-common/src/value/snapshot.rs",
     "crates/varta-common/src/function.rs",
     "crates/varta-common/src/function/view.rs",
 ];

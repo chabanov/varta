@@ -106,12 +106,47 @@ impl Lower<'_> {
         key: Expr,
         shape: u32,
         undeclared: bool,
-    ) -> Expr {
+    ) -> Result<Expr> {
         let record = Type::Record(shape);
         let source = self.hidden(record);
         let name = self.hidden(Type::String);
         let output = self.hidden(Type::Boolean);
         let marker = self.hidden(Type::Number);
+        if self.types.profile.checked_snapshots() {
+            let keys = self.enumerate_value(
+                local(span, source, record),
+                object_enumeration::Kind::Keys,
+                span,
+            )?;
+            let found = Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::ArraySearch(
+                    ir::ArraySearch::Includes,
+                    Box::new(keys),
+                    Box::new(local(span, name, Type::String)),
+                    Box::new(Expr {
+                        span,
+                        ty: Type::Float64,
+                        kind: E::Float64(0.0),
+                    }),
+                ),
+            };
+            return Ok(Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::ValueBlock {
+                    output,
+                    marker,
+                    roots: vec![source, name, output],
+                    body: vec![
+                        S::Init(source, value),
+                        S::Init(name, key),
+                        S::Init(output, found),
+                    ],
+                },
+            });
+        }
         let mut fields: Vec<_> = self.types.records[shape as usize]
             .fields
             .iter()
@@ -150,7 +185,7 @@ impl Lower<'_> {
             ),
         ];
         body.extend(lookup(span, name, &mut fields));
-        Expr {
+        Ok(Expr {
             span,
             ty: Type::Boolean,
             kind: E::ValueBlock {
@@ -159,6 +194,6 @@ impl Lower<'_> {
                 roots: vec![source, name, output],
                 body,
             },
-        }
+        })
     }
 }

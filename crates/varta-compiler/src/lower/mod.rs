@@ -530,6 +530,7 @@ mod results;
 mod sdk_paths;
 mod shared_unions;
 mod signature;
+pub(crate) mod snapshots;
 mod spread;
 mod spread_arguments;
 mod standard;

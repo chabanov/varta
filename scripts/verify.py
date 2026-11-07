@@ -240,6 +240,8 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
         cargo("test", "--workspace", "--locked"),
         browser_node_tests(),
         cargo("run", "-p", "varta-conformance", "--locked", "--", "--json"),
+        cargo("run", "-p", "varta-conformance", "--locked", "--", "--suite",
+              "conformance/snapshot-v39/suite.json", "--require-supported", "--json"),
     ]
 
 

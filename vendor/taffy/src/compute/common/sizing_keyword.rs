@@ -7,11 +7,29 @@ use crate::util::sys::f32_max;
 use crate::{CompactLength, Dimension};
 
 /// How a sizing keyword resolves to a used size
+#[derive(Clone, Copy)]
 pub(crate) enum SizingKeywordResolution {
     /// The size is the result of measuring the item under the given available space constraint
     Measure(AvailableSpace),
     /// The size resolves to an exact value without measuring the item
     Exact(f32),
+}
+
+impl SizingKeywordResolution {
+    /// CSS Sizing 3 §3.2: fit-content clamps the available size between
+    /// min-content and max-content. Measuring once at the available width
+    /// instead returns the longest wrapped line for text and is too narrow.
+    pub(crate) fn resolve(self, mut measure: impl FnMut(AvailableSpace) -> f32) -> f32 {
+        match self {
+            Self::Exact(value) => value,
+            Self::Measure(AvailableSpace::Definite(limit)) => {
+                let min = measure(AvailableSpace::MinContent);
+                let max = measure(AvailableSpace::MaxContent);
+                min.max(limit.min(max))
+            }
+            Self::Measure(available) => measure(available),
+        }
+    }
 }
 
 /// Resolve an item's size style in one axis if it is a sizing keyword (`min-content`,
@@ -111,7 +129,9 @@ pub(crate) fn resolve_absolute_sizing_keywords(
         (
             Some(SizingKeywordResolution::Measure(available_width)),
             Some(SizingKeywordResolution::Measure(available_height)),
-        ) => {
+        ) if !matches!(available_width, AvailableSpace::Definite(_))
+            && !matches!(available_height, AvailableSpace::Definite(_)) =>
+        {
             let measured_size = tree.measure_child_size_both(
                 node,
                 Size::NONE,
@@ -124,9 +144,8 @@ pub(crate) fn resolve_absolute_sizing_keywords(
         }
         (keyword_width, keyword_height) => {
             if let Some(resolution) = keyword_width {
-                known_dimensions.width = Some(match resolution {
-                    SizingKeywordResolution::Exact(width) => width,
-                    SizingKeywordResolution::Measure(available_width) => tree.measure_child_size(
+                known_dimensions.width = Some(resolution.resolve(|available_width| {
+                    tree.measure_child_size(
                         node,
                         *known_dimensions,
                         area_size.map(Some),
@@ -134,13 +153,12 @@ pub(crate) fn resolve_absolute_sizing_keywords(
                         sizing_mode,
                         AbsoluteAxis::Horizontal,
                         Line::FALSE,
-                    ),
-                });
+                    )
+                }));
             }
             if let Some(resolution) = keyword_height {
-                known_dimensions.height = Some(match resolution {
-                    SizingKeywordResolution::Exact(height) => height,
-                    SizingKeywordResolution::Measure(available_height) => tree.measure_child_size(
+                known_dimensions.height = Some(resolution.resolve(|available_height| {
+                    tree.measure_child_size(
                         node,
                         *known_dimensions,
                         area_size.map(Some),
@@ -154,8 +172,8 @@ pub(crate) fn resolve_absolute_sizing_keywords(
                         sizing_mode,
                         AbsoluteAxis::Vertical,
                         Line::FALSE,
-                    ),
-                });
+                    )
+                }));
             }
         }
     }

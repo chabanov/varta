@@ -29,6 +29,11 @@ impl Lower<'_> {
         helper: DictionaryHelper,
         mut args: Vec<Expr>,
     ) -> Result<Expr> {
+        if helper == DictionaryHelper::Define && !self.types.profile.checked_snapshots() {
+            return Err(invalid(
+                "data-property copy helper requires checked snapshots",
+            ));
+        }
         let Some(Type::Dictionary(id)) = args.first().map(|arg| arg.ty) else {
             return Err(invalid("missing dictionary type"));
         };
@@ -45,7 +50,9 @@ impl Lower<'_> {
                 vec![plain, Type::String],
                 unions::intern(vec![value, Type::Undefined], self.types)?,
             ),
-            DictionaryHelper::Set => (vec![plain, Type::String, value], value),
+            DictionaryHelper::Set | DictionaryHelper::Define => {
+                (vec![plain, Type::String, value], value)
+            }
             DictionaryHelper::Delete => (vec![plain, Type::String], Type::Boolean),
             DictionaryHelper::Compact => (vec![plain], Type::Boolean),
             DictionaryHelper::Index => {
@@ -89,10 +96,15 @@ impl Lower<'_> {
                     let (receiver, key) = (argument()?, argument()?);
                     child.dictionary_get_inline(receiver, key)?
                 }
-                DictionaryHelper::Set => {
+                DictionaryHelper::Set | DictionaryHelper::Define => {
                     let (receiver, key, value) = (argument()?, argument()?, argument()?);
                     let block = child.dictionary_block(receiver, key)?;
-                    child.dictionary_store(block, value, result)?
+                    child.dictionary_store_mode(
+                        block,
+                        value,
+                        result,
+                        helper == DictionaryHelper::Define,
+                    )?
                 }
                 DictionaryHelper::Delete => {
                     let (receiver, key) = (argument()?, argument()?);

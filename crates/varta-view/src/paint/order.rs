@@ -173,7 +173,7 @@ impl Order {
             let flex_parent = tree
                 .computed_read(parent, env)
                 .get(&CssProperty::Display)
-                .is_some_and(|value| matches!(value.as_str(), "flex" | "grid"));
+                .is_some_and(|value| matches!(value.as_str(), "flex" | "inline-flex" | "grid"));
             for &id in children.iter().rev() {
                 if tree.element(id).is_none() || !geometry.contains_key(&id) {
                     continue;
@@ -224,14 +224,19 @@ impl Order {
                 let z = if scheme.positioned() || item { z } else { None };
                 // Any transform makes a stacking context (CSS Transforms 1 §3).
                 let transformed = crate::transform::effective(&properties).is_some();
-                let real = translucent || transformed || scheme == Scheme::Fixed || z.is_some();
+                let real = translucent
+                    || transformed
+                    || matches!(scheme, Scheme::Fixed | Scheme::Sticky)
+                    || super::backdrop::establishes(&properties)
+                    || z.is_some()
+                    || super::clip_path::establishes(&properties);
                 self.placements.insert(
                     id,
                     Placement {
                         scope: match scheme {
                             Scheme::Absolute => containing,
                             Scheme::Fixed => None,
-                            Scheme::Static | Scheme::Relative => Some(parent),
+                            Scheme::Static | Scheme::Relative | Scheme::Sticky => Some(parent),
                         },
                         out_of_flow: scheme.out_of_flow(),
                     },

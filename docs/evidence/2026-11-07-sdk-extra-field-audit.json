@@ -1,0 +1,108 @@
+{
+  "date": "2026-11-07",
+  "scope": "Read-only audit of unknown JSON-graph assertions with additional record keys",
+  "classification": "Documented compatibility gap / contract decision; not evidence of nullable, counter or enum validation defect",
+  "engine_changed": false,
+  "sdk_or_application_sources_changed": false,
+  "credentials_or_payload_accessed": false,
+  "network_calls_by_audit": false,
+  "reproduction": {
+    "command": "../varta/target/debug/varta dev --config varta.quota-counters.config.json",
+    "cwd": "/Users/snaga/Developer/Laboratory/cloud",
+    "exit_code": 1,
+    "passed": 14,
+    "failed": 2,
+    "passing_variants": [
+      "baseline",
+      "empty-counters",
+      "counter",
+      "nullable-counter",
+      "nullable-daily",
+      "mixed-counters",
+      "reordered"
+    ],
+    "failing_variant": {
+      "name": "extra-field",
+      "added_synthetic_field": "fixture_extra: true",
+      "direct": "fail",
+      "sdk": "fail"
+    },
+    "log": "target/sdk-extra-fields-20261107/quota-variants.log"
+  },
+  "engine_only_probe": {
+    "source": "target/sdk-extra-fields-20261107/probe.ts",
+    "log": "target/sdk-extra-fields-20261107/minimal.log",
+    "exit_code": 0,
+    "observations": {
+      "typed_width": true,
+      "json_baseline": true,
+      "json_extra": false,
+      "json_wrong": false,
+      "json_missing": false
+    }
+  },
+  "regression": {
+    "command": "cargo test -p varta-runtime --lib checked_conversions_deviate_from_node --locked",
+    "passed": 1,
+    "failed": 0,
+    "log": "target/sdk-extra-fields-20261107/policy-regression.log"
+  },
+  "contract": [
+    {
+      "path": "docs/architecture.md",
+      "section": "Checked declared fields / Built values",
+      "text": "each key must be a declared field, as in checked parsing"
+    },
+    {
+      "path": "docs/profile-rules.md",
+      "section": "Checked declared fields",
+      "text": "Records accept exactly their declared keys"
+    },
+    {
+      "path": "crates/varta-compiler/src/lower/declared_fields.rs",
+      "function": "build_record",
+      "behavior": "Unmatched key branch throws the conversion TypeError"
+    },
+    {
+      "path": "crates/varta-runtime/src/declared_field_tests.rs",
+      "function": "checked_conversions_deviate_from_node",
+      "behavior": "Pins strict conversion and fresh JSON-graph values as deliberate deviations"
+    }
+  ],
+  "typescript_primary_sources": [
+    {
+      "url": "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#type-assertions",
+      "finding": "Assertions are erased and perform no runtime validation"
+    },
+    {
+      "url": "https://www.typescriptlang.org/docs/handbook/type-compatibility.html#starting-out",
+      "finding": "Structural compatibility checks target members; additional members of a source variable are permitted"
+    }
+  ],
+  "proposal": {
+    "status": "Owner decision requested; not implemented",
+    "scope": "Checked structural assertions for external unknown JSON graphs",
+    "requirements": [
+      "Fully validate declared fields, requiredness, nullability and literals/enums recursively",
+      "Admit and preserve additional keys for enumeration and serialization",
+      "Define identity and mutation/alias behavior",
+      "Retain older profiles and explicit strict JSON decode behavior",
+      "Define record-union matching and ambiguity; do not change shared union selection silently"
+    ],
+    "rejected_shortcut": "Removing the common build_record fallback affects checked parsing, declared reads and union matching; skipping unknown keys also drops data",
+    "sdk_acceptance": "Quota remains open; no SDK or application projection workaround introduced",
+    "concrete_contracts_document": "docs/architecture.md#proposed-external-sdk-assertion-contracts-not-adopted",
+    "alternatives": {
+      "A": "Recommended checked isolated snapshot, all extra JSON fields retained recursively; fresh identity and no mutable sharing with input",
+      "B": "Checked live object/array views, source logical identity retained; typed reads revalidate after untyped alias mutations"
+    },
+    "activation": "Preferred new whole-graph languageProfile; alternative versioned compiler setting only in a new profile with mandatory artifact requirements. Original SDK source assertions receive the mode during compilation; no source or response filters.",
+    "compatibility_boundaries": "Existing profiles, explicit checked JSON decode, declared reads and multi-record union subgraphs keep strict rules. Representation/ABI/GC/readers need a separate review; none changed."
+  },
+  "full_test_run": false,
+  "logs_sha256": {
+    "target/sdk-extra-fields-20261107/minimal.log": "c608922d14fd41b7d31ceff601c521e6625a842cad6219887386affa89ca2b70",
+    "target/sdk-extra-fields-20261107/policy-regression.log": "56f002dc1d97edf23f14a91a8ff94ead15500322b3f73d0839591ee3f7abb8bc",
+    "target/sdk-extra-fields-20261107/quota-variants.log": "2e64b0ccef61eaf0298005d0e3a8c203d35caa06c97c43e4ef55fec565f932b4"
+  }
+}

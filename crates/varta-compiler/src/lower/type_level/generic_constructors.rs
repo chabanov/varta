@@ -447,11 +447,21 @@ impl Lower<'_> {
         registry.uses.insert((entry, selector));
         // The arguments the inference left unlowered, against the instance.
         let mut values = values;
-        arguments::count(call.args.len(), &signature.shape)
-            .map_err(|e| self.source.locate(e, span))?;
+        arguments::typed_count(
+            call.args.len(),
+            &signature.params,
+            &signature.shape,
+            self.types,
+        )
+        .map_err(|e| self.source.locate(e, span))?;
         for (index, arg) in call.args.iter().enumerate().skip(values.len()) {
-            let context =
-                arguments::context(index, &signature.params, &signature.shape, self.types);
+            let context = arguments::call_context(
+                index,
+                call.args.len(),
+                &signature.params,
+                &signature.shape,
+                self.types,
+            );
             values.push(self.expr_expected(&arg.expr, context)?);
         }
         let values = self.bind_arguments(values, &signature.params, &signature.shape, span)?;

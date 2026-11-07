@@ -1,0 +1,76 @@
+{
+  "mode": "one-full-run-followed-by-narrow-adapter-correction",
+  "fullInvocationCount": 1,
+  "baseHead": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+  "fullRun": {
+    "path": "target/verification/20261107-081149-1sydq6ck/report.json",
+    "passed": true,
+    "sourceUnchanged": true,
+    "snapshot": {
+      "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+      "sourceSha256": "10d89ca223eda894957ec8b9c60492c0394b16508ce622fab924546fdd769251"
+    },
+    "rustPassed": 4588,
+    "rustIgnored": 26,
+    "browserNodePassed": 189
+  },
+  "postFullCorrection": {
+    "reason": "A variadic tuple function requiring its first element was accepted as a zero-argument tuple callback. The compile-only probe reproduced the missing arity rejection.",
+    "files": [
+      "crates/varta-compiler/src/lower/subtyping.rs",
+      "crates/varta-runtime/src/class_function_tests.rs"
+    ],
+    "scope": "Unexpanded optional/variadic tuple adapters now require identical parameter layouts; unchanged finite adapters and direct tuple-rest calls retain their paths.",
+    "snapshot": {
+      "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+      "sourceSha256": "6454bb8c157528ba91f56479507935ebf75f1ff1fddac3dd0fe8687b24eb8014"
+    },
+    "scopedChecks": {
+      "coreCheck": "passed",
+      "runtimeTestsPassed": 41,
+      "runtimeTestsFailed": 0,
+      "clippy": "passed"
+    },
+    "logs": [
+      "target/class-function-package-20261107/arity-check.log",
+      "target/class-function-package-20261107/final-core.log",
+      "target/class-function-package-20261107/final-runtime.log",
+      "target/class-function-package-20261107/final-clippy.log"
+    ]
+  },
+  "rustLatestResults": {
+    "passed": 4588,
+    "ignored": 26,
+    "failed": 0,
+    "method": "latest result by suite and name; full run plus affected rechecks"
+  },
+  "conformance": {
+    "counts": {
+      "total": 247,
+      "passed": 245,
+      "knownUnsupported": 2,
+      "unexpectedSupport": 0,
+      "regressions": 0,
+      "infrastructureFailures": 0
+    },
+    "baselineMatches": true,
+    "featureRows": 131,
+    "untestedFeatures": 4,
+    "scope": "Full-run result; all four new affected fixtures also executed by the post-correction runtime tests against identical sources."
+  },
+  "scopedEvidence": [
+    "New fixture outputs matched Node",
+    "Source-free artifact smoke passed",
+    "Construction, unbound method identity, tuple-rest and suspension cases passed normal and collection-stress execution",
+    "Historical profile byte/diagnostic hashes passed"
+  ],
+  "passed": true,
+  "limitations": [
+    "Local macOS arm64 checks only",
+    "The final arity guard was validated by affected checks after the full run; there was no second full run",
+    "Polymorphic method extraction, generic methods, overload views and generic-class method values with multiple specializations remain refused",
+    "Initializer identity does not admit arbitrary this escape; identity and receiver-bearing function fields cannot be read during construction",
+    "Changing optional/variadic tuple layouts through adapters and dynamic tuple-rest spreads remain refused",
+    "Two known unsupported compatibility cases and four uncased feature rows remain"
+  ]
+}

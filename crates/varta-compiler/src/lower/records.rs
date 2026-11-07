@@ -75,7 +75,7 @@ pub(super) fn property_key(name: &ast::PropName) -> Result<String> {
     }
 }
 pub(super) fn intern(fields: Vec<RecordField>, types: &mut ir::ValueTypes) -> Result<Type> {
-    intern_shape(fields, types, false)
+    intern_shape(fields, types, false, false)
 }
 /// The physical shape of an object literal with accessors (v38
 /// `expression_forms`): its getter and setter fields carry the reserved
@@ -84,12 +84,23 @@ pub(super) fn intern_accessors(
     fields: Vec<RecordField>,
     types: &mut ir::ValueTypes,
 ) -> Result<Type> {
-    intern_shape(fields, types, true)
+    intern_shape(fields, types, true, false)
+}
+/// Compiler-owned snapshot metadata cannot be spelled by a source property.
+pub(super) fn intern_snapshot(
+    fields: Vec<RecordField>,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    if !types.profile.checked_snapshots() {
+        return Err(invalid("snapshot layout requires its admitting profile"));
+    }
+    intern_shape(fields, types, false, true)
 }
 fn intern_shape(
     mut fields: Vec<RecordField>,
     types: &mut ir::ValueTypes,
     accessors: bool,
+    internal: bool,
 ) -> Result<Type> {
     if fields.iter().any(|f| matches!(f.ty, Type::Generator(_))) {
         return Err(generators::opaque("an object"));
@@ -112,6 +123,7 @@ fn intern_shape(
     // V38 (`symbol_values`): symbol keys share the prefix; no quoted key can
     // spell one (`quoted_key`).
     if types.profile.class_generics()
+        && !internal
         && let Some(field) = fields.iter().find(|f| {
             f.name.starts_with(classes::PRIVATE_PREFIX)
                 && !(accessors && object_accessors::hidden_field(&f.name))
@@ -347,6 +359,9 @@ impl Lower<'_> {
             if let Some(value) = self.receiver_literal(object, expected)? {
                 return Ok(value);
             }
+        }
+        if let Some(value) = self.snapshot_spread_literal(object, expected, true)? {
+            return Ok(value);
         }
         // Object spread (v38): into a dictionary when the first source is
         // one (without another context), otherwise into a closed record.

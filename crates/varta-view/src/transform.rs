@@ -52,6 +52,7 @@ pub(crate) enum Function {
     /// Pixels and box fractions per axis: `[x px, y px, x fraction, y fraction]`.
     Translate([f32; 4]),
     Scale([f32; 2]),
+    Rotate(f32),
 }
 
 impl Function {
@@ -62,12 +63,15 @@ impl Function {
         match self {
             Self::Translate(_) => Self::IDENTITY_TRANSLATE,
             Self::Scale(_) => Self::IDENTITY_SCALE,
+            Self::Rotate(_) => Self::Rotate(0.0),
         }
     }
     fn same_primitive(self, other: Self) -> bool {
         matches!(
             (self, other),
-            (Self::Translate(_), Self::Translate(_)) | (Self::Scale(_), Self::Scale(_))
+            (Self::Translate(_), Self::Translate(_))
+                | (Self::Scale(_), Self::Scale(_))
+                | (Self::Rotate(_), Self::Rotate(_))
         )
     }
 }
@@ -115,6 +119,13 @@ impl List {
                     Function::Scale([s, s])
                 }
                 ("scale", [x, y]) => Function::Scale([factor(x)?, factor(y)?]),
+                ("rotate", [angle]) => Function::Rotate(
+                    angle
+                        .strip_suffix("deg")?
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|a| a.is_finite())?,
+                ),
                 _ => return None,
             };
             if list.len == MAX_FUNCTIONS {
@@ -175,6 +186,7 @@ impl List {
                 (Function::Translate(a), Function::Translate(b)) => {
                     Function::Translate(std::array::from_fn(|i| mix(a[i], b[i])))
                 }
+                (Function::Rotate(a), Function::Rotate(b)) => Function::Rotate(mix(a, b)),
                 (Function::Scale(a), Function::Scale(b)) => {
                     Function::Scale(std::array::from_fn(|i| mix(a[i], b[i])))
                 }
@@ -208,6 +220,7 @@ impl List {
                     fy * 100.0
                 ),
                 Function::Scale([x, y]) => format!("scale({x:.digits$}, {y:.digits$})"),
+                Function::Rotate(a) => format!("rotate({a:.digits$}deg)"),
             });
         }
         out.join(" ")
@@ -223,6 +236,16 @@ impl List {
                     y: py + fy * rect.height,
                     ..Affine::IDENTITY
                 },
+                Function::Rotate(a) => {
+                    let (s, c) = a.to_radians().sin_cos();
+                    Affine {
+                        scale_x: c,
+                        scale_y: c,
+                        skew_x: -s,
+                        skew_y: s,
+                        ..Affine::IDENTITY
+                    }
+                }
                 Function::Scale([x, y]) => Affine {
                     scale_x: x,
                     scale_y: y,
@@ -238,19 +261,21 @@ impl List {
         );
         let around = |o: f32, s: f32, t: f32| o + t - s * o;
         Affine {
-            x: around(origin_x, matrix.scale_x, matrix.x),
-            y: around(origin_y, matrix.scale_y, matrix.y),
+            x: around(origin_x, matrix.scale_x, matrix.x) - matrix.skew_x * origin_y,
+            y: around(origin_y, matrix.scale_y, matrix.y) - matrix.skew_y * origin_x,
             ..matrix
         }
     }
 }
 
-/// A 2D transform without rotation or skew: `x' = scale_x * x + x_offset`
-/// and likewise for y, in CSS pixels of the view.
+/// A nonsingular 2D affine transform in CSS pixels. Off-diagonal
+/// coefficients preserve rotation for paint, visual geometry and input.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Affine {
     pub scale_x: f32,
     pub scale_y: f32,
+    pub skew_x: f32,
+    pub skew_y: f32,
     pub x: f32,
     pub y: f32,
 }
@@ -259,6 +284,8 @@ impl Affine {
     pub const IDENTITY: Self = Self {
         scale_x: 1.0,
         scale_y: 1.0,
+        skew_x: 0.0,
+        skew_y: 0.0,
         x: 0.0,
         y: 0.0,
     };
@@ -266,35 +293,63 @@ impl Affine {
     #[must_use]
     pub fn then(self, other: Self) -> Self {
         Self {
-            scale_x: self.scale_x * other.scale_x,
-            scale_y: self.scale_y * other.scale_y,
-            x: self.scale_x * other.x + self.x,
-            y: self.scale_y * other.y + self.y,
+            scale_x: self.scale_x * other.scale_x + self.skew_x * other.skew_y,
+            scale_y: self.skew_y * other.skew_x + self.scale_y * other.scale_y,
+            skew_x: self.scale_x * other.skew_x + self.skew_x * other.scale_y,
+            skew_y: self.skew_y * other.scale_x + self.scale_y * other.skew_y,
+            x: self.scale_x * other.x + self.skew_x * other.y + self.x,
+            y: self.skew_y * other.x + self.scale_y * other.y + self.y,
         }
     }
-    /// The inverse transform (factors are positive).
+    /// The inverse of a nonsingular 2D transform.
     #[must_use]
     pub fn inverse(self) -> Self {
+        let d = self.scale_x * self.scale_y - self.skew_x * self.skew_y;
         Self {
-            scale_x: 1.0 / self.scale_x,
-            scale_y: 1.0 / self.scale_y,
-            x: -self.x / self.scale_x,
-            y: -self.y / self.scale_y,
+            scale_x: self.scale_y / d,
+            scale_y: self.scale_x / d,
+            skew_x: -self.skew_x / d,
+            skew_y: -self.skew_y / d,
+            x: (self.skew_x * self.y - self.scale_y * self.x) / d,
+            y: (self.skew_y * self.x - self.scale_x * self.y) / d,
         }
     }
+    pub(crate) fn point(self, x: f32, y: f32) -> (f32, f32) {
+        (
+            self.scale_x * x + self.skew_x * y + self.x,
+            self.skew_y * x + self.scale_y * y + self.y,
+        )
+    }
+
     /// Whether the transform only translates.
     pub(crate) fn translation(self) -> Option<(f32, f32)> {
-        (self.scale_x == 1.0 && self.scale_y == 1.0).then_some((self.x, self.y))
+        (self.scale_x == 1.0 && self.scale_y == 1.0 && self.skew_x == 0.0 && self.skew_y == 0.0)
+            .then_some((self.x, self.y))
     }
     /// The image of `rect` (its bounding box; positive factors keep it a
     /// rectangle).
     #[must_use]
     pub fn rect(self, rect: BoxRect) -> BoxRect {
+        let p = [
+            self.point(rect.x, rect.y),
+            self.point(rect.x + rect.width, rect.y),
+            self.point(rect.x, rect.y + rect.height),
+            self.point(rect.x + rect.width, rect.y + rect.height),
+        ];
+        let [left, top, right, bottom] = p.into_iter().fold(
+            [
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ],
+            |a, p| [a[0].min(p.0), a[1].min(p.1), a[2].max(p.0), a[3].max(p.1)],
+        );
         BoxRect {
-            x: self.scale_x * rect.x + self.x,
-            y: self.scale_y * rect.y + self.y,
-            width: self.scale_x * rect.width,
-            height: self.scale_y * rect.height,
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
         }
     }
 }
@@ -400,7 +455,8 @@ mod tests {
         // A unit scale is the identity; another factor is not a translation.
         assert_eq!(resolve("scale(1) translateX(1px)"), Some(Some((1.0, 0.0))));
         assert_eq!(resolve("scale(0.98)"), Some(None));
-        assert!(super::resolve("rotate(4deg)", CENTRE, units(), BOX).is_err());
+        assert_eq!(resolve("rotate(4deg)"), Some(None));
+        assert!(super::resolve("rotate(4px)", CENTRE, units(), BOX).is_err());
         // Factors must be positive.
         assert!(super::resolve("scale(0)", CENTRE, units(), BOX).is_err());
         assert!(super::resolve("scale(-1, 1)", CENTRE, units(), BOX).is_err());

@@ -1135,15 +1135,17 @@ fn determine_flex_base_size(
                 .with_cross(dir, cross_axis_available_space);
 
             debug_log!("COMPUTE CHILD BASE SIZE:");
-            break 'flex_basis tree.measure_child_size(
-                child.node,
-                child_known_dimensions,
-                child_parent_size,
-                child_available_space,
-                SizingMode::ContentSize,
-                dir.main_axis(),
-                Line::FALSE,
-            );
+            break 'flex_basis SizingKeywordResolution::Measure(child_available_space.main(dir)).resolve(|space| {
+                tree.measure_child_size(
+                    child.node,
+                    child_known_dimensions,
+                    child_parent_size,
+                    child_available_space.with_main(dir, space),
+                    SizingMode::ContentSize,
+                    dir.main_axis(),
+                    Line::FALSE,
+                )
+            });
         };
 
         // Floor flex-basis by the padding_border_sum (floors inner_flex_basis at zero)
@@ -1999,40 +2001,48 @@ fn determine_hypothetical_cross_size(
             .map(|val| constants.divided_cross_space(val))
             .maybe_sub(child.margin.cross_axis_sum(constants.dir))
             .maybe_max(0.0);
-        let child_available_cross = match resolve_sizing_keyword(
+        let keyword_cross = resolve_sizing_keyword(
             child.size_style.cross(constants.dir),
             cross_stretch_size,
             constants.node_inner_size.cross(constants.dir),
             |val, basis| tree.calc(val, basis),
-        ) {
+        );
+        let child_available_cross = match keyword_cross {
             Some(SizingKeywordResolution::Measure(available)) => available,
             _ => child_available_cross,
         };
 
         let child_inner_cross = child_cross.unwrap_or_else(|| {
-            tree.compute_child_layout(
-                child.node,
-                LayoutInput {
-                    run_mode: RunMode::ComputeSize,
-                    sizing_mode: SizingMode::ContentSize,
-                    axis: constants.dir.cross_axis().into(),
-                    known_dimensions: Size {
-                        width: if constants.is_row { child.target_size.width.into() } else { child_cross },
-                        height: if constants.is_row { child_cross } else { child.target_size.height.into() },
+            let mut measure = |cross_space| {
+                tree.compute_child_layout(
+                    child.node,
+                    LayoutInput {
+                        run_mode: RunMode::ComputeSize,
+                        sizing_mode: SizingMode::ContentSize,
+                        axis: constants.dir.cross_axis().into(),
+                        known_dimensions: Size {
+                            width: if constants.is_row { child.target_size.width.into() } else { child_cross },
+                            height: if constants.is_row { child_cross } else { child.target_size.height.into() },
+                        },
+                        known_dimensions_are_definite: item_known_dimension_definiteness(constants, child),
+                        parent_size: constants.node_inner_size,
+                        available_space: Size {
+                            width: if constants.is_row { child_available_main } else { cross_space },
+                            height: if constants.is_row { cross_space } else { child_available_main },
+                        },
+                        vertical_margins_are_collapsible: Line::FALSE,
                     },
-                    known_dimensions_are_definite: item_known_dimension_definiteness(constants, child),
-                    parent_size: constants.node_inner_size,
-                    available_space: Size {
-                        width: if constants.is_row { child_available_main } else { child_available_cross },
-                        height: if constants.is_row { child_available_cross } else { child_available_main },
-                    },
-                    vertical_margins_are_collapsible: Line::FALSE,
-                },
-            )
-            .size
-            .get_abs(constants.dir.cross_axis())
-            .maybe_clamp(transferred_min_cross, transferred_max_cross)
-            .max(padding_border_sum)
+                )
+                .size
+                .get_abs(constants.dir.cross_axis())
+            };
+            let size = match keyword_cross {
+                Some(value @ SizingKeywordResolution::Measure(AvailableSpace::Definite(_))) => {
+                    value.resolve(&mut measure)
+                }
+                _ => measure(child_available_cross),
+            };
+            size.maybe_clamp(transferred_min_cross, transferred_max_cross).max(padding_border_sum)
         });
         let child_outer_cross = child_inner_cross + child.margin.cross_axis_sum(constants.dir);
 

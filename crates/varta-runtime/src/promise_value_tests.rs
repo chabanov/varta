@@ -10,6 +10,65 @@ use varta_common::language::LanguageProfile;
 
 const V35: LanguageProfile = LanguageProfile::CheckedF64Utf16V35;
 
+#[test]
+fn typed_async_returns_adopt_before_widening_and_after_finalizers() {
+    let source = include_str!("promise_return_cases/typed-returns.ts");
+    let bytes = varta_compiler::compile_typescript_with_profile(
+        source,
+        LanguageProfile::CheckedF64Utf16V38,
+    )
+    .unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    let output = VartaRuntime::new().run_wasm_bytes(&bytes, &[]).unwrap();
+    let expected = [
+        "fixture-ok",
+        "7",
+        "record",
+        "undefined",
+        "plain",
+        "finally 0",
+        "original",
+        "finally 1",
+        "9",
+        "finally 2",
+        "8",
+        "finally 3",
+        "same target",
+        "reject finally",
+        "typed rejection",
+        "yes 2",
+        "arrow",
+        "order finally",
+        "after call",
+        "tick 1",
+        "tick 2",
+        "adopted",
+        "tick 3",
+        "tick 4",
+        "unknown promise refused",
+    ];
+    let expected = expected.map(|line| format!("varta log: {line}"));
+    assert_eq!(output.lines, expected);
+    assert_eq!(
+        forced_collections(source, LanguageProfile::CheckedF64Utf16V38),
+        expected,
+    );
+}
+
+#[test]
+fn typed_async_returns_reject_incompatible_fulfillment_types() {
+    let source = "async function wrong(): Promise<string> { return Promise.resolve(1); } export function main(): void {}";
+    let error = varta_compiler::compile_typescript_with_profile(
+        source,
+        LanguageProfile::CheckedF64Utf16V38,
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("return type mismatch"),
+        "{error}"
+    );
+}
+
 fn compile(source: &str) -> Vec<u8> {
     let bytes = varta_compiler::compile_typescript_with_profile(source, V35)
         .unwrap_or_else(|e| panic!("{e}\n{source}"));
@@ -109,9 +168,21 @@ fn promise_combinators_match_node_job_order_and_results() {
 /// and dictionaries (and the combinators' private state) survive.
 #[test]
 fn promise_values_survive_a_collection_forced_before_every_job() {
+    let source = include_str!("promise_value_cases/lifetime.ts");
+    let expected = [
+        "a!~~b!~c!~~~d!~f!~object",
+        r#"[{"status":"fulfilled","value":"g!~~"},{"status":"rejected","reason":{}}]"#,
+    ];
+    assert_eq!(
+        forced_collections(source, V35),
+        expected.map(|line| format!("varta log: {line}"))
+    );
+    run(source, &expected);
+}
+
+fn forced_collections(source: &str, profile: LanguageProfile) -> Vec<String> {
     use varta_compiler::suspension_test_hook as hook;
-    let bytes =
-        hook::compile_with_profile(include_str!("promise_value_cases/lifetime.ts"), V35).unwrap();
+    let bytes = hook::compile_with_profile(source, profile).unwrap();
     let runtime = crate::VartaRuntime::new();
     let module = runtime.prepare_module(&bytes).unwrap();
     let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
@@ -141,15 +212,7 @@ fn promise_values_survive_a_collection_forced_before_every_job() {
     }
     assert!(jobs > 10, "{jobs}");
     assert!(store.data().scheduler.unhandled_rejection().is_none());
-    let expected = [
-        "a!~~b!~c!~~~d!~f!~object",
-        r#"[{"status":"fulfilled","value":"g!~~"},{"status":"rejected","reason":{}}]"#,
-    ];
-    assert_eq!(
-        store.data().output.lines,
-        expected.map(|line| format!("varta log: {line}"))
-    );
-    run(include_str!("promise_value_cases/lifetime.ts"), &expected);
+    store.data().output.lines.clone()
 }
 
 /// A promise held by `unknown` has no static `T`: awaiting or resolving with

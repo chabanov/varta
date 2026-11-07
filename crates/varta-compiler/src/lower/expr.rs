@@ -45,6 +45,20 @@ impl Lower<'_> {
         expected: Option<Type>,
         hints: Option<references::AggregateHints>,
     ) -> Result<Expr> {
+        self.expr_lowered_result(expression, expected, hints, false)
+    }
+    /// An async return keeps a statically typed promise until settlement;
+    /// widening the promise itself to `unknown` would erase its value type.
+    pub(super) fn async_return_expression(&mut self, expression: &ast::Expr) -> Result<Expr> {
+        self.expr_lowered_result(stmt::unparen(expression), Some(self.result), None, true)
+    }
+    fn expr_lowered_result(
+        &mut self,
+        expression: &ast::Expr,
+        expected: Option<Type>,
+        hints: Option<references::AggregateHints>,
+        async_return: bool,
+    ) -> Result<Expr> {
         self.depth += 1;
         if self.depth > super::MAX_NESTING {
             return Err(self.source.locate(
@@ -193,7 +207,13 @@ impl Lower<'_> {
             })
             .and_then(|value| self.void_function(value, expected))
             .and_then(|value| self.class_value_conversion(value, expected, expression))
-            .and_then(|value| unions::widen(value, expected, self.types))
+            .and_then(|value| {
+                if async_return && matches!(value.ty, Type::Promise(_)) {
+                    Ok(value)
+                } else {
+                    unions::widen(value, expected, self.types)
+                }
+            })
             .map_err(|e| self.source.locate(e, expression.span()))
     }
     fn expr_inner(&mut self, expression: &ast::Expr) -> Result<Expr> {
@@ -855,6 +875,62 @@ impl Lower<'_> {
         #[cfg(any(test, feature = "suspension-test-hook"))]
         if let Some(point) = self.suspension_hook(call)? {
             return Ok(point);
+        }
+        // Private calls are recognized only in the compiler-owned snapshot
+        // prelude, never by an application's spelling of these names.
+        if self.types.profile.checked_snapshots()
+            && self.source.file.name.to_string() == crate::modules::engine::SNAPSHOT.path
+            && let ast::Callee::Expr(callee) = &call.callee
+        {
+            match callee_name(callee).as_deref() {
+                Some("snapshotPut") if call.args.len() == 3 => {
+                    let graph = dictionaries::intern(Type::Unknown, self.types)?;
+                    let target = self.expr_expected(&call.args[0].expr, Some(graph))?;
+                    let key = self.expr_expected(&call.args[1].expr, Some(Type::String))?;
+                    let value = self.expr_expected(&call.args[2].expr, Some(Type::Unknown))?;
+                    let stored = self.dictionary_helper_call(
+                        ir::DictionaryHelper::Define,
+                        vec![target, key, value],
+                    )?;
+                    return Ok(Expr {
+                        span: call.span,
+                        ty: Type::Void,
+                        kind: E::Sequence(
+                            Box::new(stored),
+                            Box::new(Expr {
+                                span: call.span,
+                                ty: Type::Void,
+                                kind: E::Zero,
+                            }),
+                        ),
+                    });
+                }
+                Some("snapshotArray") if call.args.len() == 1 => {
+                    let value = self.expr(&call.args[0].expr)?;
+                    return self.snapshot_array(value, call.span);
+                }
+                Some("snapshotObject") if call.args.len() == 1 => {
+                    let value = self.expr(&call.args[0].expr)?;
+                    return self.snapshot_object(value, call.span);
+                }
+                Some("snapshotSame") if call.args.len() == 2 => {
+                    // Both operands have already passed the JSON object/array
+                    // check. Uint8Array identity cannot enter this path.
+                    let a = self.expr(&call.args[0].expr)?;
+                    let a = unknown::widen(a, self.types)?;
+                    let b = self.expr(&call.args[1].expr)?;
+                    let b = unknown::widen(b, self.types)?;
+                    return Ok(Expr {
+                        span: call.span,
+                        ty: Type::Boolean,
+                        kind: E::Host(
+                            self.types.profile.host_operation(Host::UnionStrictEqual),
+                            vec![a, b],
+                        ),
+                    });
+                }
+                _ => {}
+            }
         }
         // V38 (`expression_forms`): static spreads expand into arguments.
         if self.types.profile.expression_forms()

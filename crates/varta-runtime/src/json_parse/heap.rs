@@ -474,3 +474,32 @@ impl Writer {
         Ok(())
     }
 }
+
+impl Writer {
+    /// The same checked allocation through an asynchronous Wasmtime call.
+    /// Epoch yields remain possible; no executor is blocked waiting for Wasm.
+    pub(super) async fn block_async(
+        &self,
+        caller: &mut Caller<'_, RuntimeContext>,
+        len: usize,
+    ) -> Result<usize, wasmtime::Error> {
+        if std::time::Instant::now() >= caller.data().deadline {
+            return Err(error("execution deadline"));
+        }
+        let request = i32::try_from(len).map_err(|_| error("allocation size"))?;
+        let ptr = self.allocate.call_async(&mut *caller, request).await? as u32 as usize;
+        varta_kv_codec::build::check_block(self.memory.data(&*caller), ptr, len).map_err(error)?;
+        Ok(ptr)
+    }
+    pub(super) async fn retain_handle_async(
+        &self,
+        caller: &mut Caller<'_, RuntimeContext>,
+        handle: u64,
+    ) -> Result<(), wasmtime::Error> {
+        let retained = self.retain.call_async(&mut *caller, handle as i64).await?;
+        if retained as u64 != handle {
+            return Err(error("retention helper changed the value"));
+        }
+        Ok(())
+    }
+}

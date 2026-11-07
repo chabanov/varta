@@ -26,8 +26,10 @@ use super::{CssProperty, CssValue, FORBIDDEN_CSS, FORBIDDEN_STYLE_VALUE, syntax}
 use crate::view::prelude::*;
 
 pub mod color;
+pub mod gradient;
 mod known;
 pub mod math;
+pub mod shadow;
 
 /// Whether a published specification defines the property `name` (ASCII
 /// case-insensitively): the engine refuses a defined property it has not
@@ -456,6 +458,7 @@ fn host_leaf(name: &str, token: &V) -> bool {
             "<percentage>" => unit(text, &["%"]),
             "<flex>" => unit(text, &["fr"]),
             "<time>" => unit(text, &["ms", "s"]),
+            "<angle>" => unit(text, &["deg", "rad", "grad", "turn"]),
             _ => false,
         },
         _ => false,
@@ -834,6 +837,11 @@ pub fn forbidden(text: &str) -> bool {
 pub fn grammar(property: CssProperty) -> &'static str {
     use CssProperty as P;
     match property {
+        // CSS Sizing 3/4 intrinsic keywords. The layout engine resolves
+        // these against the containing block and measured content.
+        P::Width | P::Height => {
+            "auto | min-content | max-content | fit-content | stretch | <length-percentage>"
+        }
         // CSS Transforms 2 §4: two-dimensional `scale` takes numbers and
         // percentages (the third, z component is outside the 2D renderer).
         P::Scale => "none | [<number> | <percentage>] [<number> | <percentage>]?",
@@ -858,7 +866,7 @@ pub fn grammar(property: CssProperty) -> &'static str {
         // and ignored.
         P::TransitionProperty => "none | [all | <custom-ident>]#",
         // CSS Easing 1 §2.2 and §2.3.
-        P::TransitionTimingFunction => {
+        P::TransitionTimingFunction | P::AnimationTimingFunction => {
             "[linear | ease | ease-in | ease-out | ease-in-out | step-start | step-end | cubic-bezier(<number>, <number>, <number>, <number>) | steps(<integer> [, [jump-start | jump-end | jump-none | jump-both | start | end]]?)]#"
         }
         // CSS Backgrounds 3 §3.3: `<line-width>`, whose keywords [`lower`]
@@ -905,10 +913,10 @@ fn unrendered(property: CssProperty) -> Option<&'static str> {
     use CssProperty as P;
     Some(match property {
         P::Display => {
-            "contents | list-item | inline-block | inline-flex | inline-grid | inline-table | flow-root | table | table-row-group | table-header-group | table-footer-group | table-row | table-cell | table-column-group | table-column | table-caption | -webkit-box"
+            "contents | list-item | inline-grid | inline-table | flow-root | table | table-row-group | table-header-group | table-footer-group | table-row | table-cell | table-column-group | table-column | table-caption"
         }
-        P::Position => "sticky",
-        P::Width | P::Height | P::MinWidth | P::MinHeight | P::MaxWidth | P::MaxHeight => {
+        P::Width | P::Height => "fit-content(<length-percentage>)",
+        P::MinWidth | P::MinHeight | P::MaxWidth | P::MaxHeight => {
             "min-content | max-content | fit-content | fit-content(<length-percentage>) | stretch"
         }
         P::WhiteSpace => "pre-line | break-spaces",
@@ -1056,6 +1064,9 @@ fn nonnegative(property: CssProperty) -> bool {
             | P::FontSize
             | P::LineHeight
             | P::TransitionDuration
+            | P::AnimationDuration
+            | P::AnimationIterationCount
+            | P::BackdropFilter
     )
 }
 /// Properties whose numbers are integers (Values 4 §10.12 rounds math).
@@ -1069,6 +1080,31 @@ fn integer_property(property: CssProperty) -> bool {
 /// Literal restrictions the grammar does not express, over the tokens that
 /// are not inside a math function.
 fn literal_notes(property: CssProperty, tokens: &[V], mode: Mode) -> bool {
+    if super::animation::PROPERTIES.contains(&property)
+        && tokens.iter().filter(|v| matches!(v, V::Comma)).count()
+            >= super::animation::MAX_ANIMATIONS
+    {
+        // Timing-function commas are nested, so check the top-level count below.
+        let mut depth = 0;
+        let mut count = 1;
+        for v in tokens {
+            match v {
+                V::Function(_) => depth += 1,
+                V::Close => depth -= 1,
+                V::Comma if depth == 0 => count += 1,
+                _ => {}
+            }
+        }
+        if count > super::animation::MAX_ANIMATIONS {
+            return false;
+        }
+    }
+    if property == CssProperty::BackgroundImage && !gradient::valid_count(tokens) {
+        return false;
+    }
+    if property == CssProperty::BoxShadow && !shadow::valid_blurs(tokens) {
+        return false;
+    }
     let mut depth = 0usize;
     let mut math_depth = None;
     for (index, token) in tokens.iter().enumerate() {
@@ -1094,7 +1130,11 @@ fn literal_notes(property: CssProperty, tokens: &[V], mode: Mode) -> bool {
         }
         let ok = match (property, token) {
             (
-                CssProperty::Padding
+                CssProperty::AnimationDuration
+                | CssProperty::TransitionDuration
+                | CssProperty::AnimationIterationCount
+                | CssProperty::BackdropFilter
+                | CssProperty::Padding
                 | CssProperty::PaddingTop
                 | CssProperty::PaddingRight
                 | CssProperty::PaddingBottom
@@ -1120,6 +1160,7 @@ fn literal_notes(property: CssProperty, tokens: &[V], mode: Mode) -> bool {
                 (NumUnit::None, Mode::Host | Mode::Lowered) => (0.0..=1.0).contains(value),
                 _ => false,
             },
+            (CssProperty::WebkitLineClamp, V::Num { value, .. }) => *value >= 1.0,
             (CssProperty::FontWeight, V::Num { value, .. }) => (1.0..=1000.0).contains(value),
             // Fonts 4 §7.2 and §7.3: four-character tags of U+20–U+7E;
             // feature values are nonnegative integers.
@@ -1134,16 +1175,19 @@ fn literal_notes(property: CssProperty, tokens: &[V], mode: Mode) -> bool {
                 (NumUnit::None, Mode::Host | Mode::Lowered) => value.is_finite() && *value > 0.0,
                 _ => false,
             },
-            (CssProperty::TransitionProperty, V::Ident(word)) => {
-                (tokens.len() == 1 || !word.eq_ignore_ascii_case("none"))
+            (CssProperty::TransitionProperty | CssProperty::AnimationName, V::Ident(word)) => {
+                (property == CssProperty::AnimationName
+                    || tokens.len() == 1
+                    || !word.eq_ignore_ascii_case("none"))
                     && !CSS_WIDE_KEYWORDS
                         .iter()
                         .any(|keyword| word.eq_ignore_ascii_case(keyword))
                     && !word.eq_ignore_ascii_case("default")
             }
-            (CssProperty::TransitionTimingFunction, V::Num { value, .. }) => {
-                timing_argument(tokens, index, *value)
-            }
+            (
+                CssProperty::TransitionTimingFunction | CssProperty::AnimationTimingFunction,
+                V::Num { value, .. },
+            ) => timing_argument(tokens, index, *value),
             _ => true,
         };
         if !ok {
@@ -1530,6 +1574,9 @@ fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<
             }
             let parent_metrics =
                 matches!(property, CssProperty::FontSize | CssProperty::LineHeight);
+            if let Some(factor) = math::angle_unit(&lower) {
+                return Some(format!("{}deg", format_number(*value * factor)));
+            }
             match math::length_unit(&lower)? {
                 math::LengthUnit::Em if property == CssProperty::FontSize => {
                     Some(format!("{}%", format_number(value * 100.0)))
@@ -1648,9 +1695,21 @@ pub fn lower(property: CssProperty, value: &str, context: &Context) -> Option<St
     }
     let mut parts = Vec::with_capacity(tokens.len());
     let mut at = 0;
+    let mut shadow_length = 0;
     while let Some(token) = tokens.get(at) {
         if math::is_math(Some(token)) {
-            let (text, end) = lower_math(property, &tokens, at, context)?;
+            let numeric_property = if property == CssProperty::BoxShadow {
+                let p = if shadow_length == shadow::BLUR_POSITION {
+                    CssProperty::OutlineWidth
+                } else {
+                    CssProperty::OutlineOffset
+                };
+                shadow_length += 1;
+                p
+            } else {
+                property
+            };
+            let (text, end) = lower_math(numeric_property, &tokens, at, context)?;
             parts.push(text);
             at = end;
             continue;
@@ -1694,7 +1753,14 @@ pub fn lower(property: CssProperty, value: &str, context: &Context) -> Option<St
             continue;
         }
         parts.push(match token {
-            V::Num { .. } => lower_numeric(property, token, context)?,
+            V::Num { .. } => {
+                shadow_length += 1;
+                lower_numeric(property, token, context)?
+            }
+            V::Comma => {
+                shadow_length = 0;
+                token_text(token)
+            }
             V::Ident(word) if line_width_property(property) => LINE_WIDTH_KEYWORDS
                 .iter()
                 .find(|(name, _)| word.eq_ignore_ascii_case(name))
@@ -1854,6 +1920,10 @@ mod tests {
             (P::TextAlign, "start"),
             // Values 4 §6.1.1: `em` and `lh` resolve from the element's font.
             (P::Width, "2em"),
+            (P::Width, "min-content"),
+            (P::Width, "max-content"),
+            (P::Width, "fit-content"),
+            (P::Height, "stretch"),
             (P::Padding, "0.5em 1em"),
             (P::Height, "calc(2lh + 1em)"),
             // ... and `ex`, `cap`, `ch`, `ic` from its first available font.
@@ -1885,7 +1955,6 @@ mod tests {
                 "steps(1, jump-none)",
                 Refusal::Invalid,
             ),
-            (P::Display, "inline-block", Refusal::Unrenderable),
             (P::Content, "counter(x)", Refusal::Unrenderable),
             (P::Content, "\"a\" / 1", Refusal::Invalid),
             (P::FontFeatureSettings, "\"lig\" 1", Refusal::Invalid),
@@ -1893,8 +1962,9 @@ mod tests {
             (P::ListStyleType, "lower-roman", Refusal::Unrenderable),
             (P::ListStylePosition, "inside", Refusal::Unrenderable),
             (P::Display, "inline-blocks", Refusal::Invalid),
-            (P::Position, "sticky", Refusal::Unrenderable),
-            (P::Width, "fit-content", Refusal::Unrenderable),
+            (P::Width, "fit-content(10px)", Refusal::Unrenderable),
+            (P::MinWidth, "min-content", Refusal::Unrenderable),
+            (P::MaxHeight, "fit-content", Refusal::Unrenderable),
         ] {
             assert_eq!(
                 check(property, value),

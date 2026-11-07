@@ -399,7 +399,7 @@ fn signature_part(
 /// The parameter list of `signature` from `from` on as a tuple type:
 /// optional parameters are optional elements and a rest parameter is the
 /// tuple's rest element.
-pub(super) fn parameters_tuple(
+pub(in crate::lower) fn parameters_tuple(
     signature: &ir::FunctionType,
     from: usize,
     types: &mut ir::ValueTypes,

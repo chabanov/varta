@@ -41,10 +41,15 @@ pub(super) struct Slice {
 pub(super) enum Region {
     Box(BoxRect, Corners),
     Slice(Slice),
+    Transformed(crate::transform::Affine, Box<Region>),
 }
 impl Region {
     pub fn contains(&self, x: f32, y: f32, scale: f32) -> bool {
         match self {
+            Self::Transformed(inverse, region) => {
+                let (x, y) = inverse.point(x, y);
+                region.contains(x, y, scale)
+            }
             Self::Box(bounds, radii) => radii.contains(*bounds, x, y),
             Self::Slice(slice) => slice.contains(
                 f64::from(x) / f64::from(scale),
@@ -283,6 +288,19 @@ fn clip_to(mut segments: Vec<Segment>, clip: Rect, path: &mut PathBuilder) -> Op
     Some(())
 }
 impl Slice {
+    pub fn shadow_geometry(&self) -> ([f64; 4], [[f64; 2]; 4], [Option<f64>; 2]) {
+        let [x, y] = self.paint_origin;
+        (
+            [x, y, self.paint_shape.size[0], self.paint_shape.size[1]],
+            self.paint_shape.radii,
+            [
+                (self.offset > 0.0).then_some(f64::from(self.rect.x)),
+                (self.offset + f64::from(self.rect.width) < self.shape.size[0])
+                    .then_some(f64::from(self.rect.x) + f64::from(self.rect.width)),
+            ],
+        )
+    }
+
     pub fn path(&self, clip: Rect) -> Option<Path> {
         let mut path = PathBuilder::new();
         clip_to(self.paint_shape.contour(self.paint_origin), clip, &mut path)?;

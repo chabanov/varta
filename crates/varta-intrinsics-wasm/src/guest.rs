@@ -44,6 +44,8 @@ unsafe extern "C" {
     /// The static region's extension (low word) and intrinsic (high word)
     /// pages.
     fn static_pages() -> i64;
+    /// Compile-time source-profile flag supplied by the validated linker.
+    fn snapshot_profile() -> i32;
     /// Copy `[offset, offset + len)` of the linked locale data segment of
     /// the data marker with id hash `marker` to the library buffer at
     /// `dst` (`memory.init`) and return the segment's length; -1 (and no
@@ -124,7 +126,12 @@ pub fn static_region() -> Option<StaticRegion> {
 /// v38 limits, as the host computes them from the validated module.
 pub fn bounds() -> ModuleBounds {
     match static_region() {
-        Some(region) => ModuleBounds::v38(region),
+        Some(region) => {
+            let mut bounds = ModuleBounds::v38(region);
+            // SAFETY: this accessor returns the linker's profile constant.
+            bounds.snapshots = unsafe { snapshot_profile() != 0 };
+            bounds
+        }
         None => trap(),
     }
 }

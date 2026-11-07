@@ -16,15 +16,21 @@ use wasmtime::{Engine, InstanceAllocationStrategy, PoolingAllocationConfig};
 /// executor and checks its deadline (and cancellation) at least this often.
 pub(super) const TICK: Duration = Duration::from_millis(10);
 
+// An async request holds its outer fiber while a host callback awaits one
+// allocator/retain helper. Validated helpers cannot call the host or nest again.
+const STACKS_PER_ASYNC_REQUEST: usize = 2;
+
 /// The server engine for `slots` concurrent request instances, each memory
 /// at most `http::REQUEST_MEMORY_BYTES`.
-pub(super) fn engine(slots: usize) -> Result<Engine, wasmtime::Error> {
+pub(super) fn engine(slots: usize, async_requests: usize) -> Result<Engine, wasmtime::Error> {
+    let stacks = slots.max(async_requests.saturating_mul(STACKS_PER_ASYNC_REQUEST));
+    let stacks = u32::try_from(stacks).map_err(wasmtime::Error::new)?;
     let slots = u32::try_from(slots).map_err(wasmtime::Error::new)?;
     let mut pool = PoolingAllocationConfig::default();
     pool.total_core_instances(slots)
         .total_memories(slots)
         .total_tables(slots.saturating_mul(abi::MAX_TABLES as u32))
-        .total_stacks(slots)
+        .total_stacks(stacks)
         .max_memories_per_module(abi::MAX_MEMORIES as u32)
         .max_tables_per_module(abi::MAX_TABLES as u32)
         .table_elements(abi::MAX_TABLE_ELEMENTS)

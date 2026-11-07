@@ -1,0 +1,64 @@
+{
+  "date": "2026-11-07",
+  "scope": "Generic admitted-tuple normalization for array callback lowering; subsequent scoped correction after CSS package",
+  "implementation": {
+    "receiver": "Existing physical_array reinterpretation; no copy or repeated evaluation",
+    "element": "Existing physical tuple element union including optional/rest/trailing elements",
+    "filter": "Returns a fresh array, never the fixed source tuple shape",
+    "readonly": "Existing binding-level policy unchanged; no deep readonly type expansion",
+    "abi": "No change to ABI, layout, profile gates, budgets or capabilities"
+  },
+  "checks": [
+    {
+      "command": "cargo test -p varta-runtime --lib array_callback_tests --locked",
+      "passed": 15,
+      "failed": 0,
+      "log": "target/tuple-callback-20261107/array-callbacks.log"
+    },
+    {
+      "command": "cargo clippy -p varta-compiler -p varta-runtime --all-targets --locked -- -D warnings",
+      "exit_code": 0,
+      "log": "target/tuple-callback-20261107/clippy.log"
+    },
+    {
+      "command": "cargo build -p varta -p varta-launcher --locked",
+      "exit_code": 0,
+      "log": "target/tuple-callback-20261107/build.log"
+    }
+  ],
+  "acceptance": {
+    "application": "/Users/snaga/Developer/Laboratory/cloud",
+    "sdk": "uarp-sdk 0.13.2, unmodified sources",
+    "minimal_check": "passed",
+    "minimal_dev": "true",
+    "sdk_check": "passed",
+    "sdk_dev": "PASS: identity, quota, model list, chat fixture, authorization and 401 handling; 5 requests; no external network",
+    "logs": [
+      "target/tuple-callback-20261107/minimal-check.log",
+      "target/tuple-callback-20261107/minimal-dev.log",
+      "target/tuple-callback-20261107/sdk-check.log",
+      "target/tuple-callback-20261107/sdk-dev.log"
+    ],
+    "application_sources_modified_by_this_fix": false,
+    "live_probe": "Delegated back to application owner; not performed by engine fix"
+  },
+  "full_verification": {
+    "new_full_run": false,
+    "note": "CSS checkpoint retains its one failed full attempt plus documented scoped completion. This later compiler correction has only the scoped results recorded here; it is not covered by a newly successful full gate."
+  },
+  "sha256": {
+    "crates/varta-compiler/src/lower/array_callbacks.rs": "17fdb943ad77f5c32f3a7f7912d014e4ba847631a66529d19e958d3aae9395eb",
+    "crates/varta-runtime/src/array_callback_tests.rs": "1d70f37704c6f13d09986437c29c388ef390633d6f1aeba093515580d8be1eb9",
+    "target/debug/varta": "481fead644990acce0b30ddca9a37747de3f4fefc8063000656fb9c92014635b",
+    "target/debug/varta-runtime": "2091e6f18056488fbc7b65ebdec91d5a6555bfd1faa433d731d35384df201357"
+  },
+  "logs_sha256": {
+    "target/tuple-callback-20261107/array-callbacks.log": "1005f03529f00046cca410b017a5826280619c09448ba139c0db26a5932fd171",
+    "target/tuple-callback-20261107/build.log": "be249ca3a132bf8df2b145c7b91202cbb9f8e185bad1adee724b2faccf9ecb9e",
+    "target/tuple-callback-20261107/clippy.log": "6935c29a576b950003789ac784bc2fb311a29437a3a4c372f69d77fff1f7048a",
+    "target/tuple-callback-20261107/minimal-check.log": "3f16cafc708419ceb5239aecdc1db88b8b1a453803ea549da5a7fcb2fbd52b43",
+    "target/tuple-callback-20261107/minimal-dev.log": "7b50ab9216df4ab4f0932fbb21b3b62f8961805b5827ea950805de8e9d7e3a2a",
+    "target/tuple-callback-20261107/sdk-check.log": "8146c4143af8de8fc2edf847ff5935c4a184ada59d7289453feba69951893899",
+    "target/tuple-callback-20261107/sdk-dev.log": "87f61ec4c8fc4ca015c846f24d68274837884b6994bb6c0f9bb998109ad8dd4a"
+  }
+}

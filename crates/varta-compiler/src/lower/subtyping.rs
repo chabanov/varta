@@ -48,6 +48,7 @@ pub(crate) struct Views {
     /// reads a closed record held by an `unknown` cell as a JSON object, and
     /// that dictionary type; `resolve` adds one branch per boxed shape.
     graph: Option<(usize, Type)>,
+    plain_graph: Option<(usize, Type)>,
     /// Function values converted to another signature (`coerce`): (source
     /// function type, target function type). Each conversion is a
     /// `Reinterpret` of the value that `resolve` replaces by a call of the
@@ -432,6 +433,47 @@ impl<'a> Check<'a> {
     /// default) or be the rest parameter; extra target arguments are
     /// ignored. The result is covariant, and a `void` target discards it.
     fn call_through(&mut self, from: Callee<'_>, into: &ir::FunctionType) -> Vec<String> {
+        let source = arguments::expanded(from.params, from.shape, self.types);
+        let target = arguments::expanded(&into.params, &into.shape, self.types);
+        let unexpanded_source_tuple = source.is_none()
+            && from.shape.rest
+            && matches!(from.params.last(), Some(Type::Tuple(_)));
+        let unexpanded_target_tuple = target.is_none()
+            && into.shape.rest
+            && matches!(into.params.last(), Some(Type::Tuple(_)));
+        if (unexpanded_source_tuple || unexpanded_target_tuple)
+            && (from.params != into.params.as_slice() || from.shape != &into.shape)
+        {
+            return vec![
+                "optional or variadic tuple-rest adapters require identical parameter layouts"
+                    .into(),
+            ];
+        }
+        if source.is_some() || target.is_some() {
+            let (params, shape) = source
+                .as_ref()
+                .map(|(p, s)| (p.as_slice(), s))
+                .unwrap_or((from.params, from.shape));
+            let mut wanted = into.clone();
+            if let Some((params, shape)) = target {
+                wanted.params = params;
+                wanted.shape = shape;
+            }
+            if source.is_some() && (wanted.shape.extended() || params.len() != wanted.params.len())
+            {
+                return vec!["tuple-rest adapter requires matching fixed source arity".into()];
+            }
+            let names = vec![None; params.len()];
+            return self.call_through(
+                Callee {
+                    params,
+                    shape,
+                    result: from.result,
+                    names: &names,
+                },
+                &wanted,
+            );
+        }
         let types = self.types;
         let label = |index: usize| match from.names.get(index).and_then(Option::as_deref) {
             Some(name) => format!("parameter {} ({name})", index + 1),
@@ -526,8 +568,8 @@ impl<'a> Check<'a> {
     }
     /// Whether a function value of type `actual` may be called through the
     /// function type `expected` by a synthesized adapter (`call_through`);
-    /// otherwise the reasons. Signatures with a `this` parameter or a
-    /// generic marker convert only to themselves.
+    /// otherwise the reasons. Explicit receiver types must match; signatures with
+    /// a generic marker convert only to themselves.
     fn function(&mut self, actual: u32, expected: u32) -> std::result::Result<(), Vec<String>> {
         if actual == expected {
             return Ok(());
@@ -537,11 +579,7 @@ impl<'a> Check<'a> {
             &types.functions[actual as usize],
             &types.functions[expected as usize],
         );
-        if from.receiver.is_some()
-            || into.receiver.is_some()
-            || from.generic.is_some()
-            || into.generic.is_some()
-        {
+        if from.receiver != into.receiver || from.generic.is_some() || into.generic.is_some() {
             return Err(vec![
                 "functions with a this parameter or a generic signature convert only to \
                  their own type"
@@ -1070,6 +1108,7 @@ fn overlap(member: Type, viewing: &[u32], records: &[u32], types: &ir::ValueType
 enum Access {
     Get(Type),
     Set(Type),
+    Delete(Type),
     Has,
     Call(Type),
 }
@@ -1165,6 +1204,7 @@ pub(super) fn resolve(program: &mut ir::Program) -> Result<()> {
     }
     if edges.is_empty()
         && program.types.subtyping.graph.is_none()
+        && program.types.subtyping.plain_graph.is_none()
         && program.types.subtyping.adapters.borrow().is_empty()
     {
         return Ok(());
@@ -1229,9 +1269,15 @@ pub(super) fn resolve(program: &mut ir::Program) -> Result<()> {
             program.functions[index].body = rewriter.has_name(shape, &name);
         }
     }
-    if let Some((index, graph)) = program.types.subtyping.graph {
-        let dispatch = rewriter.graph_branches(graph, &mut program.functions[index].locals)?;
-        program.functions[index].body.splice(0..0, dispatch);
+    for (entry, plain) in [
+        (program.types.subtyping.graph, false),
+        (program.types.subtyping.plain_graph, true),
+    ] {
+        if let Some((index, graph)) = entry {
+            let dispatch =
+                rewriter.graph_branches(graph, &mut program.functions[index].locals, plain)?;
+            program.functions[index].body.splice(0..0, dispatch);
+        }
     }
     // Synthesized functions read exact layouts: only their function
     // conversions are rewritten, which may append further wrappers.
@@ -1453,6 +1499,18 @@ impl Rewriter<'_> {
                 for value in values.iter_mut() {
                     self.expression(value)?;
                 }
+                if let S::RecordEnumerate {
+                    source,
+                    target,
+                    shape,
+                    symbols: false,
+                    ..
+                } = statement
+                    && let Some(snapshot) = snapshots::physical(*shape, self.types)
+                {
+                    *statement = self.snapshot_enumeration(snapshot, *source, *target)?;
+                    return Ok(());
+                }
                 // The symbol-keyed form is admitted only where every source
                 // declares the view's members (`note_key_copy`): the same
                 // canonical slots in every layout.
@@ -1479,6 +1537,25 @@ impl Rewriter<'_> {
                     // accessors included) enumerates its own slots in its
                     // own insertion order (OrdinaryOwnPropertyKeys).
                     for accessor in self.record_sources(view) {
+                        if let Some(snapshot) = snapshots::physical(accessor, self.types) {
+                            let branch = self.snapshot_enumeration(snapshot, source, target)?;
+                            let descriptor = self.locals.len() as u32;
+                            self.locals.push(Type::Number);
+                            viewed = S::If(
+                                Expr {
+                                    span,
+                                    ty: Type::Boolean,
+                                    kind: E::IsClass {
+                                        value: Box::new(local(span, source, Type::Record(view))),
+                                        shapes: vec![accessor],
+                                        slot: descriptor,
+                                    },
+                                },
+                                vec![branch],
+                                vec![viewed],
+                            );
+                            continue;
+                        }
                         let fields = self.types.records[view as usize].fields.clone();
                         // A key the view does not declare is its own name; its
                         // value is checked against the declared property
@@ -1927,8 +2004,25 @@ impl Rewriter<'_> {
             | E::ArrayPush(a, b)
             | E::ArrayAt(a, b)
             | E::Index(a, b) => self.boxed(&mut [a, b])?,
-            E::RecordDelete { object, absent, .. } => {
-                if self.view(object.ty).is_some() {
+            E::RecordDelete {
+                object,
+                absent,
+                slot,
+                ..
+            } => {
+                if let Some(view) = self.view(object.ty) {
+                    let snapshot_only = self.types.profile.checked_snapshots()
+                        && self.types.subtyping.sources_of(view).iter().all(|source| {
+                            matches!(source, Type::Record(shape) if snapshots::physical(*shape, self.types).is_some())
+                        });
+                    if snapshot_only {
+                        let index =
+                            self.accessor(view, *slot, Access::Delete(absent.ty), value.span)?;
+                        self.expression(object)?;
+                        self.expression(absent)?;
+                        value.kind = E::Call(index, vec![*object.clone(), *absent.clone()]);
+                        return Ok(());
+                    }
                     return Err(self.locate(
                         unsupported(&format!(
                             "delete through {}, which a wider object type is assigned to",
@@ -1977,9 +2071,36 @@ impl Rewriter<'_> {
         }
         let span = value.span;
         let access = match &value.kind {
-            E::Field(base, slot) => self
-                .view(base.ty)
-                .map(|shape| (shape, *slot, Access::Get(value.ty))),
+            E::Field(base, slot) => self.view(base.ty).map(|shape| {
+                let field = &self.types.records[shape as usize].fields[*slot as usize];
+                let sources = self.types.subtyping.sources_of(shape);
+                // A property-path guard proves a narrower type at this read,
+                // not a narrower signature for its physical-layout accessor.
+                // Only stable data sources participate: getters and classes
+                // keep their existing refusal instead of inheriting that proof.
+                let narrowed_snapshot = self.types.profile.checked_snapshots()
+                    && field.ty.is_cell()
+                    && field.ty != value.ty
+                    && value.ty != Type::Never
+                    && sources.iter().any(|source| {
+                        matches!(source,
+                        Type::Record(id) if snapshots::physical(*id, self.types).is_some())
+                    })
+                    && sources.iter().all(|source| {
+                        matches!(source, Type::Record(id)
+                        if self.types.records[*id as usize].class.is_none()
+                            && !super::object_accessors::is_accessor(*id, &field.name, self.types))
+                    });
+                (
+                    shape,
+                    *slot,
+                    Access::Get(if narrowed_snapshot {
+                        field.ty
+                    } else {
+                        value.ty
+                    }),
+                )
+            }),
             E::HasOwn(base, Some(slot)) => {
                 self.view(base.ty).map(|shape| (shape, *slot, Access::Has))
             }
@@ -1992,7 +2113,25 @@ impl Rewriter<'_> {
             else {
                 unreachable!("matched above");
             };
-            value.kind = E::Call(index, vec![*base]);
+            let result = match access {
+                Access::Get(result) => result,
+                _ => value.ty,
+            };
+            let call = E::Call(index, vec![*base]);
+            value.kind = if result == value.ty {
+                call
+            } else {
+                let full = Box::new(Expr {
+                    span,
+                    ty: result,
+                    kind: call,
+                });
+                if result.is_cell() && !value.ty.is_cell() {
+                    E::UnboxUnion(full)
+                } else {
+                    E::Reinterpret(full)
+                }
+            };
         }
         // A function value converted to another signature (`adapt`).
         let converted = match (&value.kind, value.ty) {
@@ -2040,12 +2179,12 @@ impl Rewriter<'_> {
             .ok_or_else(|| CompilerError::Internal("function adapter source".into()))?;
         // The adapter's locals: the parameters of `into`, the captured value,
         // then the hidden callee, argument and output slots of its call.
-        let mut locals = wanted.params.clone();
+        let mut locals = wanted.physical_params();
         let captured = locals.len() as u32;
         locals.extend([source, source]);
         let slot = captured + 1;
         let arguments: Vec<u32> = callee
-            .params
+            .physical_params()
             .iter()
             .map(|ty| {
                 locals.push(*ty);
@@ -2056,8 +2195,12 @@ impl Rewriter<'_> {
             locals.push(callee.result);
             locals.len() as u32 - 1
         });
-        let args = forwarded(&wanted, &callee.params, &callee.shape, 0, span, types)
+        let first = u32::from(wanted.receiver.is_some());
+        let mut args = forwarded(&wanted, &callee.params, &callee.shape, first, span, types)
             .map_err(|error| self.locate(error, span))?;
+        if let Some(receiver) = wanted.receiver {
+            args.insert(0, local(span, 0, receiver));
+        }
         let call = Expr {
             span,
             ty: callee.result,
@@ -2105,10 +2248,10 @@ impl Rewriter<'_> {
         self.created.push(ir::Function {
             shape: wanted.shape.clone(),
             self_slot: None,
-            receiver: None,
+            receiver: wanted.receiver,
             source: file,
             span,
-            params: wanted.params.clone(),
+            params: wanted.physical_params(),
             result: wanted.result,
             locals,
             body,
@@ -2119,6 +2262,140 @@ impl Rewriter<'_> {
         });
         self.wrappers.insert((from, into), wrapper);
         Ok(wrapper)
+    }
+
+    /// The accessor function of `access` to member `slot` of view `shape`.
+    fn snapshot_enumeration(
+        &mut self,
+        snapshot: snapshots::SnapshotRecord,
+        source: u32,
+        target: u32,
+    ) -> Result<S> {
+        let span = self.span;
+        let (id, dictionary) = self
+            .types
+            .dictionaries
+            .iter()
+            .enumerate()
+            .find(|(_, dictionary)| {
+                dictionary.value == Type::Unknown && dictionary.declared.is_none()
+            })
+            .ok_or_else(|| invalid("missing snapshot enumeration dictionary"))?;
+        let graph = Type::Dictionary(id as u32);
+        let ty = self.locals[target as usize];
+        let slot = if ty == dictionary.keys {
+            dictionary.keys_slot()
+        } else if ty == dictionary.values {
+            dictionary.values_slot()
+        } else {
+            return Err(unsupported(
+                "snapshot enumeration requires unknown-valued entries",
+            ));
+        };
+        let saved = self.locals.len() as u32;
+        self.locals.push(graph);
+        let call = Expr {
+            span,
+            ty: graph,
+            kind: E::Call(
+                snapshot.graph,
+                vec![Expr {
+                    span,
+                    ty: Type::Record(snapshot.physical),
+                    kind: E::Reinterpret(Box::new(local(
+                        span,
+                        source,
+                        self.locals[source as usize],
+                    ))),
+                }],
+            ),
+        };
+        Ok(S::Scope(
+            vec![saved],
+            vec![
+                S::Init(saved, call),
+                S::Set(
+                    target,
+                    Expr {
+                        span,
+                        ty,
+                        kind: E::Field(Box::new(local(span, saved, graph)), slot),
+                    },
+                ),
+            ],
+        ))
+    }
+
+    fn snapshot_delete_branch(
+        &self,
+        source: Type,
+        name: &str,
+        absent: Type,
+        span: swc_common::Span,
+        locals: &mut Vec<Type>,
+    ) -> Result<Vec<S>> {
+        let Type::Record(shape) = source else {
+            return Err(unsupported("delete through a non-record snapshot view"));
+        };
+        let slot = self.types.records[shape as usize]
+            .fields
+            .iter()
+            .position(|field| field.name == name)
+            .ok_or_else(|| invalid("missing optional snapshot field"))? as u32;
+        let mut temporary = |ty| {
+            let index = locals.len() as u32;
+            locals.push(ty);
+            index
+        };
+        let (scan, write, count, result) = (
+            temporary(Type::Number),
+            temporary(Type::Number),
+            temporary(Type::Number),
+            temporary(Type::Boolean),
+        );
+        let operation = Expr {
+            span,
+            ty: Type::Boolean,
+            kind: E::RecordDelete {
+                object: Box::new(local(span, 0, source)),
+                absent: Box::new(local(span, 1, absent)),
+                slot,
+                scan,
+                write,
+                count,
+            },
+        };
+        let mut body = vec![S::Init(result, operation)];
+        if let Some(snapshot) = snapshots::physical(shape, self.types) {
+            let order_ty = self.types.records[shape as usize].fields[snapshot.order as usize].ty;
+            let function = self
+                .types
+                .engine
+                .function(&crate::modules::engine::SNAPSHOT, "snapshotForgetKey")
+                .ok_or_else(|| invalid("missing snapshot key deletion helper"))?
+                .index;
+            body.push(S::Expr(Expr {
+                span,
+                ty: Type::Void,
+                kind: E::Call(
+                    function,
+                    vec![
+                        Expr {
+                            span,
+                            ty: order_ty,
+                            kind: E::Field(Box::new(local(span, 0, source)), snapshot.order),
+                        },
+                        Expr {
+                            span,
+                            ty: Type::String,
+                            kind: E::String(self.types.profile.string_bytes(name)),
+                        },
+                    ],
+                ),
+            }));
+        }
+        body.push(S::Return(Some(local(span, result, Type::Boolean))));
+        Ok(body)
     }
 
     /// The accessor function of `access` to member `slot` of view `shape`.
@@ -2158,6 +2435,7 @@ impl Rewriter<'_> {
         let (params, result) = match access {
             Access::Get(result) => (vec![view], result),
             Access::Set(value) => (vec![view, value], Type::Void),
+            Access::Delete(value) => (vec![view, value], Type::Boolean),
             Access::Has => (vec![view], Type::Boolean),
             Access::Call(function) => {
                 let Type::Function(id) = function else {
@@ -2248,6 +2526,9 @@ impl Rewriter<'_> {
                     Access::Set(value) => {
                         self.write(*source, shape, &wanted, value, span, &mut locals)?
                     }
+                    Access::Delete(absent) => {
+                        self.snapshot_delete_branch(*source, name, absent, span, &mut locals)?
+                    }
                     Access::Call(function) => {
                         let Type::Function(id) = function else {
                             return Err(CompilerError::Internal("view call".into()));
@@ -2315,6 +2596,9 @@ impl Rewriter<'_> {
                 S::SetField(receiver(view), slot, local(span, 1, params[1])),
                 S::Return(None),
             ],
+            Access::Delete(absent) => {
+                self.snapshot_delete_branch(view, name, absent, span, &mut locals)?
+            }
             Access::Call(_) => finish(invoke(own)),
         });
         Ok(ir::Function {
@@ -2544,7 +2828,7 @@ impl Rewriter<'_> {
     /// record's own-key order (canonical array indices, then insertion
     /// order, as `Object.entries` enumerates them), each value as `unknown`.
     /// The function's `locals` gain the field caches and enumeration slots.
-    fn graph_branches(&self, graph: Type, locals: &mut Vec<Type>) -> Result<Vec<S>> {
+    fn graph_branches(&self, graph: Type, locals: &mut Vec<Type>, plain: bool) -> Result<Vec<S>> {
         let types = self.types;
         let span = swc_common::DUMMY_SP;
         let Type::Dictionary(id) = graph else {
@@ -2595,7 +2879,35 @@ impl Rewriter<'_> {
         )?;
         let mut body = Vec::new();
         for shape in boxed {
+            if plain
+                && types.records[shape as usize].fields.iter().any(|field| {
+                    super::object_accessors::is_accessor(shape, &field.name, types)
+                        || super::object_accessors::hidden_field(&field.name)
+                })
+            {
+                continue;
+            }
             let record = Type::Record(shape);
+            if let Some(snapshot) = snapshots::physical(shape, types) {
+                body.push(S::If(
+                    Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::IsClass {
+                            value: Box::new(local(span, 0, any)),
+                            shapes: vec![shape],
+                            slot: descriptor,
+                        },
+                    },
+                    vec![S::Return(Some(Expr {
+                        span,
+                        ty: graph,
+                        kind: E::Call(snapshot.graph, vec![local(span, 0, record)]),
+                    }))],
+                    Vec::new(),
+                ));
+                continue;
+            }
             let fields = &types.records[shape as usize].fields;
             let mut branch = Vec::new();
             let mut names = Vec::new();
@@ -2756,6 +3068,21 @@ impl Rewriter<'_> {
                         ty: Type::Boolean,
                         kind: E::HasOwn(Box::new(local(span, 0, source)), Some(slot as u32)),
                     },
+                    None if snapshots::physical(id, types).is_some() => Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::Call(
+                            snapshots::physical(id, types).expect("snapshot branch").has,
+                            vec![
+                                local(span, 0, source),
+                                Expr {
+                                    span,
+                                    ty: Type::String,
+                                    kind: E::String(types.profile.string_bytes(name)),
+                                },
+                            ],
+                        ),
+                    },
                     // V38 (`object_accessors`): an accessor is an own property.
                     None => constant(
                         span,
@@ -2820,10 +3147,52 @@ impl Rewriter<'_> {
             _ => None,
         };
         match target {
-            Some((slot, ty)) if ty == value => Ok(vec![
-                S::SetField(local(span, 0, source), slot, local(span, 1, value)),
-                S::Return(None),
-            ]),
+            Some((slot, ty)) if ty == value => {
+                let store = S::SetField(local(span, 0, source), slot, local(span, 1, value));
+                if let Type::Record(physical) = source
+                    && let Some(snapshot) = snapshots::physical(physical, types)
+                    && wanted.optional
+                {
+                    let order_ty =
+                        types.records[physical as usize].fields[snapshot.order as usize].ty;
+                    let function = types
+                        .engine
+                        .function(&crate::modules::engine::SNAPSHOT, "snapshotSetKey")
+                        .ok_or_else(|| invalid("missing snapshot key update helper"))?
+                        .index;
+                    let prior = locals.len() as u32;
+                    locals.push(Type::Boolean);
+                    return Ok(vec![
+                        S::Init(prior, self.has(source, name, span)),
+                        store,
+                        S::Expr(Expr {
+                            span,
+                            ty: Type::Void,
+                            kind: E::Call(
+                                function,
+                                vec![
+                                    Expr {
+                                        span,
+                                        ty: order_ty,
+                                        kind: E::Field(
+                                            Box::new(local(span, 0, source)),
+                                            snapshot.order,
+                                        ),
+                                    },
+                                    Expr {
+                                        span,
+                                        ty: Type::String,
+                                        kind: E::String(types.profile.string_bytes(name)),
+                                    },
+                                    local(span, prior, Type::Boolean),
+                                ],
+                            ),
+                        }),
+                        S::Return(None),
+                    ]);
+                }
+                Ok(vec![store, S::Return(None)])
+            }
             Some((_, ty)) => Err(type_error(format!(
                 "cannot assign {name} through {}: an object of type {} assigned to it declares \
                  {name} as {}, not {}",
@@ -2873,6 +3242,102 @@ fn forwarded(
     span: swc_common::Span,
     types: &ir::ValueTypes,
 ) -> Result<Vec<Expr>> {
+    if arguments::expanded(params, shape, types).is_some()
+        || arguments::expanded(&into.params, &into.shape, types).is_some()
+    {
+        let mut values = Vec::new();
+        for (index, &ty) in into.params.iter().enumerate() {
+            if into.shape.rest && index == into.shape.fixed_count() {
+                let Type::Tuple(id) = ty else {
+                    return Err(invalid("tuple-rest adapter source"));
+                };
+                let tuple = &types.tuples[id as usize];
+                let Type::Array(array) = tuple.array else {
+                    return Err(invalid("tuple-rest array"));
+                };
+                let stored = types.arrays[array as usize];
+                for (i, &element) in tuple.elements.iter().enumerate() {
+                    let array = Expr {
+                        span,
+                        ty: tuple.array,
+                        kind: E::Reinterpret(Box::new(local(span, first + index as u32, ty))),
+                    };
+                    let read = Expr {
+                        span,
+                        ty: stored,
+                        kind: E::Index(
+                            Box::new(array),
+                            Box::new(Expr {
+                                span,
+                                ty: Type::Float64,
+                                kind: E::Float64(i as f64),
+                            }),
+                        ),
+                    };
+                    values.push(if stored == element {
+                        read
+                    } else if element.is_union() {
+                        Expr {
+                            ty: element,
+                            ..read
+                        }
+                    } else {
+                        Expr {
+                            span,
+                            ty: element,
+                            kind: E::UnboxUnion(Box::new(read)),
+                        }
+                    });
+                }
+            } else {
+                values.push(local(span, first + index as u32, ty));
+            }
+        }
+        let mut result = Vec::new();
+        for (index, &taken) in params.iter().enumerate() {
+            if shape.rest && index == shape.fixed_count() {
+                let Type::Tuple(id) = taken else {
+                    return Err(invalid("tuple-rest adapter target"));
+                };
+                let tuple = &types.tuples[id as usize];
+                let Type::Array(array) = tuple.array else {
+                    return Err(invalid("tuple-rest array"));
+                };
+                let stored = types.arrays[array as usize];
+                let tail = values
+                    .iter()
+                    .skip(index)
+                    .cloned()
+                    .enumerate()
+                    .map(|(i, value)| {
+                        let value = convert(value, tuple.elements[i], types)?;
+                        let value = match value.ty {
+                            Type::Tuple(id) => Expr {
+                                ty: types.tuples[id as usize].array,
+                                kind: E::Reinterpret(Box::new(value)),
+                                span,
+                            },
+                            _ => value,
+                        };
+                        Ok(Some(unions::widen(value, Some(stored), types)?))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                result.push(Expr {
+                    span,
+                    ty: taken,
+                    kind: E::Array(tail),
+                });
+            } else {
+                let value = values.get(index).cloned().unwrap_or(Expr {
+                    span,
+                    ty: Type::Undefined,
+                    kind: E::Integer(0),
+                });
+                result.push(convert(value, taken, types)?);
+            }
+        }
+        return Ok(result);
+    }
     let rest = shape.rest.then(|| shape.fixed_count());
     let into_rest = into.shape.rest.then(|| into.shape.fixed_count());
     params
@@ -2929,13 +3394,37 @@ impl Lower<'_> {
     /// object `Record<string, unknown>` (v38): the reserved function that
     /// `resolve` completes for every record shape boxed into `unknown`.
     pub(super) fn record_graph(&mut self, cell: Expr, span: swc_common::Span) -> Result<Expr> {
+        self.record_graph_mode(cell, span, false)
+    }
+    pub(super) fn plain_record_graph(
+        &mut self,
+        cell: Expr,
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        self.record_graph_mode(cell, span, true)
+    }
+    fn record_graph_mode(
+        &mut self,
+        cell: Expr,
+        span: swc_common::Span,
+        plain: bool,
+    ) -> Result<Expr> {
         let graph = dictionaries::intern(Type::Unknown, self.types)?;
         let any = records::intern(Vec::new(), self.types)?;
-        let index = match self.types.subtyping.graph {
+        let entry = if plain {
+            self.types.subtyping.plain_graph
+        } else {
+            self.types.subtyping.graph
+        };
+        let index = match entry {
             Some((index, _)) => index,
             None => {
                 let index = self.reserve_function("too many functions across modules")?;
-                self.types.subtyping.graph = Some((index, graph));
+                if plain {
+                    self.types.subtyping.plain_graph = Some((index, graph));
+                } else {
+                    self.types.subtyping.graph = Some((index, graph));
+                }
                 let Type::Dictionary(id) = graph else {
                     return Err(CompilerError::Internal("record graph type".into()));
                 };

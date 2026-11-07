@@ -4462,6 +4462,110 @@
     "span"
    ],
    "style": []
+  },
+  {
+   "name": "gradient-stops",
+   "sheet": ".probe{background-image:linear-gradient(45deg in oklab,red 0% 30%,transparent,blue 100%)}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
+  },
+  {
+   "name": "backdrop-alias",
+   "sheet": ".probe{backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(8px)}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
+  },
+  {
+   "name": "backdrop-negative-refused",
+   "sheet": ".probe{backdrop-filter:blur(-1px)}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
+  },
+  {
+   "name": "animation-keyframes",
+   "sheet": "@keyframes pulse{50%{opacity:.5}}@keyframes spin{to{transform:rotate(1turn)}}.probe{animation:pulse 2s cubic-bezier(.4,0,.6,1) infinite,spin 1s linear infinite}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
+  },
+  {
+   "name": "keyframe-layout-refused",
+   "sheet": "@keyframes wide{to{width:100px}}.probe{animation:wide 1s}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
+  },
+  {
+   "name": "keyframe-variable-refused",
+   "sheet": "@keyframes fade{to{opacity:var(--a)}}.probe{animation:fade 1s}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
+  },
+  {
+   "name": "numeric-variants",
+   "sheet": ".probe{font-variant-numeric:oldstyle-nums tabular-nums slashed-zero}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
+  },
+  {
+   "name": "legacy-clamp",
+   "sheet": ".probe{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
+  },
+  {
+   "name": "shadow-keyframes",
+   "sheet": "@keyframes ring{from{box-shadow:none}to{box-shadow:0 0 4px 2px red,inset 2px 0 blue}}.probe{animation:ring 1s linear forwards}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
+  },
+  {
+   "name": "transition-shorthand",
+   "sheet": ".probe{transition:box-shadow 100ms steps(2,jump-end) -20ms,opacity 1s}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
+  },
+  {
+   "name": "transition-shorthand-variable",
+   "sheet": ".probe{--motion:box-shadow 100ms linear;transition:var(--motion);transition-delay:10ms}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
+  },
+  {
+   "name": "transition-shorthand-none-list-refused",
+   "sheet": ".probe{transition:none,opacity 1s}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
+  },
+  {
+   "name": "transition-shorthand-negative-duration-refused",
+   "sheet": ".probe{transition:box-shadow -1s}",
+   "classes": [
+    "probe"
+   ],
+   "style": []
   }
  ]
 }

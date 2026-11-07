@@ -12053,7 +12053,7 @@ fn pilot_profile_v35_declares_value16_and_host_abi_31_through_both_binaries() {
     const PROFILE: &str = "checked-f64-utf16-v35";
     // An unregistered successor of the same length: every binary sees it as a
     // v34 binary sees v35.
-    const UNKNOWN: &str = "checked-f64-utf16-v39";
+    const UNKNOWN: &str = "checked-f64-utf16-v40";
     let project = RegressionProject::new(
         "import {label} from './api.ts';export function main():void{console.log(label(35));}",
         serde_json::json!({}),
@@ -12137,7 +12137,7 @@ fn pilot_profile_v36_declares_host_abi_32_with_value17_through_both_binaries() {
     const PROFILE: &str = "checked-f64-utf16-v36";
     // An unregistered successor of the same length: every binary sees it as a
     // v35 binary sees v36.
-    const UNKNOWN: &str = "checked-f64-utf16-v39";
+    const UNKNOWN: &str = "checked-f64-utf16-v40";
     // The predecessor of the same length, whose host ABI is 31.
     const PREDECESSOR: &str = "checked-f64-utf16-v35";
     let project = RegressionProject::new(
@@ -12230,7 +12230,7 @@ fn pilot_profile_v37_declares_host_abi_33_with_value17_through_both_binaries() {
     const PROFILE: &str = "checked-f64-utf16-v37";
     // An unregistered successor of the same length: every binary sees it as a
     // v36 binary sees v37.
-    const UNKNOWN: &str = "checked-f64-utf16-v39";
+    const UNKNOWN: &str = "checked-f64-utf16-v40";
     // The predecessor of the same length, whose host ABI is 32.
     const PREDECESSOR: &str = "checked-f64-utf16-v36";
     let project = RegressionProject::new(
@@ -12323,7 +12323,7 @@ fn pilot_profile_v38_declares_host_abi_34_with_value18_through_both_binaries() {
     const PROFILE: &str = "checked-f64-utf16-v38";
     // An unregistered successor of the same length: every binary sees it as a
     // v37 binary sees v38.
-    const UNKNOWN: &str = "checked-f64-utf16-v39";
+    const UNKNOWN: &str = "checked-f64-utf16-v40";
     // The predecessor of the same length, whose host ABI is 33.
     const PREDECESSOR: &str = "checked-f64-utf16-v37";
     let project = RegressionProject::new(
@@ -18993,5 +18993,37 @@ fn v38_inference_and_union_views_run_in_source_free_artifacts() {
         let output = command.current_dir(&project.0).output().unwrap();
         assert!(output.status.success(), "{}", combined(&output));
         assert_eq!(logs(&output), ["varta log: 4 2 2"]);
+    }
+}
+
+#[test]
+fn v38_class_function_prerequisites_run_without_sources() {
+    let source = "let saved:C|undefined;function save(c:C):void{saved=c;}class C{self:C=this;n:number=2;constructor(){save(this);this.bump();}bump():void{this.n++;}add(x:number):number{return this.n+x;}} function pair(...args:[number,string]):string{return args[0]+args[1];} export async function main():Promise<void>{const c=new C();const f=c.add;await Promise.resolve(0);console.log(c.self===c,saved===c,f.call(c,3),pair(4,'x'));}";
+    let project = RegressionProject::new(source, serde_json::json!({}));
+    project.language_profile("checked-f64-utf16-v38");
+    let logs = |o: &std::process::Output| {
+        String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter(|l| l.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), ["varta log: true true 6 4x"]);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    let mut commands = vec![Command::new(project.0.join("dist/app"))];
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut cmd in [varta(), Command::new(runtime_path())] {
+            cmd.args(["run", artifact]);
+            commands.push(cmd);
+        }
+    }
+    for mut cmd in commands {
+        let o = cmd.current_dir(&project.0).output().unwrap();
+        assert!(o.status.success(), "{}", combined(&o));
+        assert_eq!(logs(&o), ["varta log: true true 6 4x"]);
     }
 }

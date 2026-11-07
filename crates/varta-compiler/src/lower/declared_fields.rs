@@ -287,6 +287,8 @@ struct BuildState {
     output: u32,
     roots: Vec<u32>,
     body: Vec<S>,
+    snapshot: bool,
+    copy_extras: bool,
 }
 
 /// The rooted key and value vectors of a `Record<string, unknown>` source.
@@ -550,11 +552,56 @@ impl Lower<'_> {
         message: &str,
         span: Span,
     ) -> Result<Expr> {
+        self.converted_value_mode(value, target, message, span, false)
+    }
+    pub(super) fn converted_snapshot(
+        &mut self,
+        value: Expr,
+        target: Type,
+        message: &str,
+        span: Span,
+    ) -> Result<Expr> {
+        self.prepare_snapshot_records(target)?;
+        let saved = self.hidden(Type::Unknown);
+        let output = self.hidden(target);
+        let exact = self.exact_test(span, saved, target)?;
+        let cloned = self.snapshot_clone(local(span, saved, Type::Unknown), span)?;
+        let converted = self.converted_value_mode(cloned, target, message, span, true)?;
+        Ok(Expr {
+            span,
+            ty: target,
+            kind: E::ValueBlock {
+                output,
+                marker: self.hidden(Type::Number),
+                roots: vec![saved, output],
+                body: vec![
+                    S::Init(saved, value),
+                    S::If(
+                        exact,
+                        vec![S::Init(output, view(span, saved, target))],
+                        vec![S::Init(output, converted)],
+                    ),
+                ],
+            },
+        })
+    }
+    fn converted_value_mode(
+        &mut self,
+        value: Expr,
+        target: Type,
+        message: &str,
+        span: Span,
+        snapshot: bool,
+    ) -> Result<Expr> {
         let saved = self.hidden(Type::Unknown);
         let text = self.hidden(Type::String);
         let output = self.hidden(target);
         let marker = self.hidden(Type::Number);
-        let convert = self.convert_into(span, saved, target, output, text, Vec::new())?;
+        let convert = if snapshot {
+            S::Block(self.build_statements_mode(span, saved, target, output, text, true)?)
+        } else {
+            self.convert_into(span, saved, target, output, text, Vec::new())?
+        };
         Ok(Expr {
             span,
             ty: target,
@@ -616,6 +663,22 @@ impl Lower<'_> {
     fn exact_test(&mut self, span: Span, slot: u32, target: Type) -> Result<Expr> {
         match target {
             Type::Unknown => Ok(boolean(span, true)),
+            Type::Record(shape) if self.types.snapshots.records.contains_key(&shape) => {
+                let physical = self.types.snapshots.records[&shape].physical;
+                let member = test(
+                    span,
+                    E::IsUnionMember(Box::new(local(span, slot, Type::Unknown)), target),
+                );
+                let exact = test(
+                    span,
+                    E::IsClass {
+                        value: Box::new(view(span, slot, target)),
+                        shapes: vec![shape, physical],
+                        slot: self.hidden(Type::Number),
+                    },
+                );
+                Ok(and(span, member, exact))
+            }
             Type::Union(_) | Type::ReferenceUnion(_) => {
                 let members = unions::members(target, self.types);
                 // A union wider than any earlier profile admits (v38) joins
@@ -691,14 +754,49 @@ impl Lower<'_> {
             Type::Array(_) => return self.exact_array(span, value, element),
             _ => return Ok(boolean(span, false)),
         };
+        let mut shapes = vec![shape];
+        if let Type::Record(shape) = element
+            && let Some(snapshot) = self.types.snapshots.records.get(&shape)
+        {
+            shapes.push(snapshot.physical);
+        }
         Ok(test(
             span,
             E::IsClass {
                 value: Box::new(value),
-                shapes: vec![shape],
+                shapes,
                 slot: self.hidden(Type::Number),
             },
         ))
+    }
+    pub(super) fn snapshot_spread_result(
+        &mut self,
+        value: Expr,
+        target: Type,
+        span: Span,
+    ) -> Result<Expr> {
+        self.prepare_snapshot_records(target)?;
+        let value = unknown::widen(value, self.types)?;
+        let index = self.converter(Converter::SnapshotSpread, target, span)?;
+        Ok(Expr {
+            span,
+            ty: target,
+            kind: E::Call(
+                index,
+                vec![
+                    value,
+                    Expr {
+                        span,
+                        ty: Type::String,
+                        kind: E::String(
+                            self.types
+                                .profile
+                                .string_bytes("invalid typed snapshot spread"),
+                        ),
+                    },
+                ],
+            ),
+        })
     }
     /// The shared function of `kind` for `target`, synthesized on first use.
     /// The index is registered before the body is lowered, so recursive types
@@ -716,13 +814,22 @@ impl Lower<'_> {
                     child.exact_array_body(span, target, args)
                 })?
             }
-            Converter::Build => self.define_function(
-                index,
-                span,
-                vec![Type::Unknown, Type::String],
-                target,
-                |child, args| child.build_body(span, target, args),
-            )?,
+            Converter::Build | Converter::Snapshot | Converter::SnapshotSpread => self
+                .define_function(
+                    index,
+                    span,
+                    vec![Type::Unknown, Type::String],
+                    target,
+                    |child, args| {
+                        child.build_body(
+                            span,
+                            target,
+                            args,
+                            kind != Converter::Build,
+                            kind != Converter::SnapshotSpread,
+                        )
+                    },
+                )?,
             Converter::Read => {
                 let graph = dictionaries::intern(Type::Unknown, self.types)?;
                 self.define_function(
@@ -828,8 +935,32 @@ impl Lower<'_> {
         output: u32,
         message: u32,
     ) -> Result<Vec<S>> {
+        self.build_statements_mode(span, saved, target, output, message, false)
+    }
+    fn build_statements_mode(
+        &mut self,
+        span: Span,
+        saved: u32,
+        target: Type,
+        output: u32,
+        message: u32,
+        snapshot: bool,
+    ) -> Result<Vec<S>> {
+        // Multi-record union selection remains exact, including its children.
+        let snapshot = snapshot
+            && !(target.is_union()
+                && unions::members(target, self.types)
+                    .iter()
+                    .filter(|ty| matches!(ty, Type::Record(_)))
+                    .count()
+                    > 1);
         if built(target, self.types) {
-            let index = self.converter(Converter::Build, target, span)?;
+            let kind = if snapshot {
+                Converter::Snapshot
+            } else {
+                Converter::Build
+            };
+            let index = self.converter(kind, target, span)?;
             return Ok(vec![S::Init(
                 output,
                 Expr {
@@ -859,7 +990,8 @@ impl Lower<'_> {
                 return Ok(vec![this.conversion_error(span, message)?]);
             };
             let value = this.hidden(ty);
-            let mut statements = this.build_statements(span, saved, ty, value, message)?;
+            let mut statements =
+                this.build_statements_mode(span, saved, ty, value, message, snapshot)?;
             // Widening boxes the built member; boxing roots it first.
             statements.push(S::Init(
                 output,
@@ -1271,7 +1403,14 @@ impl Lower<'_> {
         Ok(body)
     }
     /// `(cell, message) -> T` of [`Converter::Build`].
-    fn build_body(&mut self, span: Span, target: Type, args: Vec<Expr>) -> Result<Vec<S>> {
+    fn build_body(
+        &mut self,
+        span: Span,
+        target: Type,
+        args: Vec<Expr>,
+        snapshot: bool,
+        copy_extras: bool,
+    ) -> Result<Vec<S>> {
         let [cell, message] =
             <[Expr; 2]>::try_from(args).map_err(|_| invalid("build conversion arity"))?;
         let saved = self.hidden(Type::Unknown);
@@ -1286,6 +1425,8 @@ impl Lower<'_> {
             output,
             roots: vec![saved, text, output],
             body: vec![S::Init(saved, cell), S::Init(text, message)],
+            snapshot,
+            copy_extras,
         };
         match target {
             Type::Array(_) => self.build_array(&mut state)?,
@@ -1314,10 +1455,32 @@ impl Lower<'_> {
         target: Type,
         message: u32,
     ) -> Result<Expr> {
+        self.convert_part_mode(span, value, target, message, false)
+    }
+    fn convert_part_mode(
+        &mut self,
+        span: Span,
+        value: Expr,
+        target: Type,
+        message: u32,
+        snapshot: bool,
+    ) -> Result<Expr> {
         let saved = self.hidden(Type::Unknown);
         let output = self.hidden(target);
         let marker = self.hidden(Type::Number);
-        let convert = self.convert_into(span, saved, target, output, message, Vec::new())?;
+        let convert = if snapshot && (built(target, self.types) || target.is_union()) {
+            // Scalars still use exact tests; no extra cloning of the already
+            // isolated input graph occurs in these recursive converters.
+            let exact = self.exact_test(span, saved, target)?;
+            let build = self.build_statements_mode(span, saved, target, output, message, true)?;
+            S::If(
+                exact,
+                vec![S::Init(output, view(span, saved, target))],
+                build,
+            )
+        } else {
+            self.convert_into(span, saved, target, output, message, Vec::new())?
+        };
         Ok(Expr {
             span,
             ty: target,
@@ -1416,7 +1579,7 @@ impl Lower<'_> {
                 ),
             };
             let cell = unions::widen(read, Some(Type::Unknown), self.types)?;
-            let converted = self.convert_part(span, cell, element, message)?;
+            let converted = self.convert_part_mode(span, cell, element, message, state.snapshot)?;
             let step = vec![
                 S::Init(item, converted),
                 push(
@@ -1515,6 +1678,11 @@ impl Lower<'_> {
             return Err(invalid("missing record build type"));
         };
         let fields = self.types.records[shape as usize].fields.clone();
+        let snapshot = state
+            .snapshot
+            .then(|| self.snapshot_record(shape))
+            .transpose()?;
+        let physical = snapshot.map_or(target, |record| Type::Record(record.physical));
         let GraphObject {
             keys,
             keys_ty,
@@ -1537,16 +1705,39 @@ impl Lower<'_> {
                     kind: E::Zero,
                 }
             };
+            let slot = if let Some(record) = snapshot {
+                self.types.records[record.physical as usize]
+                    .fields
+                    .iter()
+                    .position(|candidate| candidate.name == field.name)
+                    .ok_or_else(|| invalid("snapshot declared slot"))?
+            } else {
+                slot
+            };
             initial.push((slot as u32, value));
         }
-        state.body.push(S::Init(
-            output,
-            Expr {
-                span,
-                ty: target,
-                kind: E::OptionalRecord(initial, 0),
-            },
-        ));
+        let mut present = 0;
+        if let Some(record) = snapshot {
+            initial.push((record.extras, self.snapshot_empty_graph(span)?));
+            let order = arrays::intern(Type::String, self.types)?;
+            initial.push((
+                record.order,
+                Expr {
+                    span,
+                    ty: order,
+                    kind: E::Array(Vec::new()),
+                },
+            ));
+            present = (1u128 << record.extras) | (1u128 << record.order);
+            initial.sort_by_key(|(slot, _)| *slot);
+        }
+        let allocated = Expr {
+            span,
+            ty: physical,
+            kind: E::OptionalRecord(initial, present),
+        };
+        let allocated = unions::widen(allocated, Some(target), self.types)?;
+        state.body.push(S::Init(output, allocated));
         let index = self.hidden(Type::Float64);
         let count = self.hidden(Type::Float64);
         let key = self.hidden(Type::String);
@@ -1559,19 +1750,68 @@ impl Lower<'_> {
             state.body.push(S::Init(*flag, boolean(span, false)));
         }
         let at = || local(span, index, Type::Float64);
-        let mut chain = vec![self.conversion_error(span, message)?];
+        let metadata = |slot: u32, ty: Type| Expr {
+            span,
+            ty,
+            kind: E::Field(
+                Box::new(Expr {
+                    span,
+                    ty: physical,
+                    kind: E::Reinterpret(Box::new(local(span, output, target))),
+                }),
+                slot,
+            ),
+        };
+        let mut chain = if let Some(record) = snapshot {
+            let graph = dictionaries::intern(Type::Unknown, self.types)?;
+            let entry = Expr {
+                span,
+                ty: Type::Unknown,
+                kind: E::Index(Box::new(local(span, values, values_ty)), Box::new(at())),
+            };
+            let entry = if state.copy_extras {
+                self.snapshot_extra(entry, span)?
+            } else {
+                entry
+            };
+            vec![S::Expr(self.dictionary_helper_call(
+                ir::DictionaryHelper::Define,
+                vec![
+                    metadata(record.extras, graph),
+                    local(span, key, Type::String),
+                    entry,
+                ],
+            )?)]
+        } else {
+            vec![self.conversion_error(span, message)?]
+        };
         for (slot, field) in fields.iter().enumerate().rev() {
             let entry = Expr {
                 span,
                 ty: Type::Unknown,
                 kind: E::Index(Box::new(local(span, values, values_ty)), Box::new(at())),
             };
-            let converted = self.convert_part(span, entry, field.ty, message)?;
-            let mut store = vec![S::SetField(
-                local(span, output, target),
-                slot as u32,
-                converted,
-            )];
+            let converted =
+                self.convert_part_mode(span, entry, field.ty, message, state.snapshot)?;
+            let (object, stored_slot) = if let Some(record) = snapshot {
+                let stored_slot = self.types.records[record.physical as usize]
+                    .fields
+                    .iter()
+                    .position(|candidate| candidate.name == field.name)
+                    .ok_or_else(|| invalid("snapshot field initialization"))?
+                    as u32;
+                (
+                    Expr {
+                        span,
+                        ty: physical,
+                        kind: E::Reinterpret(Box::new(local(span, output, target))),
+                    },
+                    stored_slot,
+                )
+            } else {
+                (local(span, output, target), slot as u32)
+            };
+            let mut store = vec![S::SetField(object, stored_slot, converted)];
             if let Some(flag) = seen[slot] {
                 store.push(S::Set(flag, boolean(span, true)));
             }
@@ -1595,6 +1835,14 @@ impl Lower<'_> {
             },
         )];
         step.extend(chain);
+        if let Some(record) = snapshot {
+            let order = arrays::intern(Type::String, self.types)?;
+            step.push(push(
+                span,
+                metadata(record.order, order),
+                local(span, key, Type::String),
+            ));
+        }
         step.push(increment(span, index));
         state.body.extend([
             S::Init(index, number(span, 0.0)),
@@ -1642,7 +1890,8 @@ impl Lower<'_> {
             ty: Type::Unknown,
             kind: E::Index(Box::new(local(span, values, values_ty)), Box::new(at())),
         };
-        let converted = self.convert_part(span, entry, dictionary.value, message)?;
+        let converted =
+            self.convert_part_mode(span, entry, dictionary.value, message, state.snapshot)?;
         let key = Expr {
             span,
             ty: Type::String,

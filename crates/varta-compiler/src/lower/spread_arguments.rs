@@ -55,7 +55,10 @@ impl Lower<'_> {
                     return None;
                 };
                 let tuple = &self.types.tuples[tuple as usize];
-                if tuple.required != tuple.elements.len() {
+                if tuple.required != tuple.elements.len()
+                    || tuple.rest.is_some()
+                    || !tuple.trailing.is_empty()
+                {
                     return None;
                 }
                 Some(

@@ -1,0 +1,170 @@
+{
+  "date": "2026-11-07",
+  "baseHead": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+  "scope": "Native CSS shadow/ring transitions, shadow keyframes, transition shorthand and rejection of literal negative transition durations; no native tables/direct GPU expansion.",
+  "profileOrAbiChanged": false,
+  "productionBudgetsRaised": false,
+  "newRegressions": {
+    "nativePaint": 8,
+    "interpolation": 2,
+    "commonColorAndShorthand": 2
+  },
+  "focused": {
+    "nativeMotionAndExistingTransitionsAnimations": 17,
+    "interpolationAndExistingTiming": 6,
+    "affectedStrictClippy": true
+  },
+  "crossHostCorpus": {
+    "total": 480,
+    "admitted": 454,
+    "refused": 26,
+    "newCases": 5,
+    "applicationCandidatesRemain": 312,
+    "nativeWasmAgreement": true
+  },
+  "chromeMotion": [
+    {
+      "scale": 1.0,
+      "cases": 13,
+      "samples": 55,
+      "checks": 495,
+      "maxMeanRgbDelta": 0.0587,
+      "log": "target/css-shadow-motion-20261107/chrome-1.log"
+    },
+    {
+      "scale": 1.25,
+      "cases": 13,
+      "samples": 55,
+      "checks": 495,
+      "maxMeanRgbDelta": 0.0419,
+      "log": "target/css-shadow-motion-20261107/chrome-1.25.log"
+    },
+    {
+      "scale": 2.0,
+      "cases": 13,
+      "samples": 55,
+      "checks": 495,
+      "maxMeanRgbDelta": 0.0313,
+      "log": "target/css-shadow-motion-20261107/chrome-2.log"
+    }
+  ],
+  "browserBridge": [
+    {
+      "mode": "bridge",
+      "scale": 1.0,
+      "scenes": 2,
+      "checks": 26,
+      "maxMeanRgbDelta": 0.0043,
+      "log": "target/css-shadow-motion-20261107/bridge-1.log"
+    },
+    {
+      "mode": "platform",
+      "scale": 1.0,
+      "scenes": 2,
+      "checks": 26,
+      "maxMeanRgbDelta": 0.0043,
+      "log": "target/css-shadow-motion-20261107/platform-1.log"
+    },
+    {
+      "mode": "bridge",
+      "scale": 1.25,
+      "scenes": 2,
+      "checks": 26,
+      "maxMeanRgbDelta": 0.0039,
+      "log": "target/css-shadow-motion-20261107/bridge-1.25.log"
+    },
+    {
+      "mode": "platform",
+      "scale": 1.25,
+      "scenes": 2,
+      "checks": 26,
+      "maxMeanRgbDelta": 0.0039,
+      "log": "target/css-shadow-motion-20261107/platform-1.25.log"
+    },
+    {
+      "mode": "bridge",
+      "scale": 2.0,
+      "scenes": 2,
+      "checks": 26,
+      "maxMeanRgbDelta": 0.0036,
+      "log": "target/css-shadow-motion-20261107/bridge-2.log"
+    },
+    {
+      "mode": "platform",
+      "scale": 2.0,
+      "scenes": 2,
+      "checks": 26,
+      "maxMeanRgbDelta": 0.0036,
+      "log": "target/css-shadow-motion-20261107/platform-2.log"
+    }
+  ],
+  "full": {
+    "attempts": 1,
+    "status": "passed",
+    "report": "target/verification/20261107-161255-o7vw5gt9/report.json",
+    "commandsPassed": 12,
+    "sourceUnchanged": true,
+    "before": {
+      "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+      "sourceSha256": "2d2fbeded51cfa57d2718fcdbb1e83d2c19b054ffb512a5d768504adb4bafe4d"
+    },
+    "after": {
+      "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+      "sourceSha256": "2d2fbeded51cfa57d2718fcdbb1e83d2c19b054ffb512a5d768504adb4bafe4d"
+    },
+    "rustPassed": 4665,
+    "rustIgnored": 26,
+    "nodePassed": 190,
+    "coreConformance": {
+      "total": 248,
+      "passed": 246,
+      "knownUnsupported": 2,
+      "unexpectedSupport": 0,
+      "regressions": 0,
+      "infrastructureFailures": 0
+    },
+    "snapshotConformance": {
+      "total": 3,
+      "passed": 3,
+      "knownUnsupported": 0,
+      "unexpectedSupport": 0,
+      "regressions": 0,
+      "infrastructureFailures": 0
+    },
+    "testThreads": "4",
+    "priorFailedReportsRemainUnchanged": true
+  },
+  "limits": [
+    "Direct GPU shadows remain an explicit software fallback.",
+    "Native animated shadow colors containing unresolved currentcolor mixes are outside this motion subset; shadow keyframes fail explicitly.",
+    "Transition shorthand lists use the existing eight-entry list bound; transition-behavior/allow-discrete is not added.",
+    "Full CSS, native tables, Firefox/WebKit and other platform acceptance are not claimed."
+  ],
+  "logs": "target/css-shadow-motion-20261107",
+  "viewEngine": {
+    "sourceFingerprint": "614c7800922994d0",
+    "target": "wasm32-wasip2",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "bytes": 709532
+  },
+  "codeInputs": {
+    "path": "target/css-shadow-motion-20261107/final-code-inputs.json",
+    "files": 2495,
+    "sha256": "3ba2df3c73fdff5c067229fd9d4ae01903a5e06a5c7b75dfa1990ad2793e3482",
+    "documentationOnlyAfterFullGate": true
+  },
+  "nextReportedBlocker": {
+    "component": "async HTTP Store / KV value decoder callback",
+    "reportedBy": "authorized cooperating Cloud chat",
+    "symptom": "write succeeds; a later request reading the value returns 500: cannot do blocking call from an async context",
+    "reportedProfile": "v39; earlier profiles not verified",
+    "independentPositiveControl": "ordinary --app process read the persisted record under read-only KV grant",
+    "engineReproducedInThisPackage": false,
+    "engineFix": "pending, separate package",
+    "sourceEvidence": "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/http-kv-record.json",
+    "subsequentResolution": {
+      "status": "fixed in separate scoped package after this full gate",
+      "evidence": "2026-11-07-http-kv-async-verification.json"
+    }
+  }
+}

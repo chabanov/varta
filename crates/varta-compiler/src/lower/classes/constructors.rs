@@ -2,9 +2,11 @@
 //! no field may be observed before it is definitely assigned. A syntactic
 //! discipline guarantees this without flow analysis: in a constructor (and in
 //! field initializers) `this` may only read already-assigned fields or write
-//! fields; it never escapes, is never captured and never receives a method
-//! call, because a subclass override could observe its unassigned fields.
+//! fields. V38 additionally exposes a fully assigned receiver, provided a final
+//! closed-world check proves that its class has no descendants. Otherwise a
+//! subclass override could observe its still-unassigned fields.
 use super::*;
+use std::cell::Cell;
 use swc_ecma_visit::{Visit, VisitWith};
 
 /// The first discipline violation with its source position.
@@ -13,7 +15,16 @@ type Violation = Option<(String, Span)>;
 struct ThisUse<'a> {
     fields: &'a BTreeSet<String>,
     assigned: &'a BTreeSet<String>,
-    /// False before `super(...)` and inside field initializers.
+    /// Fields holding the raw instance identity cannot expose constructor
+    /// placeholders through an indirect read while construction is in progress.
+    identities: &'a BTreeSet<String>,
+    dynamic_receivers: &'a BTreeSet<String>,
+    identity_comparisons: bool,
+    /// V38: all fields are assigned at this statement. Newly permitted uses
+    /// require a final check that construction cannot target a descendant.
+    receiver_ready: bool,
+    receiver_use: &'a Cell<Option<Span>>,
+    /// False before `super(...)`, in defaults and in earlier-profile field initializers.
     allow_this: bool,
     /// Inside an arrow body: `this` would be captured; returns are local.
     closure: bool,
@@ -36,6 +47,11 @@ struct ThisUse<'a> {
     violation: Violation,
 }
 impl ThisUse<'_> {
+    fn expose_receiver(&self, span: Span) {
+        if self.receiver_use.get().is_none() {
+            self.receiver_use.set(Some(span));
+        }
+    }
     fn fail(&mut self, message: impl Into<String>, span: Span) {
         if self.violation.is_none() {
             self.violation = Some((message.into(), span));
@@ -44,6 +60,21 @@ impl ThisUse<'_> {
     fn this_member(&mut self, member: &ast::MemberExpr, write: bool) {
         if !self.allow_this || self.closure && !self.capture {
             return self.fail(self.this_message(), member.span);
+        }
+        if self.receiver_ready
+            && match &member.prop {
+                ast::MemberProp::Ident(name) => {
+                    let name = name.sym.as_ref();
+                    !self.fields.contains(name)
+                        || !write
+                            && (self.identities.contains(name)
+                                || self.dynamic_receivers.contains(name))
+                }
+                _ => true,
+            }
+        {
+            self.expose_receiver(member.span);
+            return;
         }
         let ast::MemberProp::Ident(name) = &member.prop else {
             return self.fail(
@@ -55,6 +86,18 @@ impl ThisUse<'_> {
         if !self.fields.contains(&name) {
             return self.fail(
                 "constructor this may only access declared fields",
+                member.span,
+            );
+        }
+        if !write && self.dynamic_receivers.contains(&name) {
+            return self.fail(
+                "receiver-bearing function field cannot be read during construction",
+                member.span,
+            );
+        }
+        if !write && self.identities.contains(&name) {
+            return self.fail(
+                "instance identity field cannot be read during construction",
                 member.span,
             );
         }
@@ -89,6 +132,10 @@ impl Visit for ThisUse<'_> {
     fn visit_function(&mut self, _: &ast::Function) {}
     fn visit_class(&mut self, _: &ast::Class) {}
     fn visit_this_expr(&mut self, node: &ast::ThisExpr) {
+        if self.receiver_ready {
+            self.expose_receiver(node.span);
+            return;
+        }
         let message = if self.allow_this && !self.closure {
             "constructor this may only access declared fields"
         } else {
@@ -145,6 +192,20 @@ impl Visit for ThisUse<'_> {
         node.visit_children_with(self);
     }
     fn visit_bin_expr(&mut self, node: &ast::BinExpr) {
+        if self.identity_comparisons
+            && self.allow_this
+            && !self.closure
+            && matches!(node.op, ast::BinaryOp::EqEqEq | ast::BinaryOp::NotEqEq)
+            && (matches!(stmt::unparen(&node.left), ast::Expr::This(_))
+                || matches!(stmt::unparen(&node.right), ast::Expr::This(_)))
+        {
+            for operand in [&node.left, &node.right] {
+                if !matches!(stmt::unparen(operand), ast::Expr::This(_)) {
+                    operand.visit_with(self);
+                }
+            }
+            return;
+        }
         if self.compare_target
             && let Some(other) = expression_forms::new_target_operand(node)
         {
@@ -232,6 +293,10 @@ fn this_assignment(statement: &ast::Stmt) -> Option<&ast::MemberExpr> {
 
 struct Discipline<'a> {
     fields: BTreeSet<String>,
+    identities: BTreeSet<String>,
+    dynamic_receivers: BTreeSet<String>,
+    identity_comparisons: bool,
+    receiver_use: Cell<Option<Span>>,
     assigned: BTreeSet<String>,
     source: &'a Source,
     new_target: bool,
@@ -266,6 +331,11 @@ impl Discipline<'_> {
         let mut visitor = ThisUse {
             fields: &self.fields,
             assigned,
+            identities: &self.identities,
+            dynamic_receivers: &self.dynamic_receivers,
+            identity_comparisons: self.identity_comparisons,
+            receiver_ready: self.identity_comparisons && allow_this && assigned == &self.fields,
+            receiver_use: &self.receiver_use,
             allow_this,
             closure: false,
             capture: false,
@@ -334,7 +404,7 @@ pub(super) fn declaration(
     id: u32,
     types: &ir::ValueTypes,
     object_global: bool,
-) -> Result<ast::FnDecl> {
+) -> Result<(ast::FnDecl, Option<Span>)> {
     let class = types.classes.get(id);
     let source = &class.source;
     let constructor = class
@@ -354,8 +424,30 @@ pub(super) fn declaration(
         .map(|f| f.name.clone())
         .collect();
     let initialized: BTreeSet<String> = class.initializers.iter().map(|(n, _)| n.clone()).collect();
+    let mut identities = BTreeSet::new();
+    if types.profile.expression_forms() {
+        let mut owner = Some(id);
+        while let Some(current) = owner {
+            let info = types.classes.get(current);
+            identities.extend(
+                info.initializers
+                    .iter()
+                    .filter(|(_, value)| matches!(stmt::unparen(value), ast::Expr::This(_)))
+                    .map(|(name, _)| name.clone()),
+            );
+            owner = info.parent;
+        }
+    }
     let mut discipline = Discipline {
         fields,
+        identities,
+        dynamic_receivers: if types.profile.expression_forms() {
+            class.fields.iter().filter(|f| unions::members(f.ty, types).iter().any(|t| matches!(t, Type::Function(id) if types.functions[*id as usize].receiver.is_some()))).map(|f| f.name.clone()).collect()
+        } else {
+            BTreeSet::new()
+        },
+        identity_comparisons: types.profile.expression_forms(),
+        receiver_use: Cell::new(None),
         assigned: BTreeSet::new(),
         source,
         new_target: types.profile.error_subclasses(),
@@ -365,7 +457,8 @@ pub(super) fn declaration(
             && object_global
             && constructor.is_none_or(|constructor| !binds_object(constructor)),
     };
-    // Field initializers never see `this` or constructor-scoped bindings.
+    // Initializers never see constructor-scoped bindings. V38 admits the
+    // checked earlier-field and instance-identity forms below.
     let mut scoped = BTreeSet::new();
     let (function, statements) = match constructor {
         Some(ctor) => {
@@ -413,7 +506,9 @@ pub(super) fn declaration(
             // V38 (`expression_forms`): an initializer runs as the injected
             // `this.name = value` and may read (or capture) the fields
             // initialized before it, as in TypeScript's field order.
-            discipline.check_field(&**value, &prior)?;
+            if !matches!(stmt::unparen(value), ast::Expr::This(_)) {
+                discipline.check_field(&**value, &prior)?;
+            }
         } else {
             discipline.check_initializer(&**value)?;
         }
@@ -471,7 +566,9 @@ pub(super) fn declaration(
         } else if let Some(member) = this_assignment(&statement) {
             // The right-hand side sees only fields assigned before it.
             discipline.check(&statement, true)?;
-            if let ast::MemberProp::Ident(name) = &member.prop {
+            if let ast::MemberProp::Ident(name) = &member.prop
+                && discipline.fields.contains(name.sym.as_ref())
+            {
                 discipline.assigned.insert(name.sym.to_string());
             }
         } else {
@@ -509,7 +606,26 @@ pub(super) fn declaration(
         span: function.span,
         stmts: body,
     });
-    Ok(function_declaration(CONSTRUCTOR_NAME, class.span, function))
+    Ok((
+        function_declaration(CONSTRUCTOR_NAME, class.span, function),
+        discipline.receiver_use.get(),
+    ))
+}
+
+/// Run after all generic classes have materialized. A fully assigned base
+/// instance still contains placeholders when invoked as a derived constructor.
+pub(in crate::lower) fn validate_receivers(types: &ir::ValueTypes) -> Result<()> {
+    for (class, source, span) in &types.classes.constructor_receivers {
+        if !types.classes.descendants(*class).is_empty() {
+            return Err(source.locate(
+                unsupported(
+                    "fully initialized constructor receiver requires a class without descendants",
+                ),
+                *span,
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `constructor() {}` for a base class; `constructor(...p) { super(...p); }`

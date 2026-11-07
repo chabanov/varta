@@ -65,6 +65,7 @@ pub(super) struct Guest<'a> {
     exceptions: (Option<u32>, Option<u32>, Option<u32>),
     /// The module's declared layout (`varta.static`, `varta.intrinsics`).
     pub region: abi::StaticRegion,
+    snapshots: bool,
 }
 
 impl<'a> Guest<'a> {
@@ -78,6 +79,7 @@ impl<'a> Guest<'a> {
             resource: (None, None),
             exceptions: (None, None, None),
             region: abi::StaticRegion::SINGLE_PAGE,
+            snapshots: false,
         };
         let mut intrinsic_section = None;
         for payload in Parser::new(0).parse_all(bytes) {
@@ -133,6 +135,15 @@ impl<'a> Guest<'a> {
                             }
                         }
                     }
+                }
+                Payload::CustomSection(section)
+                    if section.name() == varta_common::language::SECTION =>
+                {
+                    guest.snapshots =
+                        varta_common::language::LanguageContract::parse(section.data())
+                            .map_err(|error| error.to_string())?
+                            .profile
+                            .checked_snapshots();
                 }
                 Payload::CustomSection(section) if section.name() == abi::STATIC_SECTION => {
                     guest.region = abi::StaticRegion::read_section(section.data())
@@ -205,6 +216,7 @@ enum Accessor {
     /// `() -> i64`: the static region's extension pages (low word) and
     /// intrinsic pages (high word).
     StaticPages,
+    SnapshotProfile,
     /// `(marker, offset, len, dst) -> i32`: copy a range of a linked
     /// locale data segment ([`intl_accessor`]).
     IntlData,
@@ -226,6 +238,7 @@ struct AccessorTargets {
     /// value.
     exceptions: (Option<u32>, Option<u32>, Option<u32>),
     region: abi::StaticRegion,
+    snapshots: bool,
 }
 impl Accessor {
     fn from_name(name: &str) -> Option<Self> {
@@ -246,6 +259,7 @@ impl Accessor {
             "exception_value" => Self::ExceptionValue,
             "raise" => Self::Raise,
             "static_pages" => Self::StaticPages,
+            "snapshot_profile" => Self::SnapshotProfile,
             "intl_data" => Self::IntlData,
             _ => return None,
         })
@@ -261,7 +275,8 @@ impl Accessor {
             | Self::ArenaReservedEnd
             | Self::Roots
             | Self::ExceptionVersion
-            | Self::ExceptionPending => (&[], &[I32]),
+            | Self::ExceptionPending
+            | Self::SnapshotProfile => (&[], &[I32]),
             Self::ResourceFailure => (&[I32, I32], &[]),
             Self::Allocate => (&[I32], &[I32]),
             Self::Retain => (&[I64], &[I64]),
@@ -333,6 +348,9 @@ impl Accessor {
                     function.instruction(&I::Unreachable);
                 }
             },
+            Self::SnapshotProfile => {
+                function.instruction(&I::I32Const(i32::from(targets.snapshots)));
+            }
             Self::StaticPages => {
                 let pages = u64::from(targets.region.extension_pages())
                     | u64::from(targets.region.intrinsic_pages()) << u32::BITS;
@@ -959,6 +977,7 @@ impl<'a> Plan<'a> {
             }),
             exceptions: guest.exceptions,
             region: guest.region,
+            snapshots: guest.snapshots,
         };
         let mut plan = Self {
             guest,

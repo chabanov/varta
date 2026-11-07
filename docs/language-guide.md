@@ -4195,6 +4195,20 @@ value still waits one microtask. Store an awaited value in a local before
 using it inside string concatenation, a template literal or a call such as
 `String(...)`: `await` inside those is rejected with a diagnostic.
 
+In v38, an async function may directly return a typed promise whose result can
+be widened to its declared result. For example, `Promise<string>` can supply a
+`Promise<unknown>` result without an extra `await`:
+
+```ts
+async function decodeText(response: Response): Promise<unknown> {
+  return response.text();
+}
+```
+
+Adoption happens after enclosing `finally` blocks complete. A promise that was
+already stored in `unknown` still requires a statically typed path; this rule
+does not enable adoption of unknown-held promises.
+
 #### Promises (opt-in v34)
 
 `new Promise<T>(executor)` runs the executor at once; its `resolve` and
@@ -5096,6 +5110,18 @@ string built-ins are `padStart`, `padEnd`, `toUpperCase`, `toLowerCase`,
 `split` with a string separator, `concat`, `codePointAt`,
 `String.fromCharCode`, `String.fromCodePoint` and `Array.prototype.join`.
 
+Tuples also support the array callback methods (`map`, `filter`, `forEach`,
+`some`, `every`, predicate searches and reductions). The callback value has
+the tuple's element union; `filter` returns an array rather than preserving a
+fixed tuple length. In v38 this includes inferred `as const` tuples:
+
+```ts
+const keys = ["type", "title", "status"] as const;
+function hasProblem(body: Record<string, unknown>): boolean {
+  return keys.some(key => key in body);
+}
+```
+
 A map, a set, a `Uint8Array`, a `TextEncoder`/`TextDecoder` or a `Date` cannot
 be logged, passed to `JSON.stringify` or stored in `unknown` yet (log
 `[...set]` or `date.toISOString()` instead). A collection holds at most 1024
@@ -5995,6 +6021,72 @@ signature `[key: string]: T` keeps undeclared members of its instances as own
 properties, and `JSON.stringify` lists them with the fields in JavaScript's
 key order. Decorators are not supported yet.
 
+#### Class identities, method values and tuple rest (opt-in v38)
+
+```ts
+class Counter {
+  self: Counter = this;
+  value: number = 2;
+  add(n: number): number { return this.value + n; }
+}
+function label(...parts: [number, string?]): string {
+  return parts.length + ":" + parts[0] + ":" + String(parts[1]);
+}
+export function main(): void {
+  const counter = new Counter();
+  const add = counter.add;
+  console.log(counter.self === counter, add.call(counter, 3));
+  console.log(label(4), label(4, "x"));
+}
+```
+
+A method value keeps its function identity and does not bind `counter`;
+`add(3)` lacks its required receiver and is rejected. An inherited method shares
+its implementation identity. Extract from a concrete receiver: a base type with
+known overriding descendants cannot currently provide a polymorphic method value;
+use a receiver type with no overriding descendants.
+A generic class can provide method values when its declaring template has a
+single specialization in the program; multiple specializations need shared
+method identity support. Generic/overloaded methods and method values through
+structural views remain outside this increment.
+
+Field initializers may read/capture earlier initialized fields. `self` stores
+identity, but cannot be read while construction is incomplete: this prevents
+access to backing slots before assignment. Function fields with explicit dynamic
+receivers have the same restriction. Once all fields are definitely assigned, a
+class without descendants may pass/capture `this`, read its identity fields and
+call methods/getters, including from lexical callbacks:
+
+```ts
+function register(value: Counter): void { console.log(value.value); }
+class Counter {
+  value: number;
+  constructor(value: number) {
+    this.value = value;
+    register(this);
+    this.report();
+  }
+  report(): void { console.log(this.value); }
+}
+```
+
+This restriction checks all descendants after generic materialization. Adding a
+subclass requires moving such publication/calls out of the base constructor.
+Branches and called methods do not establish definite assignment for this rule.
+Partially initialized receivers, pre-super/default access and constructor-binding
+references from field initializers stay refused.
+
+Tuple-rest calls preserve the actual supplied length: `label(4)` has one element,
+whereas `label(4, undefined)` has two. Array and middle rest elements are admitted
+with positional checks. Required finite tuple spreads and adapters are supported;
+dynamic optional/variadic spreads into tuple-rest parameters need explicit
+arguments. Generic inference can infer `Args` from `(...args: Args)` calls and
+callback signatures without implicit `any`.
+
+Optional/variadic tuple adapters require identical parameter layouts. Signature
+conversions use adapter closures; keep the original method reference when
+comparing its canonical function identity.
+
 #### Type-level TypeScript (opt-in v38)
 
 Conditional, mapped and template literal types, every utility type, type
@@ -6815,3 +6907,58 @@ and `@import` of URLs are rejected; list extra classes with `@source inline(…)
 stylesheet grammar admits Tailwind's output (track T2: class tokens such as
 `hover:bg-red-500`, `@property`, `oklch()`, `!important`, …), `varta check`
 reports the first construct the grammar refuses inside `app.css`.
+
+### Bounded Tailwind/CSS application effects (2026-11-07)
+
+The native view accepts `tabular-nums`, `accent-indigo-600`, `sr-only`,
+`sticky`, `inline-block`, `inline-flex`, `line-clamp-2/3`, `[text-wrap:pretty]`,
+`bg-gradient-to-b`, `backdrop-blur`, `animate-pulse` and `animate-spin` in the
+checked application subset. Use gradient stop classes such as `from-indigo-500`
+and `to-blue-500` to give a direction utility actual colors. The Tailwind compiler
+emits the animation's `@keyframes`; handwritten CSS must supply its own.
+Native animation progresses on the host's supplied animation clock.
+
+`table-auto` is harmless on the current non-table view boxes; this does not add
+HTML tables. Pretty line choices are best effort. Complex clamped inline flows,
+keyframe variables/layout animation, arbitrary gradient/filter layers and some
+transformed scopes remain refused; see the architecture's CSS contract.
+
+### Shadow motion
+
+Use `shadow-sm hover:shadow-md transition-shadow duration-150` for a Tailwind
+hover shadow, or put the equivalent transition in your stylesheet:
+
+```css
+.card { box-shadow: none; transition: box-shadow 150ms ease; }
+.card:hover { box-shadow: 0 4px 12px rgba(0, 0, 0, .2); }
+@keyframes ring { 50% { box-shadow: 0 0 0 4px #4f46e580; } }
+.card.attention { animation: ring 1s ease-in-out; }
+```
+
+Shorter lists fade transparent zero shadows in or out. Use matching inset kinds
+for a smooth transition; switching an existing outer shadow to an inset shadow
+is immediate in transitions and discrete in keyframes. Omitted colors follow
+currentcolor. Native keyframes with unresolved currentcolor mixes remain refused.
+
+## Checked SDK snapshots (v39)
+
+Select `"languageProfile": "checked-f64-utf16-v39"` in the project configuration
+when typed dependencies assert external JSON objects that may carry extra fields.
+The setting applies to the whole compiled source graph, without editing packages.
+
+```ts
+interface Answer { value: number; child: { enabled: boolean } }
+const raw: unknown = JSON.parse('{"extra":"kept","value":1,"child":{"enabled":true,"tail":2}}');
+const answer = raw as Answer;
+console.log(JSON.stringify(answer)); // all fields, including extra and child.tail
+```
+
+Declared fields are checked recursively. A malformed field throws `TypeError`.
+The result is a separate mutable copy; aliases of that copy share changes, while
+changes to `raw` remain separate. Enumeration retains extras; record
+`Object.values` consequently has element type `unknown`. A cast back to a JSON
+object dictionary returns an outer copy protecting typed fields. Cycles, sparse
+arrays, getters and non-JSON extras are refused. Exact typed values can be reused.
+Explicit `varta.json.parse<T>` and direct `JSON.parse(text) as T` still require
+exact keys, as do multi-record union matching and declared dictionary reads.
+Earlier profiles keep their behavior. See the [contract](architecture.md#checked-structural-snapshots-v39).

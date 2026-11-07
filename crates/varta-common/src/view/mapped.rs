@@ -77,6 +77,9 @@ pub enum Mapped {
     ListStyle,
     /// The legacy name alias `-webkit-appearance` (CSS UI 4 §7.1).
     WebkitAppearance,
+    WebkitBackdropFilter,
+    Animation,
+    Transition,
 }
 
 /// One longhand of a mapped declaration whose value has `var()`: the mapped
@@ -106,12 +109,14 @@ enum Spread {
     Font,
     /// `list-style`: type, position and image in any order.
     ListStyle,
+    Animation,
+    Transition,
 }
 
 use CssProperty as P;
 
 impl Mapped {
-    pub const ALL: [Self; 52] = [
+    pub const ALL: [Self; 55] = [
         Self::PaddingInline,
         Self::PaddingBlock,
         Self::PaddingInlineStart,
@@ -164,6 +169,9 @@ impl Mapped {
         Self::Font,
         Self::ListStyle,
         Self::WebkitAppearance,
+        Self::WebkitBackdropFilter,
+        Self::Animation,
+        Self::Transition,
     ];
 
     /// The property name.
@@ -203,6 +211,7 @@ impl Mapped {
             P::FontFamily,
             P::FontFeatureSettings,
             P::FontVariationSettings,
+            P::FontVariantNumeric,
         ];
         match self {
             Self::PaddingInline => ("padding-inline", Spread::Pair, INLINE_PADDING),
@@ -360,6 +369,35 @@ impl Mapped {
                 &[P::ListStyleType, P::ListStylePosition, P::ListStyleImage],
             ),
             Self::WebkitAppearance => ("-webkit-appearance", Spread::Whole, &[P::Appearance]),
+            Self::Transition => (
+                "transition",
+                Spread::Transition,
+                &[
+                    P::TransitionProperty,
+                    P::TransitionDuration,
+                    P::TransitionTimingFunction,
+                    P::TransitionDelay,
+                ],
+            ),
+            Self::Animation => (
+                "animation",
+                Spread::Animation,
+                &[
+                    P::AnimationName,
+                    P::AnimationDuration,
+                    P::AnimationTimingFunction,
+                    P::AnimationDelay,
+                    P::AnimationIterationCount,
+                    P::AnimationDirection,
+                    P::AnimationFillMode,
+                    P::AnimationPlayState,
+                ],
+            ),
+            Self::WebkitBackdropFilter => (
+                "-webkit-backdrop-filter",
+                Spread::Whole,
+                &[P::BackdropFilter],
+            ),
         }
     }
 
@@ -391,6 +429,8 @@ impl Mapped {
             (Spread::Box, [a, b, c, d]) => Some(vec![a.clone(), b.clone(), c.clone(), d.clone()]),
             (Spread::Flex, parts) => flex(parts),
             (Spread::Font, _) => font(value),
+            (Spread::Transition, _) => transition(value),
+            (Spread::Animation, _) => super::animation::components(value),
             (Spread::ListStyle, parts) => list_style(parts),
             _ => None,
         }
@@ -402,6 +442,54 @@ impl Mapped {
     pub fn component(self, value: &str, index: usize) -> Option<String> {
         self.components(value)?.into_iter().nth(index)
     }
+}
+
+/// CSS Transitions 1: the first time is duration, the second delay; easing
+/// keywords are consumed before an otherwise arbitrary property identifier.
+fn transition(value: &str) -> Option<Vec<String>> {
+    let entries = super::animation::list(value)?;
+    let mut longhands: [Vec<String>; 4] = core::array::from_fn(|_| Vec::new());
+    for entry in &entries {
+        let mut values = [
+            "all".to_owned(),
+            "0s".to_owned(),
+            "ease".to_owned(),
+            "0s".to_owned(),
+        ];
+        let mut used = [false; 4];
+        for part in split(entry)? {
+            if super::css::CSS_WIDE_KEYWORDS
+                .iter()
+                .any(|v| part.eq_ignore_ascii_case(v))
+            {
+                return None;
+            }
+            let slot = if super::css::check(P::TransitionDelay, &part).is_ok() {
+                if !used[1] {
+                    1
+                } else if !used[3] {
+                    3
+                } else {
+                    return None;
+                }
+            } else if !used[2] && super::css::check(P::TransitionTimingFunction, &part).is_ok() {
+                2
+            } else if !used[0] && super::css::check(P::TransitionProperty, &part).is_ok() {
+                0
+            } else {
+                return None;
+            };
+            if slot == 0 && part.eq_ignore_ascii_case("none") && entries.len() != 1 {
+                return None;
+            }
+            used[slot] = true;
+            values[slot] = part;
+        }
+        for (slot, value) in values.into_iter().enumerate() {
+            longhands[slot].push(value);
+        }
+    }
+    Some(longhands.into_iter().map(|v| v.join(", ")).collect())
 }
 
 /// The flex factors when `flex` omits them, and the basis (Flexbox 1 §7.1:
@@ -566,6 +654,7 @@ fn font(value: &str) -> Option<Vec<String>> {
         size,
         line_height,
         family,
+        FONT_RESET.to_owned(),
         FONT_RESET.to_owned(),
         FONT_RESET.to_owned(),
     ])
@@ -744,7 +833,7 @@ mod tests {
     /// Fonts 4 §2.8: the shorthand's set and reset-only longhands.
     #[test]
     fn font_sets_and_resets_its_longhands() {
-        assert_eq!(parts(Mapped::Font, "inherit"), texts(&["inherit"; 7]));
+        assert_eq!(parts(Mapped::Font, "inherit"), texts(&["inherit"; 8]));
         assert_eq!(
             parts(
                 Mapped::Font,
@@ -756,6 +845,7 @@ mod tests {
                 "12px",
                 "1.5",
                 "\"Helvetica Neue\", serif",
+                "normal",
                 "normal",
                 "normal"
             ])
@@ -769,13 +859,14 @@ mod tests {
                 "20px",
                 "monospace",
                 "normal",
+                "normal",
                 "normal"
             ])
         );
         assert_eq!(
             parts(Mapped::Font, "normal 1em serif"),
             texts(&[
-                "normal", "normal", "1em", "normal", "serif", "normal", "normal"
+                "normal", "normal", "1em", "normal", "serif", "normal", "normal", "normal"
             ])
         );
         assert_eq!(parts(Mapped::Font, "12px"), None);
@@ -804,6 +895,35 @@ mod tests {
         assert_eq!(parts(Mapped::ListStyle, "none none none"), None);
         assert_eq!(parts(Mapped::ListStyle, "inside outside"), None);
         assert_eq!(parts(Mapped::WebkitAppearance, "none"), texts(&["none"]));
+    }
+
+    #[test]
+    fn transition_lists_preserve_function_commas_order_and_reset_defaults() {
+        assert!(super::super::css::check(P::TransitionDuration, "-1s").is_err());
+        assert_eq!(
+            parts(
+                Mapped::Transition,
+                "box-shadow 100ms steps(2, jump-end) -20ms, opacity 1s"
+            ),
+            texts(&[
+                "box-shadow, opacity",
+                "100ms, 1s",
+                "steps(2, jump-end), ease",
+                "-20ms, 0s"
+            ])
+        );
+        assert_eq!(
+            parts(Mapped::Transition, "ease 1s"),
+            texts(&["all", "1s", "ease", "0s"])
+        );
+        assert_eq!(
+            parts(Mapped::Transition, "none"),
+            texts(&["none", "0s", "ease", "0s"])
+        );
+        assert_eq!(parts(Mapped::Transition, "inherit"), texts(&["inherit"; 4]));
+        assert_eq!(parts(Mapped::Transition, "none, opacity 1s"), None);
+        assert_eq!(parts(Mapped::Transition, "all 1s 2s 3s"), None);
+        assert_eq!(parts(Mapped::Transition, "box-shadow 1s linear ease"), None);
     }
 
     /// Flexbox 1 §7.1.1 and the shorthand's grammar.

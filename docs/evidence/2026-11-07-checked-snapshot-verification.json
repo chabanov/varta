@@ -1,0 +1,223 @@
+{
+  "date": "2026-11-07",
+  "baseHead": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+  "profile": "checked-f64-utf16-v39",
+  "hostAbi": 35,
+  "valueLayout": 18,
+  "contract": "A \u2014 isolated checked snapshot, owner-selected",
+  "priorProfilesPreserved": true,
+  "capabilitiesChanged": false,
+  "productionBudgetsRaised": false,
+  "focused": {
+    "runtime": 16,
+    "commonUnit": 238,
+    "documentation": 14,
+    "affectedStrictClippy": true,
+    "intrinsicsKvViewFingerprintsCurrent": true
+  },
+  "sdk": {
+    "unchangedFiles": 328,
+    "sha256": "8175d775180df2ccf13df4178c12652dad8414f80f205df2455d4c115a045ac7",
+    "syntheticChecksPerHost": 16,
+    "matchingLogLines": 17,
+    "nativeDev": true,
+    "standaloneDirectoryWithoutSourcesOrConfig": true,
+    "chrome": true,
+    "browserUsage": {
+      "fuelRemaining": 988552621,
+      "hostCalls": 26,
+      "microtasks": 64,
+      "outputBytes": 869,
+      "fuelUsed": 11447379,
+      "turns": 1
+    },
+    "externalRequestsByThisTask": 0,
+    "independentCloud": {
+      "quotaVariants": 16,
+      "jsonRoundTrip": true,
+      "textPath": true,
+      "optionalNullableMinimal": "passed",
+      "fullFixture": "passed unchanged, five local requests",
+      "liveEntryCheck": "passed",
+      "readOnlyLive": {
+        "reportedBy": "authorized cooperating Cloud chat",
+        "identity": true,
+        "quota": true,
+        "models": 5
+      },
+      "generation": {
+        "reportedBy": "authorized cooperating Cloud chat",
+        "postAttempts": 3,
+        "completedRuns": 1,
+        "failedRuns": 2,
+        "failedReason": "service run token budget exceeded",
+        "successfulControlFields": true,
+        "successfulTools": 0,
+        "persistedRunStatus": "completed",
+        "engineChangeRequested": false,
+        "pathKind": "agent run via /v1/chat/completions; does not characterize direct LLM cost"
+      },
+      "sdkSourcesUnchanged": true,
+      "evidence": [
+        "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/snapshot-v39-nullable-final.json",
+        "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/snapshot-v39-sdk-fixture-final.json",
+        "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/snapshot-v39-live-check-final.json",
+        "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/snapshot-v39-uarp-live.json",
+        "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/uarp-generation-run-budget.json",
+        "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/uarp-generation-audit-final.json"
+      ],
+      "checkpoint": "Independent service acceptance after nullable correction; final local artifact checks also include the subsequent own-data-key correction.",
+      "directLlm": {
+        "reportedBy": "authorized cooperating Cloud chat",
+        "sdkRouting": "providers.listLLMModels / providers.llmChatCompletion",
+        "liveModels": 6,
+        "successfulDirectPosts": 2,
+        "maxTokens": 128,
+        "retryCount": 0,
+        "markerTotalTokens": 136,
+        "jsonTotalTokens": 115,
+        "typedControlFields": true,
+        "networkFreeRoutingFixture": true,
+        "engineOrSdkChanges": false,
+        "evidence": "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/uarp-llm-direct-live.json"
+      },
+      "subsequentHttpKvApiAcceptance": {
+        "status": "passed after separate generic async callback correction",
+        "engineEvidence": "2026-11-07-http-kv-async-verification.json",
+        "canonical": true,
+        "authenticatedHttpRestartUpdateConflictReplayAnonymousDenial": true,
+        "earlierCheckpointReportsPreserved": true
+      }
+    },
+    "finalDataKeyFollowup": {
+      "quotaNativeChecks": 16,
+      "originalFiveRequestNativeFixture": true,
+      "standaloneSourceFree": true,
+      "originalFiveRequestChromeFixture": true,
+      "protoDataNativeChromeParity": true,
+      "browserUsage": {
+        "fuelRemaining": 998801955,
+        "hostCalls": 7,
+        "microtasks": 44,
+        "outputBytes": 133,
+        "fuelUsed": 1198045,
+        "turns": 1
+      }
+    }
+  },
+  "conformance": {
+    "suite": "conformance/snapshot-v39/suite.json",
+    "passed": 3,
+    "baselineMatches": true,
+    "coreV38InventoryUnchanged": true,
+    "coreV38Counts": {
+      "passed": 246,
+      "knownUnsupported": 2,
+      "total": 248
+    },
+    "baselineProfileRemainsV38": true
+  },
+  "full": {
+    "status": "failed; scoped corrections and completion passed",
+    "attempts": 1,
+    "report": "target/verification/20261107-151131-l7wm03mz/report.json",
+    "sourceUnchanged": true,
+    "commandsAttempted": 9,
+    "failure": "modules::engine_globals::tests::earlier_profiles_have_no_folded_globals expected only v38 to inherit folded globals",
+    "originalReportRemainsFailed": true
+  },
+  "limitations": [
+    "Finite acyclic JSON-shaped assertion inputs; sparse arrays, getters/classes and non-JSON extras refused.",
+    "Current multi-record union matching and explicit checked JSON decoding remain exact.",
+    "KV staging refuses private snapshot metadata; explicit conversion to JSON data is required.",
+    "No Firefox/WebKit/Linux/Windows or production release acceptance is claimed. Live service checks are independent application evidence, not requests performed by this task."
+  ],
+  "logs": "target/sdk-extra-fields-20261107",
+  "postAttemptCorrections": [
+    "Update folded-global inheritance expectation for registered v39.",
+    "Preserve full declared snapshot accessor signatures and apply data-field flow narrowing at the call site; do not relax getters/classes.",
+    "Move the typed async return fixture outside the frozen historical corpus; preserve all existing module digest expectations.",
+    "Refresh only the measured v38 JSON run/rated fuel expectations from 34241 to 34377; production ceilings and rates are unchanged.",
+    "Use CreateDataProperty for fresh JSON/snapshot/spread copies, including own __proto__ keys; ordinary assignment and Object.assign keep the prototype-setter refusal."
+  ],
+  "consolidated": {
+    "notAnUninterruptedFullPass": true,
+    "rustPassed": 4653,
+    "rustIgnored": 26,
+    "nodePassed": 190,
+    "counting": "Distinct tests across the full attempt and completed scopes; the failed compiler/runtime cases are counted only after their passing reruns. Overlapping focused checks are not added.",
+    "scopes": [
+      {
+        "log": "full.log",
+        "passedCompletedSuites": 687,
+        "ignored": 0,
+        "excludesFailedCompilerSuite": true
+      },
+      {
+        "log": "compiler-data-final.log",
+        "passed": 188,
+        "ignored": 2
+      },
+      {
+        "log": "remaining-tests.log",
+        "passedCompletedSuites": 378,
+        "ignored": 3,
+        "excludesFailedRuntimeSuite": true
+      },
+      {
+        "logs": [
+          "remaining-tests.log",
+          "affected-final.log"
+        ],
+        "runtimeUnitPassed": 2340,
+        "ignored": 18,
+        "derivation": "2337 initial passing cases + 2 corrected failed cases + 1 subsequently added data-key regression"
+      },
+      {
+        "log": "public-api-final.log",
+        "passed": 112,
+        "ignored": 0
+      },
+      {
+        "log": "css-completion.log",
+        "passed": 948,
+        "ignored": 3
+      }
+    ],
+    "affectedFinal": {
+      "log": "affected-final.log",
+      "passed": 129,
+      "ignored": 1,
+      "overlapsTotals": true
+    },
+    "allWorkspaceDocTests": "passed, zero executable examples",
+    "formatAndDiffCheck": true,
+    "affectedStrictClippy": true
+  },
+  "finalLogs": [
+    "clippy-data-final.log",
+    "compiler-data-final.log",
+    "build-data-final.log",
+    "affected-final.log",
+    "snapshot-data-final.log",
+    "public-api-final.log",
+    "css-completion.log",
+    "doctests-all-final.log",
+    "documentation-final.log",
+    "node-final.log",
+    "core-conformance-final.log",
+    "conformance-data-final.log",
+    "sdk-quota-data-final.log",
+    "sdk-full-data-final.log",
+    "sdk-standalone-data-final.log",
+    "browser-full-data-acceptance.log",
+    "browser-proto-data-acceptance.log"
+  ],
+  "finalCodeInputs": {
+    "path": "target/sdk-extra-fields-20261107/final-code-inputs.json",
+    "files": 2491,
+    "sha256": "a4027a4f9c9c43aeb1a7a9cc21cc8c2715b233f81d693a9a2822ca841302fbba",
+    "scope": "Engine, tooling, scripts, CI and conformance inputs after all corrections; documentation tracked separately."
+  },
+  "subsequentFullVerification": "docs/evidence/2026-11-07-shadow-motion-verification.json"
+}

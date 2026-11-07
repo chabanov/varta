@@ -13,7 +13,11 @@ versioned language profiles; it is not general JavaScript, Node or npm
 compatibility yet. See the [status summary](docs/development-plan.md#status) and
 the [research thesis](docs/development-plan.md#research-thesis).
 
-Current development checkpoint (2026-11-07, local `main`, `0ad37b9d`): v38 remains
+The verified working-tree increment adds complete constructor receivers for
+classes without non-template descendants, checked after generic materialization.
+Partial initialization remains guarded by the checked construction rules.
+
+Current development checkpoint (2026-11-07, based on `1407f8eb`): v38 remains
 unreleased and in stabilization. The application runtime, official metered
 browser host, OPFS KV storage, native/browser network replay and packaged
 `varta-shell` are integrated. The pinned uarp-sdk runs natively against the
@@ -21,7 +25,8 @@ loopback service and its SDK groups replay in Chrome with native-equal results.
 The native renderer includes inline borders/decorations, control defaults,
 positioned painting, modal dialogs, system fonts with platform fallback faces and
 macOS colour emoji, `scale()` transforms, classic scrollbars and CSS transitions/
-translations; the console has headless first-frame and button-state evidence.
+translations, keyframes/rotation, atomic/sticky/clamped layout, gradients,
+backdrop blur, outer/inset shadows and intrinsic width/height sizing; the console has headless first-frame and button-state evidence.
 The earlier experimental examples (TSX Showcase, UARP console, web-host
 prototype) were removed on 2026-11-06; a structured developer examples package
 replaces them.
@@ -34,24 +39,30 @@ reload and Linux/sustained-load acceptance remain open. See the
 [current status](docs/development-plan.md#status) and
 [server stages](docs/development-plan.md#k7-merged-values-approved-2026-11-06).
 
-The v38 compiler/compatibility follow-up implements synchronous generator
-signature inference, compatible union-to-record views and digest-pinned module
-cases for initialization, live re-exports and default forwarding. Consolidated
-verification passes **4584 Rust tests and 189 browser Node tests**, with 26 Rust
-tests ignored. The compatibility baseline matches: **241 passed, 2 known
-unsupported out of 243 cases**, with 4 feature rows still without cases.
-One full attempt was followed by a test-fixture relocation, its targeted check
-and the unfinished suites; no full restart was run. These are local macOS arm64
-checks. All fourteen branch tips from the preceding recovery are integrated.
-See [current verification evidence](docs/verification.md#current-verification-evidence--2026-11-07).
+The class/function checked increment adds initializer identities, unbound instance
+method values with explicit receivers, tuple-rest calls/inference and finite
+signature adapters. The complete-receiver follow-up permits publication, aliases,
+callbacks and method/getter/setter access once every field is assigned in a class
+without descendants. The CSS remainder adds atomic/sticky/clamped layout,
+numeric typography, accents, inset clipping, gradients, mirrored backdrop blur
+and keyframes. Its finite application corpus now admits **312/312** candidates;
+broader Tailwind/CSS remains open, including native tables.
+The combined package also adds opt-in v39 checked snapshots retaining isolated
+extra JSON fields and fixes managed KV reads in async HTTP request Stores.
+One uninterrupted pre-commit full run on unchanged sources passes all 12 gates:
+**4671 Rust tests (26 ignored), 190 Node tests**, core compatibility **246 passed,
+2 known unsupported out of 248**, and the separate v39 contract **3/3**.
+See the [verification record](docs/evidence/2026-11-07-precommit-verification.json).
+These are local macOS arm64 checks. All fourteen branch tips from the preceding
+recovery are integrated. See
+[current verification evidence](docs/verification.md#current-verification-evidence--2026-11-07).
 
 Real-window/native system-input acceptance, sustained live-service sessions,
 complete browser/platform matrices and release/security/performance acceptance
 remain open. The optional wgpu/Vello UI backend has direct mixed-border color
 fields; direct GPU opacity groups and typed guest graphics/3D-library ports remain
 [planned work](docs/development-plan.md#gpu-and-game-graphics-future-direction).
-There is no guest GPU API or unmodified Three.js compatibility. The next compiler
-package covers class/function prerequisites; see the
+There is no guest GPU API or unmodified Three.js compatibility. Remaining compiler and application acceptance work is recorded in the
 [next steps](docs/development-plan.md#next-implementation-package). The
 [CORE ledger](docs/development-plan.md#core-completion-ledger) records remaining
 scope without treating test counts as a completion percentage.
@@ -184,6 +195,7 @@ inherits the one before it. Host and value ABI versions per profile are in the
 | `checked-f64-utf16-v36` | Pilot batch in development: checked declared fields, function fields, async generators, timers |
 | `checked-f64-utf16-v37` | Pilot batch in development: language core, class generics, collections and binary text, RegExp, net.request |
 | `checked-f64-utf16-v38` | Batch in development: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping, codegen v2; wave 2: hashed dictionaries (value 18), strict members, Web bytes, virtual file roots, text imports; wave 3: Deno KV storage, hashed `Map`/`Set`; iteration protocol (`[Symbol.iterator]`, array spreads, `yield*`); K9 D standard library (ES2025 Array/Set/iterator/JSON methods, `AggregateError`, UTC `Date`); K9 D1 Node console (Node notation, standard error, `group`/`count`/`time`/`dir`/`table`); K9 D2 Symbol values and integrity levels (`Object.freeze`/`seal`/`preventExtensions`); K9 type level (conditional/mapped/template literal types, utility types, predicates, literal inference); K9 B declarations and classes (enums, namespaces, overloads, abstract classes, setters, static fields, class expressions); K9 C expression forms (`await` anywhere, object methods with `this`, iterable destructuring, `using`, thenables) |
+| `checked-f64-utf16-v39` | V38 plus isolated checked JSON snapshots retaining extra fields for SDK assertions; explicit checked parsing and previous profiles stay exact |
 <!-- generated:profile-index:end -->
 
 ## Browser bundle (in development)

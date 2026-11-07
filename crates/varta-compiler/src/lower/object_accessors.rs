@@ -1211,6 +1211,27 @@ impl Lower<'_> {
         span: swc_common::Span,
     ) -> Result<Vec<S>> {
         let param = |ty: Type| local_value(span, 0, ty);
+        if let Type::Record(shape) = ty
+            && let Some(snapshot) = snapshots::physical(shape, self.types)
+        {
+            // A snapshot's retained keys are dynamic even when its declared
+            // names equal another logical layout. Walk its complete graph,
+            // while retaining the original object's cycle identity.
+            let mut body = self.json_enter(ty, "Object", span)?;
+            let graph = dictionaries::intern(Type::Unknown, self.types)?;
+            let graph = Expr {
+                span,
+                ty: graph,
+                kind: E::Call(snapshot.graph, vec![param(ty)]),
+            };
+            let value = self.json_value(graph, local_value(span, JSON_KEY, Type::String), span)?;
+            let text = text_type(self.types)?;
+            let saved = self.hidden(text);
+            body.push(S::Init(saved, value));
+            body.extend(self.json_leave(span)?);
+            body.push(S::Return(Some(local_value(span, saved, text))));
+            return Ok(body);
+        }
         if !reaches(ty, views, self.types, &mut BTreeSet::new()) {
             let value = self.json_host_text(param(ty), span)?;
             return Ok(vec![S::Return(Some(value))]);
@@ -1839,7 +1860,11 @@ impl Lower<'_> {
         let mut layouts = Vec::new();
         for layout in self.types.subtyping.view_sources(shape) {
             let read = self.types.receivers.logical(layout).unwrap_or(layout);
-            if layout == shape || read == shape || names(self.types, read) == own {
+            if layout == shape
+                || read == shape
+                || (names(self.types, read) == own
+                    && snapshots::physical(layout, self.types).is_none())
+            {
                 continue;
             }
             let descriptor = self.hidden(Type::Number);

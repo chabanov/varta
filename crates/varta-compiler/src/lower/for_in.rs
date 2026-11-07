@@ -127,7 +127,7 @@ impl Lower<'_> {
                     key,
                     shape,
                     self.types.profile.expression_forms(),
-                )
+                )?
             }
         };
         let mut visit = self.binding_pattern(

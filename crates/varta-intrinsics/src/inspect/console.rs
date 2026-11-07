@@ -215,6 +215,9 @@ impl<M: Memory + ?Sized> Inspector<'_, '_, M> {
                 }
             }
             Kind::Record => {
+                if let Some(entries) = self.snapshot_entries(value.payload)? {
+                    return Ok(entries);
+                }
                 let record = self.record(value.payload, None)?;
                 if matches!(
                     record.display,

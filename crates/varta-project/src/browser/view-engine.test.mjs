@@ -105,3 +105,14 @@ test("custom data attributes reach the engine's selectors as natively", () => {
   const many = Array.from({ length: 33 }, (_, index) => ({ name: "set_data", node: 2, data_name: `data-n${index}`, text: "1" }));
   assert.throws(() => model.commit(encodeViewBatch(many)), /data attribute budget/);
 });
+
+
+test("only the Rust-selected keyframes reach the browser CSSOM", () => {
+  const view = model();
+  view.commit(encodeViewBatch([{ name: "stylesheet", sheet: 1, text: "@layer low { @keyframes pulse { 50% { opacity:.1 } } } @keyframes pulse { 50% { opacity:.5 } } @media (min-width:2000px) { @keyframes pulse { 50% { opacity:0 } } } .x {animation:pulse 2s linear infinite}" }]));
+  view.engine.environment(1600,1000,16,16,0);
+  assert.equal(view.engine.animationCss(), "@keyframes pulse{50%{opacity:.5;}}");
+  view.engine.environment(2200,1000,16,16,0);
+  assert.equal(view.engine.animationCss(), "@keyframes pulse{50%{opacity:0;}}");
+  assert.throws(() => view.commit(encodeViewBatch([{ name:"stylesheet", sheet:2, text:"@keyframes invalid { to { width:100px } }" }])), /stylesheet value/);
+});

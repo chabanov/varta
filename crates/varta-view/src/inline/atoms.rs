@@ -161,6 +161,26 @@ pub(super) fn measure(
         return Err(refused());
     }
     let image = layout::image_box(tree, env, id)?;
+    measure_box(
+        tree,
+        env,
+        id,
+        font,
+        layout::atomic::Info {
+            image,
+            baseline: None,
+        },
+    )
+}
+pub(super) fn measure_box(
+    tree: &Tree,
+    env: &Environment,
+    id: u32,
+    font: (&mut TextMeasurer, f32),
+    info: layout::atomic::Info,
+) -> Result<Atom, LayoutError> {
+    let refused = || LayoutError::Unsupported(id);
+    let image = info.image;
     let (measurer, size) = font;
     let parent = tree.nodes[&id].parent.ok_or_else(refused)?;
     let mut atom = Atom {
@@ -168,7 +188,10 @@ pub(super) fn measure(
         align: Align::Bottom(0.0),
     };
     atom.align = match tree.computed_property(id, env, P::VerticalAlign).as_deref() {
-        None | Some("baseline") => Align::Bottom(0.0),
+        None | Some("baseline") => Align::Bottom(
+            info.baseline
+                .map_or(0.0, |base| image.size.1 + image.margin[2] - base),
+        ),
         Some("top") => Align::LineTop,
         Some("bottom") => Align::LineBottom,
         Some(keyword @ ("sub" | "super" | "middle" | "text-top" | "text-bottom")) => {

@@ -73,6 +73,19 @@ impl Units {
         }
     }
 
+    /// CSS Sizing 3/4 intrinsic sizes share Taffy's content measurement;
+    /// they must not be approximated by `auto` or a viewport-sized length.
+    pub(crate) fn dimension(self, value: &str) -> Option<Dimension> {
+        Some(match value {
+            "auto" | "none" => auto(),
+            "min-content" => Dimension::min_content(),
+            "max-content" => Dimension::max_content(),
+            "fit-content" => Dimension::fit_content(),
+            "stretch" => Dimension::stretch(),
+            _ => return self.length(value, false),
+        })
+    }
+
     pub(crate) fn margin(self, value: &str) -> Option<LengthPercentageAuto> {
         if value == "auto" {
             Some(auto())

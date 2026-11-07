@@ -58,7 +58,7 @@ fn key_name(key: &ast::PropName) -> Option<String> {
 fn decorator(source: &Source, span: Span) -> CompilerError {
     source.locate(
         unsupported(
-            "decorator (standard decorators are not implemented yet: they need this in field initializers, method values and rest parameters of tuple type first)",
+            "decorator (standard decorators are not implemented yet: complete initializer contexts, polymorphic/generic method values, metadata and replacement semantics remain)",
         ),
         span,
     )

@@ -248,6 +248,15 @@ pub enum Parsed {
     Unresolved,
 }
 
+/// Parse one complete color with floating-point channels and alpha intact.
+/// Dynamic currentcolor expressions remain explicitly unresolved.
+#[must_use]
+pub fn parse_value(value: &str) -> Option<Parsed> {
+    let tokens = super::lex_value(value)?;
+    let (color, end) = parse(&tokens, 0)?;
+    (end == tokens.len()).then_some(color)
+}
+
 /// Parse the `<color>` at `tokens[at]`; returns it and the index past it.
 #[must_use]
 pub(crate) fn parse(tokens: &[V], at: usize) -> Option<(Parsed, usize)> {
@@ -752,6 +761,17 @@ fn convert_carrying(color: Color, space: Space) -> Color {
 
 /// Interpolate two colours at `progress` (Color 4 §13: premultiplied, the
 /// hue method on the hue).
+/// Convert an endpoint once before repeated rectangular color interpolation.
+#[must_use]
+pub fn interpolation_endpoint(color: Color, space: Space) -> Color {
+    convert_carrying(color, space)
+}
+/// Color 4 premultiplied interpolation, using the shorter hue on polar spaces.
+#[must_use]
+pub fn interpolation_sample(a: Color, b: Color, progress: f64, space: Space) -> Color {
+    interpolate(a, b, progress.clamp(0.0, 1.0), space, Hue::Shorter)
+}
+
 fn interpolate(a: Color, b: Color, progress: f64, space: Space, method: Hue) -> Color {
     let a = convert_carrying(a, space);
     let b = convert_carrying(b, space);
@@ -1173,6 +1193,16 @@ mod tests {
             Parsed::Color(color) => Some(to_legacy(color)),
             _ => None,
         }
+    }
+
+    #[test]
+    fn complete_color_reads_keep_fractional_alpha_and_reject_trailing_data() {
+        let Some(Parsed::Color(c)) = parse_value("rgb(1 2 3 / .5)") else {
+            panic!()
+        };
+        assert_eq!(c.alpha, Some(0.5));
+        assert_eq!(parse_value("currentcolor"), Some(Parsed::Current));
+        assert!(parse_value("red blue").is_none());
     }
 
     #[test]

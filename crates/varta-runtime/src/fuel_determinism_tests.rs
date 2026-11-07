@@ -85,6 +85,9 @@ fn measure(name: &str, source: &str, profile: P) -> [(String, u64); 3] {
 /// 6255, `records` 32636 -> 33772, `json` -> 33674, `unknown assertions` ->
 /// 26683); v37 `json rated` 57680 -> 97680: its 10 serialized values are
 /// charged the recalibrated `JSON_STRINGIFY_VALUE` (1,500 -> 5,500).
+// V39's profile-gated snapshot reader adds a check to linked serialization:
+// this local v38 JSON module measures 34,377 (was 34,241). All earlier-profile
+// measurements and production rates/budgets remain unchanged.
 const GOLDEN: &[(&str, u64)] = &[
     ("portable CheckedI32Utf8V1 instantiation", 0),
     ("portable CheckedI32Utf8V1 run", 18255),
@@ -123,8 +126,8 @@ const GOLDEN: &[(&str, u64)] = &[
     ("records CheckedF64Utf16V38 run", 33782),
     ("records CheckedF64Utf16V38 rated", 33782),
     ("json CheckedF64Utf16V38 instantiation", 0),
-    ("json CheckedF64Utf16V38 run", 34241),
-    ("json CheckedF64Utf16V38 rated", 34241),
+    ("json CheckedF64Utf16V38 run", 34377),
+    ("json CheckedF64Utf16V38 rated", 34377),
     ("unknown assertions CheckedF64Utf16V38 instantiation", 0),
     ("unknown assertions CheckedF64Utf16V38 run", 26845),
     ("unknown assertions CheckedF64Utf16V38 rated", 26845),

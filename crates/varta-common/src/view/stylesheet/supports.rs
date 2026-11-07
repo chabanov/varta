@@ -199,7 +199,8 @@ mod tests {
             holds("(-webkit-hyphens: none) or (margin-trim: block)"),
             Ok(false)
         );
-        assert_eq!(holds("not (backdrop-filter: blur(1px))"), Ok(true));
+        assert_eq!(holds("not (backdrop-filter: blur(1px))"), Ok(false));
+        assert_eq!(holds("not (backdrop-filter: brightness(2))"), Ok(true));
         assert_eq!(holds("(--x: 1px)"), Ok(true));
         assert_eq!(holds("selector(.a:hover)"), Ok(true));
         assert_eq!(holds("selector(.a > .b)"), Ok(true));

@@ -143,6 +143,15 @@ fn env_snapshot(policy: &crate::policy::Policy) -> String {
 }
 
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
+    register_mode(linker, false)
+}
+pub(crate) fn register_async(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
+    register_mode(linker, true)
+}
+fn register_mode(
+    linker: &mut Linker<RuntimeContext>,
+    asynchronous: bool,
+) -> Result<(), wasmtime::Error> {
     crate::number::register(linker)?;
     crate::bigint::register(linker)?;
     crate::native_math::register(linker)?;
@@ -150,7 +159,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     crate::local_time::register(linker)?;
     crate::scheduler::register(linker)?;
     crate::net::register(linker)?;
-    crate::kv::register(linker)?;
+    crate::kv::register(linker, asynchronous)?;
     crate::events::register(linker)?;
     crate::view::register(linker)?;
     crate::primitive_string::register(linker)?;

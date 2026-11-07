@@ -36,6 +36,23 @@ impl Lower<'_> {
             }
             None => None,
         };
+        if let Some(context) = context.as_ref().filter(|t| {
+            parameters::tuple_literal(
+                expression.function.params.iter().map(|p| &p.pat),
+                t,
+                self.types,
+            )
+        }) {
+            let params =
+                arguments::expanded(&context.params, &context.shape, self.types).map(|(p, _)| p);
+            return self.function_expression_context(
+                expression,
+                params,
+                Some(context.result),
+                None,
+                context.receiver,
+            );
+        }
         // V38: a literal with extra optional parameters keeps its own shape.
         let shape = context
             .as_ref()

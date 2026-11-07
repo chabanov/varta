@@ -345,6 +345,7 @@ pub(crate) struct ValueTypes {
     /// Checked declared-field conversion functions (v36), by kind and target
     /// type; see `lower::declared_fields`.
     pub converters: std::collections::BTreeMap<(Converter, Type), usize>,
+    pub snapshots: crate::lower::snapshots::Snapshots,
     pub promises: Vec<PromiseType>,
     /// Built-in functions referenced as values (v36 `function_fields`): the
     /// synthesized wrapper of each, by name; see `lower::function_fields`.
@@ -473,6 +474,8 @@ pub(crate) enum DictionaryHelper {
     Get,
     /// `(d, key, value) -> T`: replace in place or insert at the own-key position.
     Set,
+    /// V39 compiler-owned CreateDataProperty: no prototype setter.
+    Define,
     /// `(d, key) -> boolean`.
     Delete,
     /// Value18 (`dictionary_hashing`), per dictionary type: `(d) -> boolean`;
@@ -498,6 +501,11 @@ pub(crate) enum Converter {
     /// `(cell: unknown, message: string) -> T`: a fresh `T` built from the
     /// JSON-graph form of the cell, or a `TypeError(message)`.
     Build,
+    /// V39 assertion-only conversion of an isolated JSON graph, retaining
+    /// additional record fields. Never used by strict parsing/declared reads.
+    Snapshot,
+    /// Compiler-owned shallow property copies into a typed snapshot layout.
+    SnapshotSpread,
     /// `(d: Record<string, unknown>, key, wrong, missing) -> T`: the declared
     /// read of a mixed record's field of type `T`, which stores a built value
     /// back under the key.

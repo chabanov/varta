@@ -289,7 +289,13 @@ impl Lower<'_> {
         let values = self.call_arguments(&call.args, &instance.params, &instance.shape)?;
         let mut widened = Vec::new();
         for (index, value) in values.into_iter().enumerate() {
-            let wanted = arguments::context(index, &merged.params, &merged.shape, self.types);
+            let wanted = arguments::call_context(
+                index,
+                call.args.len(),
+                &merged.params,
+                &merged.shape,
+                self.types,
+            );
             widened.push(
                 if wanted == Some(Type::Unknown) && value.ty != Type::Unknown {
                     unknown::widen(value, self.types)?
@@ -339,10 +345,15 @@ impl Lower<'_> {
             (None, _) => true,
         };
         receiver
-            && arguments::count(count, &function.shape).is_ok()
+            && arguments::typed_count(count, &function.params, &function.shape, self.types).is_ok()
             && actual.iter().enumerate().all(|(index, given)| {
-                let wanted =
-                    arguments::context(index, &function.params, &function.shape, self.types);
+                let wanted = arguments::call_context(
+                    index,
+                    count,
+                    &function.params,
+                    &function.shape,
+                    self.types,
+                );
                 match (given, wanted) {
                     (Some(given), Some(wanted)) => extends(*given, wanted, self.types),
                     (None, _) => true,

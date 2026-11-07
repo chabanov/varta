@@ -86,6 +86,10 @@ impl Lower<'_> {
         // other layouts copies the actual object's properties
         // (`layout_spreads`).
         if let Some(spread) = self.assign_as_spread(call) {
+            let spread = self.constant_keys(&spread)?.unwrap_or(spread);
+            if let Some(value) = self.snapshot_spread_literal(&spread, None, false)? {
+                return Ok(value);
+            }
             return self.record(&spread, None);
         }
         let mut roots = Vec::new();

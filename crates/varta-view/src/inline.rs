@@ -22,6 +22,7 @@ pub(crate) const MAX_FRAGMENT_COUNT: usize = 65_536;
 #[derive(Default)]
 pub(crate) struct Inventory {
     pub nodes: usize,
+    pub atoms: BTreeMap<u32, crate::layout::atomic::Info>,
     bytes: usize,
     leaves: usize,
 }
@@ -105,6 +106,8 @@ pub(crate) struct ContentFlow {
     atoms: BTreeMap<u32, atoms::Atom>,
     /// `text-overflow: ellipsis` truncates the root's single line.
     ellipsis: bool,
+    clamp: Option<usize>,
+    forced_lines: Vec<u32>,
 }
 /// Per-byte white-space preservation of a flow's text nodes.
 enum Preserved {
@@ -302,7 +305,7 @@ pub(crate) fn blockified(tree: &Tree, env: &Environment, id: u32) -> bool {
     out_of_flow(tree, env, id)
         || tree.nodes[&id].parent.is_some_and(|parent| {
             tree.computed_property(parent, env, P::Display)
-                .is_some_and(|d| matches!(d.as_str(), "flex" | "grid"))
+                .is_some_and(|d| matches!(d.as_str(), "flex" | "inline-flex" | "grid"))
         })
 }
 /// Whether `id` is absolutely positioned (`absolute` or `fixed`).
@@ -320,7 +323,7 @@ fn is_inline(tree: &Tree, env: &Environment, id: u32) -> bool {
         // An absolutely positioned box is blockified and out of the line.
         Content::Element(_) if out_of_flow(tree, env, id) => false,
         Content::Element(e) => match tree.computed_property(id, env, P::Display).as_deref() {
-            Some("none") => true,
+            Some("none" | "inline-block" | "inline-flex") => true,
             Some("inline") => {
                 matches!(
                     e.tag,
@@ -347,6 +350,14 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<layout::InlineSpa
         let supported = match property {
             P::Display => value == "inline",
             P::FontSize
+            | P::AnimationName
+            | P::AnimationDuration
+            | P::AnimationTimingFunction
+            | P::AnimationDelay
+            | P::AnimationIterationCount
+            | P::AnimationDirection
+            | P::AnimationFillMode
+            | P::AnimationPlayState
             | P::LineHeight
             | P::FontFamily
             | P::FontWeight
@@ -354,10 +365,17 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<layout::InlineSpa
             | P::WhiteSpace
             | P::OverflowWrap
             | P::TextAlign
+            | P::TableLayout
+            | P::TextWrap
+            | P::TextWrapMode
+            | P::TextWrapStyle
+            | P::FontVariantNumeric
+            | P::AccentColor
             | P::Color
             | P::Cursor
             | P::BorderRadius
-            | P::BackgroundColor => true,
+            | P::BackgroundColor
+            | P::BoxShadow => true,
             P::TextDecoration => matches!(value.as_str(), "none" | "underline"),
             P::Position => value == "static",
             P::ZIndex => value == "auto",
@@ -478,7 +496,7 @@ pub(crate) fn collect(
     };
     let display = tree.computed_property(root, env, P::Display);
     let block = match display.as_deref() {
-        Some("block") => true,
+        Some("block" | "inline-block" | "-webkit-box") => true,
         Some("inline") => blockified(tree, env, root),
         None => !inline_tag(element.tag) || blockified(tree, env, root),
         _ => false,
@@ -490,8 +508,11 @@ pub(crate) fn collect(
         return Ok(None);
     }
     let ellipsis = ellipsis::requested(tree, env, root)?;
+    let clamp = ellipsis::clamp(tree, env, root);
     let needed = root == ROOT_NODE
         || ellipsis
+        || clamp.is_some()
+        || display.as_deref() == Some("inline-block")
         || inline_tag(element.tag)
         || node.children.len() > 1
         || node
@@ -585,7 +606,7 @@ pub(crate) fn collect(
         }
         path.insert(0, id);
         let source = match &node.content {
-            Content::Element(e) if e.tag == Tag::Img => {
+            Content::Element(e) if e.tag == Tag::Img || inventory.atoms.contains_key(&id) => {
                 if !is_inline(tree, env, id)
                     || path[1..].iter().any(|&ancestor| {
                         tree.computed_property(ancestor, env, P::Opacity)
@@ -594,7 +615,10 @@ pub(crate) fn collect(
                 {
                     return Err(LayoutError::Unsupported(id));
                 }
-                let atom = atoms::measure(tree, env, id, (measurer, size))?;
+                let atom = match inventory.atoms.get(&id) {
+                    Some(info) => atoms::measure_box(tree, env, id, (measurer, size), *info)?,
+                    None => atoms::measure(tree, env, id, (measurer, size))?,
+                };
                 // A collapsible space before an atomic inline is content.
                 if let Some(owner) = whitespace.take() {
                     append_mapped(&mut text, &mut spans, (owner, transforms[owner]), ' ', "")?;
@@ -627,6 +651,9 @@ pub(crate) fn collect(
                 needs_paint_order |= tree
                     .computed_property(id, env, P::Opacity)
                     .is_some_and(|raw| raw.parse::<f32>().ok() != Some(1.0));
+                needs_paint_order |= tree
+                    .computed_property(id, env, P::BoxShadow)
+                    .is_some_and(|v| v != "none");
                 needs_paint_order |= tree
                     .computed_property(id, env, P::BackgroundColor)
                     .is_some_and(|raw| raw != "transparent");
@@ -807,6 +834,8 @@ pub(crate) fn collect(
         spacing,
         atoms,
         ellipsis,
+        clamp,
+        forced_lines: Vec::new(),
     });
     let mut shape = TextShape {
         text,
@@ -961,7 +990,7 @@ impl ContentFlow {
                 metrics: shape.metrics,
             });
         }
-        let (mut metrics, layout) = measurer.shape_with_edges(
+        let (mut metrics, mut layout) = measurer.shape_with_edges(
             &shape.text,
             width,
             &shape.families,
@@ -969,6 +998,24 @@ impl ContentFlow {
             &self.spans,
             &self.edges,
         )?;
+        if !self.forced_lines.is_empty() {
+            measurer.charge_inline_work(shape.text.len())?;
+            let mut breaker = layout.break_lines();
+            let width = width.unwrap_or(f32::MAX);
+            breaker.state_mut().set_layout_max_advance(width);
+            breaker.state_mut().set_line_max_advance(width);
+            for &count in &self.forced_lines {
+                if count == 0 {
+                    breaker.break_next();
+                } else {
+                    breaker.break_next_with_length(count);
+                }
+                breaker.set_prior_line_width(width);
+            }
+            breaker.break_remaining(width);
+            metrics.width = layout.width();
+            metrics.lines = layout.len();
+        }
         let mut y = 0.0f32;
         let mut offsets = Vec::new();
         let mut line_boxes = Vec::new();
@@ -1040,7 +1087,13 @@ impl ContentFlow {
                 return Err(TextMeasureError::Limit);
             }
         }
-        metrics.height = y;
+        metrics.height = self
+            .clamp
+            .and_then(|limit| line_boxes.get(limit.saturating_sub(1)).map(|b| b[1]))
+            .unwrap_or(y);
+        if let Some(limit) = self.clamp {
+            metrics.lines = metrics.lines.min(limit);
+        }
         Ok(ShapedFlow {
             layout,
             offsets,
@@ -1438,15 +1491,19 @@ pub(crate) fn frames(
             .shape(shape, measurer, Some(rect.width.clamp(0.01, 1_000_000.0)))
             .map_err(LayoutError::text(id))?;
         let mut frame = rich.project(shaped, shape, bounds, measurer, &mut fragments_left)?;
-        if rich.ellipsis
+        if (rich.ellipsis || rich.clamp.is_some())
             && let Some((flow, visible, shaped)) =
                 ellipsis::truncate(rich, shape, &frame.shaped, rect.width, measurer, id)?
         {
             // Pointer fragments and geometry stay untruncated; glyphs do not.
             let projected =
                 flow.project(shaped, &visible, bounds, measurer, &mut fragments_left)?;
-            frame.shaped = projected.shaped;
-            frame.glyph_owners = projected.glyph_owners;
+            if rich.clamp.is_some() {
+                frame = projected;
+            } else {
+                frame.shaped = projected.shaped;
+                frame.glyph_owners = projected.glyph_owners;
+            }
         }
         for &node in &rich.nodes {
             let pieces = frame.fragments.get(&node);

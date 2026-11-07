@@ -50,10 +50,37 @@ fn length(array: Expr) -> Expr {
 }
 
 impl Lower<'_> {
+    fn dictionary_copy_set(
+        &mut self,
+        target: Expr,
+        key: Expr,
+        value: Expr,
+        expected: Type,
+        create_data: bool,
+    ) -> Result<Expr> {
+        if !create_data || !self.types.profile.checked_snapshots() {
+            return self.dictionary_set(target, key, value, expected);
+        }
+        let Type::Dictionary(id) = target.ty else {
+            return Err(invalid("data-property target"));
+        };
+        let element = self.types.dictionaries[id as usize].value;
+        let value = self.dictionary_value(value, expected, element)?;
+        self.dictionary_helper_call(ir::DictionaryHelper::Define, vec![target, key, value])
+    }
+
     pub(super) fn dictionary_spread_literal(
         &mut self,
         object: &ast::ObjectLit,
         id: u32,
+    ) -> Result<Expr> {
+        self.dictionary_spread_literal_mode(object, id, true)
+    }
+    pub(super) fn dictionary_spread_literal_mode(
+        &mut self,
+        object: &ast::ObjectLit,
+        id: u32,
+        create_data: bool,
     ) -> Result<Expr> {
         let ty = Type::Dictionary(id);
         let dictionary = self.types.dictionaries[id as usize];
@@ -107,8 +134,12 @@ impl Lower<'_> {
                             ty: member,
                             kind: E::UnboxUnion(Box::new(local(span, cell, cell_ty))),
                         };
-                        let copied =
-                            self.spread_entries(unboxed, local(span, output, ty), &declared)?;
+                        let copied = self.spread_entries_mode(
+                            unboxed,
+                            local(span, output, ty),
+                            &declared,
+                            create_data,
+                        )?;
                         roots.extend(copied.1);
                         body.push(S::If(
                             Expr {
@@ -125,7 +156,12 @@ impl Lower<'_> {
                         ));
                         continue;
                     }
-                    let copied = self.spread_entries(source, local(span, output, ty), &declared)?;
+                    let copied = self.spread_entries_mode(
+                        source,
+                        local(span, output, ty),
+                        &declared,
+                        create_data,
+                    )?;
                     provided.extend(copied.0);
                     roots.extend(copied.1);
                     body.extend(copied.2);
@@ -216,7 +252,7 @@ impl Lower<'_> {
             .map(|members| members.fields.clone())
             .unwrap_or_default();
         let (provided, mut roots, copy) =
-            self.spread_entries(record, local(span, output, target), &declared)?;
+            self.spread_entries_mode(record, local(span, output, target), &declared, true)?;
         if let Some(missing) = declared
             .iter()
             .find(|field| !field.optional && !provided.contains(&field.name))
@@ -252,6 +288,7 @@ impl Lower<'_> {
         graph: Expr,
         target: Expr,
         declared: &[RecordField],
+        create_data: bool,
     ) -> Result<(Vec<u32>, Vec<S>)> {
         let span = graph.span;
         let (Type::Dictionary(id), Type::Dictionary(from)) = (target.ty, graph.ty) else {
@@ -329,11 +366,12 @@ impl Lower<'_> {
         cases.sort_by(|a, b| a.1.encode_utf16().cmp(b.1.encode_utf16()));
         let mut entries: Vec<_> = cases.into_iter().map(|(k, _, s)| (k, s)).collect();
         let fallback = checked(self, element)?;
-        let stored = self.dictionary_set(
+        let stored = self.dictionary_copy_set(
             target,
             local(span, name, Type::String),
             local(span, item, element),
             element,
+            create_data,
         )?;
         let mut visit = vec![
             S::Set(
@@ -377,6 +415,15 @@ impl Lower<'_> {
         target: Expr,
         declared: &[RecordField],
     ) -> Result<(Vec<String>, Vec<u32>, Vec<S>)> {
+        self.spread_entries_mode(source, target, declared, false)
+    }
+    fn spread_entries_mode(
+        &mut self,
+        source: Expr,
+        target: Expr,
+        declared: &[RecordField],
+        create_data: bool,
+    ) -> Result<(Vec<String>, Vec<u32>, Vec<S>)> {
         let span = source.span;
         let Type::Dictionary(id) = target.ty else {
             return Err(invalid("missing dictionary type"));
@@ -398,7 +445,8 @@ impl Lower<'_> {
             let expected = name
                 .and_then(|name| declared.iter().find(|field| field.name == name))
                 .map_or(element, |field| field.ty);
-            mixed_records::assignable(expected, ty, this.types)
+            (mixed_records::assignable(expected, ty, this.types)
+                || (this.types.profile.checked_snapshots() && expected == ty))
                 && (name.is_some()
                     || declared
                         .iter()
@@ -456,7 +504,7 @@ impl Lower<'_> {
                     Type::String,
                 );
                 let value = unions::widen(entry(values, from.value), Some(element), self.types)?;
-                let stored = self.dictionary_set(target, key, value, element)?;
+                let stored = self.dictionary_copy_set(target, key, value, element, create_data)?;
                 body.push(S::While(
                     binary(ast::BinaryOp::Lt, at(), length(keys), Type::Boolean),
                     vec![S::Expr(stored), step],
@@ -488,7 +536,15 @@ impl Lower<'_> {
                 // of another value type, each value the view does not declare
                 // is checked against the type it is stored at (checked reads
                 // at TypeScript unsoundness).
-                if self.layout_site(span) {
+                if self.layout_site(span)
+                    || (self.types.profile.checked_snapshots()
+                        && self
+                            .types
+                            .subtyping
+                            .view_sources(shape)
+                            .iter()
+                            .any(|source| snapshots::physical(*source, self.types).is_some()))
+                {
                     let provided = fields
                         .iter()
                         .filter(|field| !field.optional)
@@ -496,11 +552,14 @@ impl Lower<'_> {
                         .collect();
                     let cell = unknown::widen(local(span, held, source_ty), self.types)?;
                     let graph = self.record_graph(cell, span)?;
-                    let (more, statements) = if element == Type::Unknown {
-                        let (_, more, statements) = self.spread_entries(graph, target, declared)?;
+                    let (more, statements) = if element == Type::Unknown
+                        && (!self.types.profile.checked_snapshots() || declared.is_empty())
+                    {
+                        let (_, more, statements) =
+                            self.spread_entries_mode(graph, target, declared, create_data)?;
                         (more, statements)
                     } else {
-                        self.checked_entries(graph, target, declared)?
+                        self.checked_entries(graph, target, declared, create_data)?
                     };
                     roots.extend(more);
                     body.extend(statements);
@@ -564,11 +623,12 @@ impl Lower<'_> {
                 cases.sort_by(|a, b| a.1.encode_utf16().cmp(b.1.encode_utf16()));
                 let mut entries: Vec<_> = cases.into_iter().map(|(k, _, s)| (k, s)).collect();
                 let select = own_keys::lookup(span, name, &mut entries);
-                let stored = self.dictionary_set(
+                let stored = self.dictionary_copy_set(
                     target,
                     local(span, name, Type::String),
                     local(span, item, element),
                     element,
+                    create_data,
                 )?;
                 let mut visit = vec![
                     S::Set(

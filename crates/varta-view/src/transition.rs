@@ -1,7 +1,7 @@
 //! CSS transitions of the native view (CSS Transitions 1, as Chrome 156 runs
 //! them): `transition-property`, `-duration`, `-timing-function` and `-delay`
 //! over the view subset's animatable properties: the paint-only `color`,
-//! `background-color` and `opacity`, and `transform` translations.
+//! `background-color`, `opacity`, `box-shadow` and matching `transform` lists.
 //!
 //! The view keeps an animation clock the host sets ([`crate::View::set_animation_time`]),
 //! in milliseconds and never moving back. After every style change (a commit,
@@ -20,11 +20,14 @@ use varta_common::view::{CssProperty, ROOT_NODE};
 
 /// The animatable properties the native view transitions, which `all`
 /// covers.
-const PROPERTIES: [CssProperty; 4] = [
+mod keyframes;
+mod shadows;
+const PROPERTIES: [CssProperty; 5] = [
     CssProperty::Color,
     CssProperty::BackgroundColor,
     CssProperty::Opacity,
     CssProperty::Transform,
+    CssProperty::BoxShadow,
 ];
 const ALL: &str = "all";
 const NONE: &str = "none";
@@ -46,17 +49,19 @@ const BISECTION_ITERATIONS: usize = 64;
 const FRACTION_DIGITS: usize = 6;
 
 /// An animatable value: straight sRGB color channels and alpha in `0..=1`,
-/// a number, or a transform list ([`crate::transform::List`]).
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// a number, a transform list, or an immutable endpoint shadow list.
+#[derive(Debug, Clone, PartialEq)]
 enum Value {
     Color([f64; 4]),
     Number(f64),
     Transform(crate::transform::List),
+    Shadows(shadows::List),
 }
 
 impl Value {
     fn parse(property: CssProperty, value: &str, units: Units) -> Option<Self> {
         match property {
+            CssProperty::BoxShadow => shadows::List::parse(value).map(Self::Shadows),
             CssProperty::Transform => {
                 crate::transform::List::parse(value, units).map(Self::Transform)
             }
@@ -79,14 +84,14 @@ impl Value {
 
     /// Interpolate at `progress`: numbers linearly, colors in sRGB with
     /// premultiplied alpha (CSS Color 4 for legacy colors), as Chrome does.
-    fn interpolate(self, end: Self, progress: f64) -> Self {
+    fn interpolate(&self, end: &Self, progress: f64) -> Self {
         let mix = |a: f64, b: f64| a + (b - a) * progress;
         match (self, end) {
-            (Self::Number(a), Self::Number(b)) => Self::Number(mix(a, b)),
+            (Self::Number(a), Self::Number(b)) => Self::Number(mix(*a, *b)),
             // Lists of matching primitives (or `none`) interpolate each
             // function's arguments linearly (CSS Transforms 1 §9).
             (Self::Transform(a), Self::Transform(b)) => {
-                Self::Transform(a.interpolate(b, progress as f32))
+                Self::Transform(a.interpolate(*b, progress as f32))
             }
             (Self::Color(a), Self::Color(b)) => {
                 let alpha = mix(a[3], b[3]).clamp(0.0, 1.0);
@@ -99,32 +104,35 @@ impl Value {
                 };
                 Self::Color([channel(0), channel(1), channel(2), alpha])
             }
-            _ => end,
+            (Self::Shadows(a), Self::Shadows(b)) => Self::Shadows(a.interpolate(b, progress)),
+            _ => end.clone(),
         }
     }
 
     /// The value as paint reads it.
-    fn css(self) -> String {
+    fn css(&self, current: [f64; 4]) -> String {
         match self {
             Self::Number(number) => format!("{number:.FRACTION_DIGITS$}"),
             Self::Transform(list) => list.css(FRACTION_DIGITS),
+            Self::Shadows(list) => list.css(current),
             Self::Color([r, g, b, a]) => {
                 let channel = |value: f64| (value * CHANNEL_MAX).round() as u8;
                 format!(
                     "rgba({}, {}, {}, {a:.FRACTION_DIGITS$})",
-                    channel(r),
-                    channel(g),
-                    channel(b)
+                    channel(*r),
+                    channel(*g),
+                    channel(*b)
                 )
             }
         }
     }
 
-    fn same_kind(self, other: Self) -> bool {
+    fn same_kind(&self, other: &Self) -> bool {
         matches!(
             (self, other),
             (Self::Number(_), Self::Number(_)) | (Self::Color(_), Self::Color(_))
-        ) || matches!((self, other), (Self::Transform(a), Self::Transform(b)) if a.interpolable(b))
+        ) || matches!((self, other), (Self::Transform(a), Self::Transform(b)) if a.interpolable(*b))
+            || matches!((self, other), (Self::Shadows(a), Self::Shadows(b)) if a.interpolable(b))
     }
 }
 
@@ -394,9 +402,9 @@ impl Running {
     }
     fn value(&self, now: f64) -> Value {
         if now < self.begins {
-            return self.start;
+            return self.start.clone();
         }
-        self.start.interpolate(self.end, self.output(now))
+        self.start.interpolate(&self.end, self.output(now))
     }
     fn finished(&self, now: f64) -> bool {
         now >= self.begins + self.duration.max(0.0)
@@ -408,6 +416,7 @@ impl Running {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Animations {
     now: f64,
+    keyframes: keyframes::Timeline,
     running: BTreeMap<(u32, CssProperty), Running>,
     last: BTreeMap<u32, [Option<Value>; PROPERTIES.len()]>,
 }
@@ -419,42 +428,76 @@ impl Animations {
         if !now.is_finite() || now <= self.now {
             return false;
         }
+        let keyframes = self.keyframes.advance(now - self.now);
         self.now = now;
         let had = !self.running.is_empty();
         self.running.retain(|_, running| !running.finished(now));
-        had
+        had || keyframes
     }
 
     /// Whether two trees paint the same animated values: neither runs a
     /// transition, or both run the same ones at the same clock.
     pub(crate) fn same_frame(&self, other: &Self) -> bool {
-        (self.running.is_empty() && other.running.is_empty())
-            || (self.now == other.now && self.running == other.running)
+        self.keyframes == other.keyframes
+            && ((self.running.is_empty() && other.running.is_empty())
+                || (self.now == other.now && self.running == other.running))
     }
 
     /// Whether a transition is running: the host should keep presenting frames.
     pub(crate) fn active(&self) -> bool {
-        !self.running.is_empty()
+        !self.running.is_empty() || self.keyframes.active()
     }
 
     /// The current value of every running transition of `id`, as paint reads it.
-    pub(crate) fn overlay(&self, id: u32, values: &mut BTreeMap<CssProperty, String>) {
+    pub(crate) fn overlay(
+        &self,
+        tree: &Tree,
+        env: &Environment,
+        id: u32,
+        values: &mut BTreeMap<CssProperty, String>,
+    ) {
         for property in PROPERTIES {
-            if let Some(value) = self.overlay_property(id, property) {
+            if let Some(value) = self.overlay_property(tree, env, id, property) {
                 values.insert(property, value);
             }
         }
     }
 
     /// The current value of one running transition, as paint reads it.
-    pub(crate) fn overlay_property(&self, id: u32, property: CssProperty) -> Option<String> {
-        self.running
+    pub(crate) fn overlay_property(
+        &self,
+        tree: &Tree,
+        env: &Environment,
+        id: u32,
+        property: CssProperty,
+    ) -> Option<String> {
+        let value = self
+            .running
             .get(&(id, property))
-            .map(|running| running.value(self.now).css())
+            .map(|running| Ok(running.value(self.now)))
+            .or_else(|| self.keyframes.value(id, property))?;
+        let Ok(value) = value else {
+            return Some("unsupported-keyframe-interpolation".into());
+        };
+        let current = if matches!(value, Value::Shadows(_)) {
+            let Some(c) = crate::paint::current_color(tree, env, id) else {
+                return Some("unsupported-shadow-color".into());
+            };
+            [
+                f64::from(c.red()),
+                f64::from(c.green()),
+                f64::from(c.blue()),
+                f64::from(c.alpha()),
+            ]
+        } else {
+            [0.0; 4]
+        };
+        Some(value.css(current))
     }
 
     /// Apply one style change event at the current clock.
     pub(crate) fn restyle(tree: &mut Tree, env: &Environment) {
+        keyframes::Timeline::restyle(tree, env);
         let uses = tree.uses_transitions();
         if !uses && tree.animations.running.is_empty() {
             tree.animations.last.clear();
@@ -476,11 +519,11 @@ impl Animations {
                 let current = tree.animations.running.get(&key);
                 let before = current
                     .map(|running| running.value(now))
-                    .or_else(|| previous.and_then(|values| values[index]));
+                    .or_else(|| previous.and_then(|values| values[index].clone()));
                 let decided = transition(
                     current,
                     before,
-                    after[index],
+                    after[index].clone(),
                     declared(&values, property),
                     now,
                 );
@@ -511,6 +554,7 @@ fn after_value(
         CssProperty::BackgroundColor => INITIAL_BACKGROUND,
         CssProperty::Opacity => INITIAL_OPACITY,
         CssProperty::Transform => INITIAL_TRANSFORM,
+        CssProperty::BoxShadow => Value::Shadows(shadows::List::default()),
         _ => {
             // `color` inherits.
             let own = values.get(&property).filter(|v| *v != CURRENT_COLOR);
@@ -548,7 +592,7 @@ fn transition(
         };
         Running {
             start: from,
-            end: after,
+            end: after.clone(),
             reversing_start,
             shortening,
             begins: now + delay,
@@ -559,21 +603,22 @@ fn transition(
     match current {
         None => {
             let before = before?;
-            (before != after && before.same_kind(after)).then(|| start(before, before, 1.0))
+            (before != after && before.same_kind(&after))
+                .then(|| start(before.clone(), before, 1.0))
         }
         Some(running) if running.end == after => Some(running.clone()),
         Some(running) => {
             let value = running.value(now);
-            if value == after || !value.same_kind(after) {
+            if value == after || !value.same_kind(&after) {
                 None
             } else if running.reversing_start == after {
                 let shortening = (running.output(now) * running.shortening
                     + (1.0 - running.shortening))
                     .abs()
                     .clamp(0.0, 1.0);
-                Some(start(value, running.end, shortening))
+                Some(start(value, running.end.clone(), shortening))
             } else {
-                Some(start(value, value, 1.0))
+                Some(start(value.clone(), value, 1.0))
             }
         }
     }
@@ -677,15 +722,15 @@ mod tests {
         let clear = Value::Color([0.0, 0.0, 1.0, 0.0]);
         // A transparent end keeps the opaque color's channels.
         assert_eq!(
-            red.interpolate(clear, 0.5),
+            red.interpolate(&clear, 0.5),
             Value::Color([1.0, 0.0, 0.0, 0.5])
         );
         assert_eq!(
-            Value::Number(0.2).interpolate(Value::Number(1.0), 0.25),
+            Value::Number(0.2).interpolate(&Value::Number(1.0), 0.25),
             Value::Number(0.4)
         );
         assert_eq!(
-            Value::Color([1.0, 0.5, 0.0, 0.5]).css(),
+            Value::Color([1.0, 0.5, 0.0, 0.5]).css([0.0; 4]),
             "rgba(255, 128, 0, 0.500000)"
         );
     }
@@ -699,10 +744,11 @@ mod tests {
         };
         let a = Value::Number(0.0);
         let b = Value::Number(1.0);
-        let forward = transition(None, Some(a), Some(b), Some(declared), 0.0).unwrap();
+        let forward =
+            transition(None, Some(a.clone()), Some(b.clone()), Some(declared), 0.0).unwrap();
         assert_eq!(forward.value(25.0), Value::Number(0.25));
         // Back to the start value at 25%: a quarter of the duration remains.
-        let back = transition(Some(&forward), None, Some(a), Some(declared), 25.0).unwrap();
+        let back = transition(Some(&forward), None, Some(a.clone()), Some(declared), 25.0).unwrap();
         assert_eq!((back.duration, back.begins), (25.0, 25.0));
         assert_eq!(back.start, Value::Number(0.25));
         assert_eq!(back.reversing_start, b);
@@ -718,14 +764,20 @@ mod tests {
         assert_eq!((other.duration, other.start), (100.0, Value::Number(0.25)));
         // The same end keeps it; no declaration cancels it.
         assert_eq!(
-            transition(Some(&forward), None, Some(b), Some(declared), 50.0),
+            transition(Some(&forward), None, Some(b.clone()), Some(declared), 50.0),
             Some(forward.clone())
         );
-        assert_eq!(transition(Some(&forward), None, Some(a), None, 50.0), None);
-        // A first style and an unchanged value start nothing.
-        assert_eq!(transition(None, None, Some(b), Some(declared), 0.0), None);
         assert_eq!(
-            transition(None, Some(b), Some(b), Some(declared), 0.0),
+            transition(Some(&forward), None, Some(a.clone()), None, 50.0),
+            None
+        );
+        // A first style and an unchanged value start nothing.
+        assert_eq!(
+            transition(None, None, Some(b.clone()), Some(declared), 0.0),
+            None
+        );
+        assert_eq!(
+            transition(None, Some(b.clone()), Some(b.clone()), Some(declared), 0.0),
             None
         );
     }

@@ -27,6 +27,10 @@ use varta_common::{
     value::*,
 };
 
+mod owned;
+mod sync;
+pub use sync::{decode, error, materialize, type_error};
+
 /// One guest instance as a KV decode sees it: its heap ([`Heap`]: the
 /// guest allocator, retention and plain stores) and memory, its exception
 /// channel, its turn deadline and its fair fuel.
@@ -153,7 +157,7 @@ pub fn classify<D: Deadline + ?Sized>(
 /// once the schema is checked) into the checked schema at `schema_ptr`: the
 /// result handle, or 0 with a pending `TypeError` when the stored value does
 /// not match.
-pub fn decode<G: Guest, D: Deadline + ?Sized>(
+pub async fn decode_async<G: Guest + build::AsyncHeap, D: Deadline + ?Sized>(
     guest: &mut G,
     module: ModuleBounds,
     deadline: &D,
@@ -183,7 +187,7 @@ pub fn decode<G: Guest, D: Deadline + ?Sized>(
         return Err(error);
     }
     match classified {
-        Ok(value) => materialize(guest, module, &schema, value),
+        Ok(value) => materialize_async(guest, module, &schema, value).await,
         Err(DecodeError::Mismatch(message)) => {
             let message = format!(
                 "KV {} does not match the checked type: {message}",
@@ -193,7 +197,7 @@ pub fn decode<G: Guest, D: Deadline + ?Sized>(
                     "value"
                 }
             );
-            type_error(guest, module, &schema, &message)
+            type_error_async(guest, module, &schema, &message).await
         }
         Err(DecodeError::Deadline) => Err(guest.deadline_error()),
         // A refused payment returned its host error above.
@@ -203,31 +207,41 @@ pub fn decode<G: Guest, D: Deadline + ?Sized>(
 
 /// Allocate a completely checked tree through the guest's own collector,
 /// then check the module's metadata again and publish the handle.
-pub fn materialize<G: Guest>(
+pub fn materialize_async<G: Guest + build::AsyncHeap>(
     guest: &mut G,
     module: ModuleBounds,
     schema: &JsonSchema,
     value: JsonValue,
-) -> Result<u64, G::Error> {
-    let built = build::value(guest, schema, &value, module.limits.data);
-    guest.dispose(value)?;
-    let value = built.map_err(|error| match error {
-        BuildError::Heap(error) => error,
-        BuildError::Invalid(message) => guest.json_fatal(message.into()),
-    })?;
-    guest.ready()?;
-    guest.deadline()?;
-    descriptors(guest, schema, module.static_region)?;
-    let high = if schema.version == varta_common::json::SCHEMA_VERSION
-        && schema.types[schema.root as usize].kind().is_reference()
-    {
-        (value >> i32::BITS) as u32 as i32
-    } else {
-        0
-    };
-    guest.result_length(high)?;
-    // The value is already owned/rooted; this is not a borrowed result buffer.
-    Ok(value)
+) -> impl core::future::Future<Output = Result<u64, G::Error>> {
+    // Construct the guard before the future, covering even an unpolled drop.
+    let mut value = owned::Owned(Some(value));
+    async move {
+        let built = build::value_async(
+            guest,
+            schema,
+            value.0.as_ref().expect("owned decode value"),
+            module.limits.data,
+        )
+        .await;
+        guest.dispose(value.0.take().expect("owned decode value"))?;
+        let value = built.map_err(|error| match error {
+            BuildError::Heap(error) => error,
+            BuildError::Invalid(message) => guest.json_fatal(message.into()),
+        })?;
+        guest.ready()?;
+        guest.deadline()?;
+        descriptors(guest, schema, module.static_region)?;
+        let high = if schema.version == varta_common::json::SCHEMA_VERSION
+            && schema.types[schema.root as usize].kind().is_reference()
+        {
+            (value >> i32::BITS) as u32 as i32
+        } else {
+            0
+        };
+        guest.result_length(high)?;
+        // The value is already owned/rooted; this is not a borrowed result buffer.
+        Ok(value)
+    }
 }
 
 /// The bounds `ErrorObject::read_with_version` reads an Error object under
@@ -236,6 +250,7 @@ pub fn materialize<G: Guest>(
 fn legacy_error_bounds() -> ModuleBounds {
     ModuleBounds {
         static_region: StaticRegion::SINGLE_PAGE,
+        snapshots: false,
         limits: ProgramLimits {
             data: DataLimits {
                 string_bytes: abi::MAX_STRING_BYTES,
@@ -255,7 +270,7 @@ fn channel() -> ValueAbiError {
 /// `TypeError`, as checked JSON does) through the exception channel; the
 /// result is the placeholder 0 the caller unpacks only without a pending
 /// exception.
-pub fn error<G: Guest>(
+pub async fn error_async<G: Guest + build::AsyncHeap>(
     guest: &mut G,
     module: ModuleBounds,
     schema: &JsonSchema,
@@ -266,17 +281,18 @@ pub fn error<G: Guest>(
         return Err(guest.abi_fatal(channel()));
     }
     guest.ready()?;
-    let message = build::publish(guest, &varta_common::text::encode(message), 0, 0, true)?;
+    let message =
+        build::publish_async(guest, &varta_common::text::encode(message), 0, 0, true).await?;
     let mut object = Vec::with_capacity(ERROR_BYTES);
     object.extend((((class as u32) << ERROR_CLASS_SHIFT) | ERROR_OWN_MESSAGE).to_le_bytes());
     object.extend(1u32.to_le_bytes());
     object.extend(message.to_le_bytes());
-    let object = build::publish(guest, &object, HEAP_ERROR_FLAG, 1, true)?;
+    let object = build::publish_async(guest, &object, HEAP_ERROR_FLAG, 1, true).await?;
     let mut cell = Vec::with_capacity(UNION_BYTES);
     cell.extend((ValueKind::Error as u32).to_le_bytes());
     cell.extend(1u32.to_le_bytes());
     cell.extend(object.to_le_bytes());
-    let cell = build::publish(guest, &cell, HEAP_UNION_FLAG, 1, true)?;
+    let cell = build::publish_async(guest, &cell, HEAP_UNION_FLAG, 1, true).await?;
     // Allocators/retainers are untrusted Wasm, even though their call graphs are
     // host-free. Validate their final product and all metadata before publication.
     guest.ready()?;
@@ -303,13 +319,13 @@ pub fn error<G: Guest>(
 }
 
 /// Publish a recoverable `TypeError` with `message` from a v38 KV decode.
-pub fn type_error<G: Guest>(
+pub async fn type_error_async<G: Guest + build::AsyncHeap>(
     guest: &mut G,
     module: ModuleBounds,
     schema: &JsonSchema,
     message: &str,
 ) -> Result<u64, G::Error> {
-    error(guest, module, schema, ErrorClass::TypeError, message)
+    error_async(guest, module, schema, ErrorClass::TypeError, message).await
 }
 
 #[cfg(test)]

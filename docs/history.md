@@ -7,6 +7,110 @@ statements in them are historical. Current status is in the
 [development plan](development-plan.md#status); current contracts are in
 [architecture.md](architecture.md).
 
+## 2026-11-07 — Async HTTP/KV guest callback boundary
+
+An SDK-free service reproduced a successful KV write followed by a 500 when the
+next request decoded a managed value: Wasmtime rejected a blocking allocator
+call from its async fiber. The shared codec now supports suspendable allocation
+and retention with immediate adapters for ordinary/browser execution. Native
+HTTP v2 awaits those validated helpers; validation, fuel, rooting and publication
+remain shared. Cancellation drops owned classified trees iteratively. The stack
+pool accounts for a bounded outer/helper pair per admitted request, fixing the
+separate one-worker exhaustion without changing request or guest limits.
+137 affected Rust tests, strict affected Clippy, 18 Chrome KV scenarios and local
+dev/standalone restart checks pass. Independent Cloud HTTP acceptance passes.
+This is scoped verification after the CSS full gate; see the
+[KV evidence](evidence/2026-11-07-http-kv-async-verification.json).
+
+## 2026-11-07 — Shadow/ring motion and transition shorthand
+
+Native shadow lists now animate on the existing clock for both transitions and
+keyframes. Missing entries use transparent zero shadows with matching inset;
+incompatible inset pairs skip transitions and switch discretely in keyframes.
+Live currentcolor coefficients remain flat across interruption, and retained
+paint includes the changing exterior ink without changing hits or layout.
+Stylesheet `transition` maps onto existing longhands with variable substitution,
+CSS-wide resets, list/time/easing parsing and ordinary cascade precedence.
+Literal negative duration is rejected; negative delay remains valid. A shared
+floating-point color reader preserves alpha before interpolation. The finite
+application corpus remains complete and the shared decision corpus adds five
+cases. One full run on unchanged inputs passed 4665 Rust tests (26 ignored),
+190 Node tests and all 12 commands. Verification is in the
+[motion evidence](evidence/2026-11-07-shadow-motion-verification.json).
+
+## 2026-11-07 — V39 checked structural snapshots
+
+The owner selected isolated checked snapshots for unmodified SDK assertions.
+The implementation retains extra JSON fields and order using canonical typed
+records with two compiler-only reference fields, reusing existing tracing and
+profile-gating their observation. New converters stay separate from strict
+build/read and shallow property copies. Native fallback, linked serialization,
+accessor-aware walks and inspection share the retained-member contract.
+16 runtime regressions, common/documentation checks, strict affected Clippy and
+an independent contract inventory pass. The SDK's 16 local quota checks pass in
+native development, standalone execution and Chrome; the original five-request
+SDK fixture also passes. Nullable property narrowing and own `__proto__` data
+copying have explicit regressions. One full attempt failed on an outdated test
+expectation; scoped corrections and completion preserve the historical module
+hashes. The failed report and subsequent results are recorded separately in the [snapshot evidence](evidence/2026-11-07-checked-snapshot-verification.json).
+
+## 2026-11-07 — Typed async return SDK text-response blocker
+
+`decodeBody(): Promise<unknown>` returned `response.text(): Promise<string>`;
+contextual return widening boxed the promise itself into unknown, triggering the
+intended unknown-held-promise guard. V38 now retains typed source completions in
+saved locals through finalizers, adopts the selected source using the existing
+job/reaction, then widens its fulfilled value. Finalizer overrides, rejection and
+conditional arms use the same completion path. No extra promise wrapper, new
+ABI, budget increase or weakening of the unknown guard is involved.
+
+Scoped Promise/async/frame suites pass 63 distinct tests (26/38/2 by filter,
+three overlapping); affected strict Clippy and CLI/companion build pass. Node
+24.20.0 supplies the job-order reference; forced collection before each job
+exercises saved typed completions. Older-profile module digests remain identical.
+Unmodified SDK text and five-request local fixtures pass check/dev. The peer
+application separately reports live account/model reads; quota schema diagnosis
+is separate. There is no additional full workspace pass. See
+[evidence](evidence/2026-11-07-typed-async-return-verification.json).
+
+## 2026-11-07 — Tuple array callback SDK blocker
+
+Callback lowering now normalizes admitted tuples through the existing
+`physical_array` helper, as other array consumers do. It keeps storage identity,
+the physical element union, snapshot length and live backing. Filter returns an
+array rather than claiming a fixed tuple shape. The change does not strengthen
+the existing binding-level readonly policy.
+
+Two new compile/Wasmtime/behavior regressions cover v37 heterogeneous tuples,
+receiver evaluation and live mutation, plus v38 global const keys, optional/rest
+and empty tuples. All 15 array callback tests and affected strict Clippy pass.
+Rebuilt binaries compile/run the minimal Cloud regression and the unmodified
+SDK's local five-request fixture without external network. This is a subsequent
+scoped correction, not a second full gate; live read-only checks remain owned by
+the application. See [evidence](evidence/2026-11-07-tuple-callback-verification.json).
+
+## 2026-11-07 — Remaining application Tailwind/CSS package
+
+The 14 remaining utility cases raise finite application admission from 298/312
+to 312/312. Numeric typography/accents, inset clips, sticky/atomic layout, legacy
+line clamps, pretty wrapping, gradients, backdrop blur and keyframes have actual
+native rendering checks. `table-layout` is inert on current non-table boxes;
+this does not add tables or imply complete CSS/Tailwind support.
+
+One full attempt passed checks/builds and then exposed a zero-work standalone
+text regression in three desktop font tests. Two concurrently added cloud docs
+also changed its global fingerprint; reconstruction proves code was stable.
+The original failed report remains intact. Scoped continuation corrected that
+regression, mirrored blur edges/units, quadratic keyframe emission, an obsolete
+rotation refusal assertion and missing generated browser engine bindings, then
+finished all previously unexecuted suites. Consolidated nonduplicated coverage
+is 4632 Rust tests (26 ignored) and 190 browser Node tests, with compatibility
+246/2 of 248 unchanged. There was no second full run and no uninterrupted final
+full-pass claim. Chrome coverage comprises 49 original scenes plus corrected
+backdrop checks/two edge scenes at 1×/1.25×/2×. Generated browser input/click and
+Cloud Studio save acceptance pass. See
+[the evidence](evidence/2026-11-07-tailwind-css-remainder-verification.json).
+
 ## 2026-11-05 — Direct GPU color fields (wave 3, `w3-gpu-color-fields`, scoped)
 
 Borders with distinct side colors used a private software command, so every

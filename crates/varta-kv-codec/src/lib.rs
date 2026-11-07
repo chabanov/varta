@@ -187,3 +187,6 @@ pub fn index_units(index: u32) -> usize {
         .checked_ilog10()
         .map_or(1, |digits| digits as usize + 1)
 }
+
+#[cfg(test)]
+mod build_tests;

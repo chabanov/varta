@@ -109,7 +109,15 @@ pub(super) fn member_function(
             Member::Init => {
                 let object_global =
                     !symbols.contains_key("Object") && !constants.contains_key("Object");
-                let declaration = constructors::declaration(class, types, object_global)?;
+                let (declaration, receiver_use) =
+                    constructors::declaration(class, types, object_global)?;
+                if let Some(span) = receiver_use {
+                    types.classes.constructor_receivers.push((
+                        class,
+                        types.classes.get(class).source.clone(),
+                        span,
+                    ));
+                }
                 let signature = types.classes.list[class as usize]
                     .init
                     .clone()

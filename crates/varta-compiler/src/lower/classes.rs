@@ -160,6 +160,11 @@ pub(crate) struct Classes {
     order: Vec<(usize, u32, Member)>,
     dispatchers: Vec<Dispatcher>,
     method_names: BTreeSet<String>,
+    /// Method-value reads validated after generic subclasses are materialized.
+    method_values: Vec<(u32, String, Source, Span)>,
+    /// Constructor uses that expose a fully assigned receiver; checked after
+    /// generic materialization to rule out partially initialized descendants.
+    constructor_receivers: Vec<(u32, Source, Span)>,
     /// Synthetic native-error root classes (v32 `error_subclasses`).
     error_roots: BTreeMap<varta_common::value::ErrorClass, u32>,
     /// Generic method instances by (owner, name, static, type arguments).
@@ -881,6 +886,7 @@ mod members;
 mod merged_interfaces;
 mod parameter_properties;
 mod private_names;
+pub(super) use constructors::validate_receivers as validate_constructor_receivers;
 pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers, late_dispatch_bodies};
 pub(super) use error_classes::{
     CAUSE, MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance, reaches_json_form,
@@ -896,3 +902,34 @@ pub(super) use layout::layout_module;
 pub(super) use private_names::{
     PREFIX as PRIVATE_PREFIX, hide_prelude_state, is_private_name, reaches_private,
 };
+
+/// A first-class method keeps its implementation identity. A static receiver
+/// whose descendants replace it needs a polymorphic receiver-function model;
+/// refuse that boundary rather than returning the virtual call dispatcher.
+pub(super) fn validate_method_values(types: &ir::ValueTypes) -> Result<()> {
+    for (class, name, source, span) in &types.classes.method_values {
+        let method = &types.classes.get(*class).methods[name];
+        if let Some(template) = types.classes.get(method.owner).template
+            && types
+                .classes
+                .instantiable()
+                .iter()
+                .filter(|id| types.classes.get(**id).template == Some(template))
+                .count()
+                > 1
+        {
+            return Err(source.locate(unsupported("method values of a generic class with multiple specializations require shared function identity support"), *span));
+        }
+        if types.classes.descendants(*class).iter().any(|child| {
+            types
+                .classes
+                .get(*child)
+                .methods
+                .get(name)
+                .is_some_and(|m| m.signature.index != method.signature.index)
+        }) {
+            return Err(source.locate(unsupported("polymorphic class method value; the receiver type must have no overriding descendants"), *span));
+        }
+    }
+    Ok(())
+}

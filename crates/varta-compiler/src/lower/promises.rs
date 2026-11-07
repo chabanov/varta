@@ -14,6 +14,7 @@ use super::*;
 use functions::{LiftContext, intern_full};
 mod async_functions;
 mod async_generators;
+mod async_returns;
 mod combinators;
 mod methods;
 pub(in crate::lower) mod timers;
@@ -638,65 +639,104 @@ impl Lower<'_> {
     /// NewPromiseResolveThenableJob for an internal promise: a scheduled frame
     /// `(target, source)` that awaits `source` and settles `target` alike.
     fn adopt_helper(&mut self, span: swc_common::Span, id: u32) -> Result<usize> {
+        self.adopt_typed_helper(span, id, id)
+    }
+    fn adopt_typed_helper(
+        &mut self,
+        span: swc_common::Span,
+        id: u32,
+        source_id: u32,
+    ) -> Result<usize> {
         let ty = Type::Promise(id);
-        self.memoized(Helper::Adopt, vec![ty], |lower| {
-            lower.synthesize(Self::plain(span, vec![ty, ty], true), |child, params, _| {
-                let (target, source) = (params[0], params[1]);
-                let value = stored(child.types.promises[id as usize].value);
-                let reason = child.exception_type()?;
-                let fulfill = child.fulfill_helper(span, id)?;
-                let reject = child.reject_helper(span, id)?;
-                let v = child.hidden(value);
-                let e = child.hidden(reason);
-                let marker = child.hidden(Type::Number);
-                let awaited = child.await_promise(span, local(span, source, ty))?;
-                Ok(vec![
-                    S::Init(v, zero(span, value)),
-                    S::TryCatch {
-                        body: vec![
-                            S::Set(v, awaited),
-                            invoke(
+        let source_ty = Type::Promise(source_id);
+        let key = if id == source_id {
+            vec![ty]
+        } else {
+            vec![ty, source_ty]
+        };
+        self.memoized(Helper::Adopt, key, |lower| {
+            lower.synthesize(
+                Self::plain(span, vec![ty, source_ty], true),
+                |child, params, _| {
+                    let (target, source) = (params[0], params[1]);
+                    let value = stored(child.types.promises[source_id as usize].value);
+                    let target_value = stored(child.types.promises[id as usize].value);
+                    let reason = child.exception_type()?;
+                    let fulfill = child.fulfill_helper(span, id)?;
+                    let reject = child.reject_helper(span, id)?;
+                    let v = child.hidden(value);
+                    let e = child.hidden(reason);
+                    let marker = child.hidden(Type::Number);
+                    let awaited = child.await_promise(span, local(span, source, source_ty))?;
+                    let converted =
+                        unions::widen(local(span, v, value), Some(target_value), child.types)?;
+                    if converted.ty != target_value {
+                        return Err(type_error(
+                            "async promise result cannot be widened to its declared type",
+                        ));
+                    }
+                    Ok(vec![
+                        S::Init(v, zero(span, value)),
+                        S::TryCatch {
+                            body: vec![
+                                S::Set(v, awaited),
+                                invoke(span, fulfill, vec![local(span, target, ty), converted]),
+                            ],
+                            binding: Some(e),
+                            handler: vec![invoke(
                                 span,
-                                fulfill,
-                                vec![local(span, target, ty), local(span, v, value)],
-                            ),
-                        ],
-                        binding: Some(e),
-                        handler: vec![invoke(
-                            span,
-                            reject,
-                            vec![local(span, target, ty), local(span, e, reason)],
-                        )],
-                        marker,
-                    },
-                ])
-            })
+                                reject,
+                                vec![local(span, target, ty), local(span, e, reason)],
+                            )],
+                            marker,
+                        },
+                    ])
+                },
+            )
         })
     }
     /// Resolve `target` with the promise `source`: a self-resolution is a
     /// `TypeError` rejection; otherwise adoption is queued as a job.
     fn resolve_helper(&mut self, span: swc_common::Span, id: u32) -> Result<usize> {
+        self.resolve_typed_helper(span, id, id)
+    }
+    fn resolve_typed_helper(
+        &mut self,
+        span: swc_common::Span,
+        id: u32,
+        source_id: u32,
+    ) -> Result<usize> {
         let ty = Type::Promise(id);
-        self.memoized(Helper::Resolve, vec![ty], |lower| {
+        let source_ty = Type::Promise(source_id);
+        let key = if id == source_id {
+            vec![ty]
+        } else {
+            vec![ty, source_ty]
+        };
+        self.memoized(Helper::Resolve, key, |lower| {
             lower.synthesize(
-                Self::plain(span, vec![ty, ty], false),
+                Self::plain(span, vec![ty, source_ty], false),
                 |child, params, _| {
                     let (target, source) = (params[0], params[1]);
                     let reject = child.reject_helper(span, id)?;
-                    let adopt = child.adopt_helper(span, id)?;
+                    let adopt = if id == source_id {
+                        child.adopt_helper(span, id)?
+                    } else {
+                        child.adopt_typed_helper(span, id, source_id)?
+                    };
                     let error = child.array_error(ErrorClass::TypeError, CYCLE_MESSAGE, span)?;
                     Ok(vec![S::If(
                         compare(
                             span,
                             ast::BinaryOp::EqEqEq,
                             child.view(local(span, target, ty))?,
-                            child.view(local(span, source, ty))?,
+                            child.view(local(span, source, source_ty))?,
                         ),
                         vec![invoke(span, reject, vec![local(span, target, ty), error])],
                         vec![schedule(
                             span,
                             adopt,
-                            vec![local(span, target, ty), local(span, source, ty)],
+                            vec![local(span, target, ty), local(span, source, source_ty)],
                             ScheduleMode::Enqueue,
                         )],
                     )])

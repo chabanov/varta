@@ -84,7 +84,8 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
   // its own, keyed by the element's id, whose declarations are set
   // through the CSSOM from the engine's computed values.
   const pseudoSheet = new Sheet(), pseudoRules = new Map();
-  shadow.adoptedStyleSheets = [base, pseudoSheet];
+  const animationSheet = new Sheet(); let animationCss = "";
+  shadow.adoptedStyleSheets = [base, pseudoSheet, animationSheet];
   // Every element's style is the view style engine's computed value, set
   // inline; guest stylesheets never reach the platform cascade. The engine's
   // inputs are recorded here: the viewport, the media preferences and the
@@ -112,6 +113,8 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
     // the user validity of `:user-valid`/`:user-invalid` (HTML §4.10.18.4.1).
     for (const [id, element] of nodes) if (["input", "textarea", "select"].includes(element.localName))
       engine.setStates(id, (element.validity.badInput ? ENGINE_STATES.badInput : 0) | (element.matches(":user-valid, :user-invalid") ? ENGINE_STATES.userValidity : 0), fieldStates);
+    const keyframes = engine.animationCss();
+    if (animationCss !== keyframes) { animationSheet.replaceSync(keyframes); animationCss = keyframes; }
     for (const [id, element] of nodes) {
       if (element.nodeType !== 1) continue;
       const values = engine.computed(id), previous = applied.get(element) ?? new Map();

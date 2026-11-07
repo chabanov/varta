@@ -234,8 +234,11 @@ pub(super) fn align_and_position_item(
         (
             Some(Some(SizingKeywordResolution::Measure(available_width))),
             Some(Some(SizingKeywordResolution::Measure(available_height))),
-        ) if !position.is_out_of_flow() => tree
-            .measure_child_size_both(
+        ) if !position.is_out_of_flow()
+            && !matches!(available_width, AvailableSpace::Definite(_))
+            && !matches!(available_height, AvailableSpace::Definite(_)) =>
+        {
+            tree.measure_child_size_both(
                 node,
                 Size::NONE,
                 containing_block_size.map(Option::Some),
@@ -243,7 +246,8 @@ pub(super) fn align_and_position_item(
                 SizingMode::InherentSize,
                 Line::FALSE,
             )
-            .map(Option::Some),
+            .map(Option::Some)
+        }
         _ => Size::NONE,
     };
 
@@ -259,9 +263,8 @@ pub(super) fn align_and_position_item(
         }
 
         if let Some(Some(resolution)) = keyword_width {
-            return Some(match resolution {
-                SizingKeywordResolution::Exact(width) => width,
-                SizingKeywordResolution::Measure(available_width) => keyword_measured_size.width.unwrap_or_else(|| {
+            return Some(resolution.resolve(|available_width| {
+                keyword_measured_size.width.unwrap_or_else(|| {
                     tree.measure_child_size(
                         node,
                         Size::NONE,
@@ -274,8 +277,8 @@ pub(super) fn align_and_position_item(
                         AbsoluteAxis::Horizontal,
                         Line::FALSE,
                     )
-                }),
-            });
+                })
+            }));
         }
 
         // Apply width based on stretch alignment if:
@@ -304,27 +307,24 @@ pub(super) fn align_and_position_item(
         }
 
         if let Some(Some(resolution)) = keyword_height {
-            return Some(match resolution {
-                SizingKeywordResolution::Exact(height) => height,
-                SizingKeywordResolution::Measure(available_height) => {
-                    keyword_measured_size.height.unwrap_or_else(|| {
-                        tree.measure_child_size(
-                            node,
-                            Size { width, height: None },
-                            containing_block_size.map(Option::Some),
-                            Size {
-                                width: width
-                                    .map(AvailableSpace::Definite)
-                                    .unwrap_or(AvailableSpace::Definite(grid_area_minus_item_margins_size.width)),
-                                height: available_height,
-                            },
-                            SizingMode::InherentSize,
-                            AbsoluteAxis::Vertical,
-                            Line::FALSE,
-                        )
-                    })
-                }
-            });
+            return Some(resolution.resolve(|available_height| {
+                keyword_measured_size.height.unwrap_or_else(|| {
+                    tree.measure_child_size(
+                        node,
+                        Size { width, height: None },
+                        containing_block_size.map(Option::Some),
+                        Size {
+                            width: width
+                                .map(AvailableSpace::Definite)
+                                .unwrap_or(AvailableSpace::Definite(grid_area_minus_item_margins_size.width)),
+                            height: available_height,
+                        },
+                        SizingMode::InherentSize,
+                        AbsoluteAxis::Vertical,
+                        Line::FALSE,
+                    )
+                })
+            }));
         }
 
         // Apply height based on stretch alignment if:

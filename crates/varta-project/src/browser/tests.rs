@@ -800,6 +800,7 @@ fn kv_codec_matches_its_sources() {
             "src/value/symbol.rs",
             "src/value/vector.rs",
             "src/value/dictionary.rs",
+            "src/value/snapshot.rs",
             "src/function.rs",
             "src/function/view.rs",
         ]

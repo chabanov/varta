@@ -16,15 +16,24 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 131 feature rows and 243 cases:
-241 have a supported baseline, 2 are known unsupported, and 4 feature rows have no
+executable cases. The current inventory has 131 feature rows and 248 cases:
+246 have a supported baseline, 2 are known unsupported, and 4 feature rows have no
 case. Generator inference and union-to-record views promote two reviewed gaps;
 module initialization, re-exports and default exports now have executable module
-snapshots. The completed package matched this baseline on 2026-11-07 with no
-regressions or infrastructure failures. Evidence is linked from
+snapshots. Five new class/function cases cover identity initializers, method
+values, tuple-rest parameters, suspension and complete constructor receivers.
+The 248-case baseline matched in the uninterrupted full run on 2026-11-07.
+Evidence is linked from
 [verification](../docs/verification.md#current-verification-evidence--2026-11-07).
 They do not express a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
+
+The separate `conformance/snapshot-v39/suite.json` inventory pins the v39
+checked-snapshot contract (retention, isolation, alias mutations and strict parse
+boundaries). It is run by the full gate alongside the frozen v38 core baseline;
+its cases do not change the core inventory's counts or claim Node identity parity.
+Run it with `cargo run -p varta-conformance --locked -- --suite
+conformance/snapshot-v39/suite.json --require-supported --json`.
 
 Each source file is read as an immutable UTF-8 snapshot and checked against its
 manifest SHA-256. All `.ts` files beneath `cases/` must be listed. Duplicate IDs,

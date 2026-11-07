@@ -1,0 +1,63 @@
+{
+  "date": "2026-11-07",
+  "baseHead": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+  "scope": "Combined compiler/class receivers, v39 checked snapshots, finite Tailwind/CSS rendering and motion, async HTTP/KV integration package before commit.",
+  "full": {
+    "attempts": 1,
+    "passed": true,
+    "commandsPassed": 12,
+    "report": "target/verification/20261107-172932-9993613s/report.json",
+    "sourceUnchanged": true,
+    "before": {
+      "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+      "sourceSha256": "a605ea4d8962b9420f8e51f08a89e5cf39554b1387889aa04b006796029cf68e"
+    },
+    "after": {
+      "head": "1407f8eb2012eed59c5a90853f8a375ca95e7e7b",
+      "sourceSha256": "a605ea4d8962b9420f8e51f08a89e5cf39554b1387889aa04b006796029cf68e"
+    },
+    "rustPassed": 4671,
+    "rustIgnored": 26,
+    "nodePassed": 190,
+    "testThreads": "4",
+    "conformance": [
+      {
+        "suite": "checked-core-v1",
+        "profile": "checked-f64-utf16-v38",
+        "counts": {
+          "total": 248,
+          "passed": 246,
+          "knownUnsupported": 2,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "baselineMatches": true
+      },
+      {
+        "suite": "checked-snapshots-v39",
+        "profile": "checked-f64-utf16-v39",
+        "counts": {
+          "total": 3,
+          "passed": 3,
+          "knownUnsupported": 0,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "baselineMatches": true
+      }
+    ]
+  },
+  "postGateEdits": "Documentation/evidence only; no code or build inputs changed.",
+  "precedingReportsPreserved": true,
+  "separateBrowserAcceptance": [
+    "2026-11-07-shadow-motion-verification.json",
+    "2026-11-07-http-kv-async-verification.json"
+  ],
+  "platform": "Local macOS arm64; no additional cross-platform acceptance claimed.",
+  "excludedFromCommit": [
+    ".claude/",
+    "docs/varta-cloud/"
+  ]
+}

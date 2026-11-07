@@ -208,7 +208,9 @@ pub fn dictionary_entry_limit(version: u32, limits: crate::limits::DataLimits) -
     }
 }
 mod dictionary;
+mod snapshot;
 pub use dictionary::{Dictionary, array_index, array_index_bytes, dictionary_storage};
+pub use snapshot::{SnapshotMembers, snapshot_members};
 pub const HEAP_VECTOR_FLAG: i32 = 32;
 pub const VECTOR_BYTES: usize = 16;
 pub const VECTOR_STORAGE_OFFSET: u64 = 8;
@@ -285,6 +287,10 @@ pub const PRIVATE_KEY_PREFIX: char = '#';
 /// ascending, then the fields in insertion order, then the other entries in
 /// insertion order), never the dictionary itself.
 pub const INDEX_SIGNATURE_KEY: &str = "#index signature";
+/// V39 snapshot metadata: original own-key order, alongside declared fields
+/// and the existing hidden index dictionary. Ordinary value18 record/array
+/// storage and reference tracing apply; interpretation is profile-gated.
+pub const SNAPSHOT_ORDER_KEY: &str = "#snapshot order";
 /// Digits of the largest canonical array index, [`MAX_ARRAY_INDEX`].
 pub const MAX_ARRAY_INDEX_DIGITS: usize = 10;
 /// The canonical array index a key of UTF-16 `units` names: `0` or a
@@ -467,6 +473,9 @@ pub use symbol::{
 pub struct ModuleBounds {
     pub static_region: crate::abi::StaticRegion,
     pub limits: crate::limits::ProgramLimits,
+    /// V39 interpretation of compiler-owned snapshot order metadata. Comes
+    /// from the validated source profile; false for every prior profile.
+    pub snapshots: bool,
 }
 impl ModuleBounds {
     /// The bounds of a v38 (`program_limits`) module whose static region is
@@ -476,6 +485,7 @@ impl ModuleBounds {
         Self {
             static_region,
             limits: crate::limits::WASM,
+            snapshots: false,
         }
     }
 }
@@ -484,6 +494,7 @@ impl ModuleBounds {
     pub const LEGACY: Self = Self {
         static_region: crate::abi::StaticRegion::SINGLE_PAGE,
         limits: crate::limits::FROZEN,
+        snapshots: false,
     };
     /// The bounds of a validated module of `profile` with `static_region`.
     #[must_use]
@@ -494,6 +505,7 @@ impl ModuleBounds {
         Self {
             static_region,
             limits: profile.limits(),
+            snapshots: profile.checked_snapshots(),
         }
     }
 }

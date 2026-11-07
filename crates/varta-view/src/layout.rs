@@ -10,8 +10,10 @@ use taffy::prelude::*;
 use taffy::style::{GridPlacement, GridTemplateTracks, Overflow, RepetitionCount};
 use varta_common::view::{CssProperty, ROOT_NODE, Tag};
 
+pub(crate) mod atomic;
 pub(crate) mod controls;
 pub(crate) mod replaced;
+mod sticky;
 
 pub(crate) const MAX_LAYOUT_DEPTH: usize = 128;
 pub(crate) const MAX_LAYOUT_NODES: usize = 4096;
@@ -136,6 +138,7 @@ pub(crate) fn intersect(a: BoxRect, b: BoxRect) -> BoxRect {
 pub(crate) enum Scheme {
     Static,
     Relative,
+    Sticky,
     Absolute,
     Fixed,
 }
@@ -145,6 +148,7 @@ impl Scheme {
         match value.map(String::as_str) {
             None | Some("static") => Some(Self::Static),
             Some("relative") => Some(Self::Relative),
+            Some("sticky") => Some(Self::Sticky),
             Some("absolute") => Some(Self::Absolute),
             Some("fixed") => Some(Self::Fixed),
             Some(_) => None,
@@ -186,7 +190,9 @@ pub(crate) fn scroll_chain(
         let next = match schemes[index] {
             Scheme::Fixed => None,
             Scheme::Absolute => (index + 1..path.len()).find(|&next| schemes[next].positioned()),
-            Scheme::Static | Scheme::Relative => Some(index + 1).filter(|&next| next < path.len()),
+            Scheme::Static | Scheme::Relative | Scheme::Sticky => {
+                Some(index + 1).filter(|&next| next < path.len())
+            }
         };
         let Some(next) = next else {
             return Ok(chain);
@@ -351,7 +357,8 @@ fn root_inert(property: CssProperty, value: &str) -> bool {
         })
     };
     match property {
-        P::BoxSizing
+        P::TableLayout
+        | P::BoxSizing
         | P::BorderStyle
         | P::BorderTopStyle
         | P::BorderRightStyle
@@ -391,7 +398,11 @@ fn root_inert(property: CssProperty, value: &str) -> bool {
 fn paint_only(property: CssProperty) -> bool {
     matches!(
         property,
-        CssProperty::BackgroundColor
+        CssProperty::BackgroundImage
+            | CssProperty::BackdropFilter
+            | CssProperty::ClipPath
+            | CssProperty::BoxShadow
+            | CssProperty::BackgroundColor
             | CssProperty::Color
             | CssProperty::Opacity
             | CssProperty::BorderRadius
@@ -412,6 +423,14 @@ fn paint_only(property: CssProperty) -> bool {
             | CssProperty::TextDecoration
             | CssProperty::ZIndex
             // Transitions animate paint-only values (`crate::transition`).
+            | CssProperty::AnimationName
+            | CssProperty::AnimationDuration
+            | CssProperty::AnimationTimingFunction
+            | CssProperty::AnimationDelay
+            | CssProperty::AnimationIterationCount
+            | CssProperty::AnimationDirection
+            | CssProperty::AnimationFillMode
+            | CssProperty::AnimationPlayState
             | CssProperty::TransitionProperty
             | CssProperty::TransitionDuration
             | CssProperty::TransitionTimingFunction
@@ -910,6 +929,7 @@ enum Measure {
 /// Measurements prepared before a layout pass, by node.
 #[derive(Clone, Copy)]
 struct Measured<'a> {
+    root: u32,
     text: &'a BTreeMap<u32, TextShape>,
     controls: &'a BTreeMap<u32, controls::ControlSize>,
     /// The parent's strut (ascent and descent with half-leading) of each
@@ -1171,6 +1191,8 @@ pub(crate) fn resolve_text(
     let weight = font.weight as f32;
     let italic = font.italic;
     let mut letter_spacing = 0.0;
+    let mut pretty = false;
+    let mut numeric = crate::text::numeric::Numeric::default();
     let mut white_space = WhiteSpaceMode::Normal;
     let mut break_anywhere = false;
     let mut align = TextAlign::Start;
@@ -1198,6 +1220,10 @@ pub(crate) fn resolve_text(
                 .get(&property)
                 .filter(|value| value.as_str() != style::INHERIT)
         };
+        if let Some(value) = declared(CssProperty::FontVariantNumeric) {
+            numeric = crate::text::numeric::Numeric::parse(value)
+                .ok_or(LayoutError::Unsupported(ancestor))?;
+        }
         if let Some(value) = declared(CssProperty::TextAlign) {
             align = TextAlign::parse(value).ok_or(LayoutError::Unsupported(ancestor))?;
         }
@@ -1236,6 +1262,18 @@ pub(crate) fn resolve_text(
                 _ => return Err(LayoutError::Unsupported(ancestor)),
             };
         }
+        if let Some(value) = declared(CssProperty::TextWrapStyle) {
+            pretty = value == "pretty";
+        }
+        if let Some(value) = declared(CssProperty::TextWrapMode) {
+            white_space = match (white_space.preserves(), value.as_str()) {
+                (false, "wrap") => WhiteSpaceMode::Normal,
+                (false, "nowrap") => WhiteSpaceMode::NoWrap,
+                (true, "wrap") => WhiteSpaceMode::PreWrap,
+                (true, "nowrap") => WhiteSpaceMode::Pre,
+                _ => return Err(LayoutError::Unsupported(ancestor)),
+            };
+        }
     }
     Ok(ResolvedText {
         specified_size: font.size.px as f32,
@@ -1244,6 +1282,8 @@ pub(crate) fn resolve_text(
             line_height,
             weight,
             italic,
+            numeric,
+            pretty,
             letter_spacing,
             white_space,
             break_anywhere,
@@ -1381,7 +1421,17 @@ fn build_one(
                 && (crate::inline::blockified(tree, env, id)
                     || tree
                         .computed_property(id, env, CssProperty::Display)
-                        .is_some_and(|d| matches!(d.as_str(), "block" | "flex" | "grid")))))
+                        .is_some_and(|d| {
+                            matches!(
+                                d.as_str(),
+                                "block"
+                                    | "flex"
+                                    | "grid"
+                                    | "inline-block"
+                                    | "inline-flex"
+                                    | "-webkit-box"
+                            )
+                        }))))
     {
         return Err(LayoutError::Unsupported(id));
     }
@@ -1410,6 +1460,11 @@ fn build_one(
                         | CssProperty::OverflowWrap
                         | CssProperty::TextAlign
                         | CssProperty::TextTransform
+                        | CssProperty::TextWrap
+                        | CssProperty::TextWrapMode
+                        | CssProperty::TextWrapStyle
+                        | CssProperty::FontVariantNumeric
+                        | CssProperty::AccentColor
                         | CssProperty::FontFeatureSettings
                         | CssProperty::FontVariationSettings
                         | CssProperty::ListStyleType
@@ -1425,6 +1480,13 @@ fn build_one(
             height: length(viewport.1),
         };
     } else {
+        if id == measured.root
+            && id != ROOT_NODE
+            && atomic::is_atomic(tree, env, id)
+            && style.size.width.is_auto()
+        {
+            style.size.width = Dimension::fit_content();
+        }
         if let Some(kind) = control {
             controls::control_box(tree, env, (id, kind), &mut style)?;
         }
@@ -1502,8 +1564,17 @@ fn build_one(
                 CssProperty::VerticalAlign if value == "baseline" => {}
                 CssProperty::Display => {
                     style.display = match value.as_str() {
-                        "flex" => Display::Flex,
+                        "flex" | "inline-flex" => Display::Flex,
                         "block" => Display::Block,
+                        "inline-block" => Display::FlowRoot,
+                        "-webkit-box"
+                            if tree
+                                .computed_property(id, env, CssProperty::WebkitBoxOrient)
+                                .as_deref()
+                                == Some("vertical") =>
+                        {
+                            Display::Block
+                        }
                         "grid" => Display::Grid,
                         "none" => Display::None,
                         "inline" if crate::inline::blockified(tree, env, id) => Display::Block,
@@ -1566,22 +1637,14 @@ fn build_one(
                     crate::transform::origin(&single, units).ok_or(LayoutError::Unsupported(id))?;
                 }
                 CssProperty::Width => {
-                    style.size.width = if value == "auto" {
-                        auto()
-                    } else {
-                        units
-                            .length(&value, false)
-                            .ok_or(LayoutError::Unsupported(id))?
-                    }
+                    style.size.width = units
+                        .dimension(&value)
+                        .ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::Height => {
-                    style.size.height = if value == "auto" {
-                        auto()
-                    } else {
-                        units
-                            .length(&value, false)
-                            .ok_or(LayoutError::Unsupported(id))?
-                    }
+                    style.size.height = units
+                        .dimension(&value)
+                        .ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::MinWidth => {
                     style.min_size.width = if value == "auto" {
@@ -1685,6 +1748,7 @@ fn build_one(
                     style.position = match value.as_str() {
                         "static" => Position::Static,
                         "relative" => Position::Relative,
+                        "sticky" => Position::Sticky,
                         "absolute" => Position::Absolute,
                         "fixed" => Position::Fixed,
                         _ => return Err(LayoutError::Unsupported(id)),
@@ -1764,7 +1828,15 @@ fn build_one(
                         || matches!(value.as_str(), "normal" | "none") => {}
                 // Inherited by text (`resolve_text`) and list items
                 // (`crate::list`).
-                CssProperty::FontFeatureSettings
+                CssProperty::TableLayout
+                | CssProperty::WebkitLineClamp
+                | CssProperty::WebkitBoxOrient
+                | CssProperty::TextWrap
+                | CssProperty::TextWrapMode
+                | CssProperty::TextWrapStyle
+                | CssProperty::FontVariantNumeric
+                | CssProperty::AccentColor
+                | CssProperty::FontFeatureSettings
                 | CssProperty::FontVariationSettings
                 | CssProperty::ListStyleType
                 | CssProperty::ListStylePosition
@@ -1844,6 +1916,7 @@ pub(crate) fn image_box(
         &mut engine,
         (&mut BTreeMap::new(), &mut BTreeMap::new()),
         Measured {
+            root: ROOT_NODE,
             text: &BTreeMap::new(),
             controls: &BTreeMap::new(),
             struts: &BTreeMap::new(),
@@ -1968,6 +2041,7 @@ pub(crate) fn geometry_local(
         width,
         height,
         Measured {
+            root: ROOT_NODE,
             text: &BTreeMap::new(),
             controls: &BTreeMap::new(),
             struts: &BTreeMap::new(),
@@ -2029,6 +2103,19 @@ fn geometry_and_text_inner(
     measurer: &mut TextMeasurer,
     font_size: f32,
 ) -> Result<TextGeometry, LayoutError> {
+    atomic::layout(tree, env, (width, height), (measurer, font_size))
+}
+
+fn geometry_and_text_core(
+    tree: &Tree,
+    env: &Environment,
+    width: f32,
+    height: f32,
+    measurer: &mut TextMeasurer,
+    font_size: f32,
+    context: (u32, &BTreeMap<u32, atomic::Info>),
+) -> Result<TextGeometry, LayoutError> {
+    let (root, atoms) = context;
     if !width.is_finite()
         || !height.is_finite()
         || width <= 0.0
@@ -2043,20 +2130,28 @@ fn geometry_and_text_inner(
     // The measurer's medium size is the base of computed font sizes, and so
     // of `em` in every value.
     let layout_env = Environment {
-        width: f64::from(width),
+        width: if root == ROOT_NODE {
+            f64::from(width)
+        } else {
+            env.width
+        },
         font: varta_style::font::FontBase {
             medium: f64::from(font_size),
             fixed_monospace: measurer.fixed_monospace(),
         },
         ..*env
     };
-    let mut pending = vec![(ROOT_NODE, 0usize)];
+    let mut pending = vec![(root, 0usize)];
     let mut metrics = BTreeMap::new();
     let mut control_sizes = BTreeMap::new();
     let mut struts = BTreeMap::new();
     let mut inventory = crate::inline::Inventory::default();
+    inventory.atoms = atoms.clone();
     while let Some((id, depth)) = pending.pop() {
         inventory.node(depth)?;
+        measurer
+            .charge_inline_work(1)
+            .map_err(|_| LayoutError::Limit)?;
         let node = tree.nodes.get(&id).ok_or(LayoutError::Unsupported(id))?;
         // Hidden subtrees, a closed dialog's included, measure no text.
         if id != ROOT_NODE
@@ -2164,13 +2259,13 @@ fn geometry_and_text_inner(
             let parent_style = tree.computed_read(parent, &layout_env);
             let is_flex_or_grid = parent_style
                 .get(&CssProperty::Display)
-                .is_some_and(|value| matches!(value.as_str(), "flex" | "grid"));
+                .is_some_and(|value| matches!(value.as_str(), "flex" | "inline-flex" | "grid"));
             // A flex or grid item's cascaded `inline` is blockified to
             // `block` (CSS Display 3 §2.7), as its box already is.
             let is_simple_block = parent != ROOT_NODE
                 && parent_node.children.len() == 1
                 && parent_style.get(&CssProperty::Display).is_none_or(|value| {
-                    value == "block"
+                    matches!(value.as_str(), "block" | "inline-block")
                         || (value == "inline"
                             && crate::inline::blockified(tree, &layout_env, parent))
                 });
@@ -2244,6 +2339,7 @@ fn geometry_and_text_inner(
         width,
         height,
         Measured {
+            root,
             text: &metrics,
             controls: &control_sizes,
             struts: &struts,
@@ -2307,7 +2403,11 @@ fn boxes_inner(
     // The measurer's medium size is the base of computed font sizes, and so
     // of `em` in every value.
     let layout_env = Environment {
-        width: f64::from(width),
+        width: if measured.root == ROOT_NODE {
+            f64::from(width)
+        } else {
+            env.width
+        },
         font: base.map_or(env.font, |base| varta_style::font::FontBase {
             medium: f64::from(base.px),
             fixed_monospace: base.fixed_monospace,
@@ -2320,9 +2420,28 @@ fn boxes_inner(
         &mut engine,
         (&mut ids, &mut lines),
         measured,
-        (ROOT_NODE, 0),
+        (measured.root, 0),
         ((width, height), base),
     )?;
+    // A non-root atomic context is a child of its definite containing width.
+    // Reuse the same block keyword/min/max resolution as normal in-flow boxes.
+    let root = if measured.root != ROOT_NODE {
+        engine
+            .new_with_children(
+                Style {
+                    display: Display::Block,
+                    size: Size {
+                        width: length(width),
+                        height: auto(),
+                    },
+                    ..Style::default()
+                },
+                &[root],
+            )
+            .map_err(|error| LayoutError::Engine(error.to_string()))?
+    } else {
+        root
+    };
     // Bound worst-case implicit-grid work as well as explicit track counts.
     // A child may place lines up to 64 in either direction or create implicit
     // tracks through auto placement. Reject excessive aggregate grid area.
@@ -2532,7 +2651,7 @@ fn boxes_inner(
     // it yet, so both are refused.
     let units = Units::new(&layout_env).ok_or(LayoutError::RootFont)?;
     let mut pending = vec![(
-        ROOT_NODE,
+        measured.root,
         (0.0, 0.0),
         viewport,
         (0.0, 0.0, 0.0, viewport),
@@ -2626,6 +2745,17 @@ fn boxes_inner(
             // box contains, without moving any other box. A transform that
             // scales keeps the subtree where layout put it: paint, hits and
             // the public geometry map it through `transform`.
+            if position == Position::Sticky {
+                rect = sticky::position(
+                    tree,
+                    id,
+                    rect,
+                    viewport,
+                    &result,
+                    style.inset,
+                    layout.margin,
+                );
+            }
             let computed = tree.computed_read(id, &layout_env);
             let origin =
                 crate::transform::origin(&computed, units).ok_or(LayoutError::Unsupported(id))?;
@@ -2662,13 +2792,16 @@ fn boxes_inner(
             {
                 return Err(LayoutError::Unsupported(id));
             }
+            if crate::paint::backdrop::establishes(&computed) {
+                child_transformed.ancestor = true;
+            }
             let positioned = matches!(
                 position,
-                Position::Relative | Position::Absolute | Position::Fixed
+                Position::Relative | Position::Sticky | Position::Absolute | Position::Fixed
             );
             if positioned {
                 child_transformed.static_containing_block = false;
-            } else if transform.is_some() {
+            } else if transform.is_some() || crate::paint::backdrop::establishes(&computed) {
                 child_transformed.static_containing_block = true;
             }
             content = BoxRect {

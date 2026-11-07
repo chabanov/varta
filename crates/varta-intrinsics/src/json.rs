@@ -711,6 +711,27 @@ impl<'m, 's, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, M, S> {
         if self.path.contains(ptr) {
             return Err(EncodeError::Cyclic);
         }
+        let snapshot = if self.bounds.snapshots {
+            let entries: Vec<_> = fields
+                .iter()
+                .enumerate()
+                .map(|(slot, field)| {
+                    Ok(varta_common::value::RecordEntry {
+                        key: field.key,
+                        len: field.len,
+                        slot,
+                        kind: Kind::from_tag(field.kind).ok_or(EncodeError::Layout)?,
+                        optional: field.optional,
+                        present: field.present,
+                        payload: field.payload,
+                    })
+                })
+                .collect::<Result<_, EncodeError>>()?;
+            varta_common::value::snapshot_members(memory, &entries, VERSION, self.bounds)
+                .map_err(layout)?
+        } else {
+            None
+        };
         let mut indexed = false;
         // Whether a present field holds a dictionary: only then can the
         // record be a class instance with an index signature (v38).
@@ -753,7 +774,10 @@ impl<'m, 's, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, M, S> {
                 (index.is_none(), index.unwrap_or(0))
             });
         }
-        let extra = if dictionaries {
+        let extra = if let Some(snapshot) = snapshot {
+            order = snapshot.order;
+            Some(snapshot.extras)
+        } else if dictionaries {
             self.index_members(&fields, &mut order)?
         } else {
             None

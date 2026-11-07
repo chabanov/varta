@@ -181,7 +181,7 @@ fn embedded_sources(dom: bool) -> String {
             "viewEngine",
             "",
             VIEW_ENGINE_MODULE,
-            "createViewEngine,readMediaInputs,ENGINE_STATUS,ENGINE_INPUTS,MEDIA_INPUT_QUERIES",
+            "createViewEngine,readMediaInputs,ENGINE_STATUS,ENGINE_INPUTS,ENGINE_STATES,MEDIA_INPUT_QUERIES",
         ),
         (
             "viewSelect",
@@ -192,7 +192,7 @@ fn embedded_sources(dom: bool) -> String {
         ("viewNaming", "", VIEW_NAMING, "potentialNamingWork"),
         (
             "viewModel",
-            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewEngine,ENGINE_STATUS}=viewEngine;const {potentialNamingWork}=viewNaming;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork}=viewSelect;",
+            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewEngine,ENGINE_STATUS,ENGINE_STATES}=viewEngine;const {potentialNamingWork}=viewNaming;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork}=viewSelect;",
             VIEW_MODEL,
             "createViewModel",
         ),
@@ -243,7 +243,7 @@ fn embedded_sources(dom: bool) -> String {
             VIEW_FONTS,
             "createFontNamespace,packagedFamilies,faceDescriptors,FontValueError",
         ));
-        source.push_str(&module("viewDom", "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewModel}=viewModel;const {readMediaInputs,MEDIA_INPUT_QUERIES}=viewEngine;const {createFontNamespace}=viewFonts;", VIEW_DOM, "createViewDom,encodeViewEvent"));
+        source.push_str(&module("viewDom", "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewModel}=viewModel;const {readMediaInputs,MEDIA_INPUT_QUERIES,ENGINE_INPUTS,ENGINE_STATES}=viewEngine;const {createFontNamespace}=viewFonts;", VIEW_DOM, "createViewDom,encodeViewEvent"));
     } else {
         // The Worker's KV imports; the parent page never handles KV.
         source.push_str(&module(
@@ -533,5 +533,45 @@ impl BrowserBundle {
             paths.push(path);
         }
         Ok(paths)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    #[test]
+    fn bundled_view_modules_keep_the_engine_state_and_media_bindings() {
+        let registry = serde_json::to_string(&varta_common::browser::registry()).unwrap();
+        let engine =
+            base64::engine::general_purpose::STANDARD.encode(include_bytes!("view-engine.wasm"));
+        for dom in [false, true] {
+            let source = format!(
+                "const assert=require('node:assert/strict');const registry={registry};{}\nassert.equal(viewEngine.ENGINE_STATES.badInput,4);assert(viewEngine.ENGINE_INPUTS.packagedMonospace);const compiledViewEngine=new WebAssembly.Module(Buffer.from('{engine}','base64'));const model=viewModel.createViewModel({{viewEngine:compiledViewEngine}});assert(model.snapshot().nodes.length);",
+                embedded_sources(dom)
+            );
+            let mut child = Command::new("node")
+                .arg("--input-type=commonjs")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(source.as_bytes())
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "dom={dom}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 }

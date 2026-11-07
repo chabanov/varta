@@ -22,6 +22,7 @@ mod prelude {
     pub use alloc::vec;
     pub use alloc::vec::Vec;
 }
+mod animations;
 pub mod font;
 pub mod fonts;
 mod forms;
@@ -152,6 +153,7 @@ pub struct Environment {
 pub struct Sheet {
     pub text: String,
     pub rules: Vec<Rule>,
+    pub keyframes: Vec<stylesheet::Keyframes>,
     pub index: RuleIndex,
     pub work: usize,
     /// The text's UTF-16 bytes, the unit of the aggregate stylesheet budget.
@@ -274,6 +276,9 @@ pub fn inherited(property: CssProperty) -> bool {
             | P::TextTransform
             | P::PointerEvents
             // CSS Fonts 4 §7.2, §7.3; CSS Lists 3 §3.
+            | P::TextWrap | P::TextWrapMode | P::TextWrapStyle
+            | P::FontVariantNumeric
+            | P::AccentColor
             | P::FontFeatureSettings
             | P::FontVariationSettings
             | P::ListStyleType
@@ -406,6 +411,7 @@ impl Styles {
             Sheet {
                 text: text.into(),
                 rules: parsed.rules,
+                keyframes: parsed.keyframes,
                 index,
                 work: parsed.work,
                 text_units,
@@ -804,6 +810,9 @@ impl Styles {
                 .rules
                 .iter()
                 .all(|rule| rule.applies(a) == rule.applies(b))
+                && sheet.keyframes.iter().all(|k| {
+                    k.media.iter().all(|q| q.matches(a)) == k.media.iter().all(|q| q.matches(b))
+                })
         }) && (!self.index.conditional_layers() || self.index.ranks(a) == self.index.ranks(b))
     }
 
@@ -849,6 +858,25 @@ impl Styles {
             let mut own = weight;
             let mut variables = false;
             if let Some(element) = document.element(id) {
+                charge(
+                    self.sheets
+                        .values()
+                        .flat_map(|s| &s.keyframes)
+                        .map(|k| {
+                            k.name.len()
+                                + k.frames
+                                    .iter()
+                                    .map(|f| {
+                                        weight
+                                            + f.declarations
+                                                .iter()
+                                                .map(|(_, v)| weight + v.len())
+                                                .sum::<usize>()
+                                    })
+                                    .sum::<usize>()
+                        })
+                        .sum(),
+                )?;
                 charge(element.class.len())?;
                 own = own.saturating_add(element.class.len());
                 for value in element.style.values() {
@@ -971,6 +999,17 @@ impl Styles {
                 for (property, value) in &inline {
                     properties.entry(*property).or_default().push(value);
                 }
+            }
+            if document.element(id).is_some() {
+                charge(
+                    self.sheets
+                        .values()
+                        .flat_map(|s| &s.keyframes)
+                        .flat_map(|k| &k.frames)
+                        .flat_map(|f| &f.declarations)
+                        .map(|(_, v)| v.encode_utf16().count())
+                        .sum(),
+                )?;
             }
             let (checkpoint, fresh) = scope.extend(&custom);
             charge(fresh)?;

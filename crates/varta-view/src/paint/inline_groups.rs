@@ -91,6 +91,19 @@ impl Surface<'_> {
                 Primitive::Path(path, rule) => {
                     self.fill_path(&path, &paint, rule, source.transform, mask.as_ref());
                 }
+                Primitive::Shadow(shadow) => self.record(
+                    Primitive::Shadow(shadow),
+                    &paint,
+                    source.transform,
+                    mask.as_ref(),
+                ),
+                Primitive::Backdrop(_) => return Err(PaintError::Unsupported(ROOT_NODE)),
+                Primitive::Gradient(gradient) => self.record(
+                    Primitive::Gradient(gradient),
+                    &paint,
+                    source.transform,
+                    mask.as_ref(),
+                ),
                 _ => unreachable!("inline capture admits only background and glyph contours"),
             }
         }
@@ -499,6 +512,19 @@ impl Flow<'_> {
                 .transpose()?
                 .flatten();
             let mut border = self.border(node, pieces, &properties)?;
+            let mut shadow_strip = properties
+                .get(&CssProperty::BoxShadow)
+                .filter(|v| *v != "none")
+                .map(|_| {
+                    inline_decor::Decoration::strip(
+                        crate::style::border_radius(&properties).unwrap_or_else(|| "0".into()),
+                        pieces,
+                        self.units,
+                        node,
+                    )
+                })
+                .transpose()?;
+
             let hidden = hidden
                 || pixmap
                     .capture
@@ -520,8 +546,22 @@ impl Flow<'_> {
                     .map(|(strip, _, _)| strip.slice(piece, offset, node))
                     .transpose()?
                     .flatten();
+                let shadow_slice = shadow_strip
+                    .as_mut()
+                    .map(|strip| strip.slice(piece, offset, node))
+                    .transpose()?
+                    .flatten();
+                let shadow_widths = border.as_ref().map_or([0.0; 4], |(_, w, _)| *w);
+                if !hidden && let Some(slice) = &shadow_slice {
+                    shadow::inline(
+                        pixmap,
+                        (self.tree, self.env, node, work),
+                        (slice, shadow_widths, self.frame.bounds.clip),
+                        false,
+                    )?;
+                }
                 let fill = background.filter(|c| c.alpha() > 0.0);
-                if (fill.is_some() || ring.is_some())
+                if (fill.is_some() || ring.is_some() || shadow_slice.is_some())
                     && !hidden
                     && clipped(piece, self.frame.bounds.clip).is_some()
                     && let Some((rect, mask)) = self.window(pixmap, piece)?
@@ -543,6 +583,14 @@ impl Flow<'_> {
                         } else {
                             pixmap.fill_rect(rect, &paint, Transform::identity(), mask.as_ref());
                         }
+                    }
+                    if let Some(slice) = &shadow_slice {
+                        shadow::inline(
+                            pixmap,
+                            (self.tree, self.env, node, work),
+                            (slice, shadow_widths, self.frame.bounds.clip),
+                            true,
+                        )?;
                     }
                     // CSS paints each fragment's border over its own background,
                     // before content. The ring is the strip's, sliced here.
@@ -706,7 +754,7 @@ fn line_gaps(
 }
 
 /// Reserve contour work against the shared text paint allowance.
-fn charge_paint(work: &mut usize, amount: usize, node: u32) -> Result<(), PaintError> {
+pub(super) fn charge_paint(work: &mut usize, amount: usize, node: u32) -> Result<(), PaintError> {
     *work = work.saturating_add(amount);
     if *work > MAX_TEXT_PAINT_WORK {
         return Err(PaintError::Unsupported(node));
