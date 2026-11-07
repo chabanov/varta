@@ -88,8 +88,13 @@ pub enum LengthUnit {
     ViewportHeight,
     ViewportMin,
     ViewportMax,
-    /// Font-relative units the native renderer cannot resolve yet
-    /// (`ex`, `ch`, `lh`, …): valid CSS, refused when lowered.
+    /// `lh` and `rlh` (§6.1.1): the element's and the root element's
+    /// computed line height.
+    Lh,
+    Rlh,
+    /// Font-relative units that need the font's own metrics (`ex`, `ch`,
+    /// `cap`, `ic` and their root forms): valid CSS, refused when lowered
+    /// without them.
     Unresolved,
 }
 
@@ -117,7 +122,9 @@ pub fn length_unit(unit: &str) -> Option<LengthUnit> {
         "vh" | "svh" | "lvh" | "dvh" => L::ViewportHeight,
         "vmin" | "svmin" | "lvmin" | "dvmin" => L::ViewportMin,
         "vmax" | "svmax" | "lvmax" | "dvmax" => L::ViewportMax,
-        "ex" | "rex" | "cap" | "rcap" | "ch" | "rch" | "ic" | "ric" | "lh" | "rlh" => L::Unresolved,
+        "lh" => L::Lh,
+        "rlh" => L::Rlh,
+        "ex" | "rex" | "cap" | "rcap" | "ch" | "rch" | "ic" | "ric" => L::Unresolved,
         _ => return None,
     })
 }
@@ -188,6 +195,9 @@ pub struct Expression {
 pub struct Resolution {
     pub em: Option<f64>,
     pub rem: f64,
+    /// The line heights of `lh` and `rlh`; `None` leaves them unresolved.
+    pub lh: Option<f64>,
+    pub rlh: Option<f64>,
     pub viewport_width: f64,
     pub viewport_height: f64,
 }
@@ -355,6 +365,38 @@ impl Expression {
             },
         )
     }
+    /// Whether every leaf is a number, a percentage or a `px` length: the
+    /// form of a layout-time `calc()` that the style engine lowered.
+    #[must_use]
+    pub fn layout_ready(&self) -> bool {
+        let mut pending = vec![&self.node];
+        while let Some(node) = pending.pop() {
+            match node {
+                Node::Leaf(_, Unit::Number | Unit::Percent) => {}
+                Node::Leaf(_, Unit::Length(LengthUnit::Absolute(factor))) if *factor == 1.0 => {}
+                Node::Leaf(..) => return false,
+                Node::Negate(inner) | Node::Invert(inner) => pending.push(inner),
+                Node::Sum(items) | Node::Product(items) | Node::Min(items) | Node::Max(items) => {
+                    pending.extend(items.iter());
+                }
+                Node::Clamp(items) => pending.extend(items.iter()),
+            }
+        }
+        true
+    }
+    /// The used value of a layout-time length (§10.10): percentages resolve
+    /// against `basis`, in CSS pixels; a top-level NaN is zero (§10.12).
+    #[must_use]
+    pub fn resolve_percentages(&self, resolution: &Resolution, basis: f64) -> Option<f64> {
+        self.evaluate_with(
+            resolution,
+            Flags {
+                percent_basis: Some(basis),
+                ..Flags::default()
+            },
+        )
+        .map(|evaluated| evaluated.value)
+    }
     fn evaluate_with(&self, resolution: &Resolution, mut flags: Flags) -> Option<Evaluated> {
         let value = evaluate(&self.node, resolution, &mut flags)?;
         // §10.12: a top-level NaN becomes zero.
@@ -398,6 +440,8 @@ struct Flags {
     percent: bool,
     other: bool,
     em_as_percent: bool,
+    /// Resolve percentages against this basis (a used value at layout).
+    percent_basis: Option<f64>,
 }
 
 fn evaluate(node: &Node, resolution: &Resolution, flags: &mut Flags) -> Option<f64> {
@@ -406,6 +450,10 @@ fn evaluate(node: &Node, resolution: &Resolution, flags: &mut Flags) -> Option<f
             let scale = match unit {
                 Unit::Number => 1.0,
                 Unit::Percent => {
+                    if let Some(basis) = flags.percent_basis {
+                        flags.other = true;
+                        return Some(value / 100.0 * basis);
+                    }
                     flags.percent = true;
                     return Some(*value);
                 }
@@ -422,6 +470,8 @@ fn evaluate(node: &Node, resolution: &Resolution, flags: &mut Flags) -> Option<f
                         LengthUnit::Absolute(factor) => *factor,
                         LengthUnit::Em => resolution.em?,
                         LengthUnit::Rem => resolution.rem,
+                        LengthUnit::Lh => resolution.lh?,
+                        LengthUnit::Rlh => resolution.rlh?,
                         LengthUnit::ViewportWidth => vw,
                         LengthUnit::ViewportHeight => vh,
                         LengthUnit::ViewportMin => vw.min(vh),
@@ -494,6 +544,8 @@ mod tests {
     const RESOLUTION: Resolution = Resolution {
         em: Some(10.0),
         rem: 16.0,
+        lh: Some(12.0),
+        rlh: Some(20.0),
         viewport_width: 800.0,
         viewport_height: 600.0,
     };
@@ -554,6 +606,13 @@ mod tests {
                 .unwrap()
                 .mixed
         );
-        assert!(expression("calc(1lh)").evaluate(&RESOLUTION).is_none());
+        assert_eq!(
+            expression("calc(2lh + 1rlh)")
+                .evaluate(&RESOLUTION)
+                .unwrap()
+                .value,
+            44.0
+        );
+        assert!(expression("calc(1ch)").evaluate(&RESOLUTION).is_none());
     }
 }

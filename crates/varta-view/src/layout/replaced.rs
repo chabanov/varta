@@ -339,18 +339,19 @@ pub(crate) struct AtomBox {
 }
 
 /// Size an image of a line of text from its layout style. `None` when a
-/// size, margin or padding is a percentage: it resolves against the
+/// size, margin or padding is a percentage (or a `calc()` with one): it
+/// resolves against the
 /// containing block, which the line does not fix while it is measured.
 pub(super) fn atom(style: &Style, replaced: Replaced) -> Option<AtomBox> {
     use taffy::style::{ExpandedLengthPercentage, ExpandedLengthPercentageAuto};
     let length = |value: LengthPercentage| match value.expand() {
         ExpandedLengthPercentage::Length(value) => Some(value),
-        ExpandedLengthPercentage::Percent(_) => None,
+        ExpandedLengthPercentage::Percent(_) | ExpandedLengthPercentage::Calc(_) => None,
     };
     let margin = |value: LengthPercentageAuto| match value.expand() {
         ExpandedLengthPercentageAuto::Length(value) => Some(value),
         ExpandedLengthPercentageAuto::Auto => Some(0.0),
-        ExpandedLengthPercentageAuto::Percent(_) => None,
+        ExpandedLengthPercentageAuto::Percent(_) | ExpandedLengthPercentageAuto::Calc(_) => None,
     };
     // `Some(None)` is `auto` (or `none`), `None` refuses.
     let dimension = |value: Dimension| {
@@ -363,7 +364,7 @@ pub(super) fn atom(style: &Style, replaced: Replaced) -> Option<AtomBox> {
     let bound = |value: LengthPercentageAuto| match value.expand() {
         ExpandedLengthPercentageAuto::Length(value) => Some(Some(value)),
         ExpandedLengthPercentageAuto::Auto => Some(None),
-        ExpandedLengthPercentageAuto::Percent(_) => None,
+        ExpandedLengthPercentageAuto::Percent(_) | ExpandedLengthPercentageAuto::Calc(_) => None,
     };
     let sides = |rect: Rect<LengthPercentage>| {
         Some([
@@ -412,7 +413,8 @@ pub(super) fn atom(style: &Style, replaced: Replaced) -> Option<AtomBox> {
 pub(super) fn compute(inputs: LayoutInput, style: &Style, replaced: Replaced) -> LayoutOutput {
     let Replaced { natural, ratio } = replaced;
     let parent = inputs.parent_size;
-    let calc = |_: *const (), value: f32| value;
+    // Layout-time `calc()` handles resolve against their basis.
+    let calc = crate::calc::resolve;
     let padding = style.padding.resolve_or_zero(parent.width, calc);
     let border = style.border.resolve_or_zero(parent.width, calc);
     let edges = Size {

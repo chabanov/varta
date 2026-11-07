@@ -8,15 +8,15 @@ any previous check whose scope includes those inputs.
 
 ## Current verification evidence — 2026-11-06
 
-- **Latest successful full gate:** `target/verification/20261106-164451-rnhotsbe/report.json` passes every
-  command with unchanged inputs: **4301 Rust tests, 0 failures, 25 ignored;
-  185 browser Node tests** (fewer than before because the browser host's
-  stylesheet and cascade logic moved from JavaScript into the Rust engine
-  compiled to Wasm, with its tests); checked-v38 conformance matches its
-  baseline. It covers merged `main` with the K8 T2 CSS engine stages S1–S3
-  and the Wasm style bridge, the K8 T1 Tailwind compiler and its follow-ups,
-  native `img` to the standards, the iteration protocol, overlay scrollbars
-  and the audit fixes.
+- **Latest successful full gate:** `target/verification/20261106-175014-3nwe44o_/report.json` passes every
+  command with unchanged inputs: **4327 Rust tests, 0 failures, 25 ignored;
+  185 browser Node tests**; checked-v38 conformance matches its baseline
+  (155 passed, 5 known unsupported out of 160). It covers merged `main` with
+  the K9 A TypeScript type level (conditional, mapped and template literal
+  types, utility types, type predicates, literal inference) on top of the
+  first K9 D standard library stream, the K8 CSS engine with its Wasm bridge,
+  the Tailwind compiler, native `img`, the iteration protocol, overlay
+  scrollbars and the audit fixes.
 - **One full gate at a time:** `verify.py full` waits for the machine-wide
   lock (`VARTA_GATE_LOCK`, default `varta-full-gate.lock` in the temporary
   directory) before taking its fingerprint, so gates of several worktrees
@@ -796,6 +796,15 @@ python3 scripts/build-view-engine.py
 VARTA_UPDATE_VIEW_ENGINE_EXPECTED=1 cargo test -p varta-project --lib --locked view_engine
 cargo test -p varta-project --lib --locked view_engine
 node --test crates/varta-project/src/browser/view-engine.test.mjs
+```
+
+Layout-time math (`calc()` of lengths and percentages) has its own tests in
+the engine grammar, the native calc table and layout:
+
+```sh
+cargo test -p varta-common --lib --locked layout_math
+cargo test -p varta-view --lib --locked calc
+cargo test -p varta-view --test integration --locked percentage_and_length
 ```
 
 The desktop shell's system preferences (macOS reduced motion and increased

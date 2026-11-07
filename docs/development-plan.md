@@ -32,9 +32,9 @@ their current limitations and the evidence behind this checkpoint.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last recorded successful full gate | Merged `main` with the K8 T2 CSS engine (S1–S3) and its Wasm bridge for the browser host, the K8 T1 Tailwind compiler, native `img` to the standards, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **4301 Rust tests passed, 0 failures, 25 ignored; 185 browser Node tests passed** (the stylesheet logic moved from JS into Wasm with its tests); conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-164451-rnhotsbe/report.json`. Linux CI and other platforms not run |
+| Last recorded successful full gate | Merged `main` with the K9 A TypeScript type level on top of the first K9 D standard library stream, the K8 CSS engine and Wasm bridge, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **4327 Rust tests passed, 0 failures, 25 ignored; 185 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-175014-3nwe44o_/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **146 passed, 5 known unsupported out of 151** after the K9 D standard-library cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **155 passed, 5 known unsupported out of 160** after the K9 A type-level cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -7947,6 +7947,61 @@ sections is [view CSS engine](architecture.md#view-css-engine-k8-t2-and-t3).
   59 distinct), logical properties (S4), shadows (S6) and the values native
   layout lacks (`inline-flex`, `inline-block`, `sticky`, `fit-content`,
   `-webkit-box`).
+
+#### K8 T2 items (2) and (5): font-relative units and layout-time math (2026-11-06)
+
+Owner decision of the same day: (2) and (5) are required by the standards.
+
+- The style engine computes font sizes and line heights (`varta_style::font`:
+  the user-agent font rows, Blink's monospace and minimum-size rules, moved
+  from the native renderer), so `em`, `lh` and `rlh` resolve in every
+  property on both hosts, and registered length values compute at the
+  declaring element before they inherit (Properties and Values API 1 §2.4).
+  The browser host passes its `medium` size (the `all: initial` shadow host)
+  and whether a packaged face names `monospace`; the engine receives each
+  element's tag.
+- Sums of lengths and percentages resolve at layout (Values 4 §10.10) for
+  sizes, margins, padding, gaps, the flex basis, insets and
+  `vertical-align`, through a recorded Taffy 0.15.1 patch that lets the
+  high-level tree resolve calc handles (an index, never a pointer).
+- Chrome oracle: two new scenes (font-relative units with a registered
+  length, percentage-and-length math), `bridge` 503 and `platform` 491
+  checks pass at 1x, 1.25x and 2x with no new deviation.
+- **Dependency record: Taffy 0.15.1 vendored with a patch** (the dependency
+  rule of CLAUDE.md §5, as for the Parley patch). Why: upstream's `calc`
+  feature stores a `calc()` length as an opaque handle and asks the layout
+  tree to resolve it, but the high-level `TaffyTree` that native layout uses
+  hard-codes the answer zero, so no Taffy user above the low-level traits
+  can resolve `calc()`. Alternatives rejected: reimplementing Taffy's tree
+  over its low-level layout traits (a second copy of `TaffyTree` and its
+  cache, view and rounding code), and refusing sums of lengths and
+  percentages (they are required by CSS Values 4 §10.10 and the owner
+  decision). Change: one upstream file, `src/tree/taffy_tree.rs`, gains a
+  `calc_resolver` field and `TaffyTree::set_calc_resolver`; without a
+  resolver the tree answers zero as upstream. No dependency version changes;
+  the lockfile changes only Taffy's source selection (registry to
+  `vendor/taffy`), and the `calc` feature is enabled for `varta-view`.
+  Provenance: the checksum-pinned crates.io archive (SHA-256 in
+  `vendor/taffy/VARTA-PATCH.md`); a recursive comparison with the unpacked
+  release finds only the patched file, the two patch records and the
+  dropped `Cargo.lock`/`.cargo_vcs_info.json`. Safety: the handle Varta
+  passes is a table index made with `ptr::without_provenance`, never a
+  pointer, and neither Taffy nor Varta dereferences it, so no `unsafe` is
+  added to workspace code. Removal criterion: upstream exposing a resolver
+  for `TaffyTree` (or Varta moving to the low-level API), after which the
+  vendored copy is dropped and the lockfile returns to the registry source.
+- Remaining for (2): `ex`, `ch`, `cap`, `ic` (and root forms), `lh` with
+  `line-height: normal` and `rlh` need the metrics of the first available
+  font. Owner decision (2026-11-06), "fonts plus host": the shared engine
+  reads the first available font's metrics from packaged font bytes with
+  read-fonts (one implementation for both hosts); for system and generic
+  families the host supplies them (natively through CoreText, as the emoji
+  platform metrics are read; on the web the bridge only measures through
+  browser APIs and passes the numbers into Wasm, with no metric logic in
+  JavaScript); the Values 4 fallbacks apply only when no metrics are
+  available at all; the goal is Chrome's values with no recorded deviation
+  for system fonts. Sums with percentages in `border-radius`, `transform`,
+  `object-position` and grid tracks wait for those consumers.
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 

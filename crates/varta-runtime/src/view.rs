@@ -115,6 +115,9 @@ impl Session {
         }
         environment.scrollbars = layout.scrollbars;
         environment.preferences = layout.preferences;
+        // The text measurer's medium size is the base of computed font
+        // sizes (and so of `em`) in snapshots as in layout.
+        environment.font.medium = f64::from(layout.font_size);
         if let Some(size) = layout.root_font_size {
             environment.root_font_size = size;
         }

@@ -25,6 +25,8 @@ pub struct Scope<'a> {
 #[derive(Clone)]
 enum Piece<'a> {
     Text(&'a str),
+    /// A computed value the scope made (an absolutized registered value).
+    Owned(alloc::rc::Rc<str>),
     Reference(usize),
 }
 struct Value<'a> {
@@ -134,6 +136,17 @@ impl<'a> Value<'a> {
             self.last = last;
         }
         Some(())
+    }
+    /// A value of one made text.
+    fn owned(text: String) -> Self {
+        let text: alloc::rc::Rc<str> = text.into();
+        let mut value = Self::new();
+        value.units = text.encode_utf16().count();
+        value.first = text.chars().next();
+        value.last = text.chars().next_back();
+        value.token = Token::text(&text);
+        value.pieces.push(Piece::Owned(text));
+        value
     }
     fn text(&mut self, text: &'a str) -> Option<()> {
         self.append(
@@ -285,13 +298,21 @@ impl<'a> Scope<'a> {
         while let Some(piece) = pending.pop() {
             match piece {
                 Piece::Text(text) => out.push_str(text),
+                Piece::Owned(text) => out.push_str(text),
                 Piece::Reference(id) => pending.extend(self.nodes[*id].pieces.iter().rev()),
             }
         }
         out.trim().to_owned()
     }
-    /// Resolve this element's declarations before making them inherited values.
-    pub fn extend(&mut self, raw: BTreeMap<&'a str, &'a str>) {
+    /// Resolve this element's declarations before making them inherited
+    /// values. `absolutize` computes a registered value whose syntax has
+    /// lengths (Properties and Values API 1 §2.4) against the element's
+    /// font; `None` keeps it as written.
+    pub fn extend(
+        &mut self,
+        raw: BTreeMap<&'a str, &'a str>,
+        absolutize: &dyn Fn(&str) -> Option<String>,
+    ) {
         if raw.is_empty() {
             return;
         }
@@ -354,10 +375,19 @@ impl<'a> Scope<'a> {
                                     // A registered syntax is checked on the
                                     // substituted value (Properties and
                                     // Values API 1 §2.4).
-                                    if registration.is_some_and(|registration| {
-                                        !registration.admits(&self.materialize(&value.pieces))
-                                    }) {
+                                    let text =
+                                        registration.map(|_| self.materialize(&value.pieces));
+                                    if let (Some(registration), Some(text)) = (registration, &text)
+                                        && !registration.admits(text)
+                                    {
                                         resolved[i] = self.unset(names[i]);
+                                    } else if let Some(computed) = registration
+                                        .filter(|registration| registration.has_lengths())
+                                        .and(text.as_deref())
+                                        .and_then(absolutize)
+                                    {
+                                        resolved[i] = Some(self.nodes.len());
+                                        self.nodes.push(Value::owned(computed));
                                     } else if let [Piece::Reference(id)] = value.pieces.as_slice() {
                                         resolved[i] = Some(*id);
                                     } else {
@@ -503,10 +533,12 @@ impl<'a> Scope<'a> {
 
 #[cfg(test)]
 mod tests {
+    /// Keeps every registered value as written.
+    const KEEP: fn(&str) -> Option<String> = |_| None;
     use super::*;
     fn scope<'a>(definitions: impl IntoIterator<Item = (&'a str, &'a str)>) -> Scope<'a> {
         let mut scope = Scope::default();
-        scope.extend(definitions.into_iter().collect());
+        scope.extend(definitions.into_iter().collect(), &KEEP);
         scope
     }
     #[test]
@@ -530,17 +562,17 @@ mod tests {
     #[test]
     fn computed_inheritance_freezes_parent_aliases_and_invalid_children_mask_them() {
         let mut scope = scope([("base", "#123"), ("alias", "var(--base)")]);
-        scope.extend(BTreeMap::from([("base", "#456")]));
+        scope.extend(BTreeMap::from([("base", "#456")]), &KEEP);
         assert_eq!(scope.substitute("var(--alias)").as_deref(), Some("#123"));
-        scope.extend(BTreeMap::from([("alias", "var(--missing)")]));
+        scope.extend(BTreeMap::from([("alias", "var(--missing)")]), &KEEP);
         assert_eq!(
             scope.substitute("var(--alias,#abc)").as_deref(),
             Some("#abc")
         );
         let mut cross = Scope::default();
-        cross.extend(BTreeMap::from([("a", "#123")]));
-        cross.extend(BTreeMap::from([("b", "var(--a)")]));
-        cross.extend(BTreeMap::from([("a", "var(--b)")]));
+        cross.extend(BTreeMap::from([("a", "#123")]), &KEEP);
+        cross.extend(BTreeMap::from([("b", "var(--a)")]), &KEEP);
+        cross.extend(BTreeMap::from([("a", "var(--b)")]), &KEEP);
         assert_eq!(cross.substitute("var(--a)").as_deref(), Some("#123"));
     }
     #[test]
@@ -563,19 +595,25 @@ mod tests {
     #[test]
     fn empty_and_wide_fallbacks_are_computed_values_not_missing_bindings() {
         let mut env = scope([("tone", "#123")]);
-        env.extend(BTreeMap::from([
-            ("tone", "var(--missing,inherit)"),
-            ("empty", "var(--missing,)"),
-        ]));
+        env.extend(
+            BTreeMap::from([
+                ("tone", "var(--missing,inherit)"),
+                ("empty", "var(--missing,)"),
+            ]),
+            &KEEP,
+        );
         assert_eq!(env.substitute("var(--tone)").as_deref(), Some("#123"));
         assert_eq!(env.substitute("var(--empty,#abc)").as_deref(), Some(""));
         assert_eq!(env.substitute("var(--absent,) 2px").as_deref(), Some("2px"));
         let mut escape = Scope::default();
-        escape.extend(BTreeMap::from([
-            ("a", "var(--c,#abc)"),
-            ("b", "var(--c,var(--a))"),
-            ("c", "var(--b)"),
-        ]));
+        escape.extend(
+            BTreeMap::from([
+                ("a", "var(--c,#abc)"),
+                ("b", "var(--c,var(--a))"),
+                ("c", "var(--b)"),
+            ]),
+            &KEEP,
+        );
         assert_eq!(escape.substitute("var(--a)").as_deref(), Some("#abc"));
         let invalid = scope([("a", "var(--missing) var(--b)"), ("b", "var(--a,#abc)")]);
         assert_eq!(invalid.substitute("var(--b,#789)").as_deref(), Some("#789"));
@@ -583,14 +621,17 @@ mod tests {
     #[test]
     fn empty_fragments_preserve_boundaries_keywords_and_quoted_empty_strings() {
         let mut env = scope([("keyword", "#456")]);
-        env.extend(BTreeMap::from([
-            ("a", "var(--empty)var(--b)"),
-            ("b", "var(--a)"),
-            ("empty", "var(--missing,)"),
-            ("keyword", "var(--empty)InHeRiT"),
-            ("n", "10"),
-            ("quoted", "\"\""),
-        ]));
+        env.extend(
+            BTreeMap::from([
+                ("a", "var(--empty)var(--b)"),
+                ("b", "var(--a)"),
+                ("empty", "var(--missing,)"),
+                ("keyword", "var(--empty)InHeRiT"),
+                ("n", "10"),
+                ("quoted", "\"\""),
+            ]),
+            &KEEP,
+        );
         assert_eq!(env.substitute("var(--empty,#abc)").as_deref(), Some(""));
         assert_eq!(
             env.substitute("var(--n)var(--empty)px").as_deref(),
@@ -625,13 +666,13 @@ mod tests {
     #[test]
     fn css_wide_keywords_apply_before_substitution_and_names_are_case_sensitive() {
         let mut scope = scope([("tone", "#123"), ("Tone", "#456")]);
-        scope.extend(BTreeMap::from([
-            ("tone", "InHeRiT"),
-            ("alias", "VAR(--Tone)"),
-        ]));
+        scope.extend(
+            BTreeMap::from([("tone", "InHeRiT"), ("alias", "VAR(--Tone)")]),
+            &KEEP,
+        );
         assert_eq!(scope.substitute("var(--tone)").as_deref(), Some("#123"));
         assert_eq!(scope.substitute("var(--alias)").as_deref(), Some("#456"));
-        scope.extend(BTreeMap::from([("tone", "initial")]));
+        scope.extend(BTreeMap::from([("tone", "initial")]), &KEEP);
         assert_eq!(
             scope.substitute("var(--tone,#abc)").as_deref(),
             Some("#abc")
@@ -665,6 +706,7 @@ mod tests {
                 .zip(&values)
                 .map(|(a, b)| (a.as_str(), b.as_str()))
                 .collect(),
+            &KEEP,
         );
         assert_eq!(
             scope.substitute("var(--p19,fallback)").as_deref(),
@@ -704,7 +746,7 @@ mod tests {
                     .map(|(a, b)| (a.as_str(), b.as_str()))
                     .collect();
                 let mut scope = Scope::default();
-                scope.extend(raw);
+                scope.extend(raw, &KEEP);
                 assert_eq!(scope.substitute("var(--v0000)").as_deref(), Some("#123"));
             })
             .unwrap()

@@ -16,6 +16,12 @@
   `TypeError` at the narrowed read, and a copied array view does not alias.
   Callable objects with properties stay refused. Conformance: 160 passed, 5
   known unsupported of 165 (new row `ts-class-subtyping`).
+- K8 T2 font-relative units: the style engine computes font sizes and line
+  heights, so `em`, `lh` and `rlh` work in every property on both hosts;
+  registered length values compute to absolute lengths before they inherit;
+  sums of lengths and percentages (`calc(50% - 1rem)`) resolve at layout for
+  sizes, margins, padding, gaps, flex basis, insets and `vertical-align`
+  (Taffy is vendored with a recorded patch for calc resolution).
 - V38 K9 type level (selector `type_level`): conditional types with
   distribution, `infer` (constrained, tuple, function, object and template
   patterns) and recursive generic aliases; mapped types with `as` remapping

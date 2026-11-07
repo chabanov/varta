@@ -1,6 +1,30 @@
 //! Native CSS length conversion against explicit host reference metrics.
 use crate::Environment;
-use taffy::prelude::{FromLength, FromPercent, LengthPercentageAuto, auto, length, percent};
+use taffy::prelude::{
+    Dimension, FromLength, FromPercent, LengthPercentage, LengthPercentageAuto, auto, length,
+    percent,
+};
+
+/// A Taffy length type that holds a layout-time `calc()` handle
+/// ([`crate::calc`]).
+pub(crate) trait FromCalc {
+    fn from_calc(handle: *const ()) -> Self;
+}
+impl FromCalc for LengthPercentage {
+    fn from_calc(handle: *const ()) -> Self {
+        Self::calc(handle)
+    }
+}
+impl FromCalc for LengthPercentageAuto {
+    fn from_calc(handle: *const ()) -> Self {
+        Self::calc(handle)
+    }
+}
+impl FromCalc for Dimension {
+    fn from_calc(handle: *const ()) -> Self {
+        Self::calc(handle)
+    }
+}
 
 pub(crate) const MAX_LENGTH: f32 = 1_000_000.0;
 
@@ -33,12 +57,15 @@ impl Units {
         Self::bounded(pixels, signed).then_some(pixels)
     }
 
-    pub(crate) fn length<T: FromLength + FromPercent>(
+    pub(crate) fn length<T: FromLength + FromPercent + FromCalc>(
         self,
         value: &str,
         signed: bool,
     ) -> Option<T> {
-        if let Some(number) = value.strip_suffix('%') {
+        if value.ends_with(')') {
+            // A lowered layout-time `calc()` (CSS Values 4 §10.10).
+            crate::calc::handle(value).map(T::from_calc)
+        } else if let Some(number) = value.strip_suffix('%') {
             let number = number.parse::<f32>().ok()?;
             Self::bounded(number, signed).then(|| percent(number / 100.0))
         } else {

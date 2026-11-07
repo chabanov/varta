@@ -7,7 +7,7 @@
 use crate::prelude::*;
 use crate::{BudgetExceeded, Computed, Document, Element, Environment, SheetError, Styles};
 use varta_common::view::{
-    CssProperty, DRAFT_MAX_CASCADE_WORK, DRAFT_MAX_EXPANDED_VALUE_BYTES, ROOT_NODE, css,
+    CssProperty, DRAFT_MAX_CASCADE_WORK, DRAFT_MAX_EXPANDED_VALUE_BYTES, ROOT_NODE, Tag, css,
 };
 
 /// The status of one session call (`0` is success).
@@ -35,7 +35,8 @@ pub mod status {
 struct Node {
     parent: Option<u32>,
     children: Vec<u32>,
-    element: bool,
+    /// The element's tag; `None` for a text node.
+    tag: Option<Tag>,
     class: String,
     style: BTreeMap<CssProperty, String>,
     disabled: bool,
@@ -57,7 +58,8 @@ impl Default for Mirror {
         nodes.insert(
             ROOT_NODE,
             Node {
-                element: true,
+                // The view root is a `div` (the L0 root container).
+                tag: Some(Tag::Div),
                 ..Node::default()
             },
         );
@@ -87,8 +89,9 @@ impl Document for Mirror {
     fn element(&self, id: u32) -> Option<Element<'_>> {
         self.nodes
             .get(&id)
-            .filter(|node| node.element)
-            .map(|node| Element {
+            .and_then(|node| Some((node, node.tag?)))
+            .map(|(node, tag)| Element {
+                tag,
                 class: &node.class,
                 style: &node.style,
                 disabled: node.disabled,
@@ -166,15 +169,15 @@ impl Session {
     pub fn abort(&mut self) {
         self.working = None;
     }
-    /// `create_element` / `create_text`.
-    pub fn create(&mut self, id: u32, element: bool) -> u32 {
+    /// `create_element` (with its tag) / `create_text` (`None`).
+    pub fn create(&mut self, id: u32, tag: Option<Tag>) -> u32 {
         let Some(tree) = self.tree() else {
             return status::MISUSE;
         };
         tree.nodes.insert(
             id,
             Node {
-                element,
+                tag,
                 ..Node::default()
             },
         );
@@ -413,12 +416,20 @@ pub mod inputs {
     pub const ANY_POINTER_SHIFT: u32 = 9;
     /// Two-bit fields.
     pub const FIELD: u32 = 0b11;
+    /// The generic `monospace` names a packaged face, so it does not keep
+    /// the fixed-font size ([`crate::font::FontBase`]).
+    pub const PACKAGED_MONOSPACE: u32 = 1 << 11;
 }
 
-/// The environment of recorded inputs: the viewport and root font size in
-/// CSS pixels and the [`inputs`] bit set.
+/// The environment of recorded inputs: the viewport, the root and medium
+/// font sizes in CSS pixels and the [`inputs`] bit set.
 #[must_use]
-pub fn environment(width: f64, height: f64, root_font_size: f64, flags: u32) -> Environment {
+pub fn environment(
+    (width, height): (f64, f64),
+    root_font_size: f64,
+    medium_font_size: f64,
+    flags: u32,
+) -> Environment {
     use varta_common::view::stylesheet::media::{Contrast, Hover, Pointer, Preferences};
     let pointer = |shift: u32| match (flags >> shift) & inputs::FIELD {
         1 => Pointer::Coarse,
@@ -456,6 +467,11 @@ pub fn environment(width: f64, height: f64, root_font_size: f64, flags: u32) -> 
             root_font_size,
             viewport_width: width,
             viewport_height: height,
+            font: None,
+        },
+        font: crate::font::FontBase {
+            medium: medium_font_size,
+            fixed_monospace: flags & inputs::PACKAGED_MONOSPACE == 0,
         },
     }
 }
