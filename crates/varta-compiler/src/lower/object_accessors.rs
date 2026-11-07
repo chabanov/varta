@@ -408,6 +408,7 @@ impl Lower<'_> {
             })
             .collect::<Result<_>>()?;
         self.types.subtyping.note_view(physical, logical);
+        self.types.receivers.logical.insert(shape, logical);
         let built = Expr {
             span,
             ty: physical,
@@ -653,6 +654,14 @@ impl Lower<'_> {
             return Ok(vec![S::Return(None)]);
         }
         let mut body = Vec::new();
+        // An object of a layout with other own keys is refreshed as itself.
+        if let Type::Record(shape) = ty {
+            for (test, value) in self.wider_layouts(shape, span) {
+                if let Some(call) = self.refresh_call(value, span)? {
+                    body.push(S::If(test, vec![call, S::Return(None)], vec![]));
+                }
+            }
+        }
         if let Type::Class(class) = ty {
             let seen = identities(self.types)?;
             for (test, derived) in self.subclass_tests(class, span)? {
@@ -1376,7 +1385,14 @@ impl Lower<'_> {
         let record = Type::Record(shape);
         let text = text_type(self.types)?;
         let fields = self.types.records[shape as usize].fields.clone();
-        let mut body = self.json_enter(record, "Object", span)?;
+        // An object of a layout with other own keys serializes as itself.
+        let mut body = Vec::new();
+        for (test, value) in self.wider_layouts(shape, span) {
+            let serialized =
+                self.json_value(value, local_value(span, JSON_KEY, Type::String), span)?;
+            body.push(S::If(test, vec![S::Return(Some(serialized))], vec![]));
+        }
+        body.extend(self.json_enter(record, "Object", span)?);
         let source = self.hidden(record);
         body.push(S::Init(source, local_value(span, 0, record)));
         let keys = self.enumerate_value(
@@ -1656,6 +1672,46 @@ impl Lower<'_> {
         let elements = self.unknown_array(local_value(span, 0, Type::Unknown))?;
         holders.push((array, elements));
         Ok(holders)
+    }
+
+    /// The record layouts with other own keys that a value of view
+    /// `shape` (local 0) may hold: the test that it holds one, and the object
+    /// as that layout (an object with accessors as the type it is viewed as).
+    fn wider_layouts(&mut self, shape: u32, span: swc_common::Span) -> Vec<(Expr, Expr)> {
+        let names = |types: &ir::ValueTypes, id: u32| -> Vec<String> {
+            types.records[id as usize]
+                .fields
+                .iter()
+                .filter(|field| !hidden_field(&field.name))
+                .map(|field| field.name.clone())
+                .collect()
+        };
+        let own = names(self.types, shape);
+        let mut layouts = Vec::new();
+        for layout in self.types.subtyping.view_sources(shape) {
+            let read = self.types.receivers.logical(layout).unwrap_or(layout);
+            if layout == shape || read == shape || names(self.types, read) == own {
+                continue;
+            }
+            let descriptor = self.hidden(Type::Number);
+            layouts.push((
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::IsClass {
+                        value: Box::new(local_value(span, 0, Type::Record(shape))),
+                        shapes: vec![layout],
+                        slot: descriptor,
+                    },
+                },
+                Expr {
+                    span,
+                    ty: Type::Record(read),
+                    kind: E::Reinterpret(Box::new(local_value(span, 0, Type::Record(shape)))),
+                },
+            ));
+        }
+        layouts
     }
 
     /// For each class derived from `class`: the test that the instance in
@@ -2080,7 +2136,7 @@ fn push(span: swc_common::Span, array: Expr, item: Expr) -> S {
 fn text_type(types: &mut ir::ValueTypes) -> Result<Type> {
     unions::intern(vec![Type::String, Type::Undefined], types)
 }
-fn local_value(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
+pub(super) fn local_value(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
     Expr {
         span,
         ty,
@@ -2364,6 +2420,8 @@ pub(super) fn finish(
     if !boxed.is_empty() {
         views.insert(UNKNOWN_REACHES);
     }
+    // Synthesized walks read each layout themselves (no key-copy notes).
+    types.layouts.exact = true;
     if let Some((source, span)) = types.receivers.origin.clone() {
         let functions_map = BTreeMap::new();
         let mut effects = BTreeMap::new();
@@ -2440,13 +2498,14 @@ pub(super) fn finish(
         .iter()
         .filter(|(index, _)| !serializers.contains(index))
         .map(|(_, function)| function);
+    types.layouts.exact = false;
     refuse_host_reads(&views, types, functions.iter().chain(others))
 }
 
 impl<'a> Lower<'a> {
     /// A lowering context for a synthesized function `index` outside every
     /// source function.
-    fn root(
+    pub(super) fn root(
         source: &'a Source,
         types: &'a mut ir::ValueTypes,
         functions: &'a BTreeMap<String, Signature>,
@@ -2500,7 +2559,7 @@ impl<'a> Lower<'a> {
         }
     }
     /// The synthesized function of this context's locals and `body`.
-    fn function(
+    pub(super) fn function(
         self,
         body: Vec<S>,
         params: Vec<Type>,

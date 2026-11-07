@@ -55,6 +55,10 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("accessor_holders"),
     case!("accessor_unknown"),
     case!("accessor_spreads"),
+    case!("layout_spreads"),
+    case!("layout_rests"),
+    case!("loose_receivers"),
+    case!("optional_spreads"),
     case!("computed_keys"),
     case!("destructuring"),
     case!("callback_patterns"),
@@ -175,6 +179,49 @@ fn accessor_keys_and_getter_calls_follow_node_order() {
 fn accessor_objects_in_instances_and_unknown_match_node() {
     matches_node("accessor_holders");
     matches_node("accessor_unknown");
+}
+
+/// Spreads and rests of views of objects of other layouts copy the actual
+/// object's own properties (`layout_spreads`: two lowering passes and
+/// run-time copies by layout); an optional spread result keeps `undefined`
+/// in its absent slots, so serializers accept it (it used to trap).
+#[test]
+fn layout_spreads_and_rests_match_node() {
+    matches_node("layout_spreads");
+    matches_node("layout_rests");
+    matches_node("optional_spreads");
+}
+
+/// Methods that use `this` see receivers of other layouts: a spread copy,
+/// and an object that has the members the method reads.
+#[test]
+fn methods_on_receivers_of_other_layouts_match_node() {
+    matches_node("loose_receivers");
+}
+
+/// A receiver whose member has another type than the method's `this` type
+/// declares (TypeScript does not check the receiver of a method without a
+/// `this` parameter) throws `TypeError` at that read; Node would read the
+/// value (checked reads at TypeScript unsoundness).
+#[test]
+fn receivers_with_members_of_other_types_throw_at_the_read() {
+    let source = "interface Named { label: string; name(): string }
+         interface Labelled { label: number; name: () => string }
+         export function main(): void {
+           const named: Named = { label: 'n', name(): string { return this.label; } };
+           const labelled: Labelled = { label: 5, name: named.name };
+           try { console.log(labelled.name()); } catch (error) {
+             if (error instanceof TypeError) { console.log(error.message); }
+           }
+           console.log(named.name());
+         }";
+    assert_eq!(
+        logs(source),
+        [
+            "property label of this object does not have the type the method's this type declares",
+            "n"
+        ]
+    );
 }
 
 /// Spreads in a literal with getters and setters copy data properties as

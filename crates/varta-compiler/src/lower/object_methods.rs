@@ -18,6 +18,7 @@
 //! Getters and setters of object literals take their receiver the same way
 //! (`object_accessors`).
 use super::*;
+use std::collections::BTreeSet;
 use swc_ecma_visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 /// The hidden binding of a method's receiver; `#` cannot start a source
@@ -47,6 +48,13 @@ pub(crate) struct Receivers {
     pub(super) read_only: BTreeMap<(u32, String), Expr>,
     /// The program has an object literal with a getter or setter.
     pub(super) accessors: bool,
+    /// The type each physical shape of an object with accessors is viewed
+    /// as (`object_accessors`).
+    pub(super) logical: BTreeMap<u32, u32>,
+    /// The fields of each literal type whose methods use `this`.
+    this_methods: BTreeMap<u32, BTreeSet<String>>,
+    /// The object types and field names of `o.m(...)` calls.
+    callers: BTreeSet<(Type, String)>,
     /// `JSON.stringify` materializers of objects with accessors, by type
     /// (`object_accessors`): the function and whether its body is written.
     pub(super) materializers: BTreeMap<Type, (usize, bool)>,
@@ -57,6 +65,10 @@ pub(crate) struct Receivers {
     pub(super) origin: Option<(Source, swc_common::Span)>,
 }
 impl Receivers {
+    /// The type the physical shape of an object with accessors is viewed as.
+    pub(crate) fn logical(&self, shape: u32) -> Option<u32> {
+        self.logical.get(&shape).copied()
+    }
     /// Whether the program has an object literal with a getter or setter.
     pub(crate) fn has_accessors(&self) -> bool {
         self.accessors
@@ -110,6 +122,33 @@ pub(super) fn scan(graph: &crate::modules::Graph, types: &mut ir::ValueTypes) {
     }
     types.receivers.enabled = methods.0;
     types.receivers.accessors = methods.1;
+}
+
+/// After every body is lowered, before the view sources are closed: each
+/// object type `L` of an `o.m(...)` call whose field `m` may hold a method
+/// that uses `this` of a literal type `T` is a view source of `T` (the
+/// method reads its receiver through `T`): an ordinary one when `L` is
+/// assignable to `T`, else a checked one (`subtyping::note_receiver`),
+/// whose missing or differently typed members throw `TypeError` when read.
+pub(super) fn loose_receivers(types: &mut ir::ValueTypes) -> Result<()> {
+    let pairs: Vec<(Type, u32)> = types
+        .receivers
+        .callers
+        .iter()
+        .flat_map(|(caller, name)| {
+            types
+                .receivers
+                .this_methods
+                .iter()
+                .filter(move |(_, names)| names.contains(name))
+                .map(move |(shape, _)| (*caller, *shape))
+        })
+        .filter(|(caller, shape)| *caller != Type::Record(*shape))
+        .collect();
+    for (caller, shape) in pairs {
+        subtyping::note_receiver(caller, shape, types)?;
+    }
+    Ok(())
 }
 
 /// After every body is lowered: place the register behind the `stored`
@@ -254,6 +293,14 @@ impl Lower<'_> {
                 (function.span.lo.0, function.span.hi.0),
                 (SELF.to_owned(), ty),
             );
+            if let (Type::Record(shape), Ok(name)) = (ty, records::property_key(&method.key)) {
+                self.types
+                    .receivers
+                    .this_methods
+                    .entry(shape)
+                    .or_default()
+                    .insert(name);
+            }
             **prop = self.bound_method(method)?;
         }
         let value = self.record(&rewritten, Some(ty))?;
@@ -423,6 +470,12 @@ impl Lower<'_> {
             return Err(CompilerError::Internal(
                 "method call on a base that is not an object".into(),
             ));
+        }
+        if let ast::MemberProp::Ident(name) = &member.prop {
+            self.types
+                .receivers
+                .callers
+                .insert((base.ty, name.sym.to_string()));
         }
         let span = call.span;
         let name = format!("#receiver{}", self.next);

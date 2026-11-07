@@ -369,6 +369,9 @@ pub(crate) struct ValueTypes {
     /// The receiver register of object-literal methods that use `this`
     /// (v38 `expression_forms`); see `lower::object_methods`.
     pub receivers: crate::lower::object_methods::Receivers,
+    /// Record spreads of views copied by the source's run-time layout (v38
+    /// `expression_forms`); see `lower::layout_spreads`.
+    pub layouts: crate::lower::layout_spreads::Layouts,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1), or under value

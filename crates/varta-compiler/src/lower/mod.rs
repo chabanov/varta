@@ -443,6 +443,7 @@ mod iterator_objects;
 pub(crate) mod json;
 mod kv;
 mod labels;
+pub(crate) mod layout_spreads;
 mod link;
 mod literal_erasure;
 pub(crate) mod literals;

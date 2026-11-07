@@ -2,6 +2,7 @@
 //! dependency exports. Function bodies are lowered with their own source/scope.
 use super::*;
 use crate::modules::{Export, Graph};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub(super) type Symbols = BTreeMap<String, Signature>;
@@ -26,17 +27,47 @@ pub(crate) fn lower_tracked(
     Ok(program.types.class_holes.take().unwrap_or_default())
 }
 
+/// The most lowering passes of a program (v38 `layout_spreads`): a pass
+/// that finds record spreads of views of objects of other layouts lowers the
+/// program again with those sites copied by the source's run-time layout,
+/// until no new site appears; the last pass refuses a remaining site.
+pub(crate) const LAYOUT_PASSES: usize = 4;
+
 fn lower_with(
     graph: &Graph,
     profile: varta_common::language::LanguageProfile,
     class_holes: Option<crate::classes::HoleTracker>,
 ) -> Result<ir::Program> {
+    let mut sites = BTreeSet::new();
+    for pass in 1..=LAYOUT_PASSES {
+        let last = pass == LAYOUT_PASSES || !profile.expression_forms();
+        let (program, missing) = lower_pass(graph, profile, class_holes.clone(), &sites, last)?;
+        if missing.is_empty() {
+            return Ok(*program);
+        }
+        sites.extend(missing);
+    }
+    Err(CompilerError::Internal("layout spread passes".into()))
+}
+
+/// One lowering pass with the layout spread `sites` of earlier passes, and
+/// the sites this pass found. The program is boxed so the pass loop adds no
+/// program-sized frame below the recursive lowering.
+fn lower_pass(
+    graph: &Graph,
+    profile: varta_common::language::LanguageProfile,
+    class_holes: Option<crate::classes::HoleTracker>,
+    sites: &BTreeSet<subtyping::Site>,
+    last: bool,
+) -> Result<(Box<ir::Program>, BTreeSet<subtyping::Site>)> {
     let mut definitions: BTreeMap<PathBuf, Symbols> = BTreeMap::new();
     let mut types = ir::ValueTypes {
         profile,
         class_holes,
         ..Default::default()
     };
+    types.subtyping.layout_sites = sites.clone();
+    types.subtyping.last_pass = last;
     let mut next = 0;
     let mut main = None;
     // A program whose closures may capture a binding before its
@@ -218,6 +249,8 @@ fn lower_with(
         )?;
     }
     // Tagged template objects (v38) are built before any module code runs.
+    object_methods::loose_receivers(&mut types)?;
+    layout_spreads::finish(&mut types, &mut generated, &mut next)?;
     object_accessors::finish(&mut types, &functions, &mut generated, &mut next)?;
     object_methods::finish(
         &mut types,
@@ -332,6 +365,10 @@ fn lower_with(
         suspendable: BTreeMap::new(),
     };
     subtyping::resolve(&mut program)?;
+    let missing = program.types.subtyping.take_missing_sites();
+    if !missing.is_empty() {
+        return Ok((Box::new(program), missing));
+    }
     type_level::resolve_covariance(&mut program)?;
     object_methods::receiver_shapes(&mut program);
     if profile.literal_types() {
@@ -345,7 +382,7 @@ fn lower_with(
     if crate::codegen_v2(profile) {
         simplify::simplify(&mut program);
     }
-    Ok(program)
+    Ok((Box::new(program), BTreeSet::new()))
 }
 
 /// One binding of the value namespace, shared by functions and (v32) module

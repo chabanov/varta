@@ -10354,7 +10354,9 @@ such members.
   source fields that are present; fields only optional sources provide are
   optional. `...x` of `R | undefined` or `R | null` copies nothing when
   nullish. A spread whose first source is a dictionary builds a dictionary;
-  dictionary spreads also accept `D | undefined`. Key order: under v38
+  dictionary spreads also accept `D | undefined`. A field only optional
+  sources provide stores `undefined` in its absent slot (its type includes
+  `undefined`), as every reader of a record checks. Key order: under v38
   (`expression_forms`) it follows CopyDataProperties and property
   definition — each key takes its position when it is first defined, a
   spread's keys in the source object's own-key order (integer keys first,
@@ -10362,6 +10364,30 @@ such members.
   `Object.assign` keep the source's order; earlier profiles put the fields
   every member provides first in member order and the others in the order
   they become present.
+- **Layout spreads** (v38 `expression_forms`, `lower::layout_spreads`): a
+  value of a closed object type may hold an object of another record
+  layout (a view), whose own properties are more or in another order.
+  `{ ...v }` and the rest of `{ a, ...rest } = v` copy every own property
+  of the actual object, so the result's layout depends on the source's
+  run-time layout. Lowering runs in passes (`link::LAYOUT_PASSES`, a named
+  bound): a pass that finds a spread or rest site whose source type has
+  view sources with other own keys (`subtyping::spread_views`) lowers the
+  program again with those sites copied by layout, until no new site
+  appears; the last pass refuses a remaining site by name. A layout site
+  evaluates the members before the spread, then `copy_T(source)`: one
+  branch per record layout the type may hold, tested by the record
+  descriptor, each a plain spread (or rest) of that exact layout (an object
+  with accessors through the type it is viewed as, so its getters run in
+  its own-key order), viewed as the static type; then the literal over the
+  copy (members after the spread are evaluated after the copy, as in
+  JavaScript); then `widen(result, copy)`: by the copy's layout, the result
+  with the copy's extra own properties at the spread's position (the key
+  order replays the members). A nullish source copies nothing. The copies,
+  widened results and per-layout JSON walks (`object_accessors`) are
+  further view sources, which a later pass may need. Refused by name for
+  now: a second layout spread in one literal, a spread of a value that may
+  hold a class instance, layout spreads into dictionary literals and into
+  literals with accessors.
 - `obj.m?.()` on a class method is the ordinary call.
 - V38 boolean discriminants: `if (result.ok)`, its negation, logical guards
   and ternaries narrow the owning record/class union like an explicit comparison
@@ -10405,7 +10431,7 @@ such members.
 
 Not yet admitted: `A[] | B[]` of record element types, `instanceof
 Map/Set/Uint8Array`, a `Uint8Array` held by `unknown`, record spreads that
-keep JavaScript's key order, and converting a function value already held by
+keep JavaScript's key order (admitted by layout spreads above), and converting a function value already held by
 a union (`F | undefined`, such as an optional function member) to another
 signature. Of these, `instanceof` of collections and key-order spreads came
 with the wave-2 [SDK paths](#sdk-paths-sdk_paths) and a `Uint8Array` held by
@@ -11694,9 +11720,15 @@ Node 24 is the reference for every output below.
   methods; the receiver must be an object of that type or of a type viewed
   as it ([structural subtyping](#structural-subtyping-structural_subtyping)),
   otherwise the call throws `TypeError: object literal method called on an
-  object that is not of its literal type` (deviation: JavaScript would read
-  the other object's properties; a spread copy with more fields than the
-  literal is such an object). Spreads, `Object.assign` and own-key
+  object that is not of its literal type` only for a receiver the
+  compiler cannot see (one no `o.m(...)` call names). Every object type `L`
+  of an `o.m(...)` call whose field `m` may hold such a method is a view
+  source of the method's type (`object_methods::loose_receivers`): an
+  ordinary view when `L` is assignable to it (a spread copy with more
+  fields, an object of another layout), else a checked view source whose
+  members are read by name with the checked reads of TypeScript
+  unsoundness (intentional deviation (3) of the type level). Spreads,
+  `Object.assign` and own-key
   enumeration of such objects are admitted. Generator methods that use
   `this` and a spread in a literal whose methods use `this` stay refused by
   name.
@@ -12278,7 +12310,15 @@ refused with an `unsupported …` diagnostic that names it (list below).
   with the mistyped value. (2) An element of a shared class array that the
   read's element type does not admit (an `A` stored through `A[]` and read
   through `B[]`) throws `TypeError` at the read; Node continues with the
-  mistyped value.
+  mistyped value. (3) An object-literal method that uses `this` called on a
+  receiver of another layout (TypeScript does not check the receiver of a
+  method without a `this` parameter) reads and writes the receiver's
+  members by name on its actual layout, as JavaScript does; a member the
+  receiver lacks (unless the declared type admits `undefined`) or holds
+  with a value outside the declared type throws `TypeError` (`property … of
+  this object does not have the type the method's this type declares`) at
+  that read or write ([expression forms](#expression-forms-expression_forms)).
+  Owner confirmation pending (rule of 2026-11-07, as (1) and (2)).
 
 - **Step 3 admissions (2026-11-06).** `infer` inside an intersection pattern
   (`T extends { a: infer A } & { b: infer B }`: the check type matches

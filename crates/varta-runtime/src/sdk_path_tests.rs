@@ -708,7 +708,12 @@ fn sdk_path_refused_forms_name_their_diagnostics() {
         )
     };
     let wider = "object spread of a Narrow that may hold a wider Wide (a view)";
-    refused(V38, &view("return JSON.stringify({ ...n });"), wider);
+    // A record spread copies the object's own properties by its run-time
+    // layout (`layout_spreads`), as Node does.
+    matches_node(
+        &view("return JSON.stringify({ ...n });"),
+        r#"{"b":1,"a":2,"c":"x"}"#,
+    );
     refused(
         V38,
         &view("const q: Record<string, unknown> = { ...n }; return Object.keys(q).join(',');"),

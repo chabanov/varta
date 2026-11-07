@@ -225,14 +225,14 @@ fn view_mismatches_name_both_types_and_the_members() {
 }
 
 #[test]
-fn views_reject_rest_patterns() {
-    let source = "interface N{name:string}\
-                  export function main():void{const e={name:'a',n:1};const v:N=e;\
-                  const {name,...rest}=v;console.log(name);}";
-    let error = rejected(source, V38);
-    assert!(
-        error.contains("rest pattern over N, which a wider object type is assigned to"),
-        "{error}\n{source}"
+fn views_copy_rest_patterns_by_layout() {
+    // A rest of a view copies the remaining own properties of the object's
+    // run-time layout (`layout_spreads`), as Node does.
+    run(
+        "interface N{name:string}\
+         export function main():void{const e={name:'a',n:1};const v:N=e;\
+         const {name,...rest}=v;console.log(name);console.log(JSON.stringify(rest));}",
+        &["a", r#"{"n":1}"#],
     );
 }
 

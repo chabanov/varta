@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- V38 K9 C layout spreads and receivers: a spread or rest of a value that
+  may hold an object of another layout copies that object's own properties
+  in its own-key order, as CopyDataProperties does (lowering runs in a
+  bounded number of passes and copies such sites by the run-time layout);
+  object-literal methods that use `this` see receivers of other layouts
+  (spread copies, objects that received the method), reading their members
+  by name, with a `TypeError` where a member is missing or of another type
+  than the method's `this` type declares. A spread of an optional source
+  no longer traps a serializer (its absent slots hold `undefined`).
 - V38 K9 C accessor objects by the specification (owner approval
   2026-11-06, a value layout 18 addition): an object literal with getters
   and setters keeps one data slot per accessor property at its creation

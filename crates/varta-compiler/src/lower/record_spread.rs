@@ -195,6 +195,9 @@ impl Lower<'_> {
         let mut roots = Vec::new();
         // The members in source order, for the result's key order.
         let mut members: Vec<Member> = Vec::new();
+        // V38 (`layout_spreads`): the parts and copy of a layout spread.
+        let mut parts: Vec<super::layout_spreads::Part> = Vec::new();
+        let mut layout: Option<(u32, u32, Option<Type>)> = None;
         // Field names in order of their first member, with their providers.
         let mut providers: Vec<(String, Vec<Provider>)> = Vec::new();
         let mut provide =
@@ -205,6 +208,7 @@ impl Lower<'_> {
         for property in &object.props {
             match property {
                 ast::PropOrSpread::Spread(spread) => {
+                    let dynamic = self.layout_spread(&spread.expr);
                     let value = self.expr(&spread.expr)?;
                     // `...optional` spreads nothing when it is nullish.
                     let present: Vec<Type> = unions::members(value.ty, self.types)
@@ -229,28 +233,96 @@ impl Lower<'_> {
                     if self.types.records[shape as usize].class.is_some() {
                         return Err(unsupported("object spread of a class instance"));
                     }
-                    if self.types.profile.sdk_paths() {
+                    if self.types.profile.sdk_paths() && !dynamic && !self.types.layouts.exact {
                         self.types.subtyping.note_key_copy(
                             shape,
-                            subtyping::KeyCopy::Spread,
+                            if self.types.profile.expression_forms() {
+                                subtyping::KeyCopy::LayoutSpread
+                            } else {
+                                subtyping::KeyCopy::Spread
+                            },
                             self.source,
                             spread.expr.span(),
                         );
                     }
+                    // A layout spread copies the object first (its getters
+                    // run in its own-key order); the literal reads the copy.
+                    let value = if dynamic {
+                        if layout.is_some() {
+                            return Err(self.source.locate(
+                                unsupported(
+                                    "a second spread of a value that may hold objects of other layouts in one object literal",
+                                ),
+                                spread.expr.span(),
+                            ));
+                        }
+                        match nullable {
+                            None => self.layout_copy(value, shape, Vec::new())?,
+                            Some(cell) => {
+                                // A nullish source copies nothing.
+                                let held = self.hidden(cell);
+                                roots.push(held);
+                                body.push(S::Init(held, value));
+                                let copy = self.layout_copy(
+                                    Expr {
+                                        span,
+                                        ty: Type::Record(shape),
+                                        kind: E::UnboxUnion(Box::new(local(span, held, cell))),
+                                    },
+                                    shape,
+                                    Vec::new(),
+                                )?;
+                                let copy = unions::widen(copy, Some(cell), self.types)?;
+                                let copied = self.hidden(cell);
+                                roots.push(copied);
+                                body.push(S::Init(copied, local(span, held, cell)));
+                                body.push(S::If(
+                                    Expr {
+                                        span,
+                                        ty: Type::Boolean,
+                                        kind: E::IsNullish(Box::new(local(span, held, cell))),
+                                    },
+                                    vec![],
+                                    vec![S::Set(copied, copy)],
+                                ));
+                                local(span, copied, cell)
+                            }
+                        }
+                    } else {
+                        value
+                    };
                     let slot = self.hidden(value.ty);
                     roots.push(slot);
                     body.push(S::Init(slot, value));
+                    if dynamic {
+                        layout = Some((slot, shape, nullable));
+                        parts.push(super::layout_spreads::Part::Layout);
+                    } else {
+                        parts.push(super::layout_spreads::Part::Static(
+                            self.types.records[shape as usize]
+                                .fields
+                                .iter()
+                                .map(|field| field.name.clone())
+                                .collect(),
+                        ));
+                    }
                     members.push(Member::Spread(slot, shape, nullable));
                     // V38 (`object_accessors`): a getter runs when its key is
-                    // reached in the source's own-key order.
-                    let cached = if nullable.is_none() && self.types.receivers.has_accessors() {
-                        let (reads, locals) = self.read_in_key_order(slot, shape, &[], span)?;
-                        roots.extend(locals.iter().copied());
-                        body.extend(reads);
-                        Some(locals)
-                    } else {
-                        None
-                    };
+                    // reached in the source's own-key order (a copy has none).
+                    let cached =
+                        if nullable.is_none() && !dynamic && self.types.receivers.has_accessors() {
+                            // The spread site is noted above; its key read is not
+                            // another key copy.
+                            let exact = std::mem::replace(&mut self.types.layouts.exact, true);
+                            let read = self.read_in_key_order(slot, shape, &[], span);
+                            self.types.layouts.exact = exact;
+                            let (reads, locals) = read?;
+                            roots.extend(locals.iter().copied());
+                            body.extend(reads);
+                            Some(locals)
+                        } else {
+                            None
+                        };
                     for (field, declared) in self.types.records[shape as usize]
                         .fields
                         .clone()
@@ -297,6 +369,7 @@ impl Lower<'_> {
                     }
                     body.push(S::Init(slot, value));
                     members.push(Member::Value(name.clone()));
+                    parts.push(super::layout_spreads::Part::Value(name.clone()));
                     provide(&name, Provider::Value { slot, ty });
                 }
             }
@@ -317,6 +390,12 @@ impl Lower<'_> {
                         members.push(member);
                     }
                 }
+            }
+            // An optional field's stored type includes `undefined`, the value
+            // of its absent slot (every reader checks that an absent slot
+            // holds it).
+            if start.is_none() && !members.contains(&Type::Undefined) {
+                members.push(Type::Undefined);
             }
             let ty = if members.len() == 1 {
                 members[0]
@@ -476,6 +555,19 @@ impl Lower<'_> {
         // own-key order, then the literal's members in place.
         if self.types.profile.expression_forms() {
             body.extend(self.spread_order(output, id, &members, span)?);
+        }
+        // V38 (`layout_spreads`): the copy's extra own properties, while the
+        // copy is still rooted.
+        if let Some((copy, shape, nullable)) = layout {
+            let copy_ty = nullable.unwrap_or(Type::Record(shape));
+            let widened = self.layout_widen(
+                local(span, output, record),
+                local(span, copy, copy_ty),
+                shape,
+                nullable,
+                parts,
+            )?;
+            body.push(S::Set(output, widened));
         }
         let marker = self.hidden(Type::Number);
         Ok(Expr {

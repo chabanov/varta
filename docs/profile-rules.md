@@ -4073,6 +4073,22 @@ Contract: [architecture.md](architecture.md#expression-forms-expression_forms).
   logs, formats or serializes values belongs in that list. Physical shapes
   of boxed views are boxed too (`note_boxed_shape`), so
   `graph_branches` calls getters for JSON-object reads of `unknown`.
+- Layout spreads (`layout_spreads`): a record spread or rest of a closed
+  object type notes its site (`KeyCopy::LayoutSpread`); a site whose type
+  has view sources with other own keys is lowered by the next pass
+  (`link::LAYOUT_PASSES`) through `copy_T` and `widen`, which `finish`
+  writes when the view sources are known. Synthesized bodies set
+  `layouts.exact` (their spreads and enumerations read one exact layout and
+  note no key copy); a ValueBlock's rooted locals are not read after the
+  block (the widen runs inside the literal's block). A new reader of own
+  keys of a view must dispatch on the layout as the JSON walk does
+  (`wider_layouts`). Optional fields of merged spread results include
+  `undefined`.
+- Receivers (`object_methods::loose_receivers`): `this_methods` and
+  `callers` are recorded while lowering; every caller type that may hold a
+  method becomes a view source of the method's type before
+  `layout_spreads::finish` (`subtyping::note_receiver`), a checked one
+  (`note_loose`, `Rewriter::loose_branch`) when it is not assignable.
 - Top-level `await` (`top_level_await`): a module that awaits is one
   async initializer (`module_constants::link_module`, split with
   `split_async`); the evaluator text is generated from the static plan and

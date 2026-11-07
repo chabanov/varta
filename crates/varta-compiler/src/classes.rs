@@ -135,7 +135,7 @@ pub(crate) enum HoleType {
 }
 
 /// Holes watched during lowering and the types observed for them.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct HoleTracker {
     pub watched: BTreeSet<HoleKey>,
     pub observed: BTreeMap<HoleKey, HoleType>,
