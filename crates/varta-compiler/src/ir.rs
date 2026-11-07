@@ -386,6 +386,9 @@ pub(crate) struct ValueTypes {
     /// V38 (`module_evaluation`): module bindings that code may read before
     /// their initialization, by root slot.
     pub module_flags: std::collections::BTreeMap<u32, ModuleFlag>,
+    /// V38 (`declaration_forms`): the own static properties subclasses
+    /// create by writing inherited static fields; see `lower::static_store`.
+    pub static_stores: crate::lower::static_store::Stores,
     /// V38 (`symbol_values`, K9 D2): the class id of the symbol prelude's
     /// record class (`SymbolValue`) that every `symbol` value erases to
     /// (`literal_erasure`), so emission tags it with the value18 symbol tag

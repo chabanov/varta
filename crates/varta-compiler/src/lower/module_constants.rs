@@ -869,6 +869,7 @@ impl Lower<'_> {
                 let (index, flag) = (*stored, *stored + 1);
                 *stored += 2;
                 self.class_flag(name, flag);
+                self.note_static_variable(name, index, (storage, ty));
                 self.types.module_flags.insert(
                     index,
                     ir::ModuleFlag {
@@ -1084,6 +1085,7 @@ impl Lower<'_> {
                     {
                         binding.global = Some((index, storage));
                     }
+                    self.note_static_variable(name.id.sym.as_ref(), index, (storage, ty));
                     locals.insert(
                         name.id.sym.to_string(),
                         Constant {

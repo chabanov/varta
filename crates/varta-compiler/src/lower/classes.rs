@@ -230,6 +230,11 @@ impl Classes {
     pub(super) fn get(&self, id: u32) -> &Class {
         &self.list[id as usize]
     }
+    /// The class that holds the static members of class `id`: the generic
+    /// class of an instance (instances have no statics), else `id`.
+    pub(super) fn static_class(&self, id: u32) -> u32 {
+        self.list[id as usize].template.unwrap_or(id)
+    }
     /// The number of classes (ids `0..count`).
     pub(super) fn count(&self) -> u32 {
         self.list.len() as u32
@@ -721,6 +726,70 @@ impl Lower<'_> {
         }
         named::class(self.types, name)
     }
+}
+
+/// A static field a class declares (`desugar::statics_key`).
+#[derive(Clone)]
+pub(super) struct StaticDeclaration {
+    pub name: String,
+    /// An auto-accessor: not enumerable, and the declaring class's storage
+    /// for every subclass.
+    pub accessor: bool,
+    pub readonly: bool,
+    pub access: Access,
+}
+
+/// The static fields `class` declares, in definition order, from its
+/// `desugar::statics_key` marker.
+pub(super) fn static_declarations(types: &ir::ValueTypes, class: u32) -> Vec<StaticDeclaration> {
+    let key = crate::desugar::statics_key();
+    let info = types.classes.get(class);
+    let list = info
+        .declaration
+        .body
+        .iter()
+        .find_map(|member| match member {
+            ast::ClassMember::Method(method)
+                if method.is_static
+                    && matches!(&method.key, ast::PropName::Ident(id) if id.sym == key.as_str()) =>
+            {
+                match method.function.body.as_ref()?.stmts.first()? {
+                    ast::Stmt::Return(ast::ReturnStmt { arg: Some(arg), .. }) => match &**arg {
+                        ast::Expr::Array(list) => Some(list),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        });
+    let Some(list) = list else {
+        return Vec::new();
+    };
+    list.elems
+        .iter()
+        .flatten()
+        .filter_map(|element| match &*element.expr {
+            ast::Expr::Lit(ast::Lit::Str(text)) => {
+                let entry = text.value.as_str()?;
+                let (flags, name) = entry.split_once(crate::desugar::STATIC_SEPARATOR)?;
+                let access = if flags.contains(crate::desugar::STATIC_PRIVATE) {
+                    Access::Private
+                } else if flags.contains(crate::desugar::STATIC_PROTECTED) {
+                    Access::Protected
+                } else {
+                    Access::Public
+                };
+                Some(StaticDeclaration {
+                    name: name.to_owned(),
+                    accessor: flags.contains(crate::desugar::STATIC_ACCESSOR),
+                    readonly: flags.contains(crate::desugar::STATIC_READONLY),
+                    access,
+                })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The constructor parameters of `class` as patterns, from its own or its

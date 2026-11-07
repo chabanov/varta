@@ -12500,14 +12500,42 @@ time (`new.target.name`, an Error subclass's `name`).
   initialized by calling the block as an arrow, so both run in the module
   initializer sequence at the class's position, as ECMAScript evaluates
   them at class definition ([module evaluation](#module-evaluation-module_evaluation)).
-  `C.x`, and `this.x` in static code, read and write the field; a subclass
-  reads an inherited static field through the same variable, and writing
-  it through the subclass (which creates an own property of the subclass in
-  JavaScript) is refused. `private`, `protected` (TS2341) and `readonly`
+  `C.x`, and `this.x` in static code, read and write the field of the
+  class that declares it. `private`, `protected` (TS2341) and `readonly`
   (TS2540) are checked. Another module writes an exported class's static
   field through a setter function the declaring module exports
-  (`C.x = v`, `op=`, `++`/`--`); a field without an annotation or literal
-  initializer has none.
+  (`C.x = v`, `op=`, `++`/`--`).
+- **Static fields per class** (coordinator decision of 2026-11-07, per
+  ECMA-262 OrdinarySet on class objects). A subclass inherits a static
+  field through its prototype chain until code assigns it through the
+  subclass (`D.x = v`, `this.x = v` in static code called through `D`, or
+  through a class value holding `D`), which creates `D`'s own property;
+  the declaring class keeps its value, and `D`'s subclasses read `D`'s.
+  Each (subclass, inherited field) pair that code may reach gets three
+  root slots behind the stored module constants (`lower::static_store`):
+  an own flag (`0`/`1`), the value (boxed in a union cell when primitive)
+  and a creation serial. A read through `D` tests `D`'s flag, then its
+  parent's, up to the declaring class's module variable, read and written
+  in its root slot with its initialization checks; a write sets `D`'s own
+  property. Which class declares which static field, with its readonly,
+  accessibility and auto-accessor flags, comes from a generated marker
+  method `static [statics]()` (`desugar::statics_key`, pruned unless
+  called). This works across modules, through generic classes
+  (`extends Base<T>` inherits `Base`'s statics), for local and expression
+  classes and for fields typed by their initializers. A `static accessor
+  x` is a get/set pair over the declaring class's storage, which tsc names
+  through that class, so every subclass reads and writes the declaring
+  class's. Compound, logical and update assignments read once and write
+  once.
+  `Object.keys(C)` lists the static fields `C` declares in definition order
+  (integer keys first, ascending; static methods and auto-accessors are not
+  enumerable), then the properties code created on `C`, in creation order;
+  `for (k in C)` continues with each ancestor's keys that no closer class
+  has. An own property created
+  while the class is still being defined (by its own static block) is
+  listed after the fields it declares, where JavaScript lists it in
+  creation order among them. `Object.values(C)` and `Object.entries(C)`
+  are typed `any[]` by tsc and refused.
 - **Static methods, `this` and `super`.** In static methods, static field
   initializers and static blocks `this` is the class. A static method that
   uses `this` or `super` is copied into each module-level subclass that
@@ -12522,13 +12550,12 @@ time (`new.target.name`, an Error subclass's `name`).
   (declared in another module, whose copy could not reach the declaring
   module's private names, or never named through) and a class value that
   may hold any subclass call it with their own class, so `this.m()`, `new
-  this()` and `this.name` dispatch over the subclasses. `this.x` of a
-  static field reads the declaring class's field there. A method that
-  writes a static field through `this` (an own property of the subclass
-  in JavaScript) or whose `super` reaches no module-level parent has no
-  receiver version, and calling it with such a subclass as `this` is
-  refused by name; so is `super.m()` of a `this`-using method from a
-  static field initializer or block.
+  this()` and `this.name` dispatch over the subclasses, and `this.x` reads
+  and writes the static property of the receiver's class (per-class
+  static fields above). A method whose `super` reaches no module-level
+  parent has no receiver version, and calling it with such a subclass as
+  `this` is refused by name; so is `super.m()` of a `this`-using method
+  from a static field initializer or block.
 - **Class values.** A class named where a value is expected, and a value
   of type `typeof C`, is a class object (owner decision of 2026-11-06):
   the identity of `C` or of one of its subclasses, an `i32` class id
@@ -12546,14 +12573,11 @@ time (`new.target.name`, an Error subclass's `name`).
   and generic inference sees its constructor type. A class value never
   enters a union, an array, a record or `unknown` (it has no value tag)
   and a generic class is no value; each is refused by name (an engine
-  class keeps its own value rules). A static field `x` with a declared or
-  literal type is read through a class value (`v.x`, 2026-11-07): each
-  such field gets a generated static method `[get]x` with the field's
-  accessibility (`desugar::getter_key`, no source name can spell it) that
-  returns the field's module variable, and `v.x` calls it through the
-  static-method dispatch, so each class reads the field it declares or
-  inherits; unused getters are pruned. Writes through a class value stay
-  refused.
+  class keeps its own value rules). A static field `x` is read and written
+  through a class value (`v.x`, `v.x = …`, 2026-11-07) with the field's
+  accessibility (TS2341) and readonly (TS2540) checks: `v.x` dispatches
+  over the subclasses, each reading and writing its own or inherited
+  property (per-class static fields above).
   `ConstructorParameters` and `InstanceType` take `typeof C` through its
   constructor type. V37 keeps the class name an unknown identifier.
 - **Class expressions and local classes.** `const X = class [N] { … }` at

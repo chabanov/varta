@@ -161,11 +161,14 @@ fn layout_members(
     let parent = parent_class(class, source, types, next.as_deref_mut())?;
     let (mut fields, mut methods, mut statics) = match parent {
         Some(parent) => {
+            // `extends Base<T>` inherits the statics of the generic class
+            // `Base`, which its instances do not carry.
+            let statics = types.classes.static_class(parent);
             let parent = &types.classes.list[parent as usize];
             (
                 parent.fields.clone(),
                 parent.methods.clone(),
-                parent.statics.clone(),
+                types.classes.list[statics as usize].statics.clone(),
             )
         }
         None => (Vec::new(), BTreeMap::new(), BTreeMap::new()),

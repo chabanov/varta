@@ -79,6 +79,40 @@ impl Lower<'_> {
         let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
         let value = unions::widen(value, Some(ty), self.types)?;
         self.flow_assigned(binding.slot, value.ty)?;
+        self.module_slot_store(index, storage, value)
+    }
+    /// The read of the module variable in root slot `index` (of type `ty`,
+    /// stored as `storage`), with its initialization check.
+    pub(super) fn module_slot_read(
+        &mut self,
+        index: u32,
+        (storage, ty): (Type, Type),
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        let stored = Expr {
+            span,
+            ty: storage,
+            kind: E::ModuleConstant(index),
+        };
+        let value = if storage == ty {
+            stored
+        } else {
+            Expr {
+                span,
+                ty,
+                kind: E::UnboxUnion(Box::new(stored)),
+            }
+        };
+        self.module_flag_read(index, value)
+    }
+    /// Store `value` into the module variable in root slot `index`, stored
+    /// as `storage`.
+    pub(super) fn module_slot_store(
+        &mut self,
+        index: u32,
+        storage: Type,
+        value: Expr,
+    ) -> Result<S> {
         let value = unions::widen(value, Some(storage), self.types)?;
         // V38: a write before the initialization throws after the right side
         // is evaluated (PutValue on an uninitialized binding); a `var` or a

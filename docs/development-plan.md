@@ -180,11 +180,8 @@ Still open, with the reason:
 - **Class values, remaining:** class values in unions, arrays, records and
   `unknown` (a class-value tag added to the unreleased value layout 18,
   decided 2026-11-07, not built yet), a generic class as a value,
-  `instanceof` a class value, writes of static fields through a class
-  value or a subclass (per-class static storage, decided 2026-11-07, not
-  built yet: a subclass's own static property needs storage per class and
-  field across modules, which module variables of the declaring module
-  cannot give).
+  `instanceof` a class value. Writes of static fields through a class
+  value or a subclass: done in the fifth increment (below).
 
 Fourth increment (coordinator decisions of 2026-11-07 under the owner's
 delegated authority; each by the specification):
@@ -221,6 +218,37 @@ delegated authority; each by the specification):
   `generic-method-overloads`). Overload signatures of a generic class's
   static methods were never resolved before (the call silently took the
   implementation's result type); the template declares them now.
+
+Fifth increment (coordinator decisions of 2026-11-07 under the owner's
+delegated authority; each by the specification):
+
+- **`x instanceof C` evaluates `x` first.** For a class code may reach
+  before its definition, the left operand is evaluated into a hidden
+  binding before the class's flag test (`lower::class_bindings`), as
+  ECMA-262 §13.10.1 evaluates the left operand before the right
+  (`class_tdz` case).
+- **Static fields per class.** Assigning an inherited static field through
+  a subclass, through `this` in static code called through it, or through
+  a class value creates the subclass's own property; the declaring class
+  keeps its value (OrdinarySet). Each (subclass, inherited field) pair
+  gets an own flag, a value and a creation serial in root slots behind the
+  stored module constants (`lower::static_store`); reads walk the class
+  chain to the declaring class's module variable, written there through
+  the declaring class. Across modules, through generic
+  classes (`extends Base<T>` now inherits `Base`'s static methods and
+  fields, which it silently did not before), local and expression
+  classes; `static accessor` fields stay the declaring class's, as tsc
+  emits them. The refusals "assignment to the inherited static field …
+  through a subclass" and "static method … writes a static field through
+  this" are gone, and a static field typed by its initializer is reached
+  through class values too (before: refused). `Object.keys(C)` and `for…in` of class values list declared fields
+  in definition order (integer keys first), then created properties in
+  creation order, `for…in` up the chain (`static_store` case, the
+  multi-module test, conformance `static-own-properties`). Open: an own
+  property created while its class is still being defined (by the class's
+  own static block) is listed after the class's later declared fields
+  (JavaScript lists it at its creation); exactness needs serials for
+  declared fields too.
 
 Earlier state, superseded by the increment above where it says so:
 

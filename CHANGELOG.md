@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- V38 K9 B, fifth increment (coordinator decisions under the owner's
+  delegated authority): static fields are stored per class, as JavaScript
+  defines them on class objects. Assigning an inherited static field
+  through a subclass, through `this` in static code or through a class
+  value creates the subclass's own property; the declaring class keeps its
+  value (before: refused). Works across modules and for subclasses of
+  generic classes, which now inherit the generic class's static members
+  (before: silently missing). `Object.keys(C)` and `for…in` of class
+  values list static fields. `x instanceof C` evaluates `x` before testing
+  whether `C` is initialized.
 - V38 K9 B, fourth increment (coordinator decisions under the owner's
   delegated authority): a module `var` or static field read before its
   definition reads `undefined` as in JavaScript, a checked read that

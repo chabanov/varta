@@ -30,7 +30,8 @@ mod scope;
 mod statics;
 
 pub(crate) use statics::{
-    class_binding, getter_key, is_class_binding, receiver_key, static_owner, unshared_key,
+    STATIC_ACCESSOR, STATIC_PRIVATE, STATIC_PROTECTED, STATIC_READONLY, STATIC_SEPARATOR,
+    class_binding, is_class_binding, receiver_key, static_owner, statics_key, unshared_key,
 };
 
 use crate::CompilerError;
@@ -78,6 +79,17 @@ pub(crate) fn is_static_field(name: &str, class: &str) -> bool {
         .and_then(|rest| rest.strip_prefix(SEPARATOR))
         .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()));
     !field.is_empty() && !block
+}
+
+/// Whether the generated module variable `name` of a class's static
+/// element is a static block (`generated(&[class, "static", index])`), not
+/// a field.
+pub(crate) fn is_static_block(name: &str) -> bool {
+    let mut segments = name.rsplit(SEPARATOR);
+    let index = segments.next().unwrap_or_default();
+    !index.is_empty()
+        && index.bytes().all(|b| b.is_ascii_digit())
+        && segments.next() == Some(statics::BLOCK)
 }
 
 /// Hex digits of a module tag's path hash ([`module_hash`]).

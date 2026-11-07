@@ -4528,6 +4528,21 @@
       }
     },
     {
+      "id": "static-own-properties",
+      "feature": "static-class-members",
+      "path": "cases/static-own-properties.ts",
+      "sha256": "93a3f7e188e2ce5a25258e9595afe3788dfc54e45cdbe4b595f61fe4b6654ba1",
+      "stdout": [
+        "varta log: 1 2 1",
+        "varta log: 1 2 2",
+        "varta log: counter! counter!! counter!!",
+        "varta log: label,count | label,count"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "generic-overloads",
       "feature": "overloads",
       "path": "cases/generic-overloads.ts",

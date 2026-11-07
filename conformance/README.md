@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 122 feature rows and 217 cases:
-213 pass, 4 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 122 feature rows and 218 cases:
+214 pass, 4 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -535,3 +535,7 @@ static calls, `name`, `===` and `typeof` of class objects, dispatched over
 subclasses) under `static-class-members`, and generic overload signatures
 add `generic-overloads` (per-candidate inference with constraints) under
 `overloads`; both match Node.js v24.20.0.
+Static fields per class (2026-11-07) add `static-own-properties` under
+`static-class-members`: writes of inherited static fields through
+subclasses and class values create the subclass's own property, listed by
+`Object.keys` and `for...in`; it matches Node.js v24.20.0.

@@ -17,8 +17,8 @@
 //!
 //! A class value converts to a constructor type (`new (…) => T`) as a
 //! closure that constructs through the dispatch. It never enters a union,
-//! an aggregate or `unknown` (it has no value tag), and static fields are
-//! not read through it yet (they are module variables of each class).
+//! an aggregate or `unknown` (it has no value tag). Static fields are read
+//! and written through it per class (`static_store`).
 use super::*;
 
 /// The constructor parameters and shape of `class`, when it has one.
@@ -56,7 +56,7 @@ pub(super) fn assignable(types: &ir::ValueTypes, actual: u32, expected: u32) -> 
 /// The classes a class object of `class` may hold: `class` and every
 /// subclass, in id order (a static method's receiver is any subclass, as in
 /// TypeScript, whatever its constructor).
-fn family(types: &ir::ValueTypes, class: u32) -> Vec<u32> {
+pub(super) fn family(types: &ir::ValueTypes, class: u32) -> Vec<u32> {
     (0..types.classes.count())
         .filter(|id| {
             let info = types.classes.get(*id);
@@ -92,7 +92,7 @@ fn is_class(span: swc_common::Span, identity: u32, class: u32) -> Expr {
 
 /// `if (identity === c1) …1 else if (identity === c2) …2 … else trap`: the
 /// last arm of a closed dispatch is unreachable.
-fn dispatch(span: swc_common::Span, identity: u32, arms: Vec<(u32, Vec<S>)>) -> Vec<S> {
+pub(super) fn dispatch(span: swc_common::Span, identity: u32, arms: Vec<(u32, Vec<S>)>) -> Vec<S> {
     let mut chain = vec![S::Trap];
     for (class, body) in arms.into_iter().rev() {
         chain = vec![S::If(is_class(span, identity, class), body, chain)];
@@ -188,10 +188,14 @@ impl Lower<'_> {
                 Some(self.class_value_new(new, class))
             }
             ast::Expr::Member(member) if matches!(member.prop, ast::MemberProp::Ident(_)) => {
+                // `C.name`, and `C.x` of a static field that `C` inherits
+                // (`desugar::statics` rewrites the fields `C` declares).
                 let class = self.class_value_path(&member.obj).or_else(|| {
-                    self.class_value_name(&member.obj).filter(
-                        |_| matches!(&member.prop, ast::MemberProp::Ident(id) if id.sym == "name"),
-                    )
+                    self.class_value_name(&member.obj).filter(|class| {
+                        matches!(&member.prop, ast::MemberProp::Ident(id)
+                            if id.sym == "name"
+                                || self.static_owner_of(*class, id.sym.as_ref()).is_some())
+                    })
                 })?;
                 Some(self.class_value_member(member, class))
             }
@@ -529,7 +533,7 @@ impl Lower<'_> {
         let span = member.span;
         let name = self.member_key(&member.prop)?;
         if name != "name" {
-            return self.class_value_field(member, class, &name);
+            return self.class_value_field(member);
         }
         let callee = self.expr(&member.obj)?;
         let identity = self.hidden(Type::Number);
@@ -570,39 +574,11 @@ impl Lower<'_> {
             },
         })
     }
-    /// `v.x` of a static field `x`: a call of the field's generated getter
-    /// (`desugar::getter_key`), dispatched over the subclasses like any
-    /// static method, so each class reads the field it declares or
-    /// inherits.
-    fn class_value_field(
-        &mut self,
-        member: &ast::MemberExpr,
-        class: u32,
-        name: &str,
-    ) -> Result<Expr> {
-        let key = crate::desugar::getter_key(name);
-        if !self.types.classes.get(class).statics.contains_key(&key) {
-            return Err(self.source.locate(
-                unsupported(&format!(
-                    "member {name} of a class value (only name, static fields with a declared or literal type, new and static method calls are dispatched)"
-                )),
-                member.prop.span(),
-            ));
-        }
-        let span = member.span;
-        let getter = ast::MemberExpr {
-            span,
-            obj: member.obj.clone(),
-            prop: ast::MemberProp::Ident(ast::IdentName::new(key.into(), member.prop.span())),
-        };
-        let call = ast::CallExpr {
-            span,
-            ctxt: Default::default(),
-            callee: ast::Callee::Expr(Box::new(ast::Expr::Member(getter.clone()))),
-            args: Vec::new(),
-            type_args: None,
-        };
-        self.class_value_static_call(&call, &getter, class)
+    /// `v.x` of a static field `x`: the own property of the class `v`
+    /// holds or the one it inherits (`static_store`).
+    fn class_value_field(&mut self, member: &ast::MemberExpr) -> Result<Expr> {
+        let base = self.expr(&member.obj)?;
+        self.static_field_read(member, base)
     }
     /// `a === b` (or `!==`, `==`, `!=`) of two class objects: their
     /// identities.

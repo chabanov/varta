@@ -528,6 +528,7 @@ mod signature;
 mod spread;
 mod spread_arguments;
 mod standard;
+pub(crate) mod static_store;
 mod stmt;
 mod string_enumeration;
 mod string_iteration;

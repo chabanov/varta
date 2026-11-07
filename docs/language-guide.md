@@ -5932,7 +5932,9 @@ function's locals).
 
 Classes are values: a parameter of type `typeof Shape` holds `Shape` or any
 subclass, and `new`, static methods, static fields and `name` act on the
-class it holds. Overload signatures of functions and methods may be generic;
+class it holds. Assigning an inherited static field through a subclass
+gives that subclass its own value, as in JavaScript; the parent keeps its
+own. Overload signatures of functions and methods may be generic;
 each call infers their type arguments.
 
 ```ts

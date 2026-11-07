@@ -6,10 +6,12 @@
 //! its initializer runs in the module initializer sequence at the class's
 //! position, as ECMAScript evaluates static fields at class definition.
 //! `C.x` (and `this.x` in static code) becomes that variable, merged with
-//! the class like a namespace member. A subclass reaches an inherited field
-//! through the same variable for reads; writing it through the subclass
-//! would create an own property of the subclass in JavaScript and is
-//! rejected. `private`/`protected` and `readonly` keep TypeScript's checks.
+//! the class like a namespace member. A field reached through a subclass
+//! (`D.x` of an inherited `x`) is only checked, not rewritten: the
+//! subclass may own a property of that name once code writes it there, so
+//! lowering reads and writes it through the per-class static store
+//! (`lower::static_store`), which ends at the declaring class's module
+//! variable. `private`/`protected` and `readonly` keep TypeScript's checks.
 //!
 //! `this` in a static method or initializer is the class itself; a static
 //! method that uses `this` is copied into each module-level subclass that
@@ -355,50 +357,115 @@ fn this_to_class(
     }
 }
 
-/// The key of the static method that reads the static field `field` for a
-/// class value (v38 class values, `lower::class_values`): no source member
-/// name can spell it.
-pub(crate) fn getter_key(field: &str) -> String {
-    generated(&[GETTER, field])
+/// The key of the marker method that describes the static fields a class
+/// declares (`lower::static_store`): no source member name can spell it.
+pub(crate) fn statics_key() -> String {
+    generated(&[STATICS])
 }
-/// The name segment of [`getter_key`].
-const GETTER: &str = "get";
+/// The name segment of [`statics_key`].
+const STATICS: &str = "statics";
 
-/// `static [get]x(): T { return __vartaDecl$C$x; }`: a class value reads the
-/// static field `x` through this method, which subclasses inherit (and a
-/// subclass's own field overrides). Its accessibility is the field's, so
-/// TypeScript's access checks apply to the read. A field whose type is
-/// neither annotated nor a literal's has none.
-fn getter(property: &ast::ClassProp, class: &str) -> Option<ast::ClassMember> {
-    let field = key(&property.key)?;
-    let ty = field_type(property)?;
-    let span = property.span;
-    let read = ast::Expr::Ident(ast::Ident::new_no_ctxt(
-        generated(&[class, &field]).into(),
+/// The flags of a static field in the [`statics_key`] marker: an
+/// auto-accessor (not enumerable; a get/set pair over the declaring class's
+/// storage).
+pub(crate) const STATIC_ACCESSOR: char = 'a';
+/// A readonly static field.
+pub(crate) const STATIC_READONLY: char = 'r';
+/// A private static field.
+pub(crate) const STATIC_PRIVATE: char = 'p';
+/// A protected static field.
+pub(crate) const STATIC_PROTECTED: char = 'q';
+/// Separates a marker entry's flags from the field's name.
+pub(crate) const STATIC_SEPARATOR: char = ':';
+
+/// The marker entry of a static field `field`: its flags, then its name.
+fn static_entry(member: &ast::ClassMember) -> Option<String> {
+    let (field, accessor, readonly, accessibility) = match member {
+        ast::ClassMember::ClassProp(property) if property.is_static => (
+            key(&property.key)?,
+            false,
+            property.readonly,
+            property.accessibility,
+        ),
+        ast::ClassMember::AutoAccessor(accessor) if accessor.is_static => {
+            let ast::Key::Public(name) = &accessor.key else {
+                return None;
+            };
+            (key(name)?, true, false, accessor.accessibility)
+        }
+        _ => return None,
+    };
+    let mut entry = String::new();
+    if accessor {
+        entry.push(STATIC_ACCESSOR);
+    }
+    if readonly {
+        entry.push(STATIC_READONLY);
+    }
+    match accessibility {
+        Some(ast::Accessibility::Private) => entry.push(STATIC_PRIVATE),
+        Some(ast::Accessibility::Protected) => entry.push(STATIC_PROTECTED),
+        _ => {}
+    }
+    entry.push(STATIC_SEPARATOR);
+    entry.push_str(&field);
+    Some(entry)
+}
+
+/// `static [statics](): string[] { return ['r:x', …]; }`: the static
+/// fields a class declares, in definition order ([`static_entry`]). Only
+/// lowering reads it; the method is pruned like any unused one.
+fn statics_method(fields: &[String], span: Span) -> ast::ClassMember {
+    let string = || {
+        Box::new(ast::TsType::TsKeywordType(ast::TsKeywordType {
+            span,
+            kind: ast::TsKeywordTypeKind::TsStringKeyword,
+        }))
+    };
+    let list = ast::Expr::Array(ast::ArrayLit {
         span,
-    ));
-    Some(ast::ClassMember::Method(ast::ClassMethod {
+        elems: fields
+            .iter()
+            .map(|field| {
+                Some(ast::ExprOrSpread {
+                    spread: None,
+                    expr: Box::new(ast::Expr::Lit(ast::Lit::Str(ast::Str {
+                        span,
+                        value: field.as_str().into(),
+                        raw: None,
+                    }))),
+                })
+            })
+            .collect(),
+    });
+    ast::ClassMember::Method(ast::ClassMethod {
         span,
-        key: ast::PropName::Ident(ast::IdentName::new(getter_key(&field).into(), span)),
+        key: ast::PropName::Ident(ast::IdentName::new(statics_key().into(), span)),
         function: Box::new(ast::Function {
             span,
             body: Some(ast::FunctionBody {
                 span,
                 stmts: vec![ast::Stmt::Return(ast::ReturnStmt {
                     span,
-                    arg: Some(Box::new(read)),
+                    arg: Some(Box::new(list)),
                 })],
             }),
-            return_type: Some(Box::new(ast::TsTypeAnn { span, type_ann: ty })),
+            return_type: Some(Box::new(ast::TsTypeAnn {
+                span,
+                type_ann: Box::new(ast::TsType::TsArrayType(ast::TsArrayType {
+                    span,
+                    elem_type: string(),
+                })),
+            })),
             ..Default::default()
         }),
         kind: ast::MethodKind::Method,
         is_static: true,
-        accessibility: property.accessibility,
+        accessibility: None,
         is_abstract: false,
         is_optional: false,
         is_override: false,
-    }))
+    })
 }
 
 /// The key of the receiver version of the static method `method` (v38
@@ -410,13 +477,12 @@ pub(crate) fn receiver_key(method: &str) -> String {
 /// parameter.
 const RECEIVER: &str = "this";
 
-/// `this` in static code as the receiver parameter, except for static
-/// field accesses `this.x`, which name the declaring class's field, and
-/// `super.m(…)`, which calls the parent's method with the same receiver
-/// (its receiver version when it uses `this`).
+/// `this` in static code as the receiver parameter, a class value, so
+/// `this.x` reads and writes the static property `x` of the receiver's
+/// class (`lower::static_store`), except for `super.m(…)`, which calls the
+/// parent's method with the same receiver (its receiver version when it
+/// uses `this`).
 struct ThisToReceiver<'a> {
-    class: &'a str,
-    fields: BTreeSet<&'a str>,
     receiver: &'a str,
     /// The parent class and its static methods that use `this`.
     parent: Option<(&'a str, &'a [(String, ast::ClassMethod)])>,
@@ -498,18 +564,6 @@ impl VisitMut for ThisToReceiver<'_> {
             _ => expr.visit_mut_children_with(self),
         }
     }
-    // `this.x` of a static field, read or assigned.
-    fn visit_mut_member_expr(&mut self, member: &mut ast::MemberExpr) {
-        if matches!(&*member.obj, ast::Expr::This(_))
-            && matches!(&member.prop, ast::MemberProp::Ident(field)
-                if self.fields.contains(field.sym.as_ref()))
-        {
-            let span = member.obj.span();
-            *member.obj = self.ident(self.class, span);
-            return;
-        }
-        member.visit_mut_children_with(self);
-    }
     fn visit_mut_function(&mut self, _: &mut ast::Function) {}
     fn visit_mut_class(&mut self, _: &mut ast::Class) {}
     fn visit_mut_getter_prop(&mut self, _: &mut ast::GetterProp) {}
@@ -517,7 +571,8 @@ impl VisitMut for ThisToReceiver<'_> {
 }
 
 /// The key of the marker of a static method that uses `this` and has no
-/// receiver version (v38): a subclass without its own copy cannot call it.
+/// receiver version (v38) because its `super` reaches no module-level
+/// parent: a subclass without its own copy cannot call it.
 pub(crate) fn unshared_key(method: &str) -> String {
     generated(&[UNSHARED, method])
 }
@@ -546,50 +601,14 @@ fn unshared_marker(name: &str, span: Span) -> ast::ClassMember {
     })
 }
 
-/// Whether a static method's own code assigns or updates `this.x` for a
-/// static field `x`.
-fn writes_this_field(function: &ast::Function, fields: &BTreeSet<&str>) -> bool {
-    struct Writes<'a>(&'a BTreeSet<&'a str>, bool);
-    impl Writes<'_> {
-        fn target(&mut self, member: &ast::MemberExpr) {
-            if matches!(&*member.obj, ast::Expr::This(_))
-                && matches!(&member.prop, ast::MemberProp::Ident(field)
-                    if self.0.contains(field.sym.as_ref()))
-            {
-                self.1 = true;
-            }
-        }
-    }
-    impl Visit for Writes<'_> {
-        fn visit_assign_expr(&mut self, assign: &ast::AssignExpr) {
-            if let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) = &assign.left
-            {
-                self.target(member);
-            }
-            assign.visit_children_with(self);
-        }
-        fn visit_update_expr(&mut self, update: &ast::UpdateExpr) {
-            if let ast::Expr::Member(member) = &*update.arg {
-                self.target(member);
-            }
-            update.visit_children_with(self);
-        }
-        fn visit_function(&mut self, _: &ast::Function) {}
-        fn visit_class(&mut self, _: &ast::Class) {}
-    }
-    let mut writes = Writes(fields, false);
-    function.params.visit_with(&mut writes);
-    function.body.visit_with(&mut writes);
-    writes.1
-}
-
 /// The receiver version of a static method that uses `this` (v38 class
 /// values): `static [this]m(this$: typeof C, …)` with `this` as that class
 /// object. A subclass without a copy of the method (one declared in
 /// another module, whose copy could not reach this module's private names,
 /// or one this module never names) and a class object that may hold any
 /// subclass call it with their own class. Static field accesses `this.x`
-/// read `C.x`. `None` when `super` reaches no module-level parent.
+/// are the receiver's own or inherited property. Only the marker when
+/// `super` reaches no module-level parent.
 fn receiver_version(
     method: &ast::ClassMethod,
     class: &str,
@@ -598,17 +617,6 @@ fn receiver_version(
     let name = key(&method.key)?;
     let span = method.span;
     let receiver = generated(&[RECEIVER]);
-    let fields: BTreeSet<&str> = statics
-        .fields
-        .iter()
-        .map(|(field, ..)| field.as_str())
-        .collect();
-    // Writing `this.x` through a subclass would create an own static
-    // property of that subclass, which a static field variable cannot
-    // model: such a method has no receiver version, only the marker.
-    if writes_this_field(&method.function, &fields) {
-        return Some(unshared_marker(&name, span));
-    }
     let mut copy = method.clone();
     copy.key = ast::PropName::Ident(ast::IdentName::new(receiver_key(&name).into(), span));
     let parent = statics.parent.as_deref().and_then(|parent| {
@@ -616,8 +624,6 @@ fn receiver_version(
         Some((parent, methods))
     });
     let mut rewrite = ThisToReceiver {
-        class,
-        fields,
         receiver: &receiver,
         parent,
         error: None,
@@ -689,11 +695,12 @@ pub(super) fn lower_class(
     let mut variables = Vec::new();
     let mut body = Vec::with_capacity(class.body.len());
     let mut supers = Vec::new();
+    let mut entries = Vec::new();
     for member in std::mem::take(&mut class.body) {
+        entries.extend(static_entry(&member));
         match static_accessor(&member).into_owned() {
             ast::ClassMember::ClassProp(property) if property.is_static => {
                 let setter = exported.then(|| setter(&property, name)).flatten();
-                body.extend(getter(&property, name));
                 variables.push(variable(property, name, classes, source)?);
                 variables.extend(setter);
             }
@@ -768,6 +775,9 @@ pub(super) fn lower_class(
             source,
         )?);
         body.push(ast::ClassMember::Method(copy));
+    }
+    if !entries.is_empty() {
+        body.push(statics_method(&entries, class.span));
     }
     class.body = body;
     variables.push(class_binding_declaration(name, class.span));

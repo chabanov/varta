@@ -107,6 +107,11 @@ struct Rewriter<'a> {
     imported: bool,
 }
 
+/// Whether `symbol` is a static field reached through a subclass.
+fn inherited(symbol: &Symbol) -> bool {
+    symbol.field.as_ref().is_some_and(|field| field.inherited)
+}
+
 /// What a member path denotes.
 enum Resolved {
     Symbol(Symbol),
@@ -138,7 +143,12 @@ impl<'a> Rewriter<'a> {
         let Resolved::Symbol(symbol) = self.path(&mut expr) else {
             return None;
         };
-        let setter = symbol.field.as_ref()?.setter.clone()?;
+        let setter = symbol
+            .field
+            .as_ref()
+            .filter(|field| !field.inherited)?
+            .setter
+            .clone()?;
         Some((symbol, setter))
     }
     /// A write of an imported static field through its setter:
@@ -285,13 +295,6 @@ impl<'a> Rewriter<'a> {
                 )),
                 span,
             );
-        } else if write && field.inherited {
-            self.fail(
-                unsupported(&format!(
-                    "assignment to the inherited static field {name} through a subclass (it would create an own property of the subclass)"
-                )),
-                span,
-            );
         }
     }
     fn finish(self) -> Result<BTreeSet<String>, CompilerError> {
@@ -325,6 +328,11 @@ impl<'a> Rewriter<'a> {
     fn value(&mut self, expr: &mut ast::Expr, symbol: &Symbol, original: &str) {
         let span = expr.span();
         self.check_field(symbol, false, span);
+        // A field reached through a subclass stays a member access: the
+        // subclass may own the property (`lower::static_store`).
+        if inherited(symbol) {
+            return;
+        }
         if !symbol.value {
             // A non-const enum used as a value is its enum object.
             if let Some(object) = symbol.enumeration.as_ref().and_then(|e| e.object.clone()) {
@@ -649,6 +657,10 @@ impl VisitMut for Rewriter<'_> {
         match self.path(&mut expr) {
             Resolved::Symbol(symbol) => {
                 self.check_field(&symbol, true, member.span);
+                if inherited(&symbol) {
+                    member.visit_mut_children_with(self);
+                    return;
+                }
                 if !symbol.value || symbol.namespace.is_some() || symbol.enumeration.is_some() {
                     self.value(&mut expr, &symbol, &original);
                     return;

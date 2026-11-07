@@ -228,6 +228,12 @@ fn lower_with(
         &mut generated,
         &mut constants.stored,
     );
+    static_store::finish(
+        &mut types,
+        &mut functions,
+        &mut generated,
+        &mut constants.stored,
+    );
     if let Some(index) = tagged_templates::finish(
         &mut types,
         &mut functions,

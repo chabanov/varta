@@ -127,6 +127,11 @@ const CASES: &[(&str, &str, &str)] = &[
         include_str!("declaration_form_cases/early_reads.expected"),
     ),
     (
+        "static_store",
+        include_str!("declaration_form_cases/static_store.ts"),
+        include_str!("declaration_form_cases/static_store.expected"),
+    ),
+    (
         "static_super",
         include_str!("declaration_form_cases/static_super.ts"),
         include_str!("declaration_form_cases/static_super.expected"),
@@ -333,10 +338,6 @@ fn class_values_match_node() {
     matches_node("static_receivers");
     for (source, diagnostic) in [
         (
-            "class A { static n = make(); } function make(): number { return 1; } export function main(): void { const k = A; console.log(String(k.n)); }",
-            "member n of a class value",
-        ),
-        (
             "class A { private static n = 1; } export function main(): void { const k = A; console.log(String(k.n)); }",
             "is private",
         ),
@@ -370,6 +371,61 @@ fn class_values_match_node() {
     );
 }
 
+/// Static fields per class (`static_store`): a write through a subclass
+/// creates its own property, in the declaring module and across modules,
+/// through class values, `this` in static code, compound, logical and
+/// update assignments; `Object.keys` and `for…in` list them. Node 24 (on
+/// tsc 5's ES2022 emit) prints the same lines.
+#[test]
+fn static_store_matches_node() {
+    matches_node("static_store");
+    let lib = "export class A {
+           static x: number = 1;
+           static tag: string = 'a';
+           static bump(): number { this.x = this.x + 10; return this.x; }
+         }
+         export class B extends A {}
+         export function readB(): number { return B.x; }";
+    let entry = "import { A, B, readB } from './lib.ts';
+         class D extends B {
+           static own(): string { return this.tag; }
+         }
+         export function main(): void {
+           console.log(String(D.x) + ' ' + D.own());
+           D.x = 5;
+           D.tag += 'd';
+           console.log(String(A.x) + ' ' + String(B.x) + ' ' + String(D.x) + ' ' + D.tag + ' ' + A.tag);
+           console.log(String(D.bump()) + ' ' + String(B.bump()) + ' ' + String(readB()));
+           A.x = 100;
+           console.log(String(A.x) + ' ' + String(B.x) + ' ' + String(D.x) + ' ' + Object.keys(D).join(','));
+         }";
+    let bytes = compile_modules(entry, &[("lib.ts", lib)]).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    assert_eq!(
+        lines(&bytes),
+        ["1 a", "1 1 5 ad a", "15 11 11", "100 11 15 x,tag"]
+    );
+    // A field typed by its initializer has the store too.
+    let inferred = compile_in(
+        V38,
+        "class A { static n = make(); } function make(): number { return 1; } class B extends A {}
+         export function main(): void { const k: typeof A = B; k.n = 5; console.log(String(A.n) + ' ' + String(k.n)); }",
+    );
+    assert_eq!(lines(&inferred), ["1 5"]);
+    for (source, diagnostic) in [
+        (
+            "class A { static n: number = 1; } class B extends A {} export function main(): void { console.log(Object.values(B).length); }",
+            "Object.values of a class object is typed any[]",
+        ),
+        (
+            "class A { static readonly n: number = 1; } class B extends A {} export function main(): void { const k: typeof A = B; k.n++; }",
+            "cannot assign to n because it is a read-only static field (TS2540)",
+        ),
+    ] {
+        refused(V38, source, diagnostic);
+    }
+}
+
 /// A `this`-using static method inherited by a subclass declared in
 /// another module runs with that subclass as `this` (its receiver
 /// version); before, it silently ran with the declaring class. Node 24
@@ -399,19 +455,17 @@ fn static_methods_inherited_across_modules_match_node() {
         lines(&bytes),
         ["table:users User user table:models Model 1"]
     );
-    // `this.count++` through User would create an own static property of
-    // User in JavaScript, which a static field variable cannot model.
+    // `this.count++` through User creates User's own static property
+    // (`static_store`); Model's stays apart.
     let writes = "import { Model } from './model.ts';
          class User extends Model {}
-         export function main(): void { console.log(String(User.bump())); }";
-    let error = compile_modules(writes, &[("model.ts", model)])
-        .err()
-        .map(|e| e.to_string())
-        .unwrap_or_default();
-    assert!(
-        error.contains("it writes a static field through this"),
-        "{error}"
-    );
+         export function main(): void {
+           console.log(String(User.bump()) + ' ' + String(User.bump()) + ' ' + String(Model.bump())
+             + ' ' + String(Model.count) + ' ' + String(User.count));
+         }";
+    let bytes = compile_modules(writes, &[("model.ts", model)]).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    assert_eq!(lines(&bytes), ["1 2 1 1 2"]);
 }
 
 /// Generic overload signatures of functions, methods and static methods
@@ -676,8 +730,16 @@ fn unsupported_declaration_forms_are_refused_by_name() {
             "cannot assign to limit because it is a read-only static field (TS2540)",
         ),
         (
-            "class A { static n = 1; } class B extends A {} export function main(): void { B.n = 2; console.log(String(A.n)); }",
-            "assignment to the inherited static field n through a subclass",
+            "class A { static readonly n: number = 1; } class B extends A {} export function main(): void { B.n = 2; console.log(String(A.n)); }",
+            "cannot assign to n because it is a read-only static field (TS2540)",
+        ),
+        (
+            "class A { private static n: number = 1; } class B extends A {} export function main(): void { console.log(String(B.n)); }",
+            "static field n is private and only accessible within class A (TS2341)",
+        ),
+        (
+            "class A { static n: number = 1; } class B extends A {} export function main(): void { B.n = 'x'; console.log(String(A.n)); }",
+            "TS2322",
         ),
         (
             "export function main(): void { const k = 2; const C = class { v = k; }; console.log(String(new C().v)); }",
