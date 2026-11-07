@@ -658,9 +658,9 @@ impl Rewriter<'_> {
             E::Await {
                 promise, result, ..
             } => self.boxed(&mut [promise, result]),
-            E::Schedule { args, .. } => args
-                .iter_mut()
-                .try_for_each(|value| self.expression(value)),
+            E::Schedule { args, .. } => {
+                args.iter_mut().try_for_each(|value| self.expression(value))
+            }
             E::ValueBlock { body, .. } => self.statements(body),
             E::GeneratorStep {
                 generator, value, ..
@@ -712,8 +712,7 @@ impl Rewriter<'_> {
                 if let Some(receiver) = ignored_receiver {
                     self.expression(receiver)?;
                 }
-                args.iter_mut()
-                    .try_for_each(|value| self.expression(value))
+                args.iter_mut().try_for_each(|value| self.expression(value))
             }
             E::StringSearch(_, a, b, c)
             | E::Conditional(a, b, c)
@@ -746,9 +745,9 @@ impl Rewriter<'_> {
             | E::RegExp(_, args)
             | E::Call(_, args)
             | E::Host(_, args)
-            | E::CheckedBigIntHost { args, .. } => args
-                .iter_mut()
-                .try_for_each(|value| self.expression(value)),
+            | E::CheckedBigIntHost { args, .. } => {
+                args.iter_mut().try_for_each(|value| self.expression(value))
+            }
             E::Record(fields) | E::OptionalRecord(fields, _) => fields
                 .iter_mut()
                 .try_for_each(|(_, value)| self.expression(value)),

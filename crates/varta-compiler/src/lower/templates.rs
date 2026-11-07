@@ -4,13 +4,24 @@ use super::*;
 
 impl Lower<'_> {
     pub(super) fn template_literal(&mut self, template: &ast::Tpl) -> Result<Expr> {
+        self.template_literal_parts(template)
+            .map(|(value, _)| value)
+    }
+    /// The template literal and the types of its substitutions (v38
+    /// `type_level` types a template in a literal type context by them).
+    pub(super) fn template_literal_parts(
+        &mut self,
+        template: &ast::Tpl,
+    ) -> Result<(Expr, Vec<Type>)> {
         if template.quasis.len() != template.exprs.len() + 1 {
             return Err(invalid("malformed template literal"));
         }
         let mut joined: Option<Expr> = None;
+        let mut parts = Vec::with_capacity(template.exprs.len());
         for (index, quasi) in template.quasis.iter().enumerate() {
             if let Some(index) = index.checked_sub(1) {
                 let value = self.expr(&template.exprs[index])?;
+                parts.push(value.ty);
                 let text = self.template_text(value)?;
                 joined = Some(concatenate(joined, text));
             }
@@ -24,7 +35,7 @@ impl Lower<'_> {
                 joined = Some(concatenate(joined, part));
             }
         }
-        Ok(match joined {
+        let value = match joined {
             Some(value) => Expr {
                 span: template.span,
                 ..value
@@ -34,7 +45,8 @@ impl Lower<'_> {
                 ty: Type::String,
                 kind: E::String(Vec::new()),
             },
-        })
+        };
+        Ok((value, parts))
     }
     /// Cooked text keeps escapes and lone surrogates exactly, like string literals.
     fn template_part(&self, quasi: &ast::TplElement) -> Result<Vec<u8>> {

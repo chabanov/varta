@@ -22,6 +22,7 @@ mod literal_inference;
 mod mapped;
 mod objects;
 mod overloads;
+mod patterns;
 mod predicates;
 mod queries;
 mod relation;
@@ -32,6 +33,49 @@ mod utilities;
 
 pub(super) use containers::covariant_array;
 pub(super) use covariance::resolve as resolve_covariance;
+pub(crate) use patterns::Pattern;
+pub(super) use patterns::{describe as describe_pattern, value_in};
+
+/// Whether `expected` is a string literal type or a union with one (a
+/// template literal expression there is typed by its parts, v38).
+pub(super) fn literal_context(expected: Option<Type>, types: &ir::ValueTypes) -> bool {
+    types.profile.type_level()
+        && expected.is_some_and(|expected| {
+            unions::members(expected, types)
+                .iter()
+                .any(|member| matches!(member, Type::Literal(ir::LiteralBase::String, _)))
+        })
+}
+
+/// A string literal set without the strings its pattern members match
+/// (TypeScript reduces such a union to its template literal types).
+pub(super) fn reduce_patterns(
+    values: BTreeSet<literals::LiteralValue>,
+    types: &ir::ValueTypes,
+) -> BTreeSet<literals::LiteralValue> {
+    let patterns: Vec<&Pattern> = values
+        .iter()
+        .filter_map(|value| match value {
+            literals::LiteralValue::Pattern(id) => Some(types.literals.pattern(*id)),
+            _ => None,
+        })
+        .collect();
+    if patterns.is_empty() {
+        return values;
+    }
+    values
+        .iter()
+        .filter(|value| {
+            !matches!(value, literals::LiteralValue::String(_))
+                || !literals::string_units(value, types.profile).is_some_and(|units| {
+                    patterns
+                        .iter()
+                        .any(|pattern| patterns::text_matches(&units, pattern))
+                })
+        })
+        .cloned()
+        .collect()
+}
 pub(super) use relation::extends;
 
 /// Nesting bound of type-level evaluation (conditional branches, mapped
@@ -172,7 +216,7 @@ pub(super) fn literal_text(value: &literals::LiteralValue) -> Option<String> {
             Some(template_types::number_text(f64::from_bits(*bits)))
         }
         literals::LiteralValue::Boolean(flag) => Some(flag.to_string()),
-        literals::LiteralValue::String(_) => None,
+        literals::LiteralValue::String(_) | literals::LiteralValue::Pattern(_) => None,
     }
 }
 

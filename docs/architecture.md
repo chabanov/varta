@@ -11880,10 +11880,30 @@ refused with an `unsupported …` diagnostic that names it (list below).
     types map them); an array's and tuple's `number`, positions and
     `Array.prototype` string keys; a primitive's prototype string keys
     (`number` for strings). Symbol-keyed members have no key type here.
-  - *Pattern template literal types* (`` `on${string}` ``) and intrinsic
-    string types over `string` are `string` outside an `extends` clause (a
-    lenient deviation: TypeScript would also check each literal assigned to
-    them against the pattern).
+  - *Pattern template literal types* (`` `on${string}` ``, `` `${number}px` ``,
+    `` `id-${bigint}` ``) and the intrinsic string types over `string`
+    (`Uppercase<string>`, and over a pattern: `` Uppercase<`on${string}`> ``
+    is `` `ON${Uppercase<string>}` ``) are checked as in tsc (step 3,
+    2026-11-06). A pattern is a member of a string literal set
+    (`LiteralValue::Pattern`), physically a string like every literal type.
+    A string literal is assignable to it when it matches (TypeScript's
+    inference from a literal to a template: a placeholder followed by text
+    takes the text up to that text's first occurrence, the last one the
+    rest; `${number}` takes a non-empty text whose ECMAScript `ToNumber` is
+    finite, `${bigint}` a bigint literal's text, `${Uppercase<string>}` a
+    text the mapping leaves unchanged); a pattern is assignable to another
+    when every string it describes matches the other; `string` is
+    assignable to none. A template literal expression where a string
+    literal type is expected takes the template type of its parts
+    (`` `on${name}` `` with `name: string` is `` `on${string}` ``). A union
+    drops the string literals its patterns match, and `` `${string}` `` is
+    `string`. `Record` and mapped types over a pattern key type are string
+    index signatures (their keys are not checked against the pattern), and
+    `Omit` drops the keys a pattern matches. Refused by name: a checked
+    assertion (`x as T`, `JSON.parse(text) as T`) to a type with a pattern,
+    which has no run-time test, `Pick` with pattern keys, and an intrinsic
+    type over a pattern with a `number`, `bigint` or other mapped
+    placeholder.
   - *`infer`* inside a declared generic type's arguments (`Box<infer U>`: the
     declaration body with its parameters as inference positions), in a union
     pattern with one inferring member (`infer U | undefined`) and over

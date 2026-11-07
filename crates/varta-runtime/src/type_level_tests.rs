@@ -261,6 +261,55 @@ fn overloads_generic_signatures_object_this_and_pattern_templates() {
 }
 
 #[test]
+fn pattern_template_types_check_their_literals() {
+    case(
+        include_str!("type_level_cases/patterns.ts"),
+        &[
+            "Click Key on3 12.5 id-42 HELLO",
+            "Hello world ONCLICK none,#fff 7",
+            "true yes no yes yes",
+            "1 2 #000 color #abc empty",
+            r#"1,2.5,1000 {"title":"t"}"#,
+        ],
+    );
+    // Each is an error in tsc 5.x: the literal (or `string`, or another
+    // pattern) is not assignable to the pattern.
+    for (declaration, wanted) in [
+        ("const h: `on${string}` = \"click\";", "`on${string}`"),
+        ("const h: `on${string}` = String(1);", "`on${string}`"),
+        ("const p: `${number}px` = \"abcpx\";", "`${number}px`"),
+        ("const i: `id-${bigint}` = \"id-1.5\";", "`id-${bigint}`"),
+        (
+            "const l: Uppercase<string> = \"Hello\";",
+            "Uppercase<string>",
+        ),
+        (
+            "const t: Capitalize<string> = \"hello\";",
+            "Capitalize<string>",
+        ),
+        (
+            "const e: Uppercase<`on${string}`> = \"ONclick\";",
+            "`ON${Uppercase<string>}`",
+        ),
+        (
+            "const s = String(1); const h: `on${string}` = `x${s}`;",
+            "`on${string}`",
+        ),
+        (
+            "const a: `on${string}` = \"onA\"; const n: `on${number}` = a;",
+            "`on${number}`",
+        ),
+    ] {
+        let source = format!("export function main(): void {{\n  {declaration}\n}}");
+        let error = rejected(&source, V38);
+        assert!(
+            error.contains(&format!("is not assignable to literal type {wanted}")),
+            "{source}\n{error}"
+        );
+    }
+}
+
+#[test]
 fn class_arrays_viewed_as_ancestor_arrays_are_one_array() {
     case(
         include_str!("type_level_cases/shared_arrays.ts"),

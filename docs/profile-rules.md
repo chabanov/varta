@@ -4168,6 +4168,16 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   `ArrayPush` items, `ArrayFill`, `ArraySearch` needles) convert to the
   stored representation. A new IR form that reads or writes array elements
   must be handled there (the walkers are exhaustive).
+- Pattern template literal types are `LiteralValue::Pattern` members of
+  string literal sets (`type_level::patterns`, pieces interned in
+  `LiteralTypes::patterns`). Every membership test of a literal value in a
+  set goes through `type_level::value_in` (subset, `fits`, `refine`), never
+  `BTreeSet::contains` alone; `exhausted_by` never counts a pattern as
+  covered. A reader that needs a finite text (`string_units`,
+  `string_members`, `constants`) gets `None`/skips the pattern and must
+  refuse it by name or fall back to a string index signature; checked
+  assertions and JSON targets refuse patterns (`has_pattern`,
+  `contains_pattern`).
 - Predicate narrowing of a class instance to a subclass reads through
   `checked_downcast` (descriptor test, `TypeError`), of `unknown` to an
   object type through `assert_value`; `this is T` predicates are recorded per
