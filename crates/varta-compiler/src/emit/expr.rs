@@ -631,6 +631,11 @@ impl Emitter<'_> {
                     I::I32Const(self.constant_root(*index)),
                     I::I64Load(strings::ROOT),
                 ]);
+                // A module binding's initialization flag (v38
+                // `module_evaluation`) is a Boolean in its root slot.
+                if expr.ty == Type::Boolean {
+                    self.code.push(I::I32WrapI64);
+                }
             }
             E::String(s) => {
                 let packed = ((s.len() as u64) << strings::LENGTH_SHIFT) | self.strings[s] as u64;

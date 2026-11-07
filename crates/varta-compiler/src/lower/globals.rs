@@ -49,7 +49,7 @@ impl Lower<'_> {
         let narrow = (binding.identity.0 == self.index)
             .then(|| self.refinements.get(&binding.slot).copied())
             .flatten();
-        Ok(match narrow {
+        let value = match narrow {
             Some(narrow) if narrow != ty && ty.is_cell() => {
                 if narrow.is_cell() {
                     Expr {
@@ -65,7 +65,8 @@ impl Lower<'_> {
                 }
             }
             _ => value,
-        })
+        };
+        self.module_flag_read(index, value)
     }
     /// Store `value` (of the variable's declared type) into its slot.
     pub(super) fn global_store(&mut self, binding: &Binding, value: Expr) -> Result<S> {
@@ -78,10 +79,78 @@ impl Lower<'_> {
         let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
         let value = unions::widen(value, Some(ty), self.types)?;
         self.flow_assigned(binding.slot, value.ty)?;
-        Ok(S::InitModuleConstant(
-            index,
-            unions::widen(value, Some(storage), self.types)?,
+        let value = unions::widen(value, Some(storage), self.types)?;
+        // V38: a write before the initialization throws after the right side
+        // is evaluated (PutValue on an uninitialized binding).
+        let Some((flag, name)) = self.types.module_flags.get(&index).cloned() else {
+            return Ok(S::InitModuleConstant(index, value));
+        };
+        let span = value.span;
+        let saved = self.hidden(storage);
+        let check = self.module_flag_check(flag, &name, span)?;
+        Ok(S::Scope(
+            vec![saved],
+            vec![
+                S::Init(saved, value),
+                check,
+                S::InitModuleConstant(index, local(span, saved, storage)),
+            ],
         ))
+    }
+    /// The statement that marks the module binding stored in root slot
+    /// `index` initialized, when code may read it earlier (v38
+    /// `module_evaluation`).
+    pub(super) fn mark_initialized(&self, index: u32, span: swc_common::Span) -> Option<S> {
+        let (flag, _) = self.types.module_flags.get(&index)?;
+        Some(S::InitModuleConstant(
+            *flag,
+            Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Integer(1),
+            },
+        ))
+    }
+    /// `if (!flag) throw ReferenceError` for module binding `name`.
+    fn module_flag_check(&mut self, flag: u32, name: &str, span: swc_common::Span) -> Result<S> {
+        let error = self.reference_error(name, span)?;
+        Ok(S::If(
+            Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Not(Box::new(Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::ModuleConstant(flag),
+                })),
+            },
+            vec![S::Throw(error)],
+            vec![],
+        ))
+    }
+    /// A read of the module binding in root slot `index`: when code may
+    /// read it before its initialization (v38 `module_evaluation`), the
+    /// flag is tested first and an uninitialized read throws
+    /// `ReferenceError`, as in JavaScript.
+    fn module_flag_read(&mut self, index: u32, value: Expr) -> Result<Expr> {
+        let Some((flag, name)) = self.types.module_flags.get(&index).cloned() else {
+            return Ok(value);
+        };
+        let span = value.span;
+        let ty = value.ty;
+        let check = self.module_flag_check(flag, &name, span)?;
+        let output = self.hidden(ty);
+        let marker = self.hidden(Type::Number);
+        Ok(Expr {
+            span,
+            ty,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![],
+                body: vec![check, S::Init(output, value)],
+            },
+        })
     }
     /// `x = value` as an expression: stores, then evaluates to the value.
     pub(super) fn global_assignment_value(

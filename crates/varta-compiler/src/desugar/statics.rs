@@ -46,6 +46,9 @@ pub(crate) struct Field {
     pub setter: Option<String>,
 }
 
+/// The name segment of a static block's generated module variable.
+pub(super) const BLOCK: &str = "static";
+
 /// The static members of one module-level class.
 #[derive(Clone, Default)]
 pub(super) struct Statics {
@@ -533,7 +536,7 @@ fn static_block(
         args: Vec::new(),
         type_args: None,
     });
-    let name = generated(&[class, "static", &index.to_string()]);
+    let name = generated(&[class, BLOCK, &index.to_string()]);
     Ok(ast::Decl::Var(Box::new(ast::VarDecl {
         span,
         ctxt: Default::default(),

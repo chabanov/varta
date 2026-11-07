@@ -116,13 +116,14 @@ pub(super) fn link_module(
             *assignable = false;
         }
     }
-    check(
+    let early = check(
         source,
         functions,
         &scope,
         (&declared, &unit.ast),
         types.profile,
     )?;
+    let mut registered = false;
     for chunk in chunks(&declared) {
         let index = *next;
         // Function initializers (v37) lift their bodies, and collection
@@ -183,8 +184,21 @@ pub(super) fn link_module(
             asynchronous: None,
             core: Default::default(),
         };
-        let (body, locals) =
-            lower.initializers(chunk, &scope, (&mut linked.stored, &mut linked.declared))?;
+        // V38: bindings that function values of earlier initializers reach
+        // get their root slots before the first initializer is lowered.
+        if !std::mem::replace(&mut registered, true) && !early.captured.is_empty() {
+            let captured = lower.register_captured(
+                &declared,
+                &early,
+                (&mut linked.stored, &mut linked.declared),
+            )?;
+            scope.extend(captured);
+        }
+        let (body, locals) = lower.initializers(
+            chunk,
+            (&scope, &early),
+            (&mut linked.stored, &mut linked.declared),
+        )?;
         let stored = body
             .iter()
             .any(|statement| matches!(statement, S::InitModuleConstant(..)));
@@ -314,17 +328,35 @@ fn chunks<'d, 'a>(declared: &'d [Declared<'a>]) -> Vec<&'d [Declared<'a>]> {
     chunks
 }
 
+/// Module bindings that code may read before their initialization (v38
+/// `module_evaluation`). JavaScript throws `ReferenceError` on such a read;
+/// these bindings are stored in root slots with an initialization flag that
+/// every read and write tests.
+#[derive(Default)]
+pub(super) struct Early {
+    /// Bindings that code may reach before their initialization.
+    flagged: BTreeSet<String>,
+    /// The subset that function values of an earlier (or their own)
+    /// initializer mention: that code reaches the binding through its root
+    /// slot, so the binding's type is fixed before its initializer is
+    /// lowered (by its annotation or its function syntax).
+    captured: BTreeSet<String>,
+}
+
 /// Validate bindings and initializer forms of one module before lowering. A
 /// reference to a constant that is declared later (or to itself) is a
-/// temporal-dead-zone error.
+/// temporal-dead-zone error; under v38 (`module_evaluation`) only a read
+/// while the initializer is evaluated (TypeScript's TS2448), and a read by
+/// code that may run earlier is checked at run time ([`Early`]).
 fn check(
     source: &Source,
     functions: &BTreeMap<String, Signature>,
     imported: &Scope,
     (declared, module): (&[Declared<'_>], &ast::Module),
     profile: varta_common::language::LanguageProfile,
-) -> Result<()> {
+) -> Result<Early> {
     let mut names: BTreeSet<String> = imported.keys().cloned().collect();
+    let mut hoisted = BTreeSet::new();
     for var in declared {
         for declarator in &var.decls {
             let ast::Pat::Ident(binding) = &declarator.name else {
@@ -346,9 +378,14 @@ fn check(
                     declarator.span,
                 ));
             }
+            if var.kind == ast::VarDeclKind::Var {
+                hoisted.insert(name.to_owned());
+            }
             names.insert(name.to_owned());
         }
     }
+    let classes = module_classes(module);
+    let mut early = Early::default();
     let mut ready: BTreeSet<String> = imported.keys().cloned().collect();
     for var in declared {
         for declarator in &var.decls {
@@ -366,36 +403,125 @@ fn check(
                 _ => init,
             };
             initializer_form(value, &names, profile).map_err(|e| source.locate(e, value.span()))?;
-            if let Some(early) = referenced(value)
-                .into_iter()
-                .find(|name| names.contains(name) && !ready.contains(name))
-            {
-                return Err(source.locate(
-                    invalid(format!("binding used before initialization: {early}")),
-                    value.span(),
-                ));
+            let pending = |name: &String| names.contains(name) && !ready.contains(name);
+            if !profile.module_evaluation() {
+                if let Some(early) = referenced(value).into_iter().find(|name| pending(name)) {
+                    return Err(source.locate(
+                        invalid(format!("binding used before initialization: {early}")),
+                        value.span(),
+                    ));
+                }
+                ready.insert(binding.id.sym.to_string());
+                continue;
             }
-            // V38 (`module_evaluation`): code the initializer runs may not
-            // read a binding of this module before its initialization
-            // (JavaScript's temporal dead zone, a `ReferenceError`).
-            if profile.module_evaluation()
-                && module_evaluation::effectful(value)
-                && let Some(early) = module_evaluation::reachable(module, value)
-                    .into_iter()
-                    .find(|name| names.contains(name) && !ready.contains(name))
+            // V38 (`module_evaluation`): a later binding read while the
+            // initializer is evaluated is TypeScript's TS2448.
+            if let Some(name) = module_evaluation::immediate(value)
+                .into_iter()
+                .find(|name| pending(name))
             {
-                return Err(source.locate(
-                    invalid(format!(
-                        "binding used before initialization: {} is read by code this initializer runs (JavaScript throws ReferenceError)",
-                        crate::desugar::display_name(&early)
-                    )),
-                    value.span(),
-                ));
+                let shown = crate::desugar::display_name(&name);
+                let message = if hoisted.contains(&name) {
+                    format!(
+                        "var {shown} read before its initialization (JavaScript reads undefined, which its type does not admit)"
+                    )
+                } else {
+                    format!("binding used before initialization: {shown} (TS2448)")
+                };
+                return Err(source.locate(invalid(message), value.span()));
+            }
+            for name in module_evaluation::mentioned(value)
+                .into_iter()
+                .filter(|name| pending(name))
+            {
+                early.captured.insert(name.clone());
+                early.flagged.insert(name);
+            }
+            // Code the initializer runs may read a later binding: JavaScript
+            // throws `ReferenceError`, which a flag test reproduces. A static
+            // field or a `var` reads `undefined` instead, which its type does
+            // not admit.
+            if module_evaluation::effectful(value) {
+                for name in module_evaluation::reachable(module, value)
+                    .into_iter()
+                    .filter(|name| pending(name))
+                {
+                    if hoisted.contains(&name) || module_evaluation::static_field(&name, &classes) {
+                        return Err(source.locate(
+                            invalid(format!(
+                                "{} is read before its definition by code this initializer runs (JavaScript reads undefined, which its type does not admit)",
+                                crate::desugar::display_name(&name)
+                            )),
+                            value.span(),
+                        ));
+                    }
+                    early.flagged.insert(name);
+                }
             }
             ready.insert(binding.id.sym.to_string());
         }
     }
-    Ok(())
+    Ok(early)
+}
+
+/// The names of the module-level classes of `module`.
+fn module_classes(module: &ast::Module) -> BTreeSet<String> {
+    module
+        .body
+        .iter()
+        .filter_map(|item| match item {
+            ast::ModuleItem::Stmt(ast::Stmt::Decl(ast::Decl::Class(class))) => {
+                Some(class.ident.sym.to_string())
+            }
+            ast::ModuleItem::ModuleDecl(ast::ModuleDecl::ExportDecl(export)) => {
+                match &export.decl {
+                    ast::Decl::Class(class) => Some(class.ident.sym.to_string()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether a module of a v38 program has a binding that code may read
+/// before its initialization: the program throws `ReferenceError`
+/// instances of the Error root.
+pub(super) fn has_early_bindings(
+    module: &ast::Module,
+    profile: varta_common::language::LanguageProfile,
+) -> bool {
+    if !profile.module_evaluation() {
+        return false;
+    }
+    let declared = declarations(module, profile);
+    let names: BTreeSet<String> = declared
+        .iter()
+        .flat_map(|var| &var.decls)
+        .filter_map(|declarator| match &declarator.name {
+            ast::Pat::Ident(id) => Some(id.id.sym.to_string()),
+            _ => None,
+        })
+        .collect();
+    let mut ready = BTreeSet::new();
+    for declarator in declared.iter().flat_map(|var| &var.decls) {
+        let ast::Pat::Ident(binding) = &declarator.name else {
+            continue;
+        };
+        if let Some(value) = declarator.init.as_deref() {
+            let pending = |name: &String| names.contains(name) && !ready.contains(name);
+            if module_evaluation::mentioned(value).iter().any(pending)
+                || module_evaluation::effectful(value)
+                    && module_evaluation::reachable(module, value)
+                        .iter()
+                        .any(pending)
+            {
+                return true;
+            }
+        }
+        ready.insert(binding.id.sym.to_string());
+    }
+    false
 }
 
 /// Why an initializer leaves the admitted pure subset, naming the construct.
@@ -538,13 +664,85 @@ fn fold(value: &Expr, folded: &BTreeMap<u32, Value>) -> Option<Value> {
 }
 
 impl Lower<'_> {
+    /// Reserve the root slots and initialization flags of the module
+    /// bindings that function values of earlier initializers mention (v38
+    /// `module_evaluation`). Their types come from their annotations or the
+    /// syntax of their function initializers, as for a closure's early
+    /// capture of a local (`tdz`).
+    fn register_captured(
+        &mut self,
+        declared: &[Declared<'_>],
+        early: &Early,
+        (stored, ids): (&mut u32, &mut usize),
+    ) -> Result<Scope> {
+        let mut registered = Scope::new();
+        for var in declared {
+            for declarator in &var.decls {
+                let ast::Pat::Ident(id) = &declarator.name else {
+                    continue;
+                };
+                let name = id.id.sym.as_ref();
+                if !early.captured.contains(name) {
+                    continue;
+                }
+                let annotated = self.binding_annotation(&declarator.name)?;
+                let ty = annotated.or_else(|| {
+                    let init = declarator.init.as_deref()?;
+                    tdz::initializer_type(init, self.types)
+                        .or_else(|| parameters::literal(init, self.types))
+                        .or_else(|| self.known_initializer(init))
+                });
+                let shown = crate::desugar::display_name(name);
+                let Some(ty) = ty else {
+                    return Err(self.source.locate(
+                        unsupported(&format!(
+                            "module binding {shown} reached by a function value before its \
+                             initialization, with a type inferred from its initializer; \
+                             annotate the binding"
+                        )),
+                        id.id.span,
+                    ));
+                };
+                let storage = if ty.needs_root() {
+                    ty
+                } else {
+                    unions::intern(vec![ty, Type::Undefined], self.types)?
+                };
+                if !storage.needs_root() {
+                    return Err(self.source.locate(
+                        unsupported(&format!("module variable of type {ty}")),
+                        declarator.span,
+                    ));
+                }
+                let (index, flag) = (*stored, *stored + 1);
+                *stored += 2;
+                self.types
+                    .module_flags
+                    .insert(index, (flag, shown.to_owned()));
+                let assignable = var.kind != ast::VarDeclKind::Const;
+                registered.insert(
+                    name.to_owned(),
+                    Constant {
+                        ty,
+                        value: Value::Stored(index),
+                        readonly: !assignable,
+                        variable: Some((storage, assignable)),
+                        id: *ids,
+                    },
+                );
+                *ids += 1;
+            }
+        }
+        Ok(registered)
+    }
     /// Lower one chunk of constant declarations into an initializer body that
     /// publishes every reference value to its permanent slot. `visible` holds the
-    /// imported constants and those of earlier chunks, already initialized.
+    /// imported constants and those of earlier chunks, already initialized,
+    /// and (v38) the [`Early`] bindings that function values reach early.
     fn initializers(
         &mut self,
         declared: &[Declared<'_>],
-        visible: &Scope,
+        (visible, early): (&Scope, &Early),
         (stored, ids): (&mut u32, &mut usize),
     ) -> Result<(Vec<S>, Scope)> {
         let mut used = BTreeSet::new();
@@ -552,6 +750,12 @@ impl Lower<'_> {
             for declarator in &var.decls {
                 if let Some(init) = declarator.init.as_deref() {
                     used.extend(referenced(init));
+                }
+                // A captured binding is initialized through its root slot.
+                if let ast::Pat::Ident(name) = &declarator.name
+                    && early.captured.contains(name.id.sym.as_ref())
+                {
+                    used.insert(name.id.sym.to_string());
                 }
             }
         }
@@ -576,8 +780,17 @@ impl Lower<'_> {
                 var
             })
             .collect();
+        let captured = |declarator: &ast::VarDeclarator| {
+            matches!(&declarator.name, ast::Pat::Ident(name)
+                if early.captured.contains(name.id.sym.as_ref()))
+        };
         for var in &declared {
-            self.predeclare(var)
+            let mut own = var.clone();
+            own.decls.retain(|declarator| !captured(declarator));
+            if own.decls.is_empty() {
+                continue;
+            }
+            self.predeclare(&own)
                 .map_err(|e| self.source.locate(e, var.span()))?;
         }
         let mut locals = Scope::new();
@@ -592,6 +805,35 @@ impl Lower<'_> {
                 let binding = self.binding(name.id.sym.as_ref())?;
                 let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
                 let span = value.span;
+                // V38: a captured binding already has its root slot.
+                if captured(declarator) {
+                    let constant = visible
+                        .get(name.id.sym.as_ref())
+                        .cloned()
+                        .ok_or_else(|| invalid("missing captured module binding"))?;
+                    let (Value::Stored(index), Some((storage, _))) =
+                        (constant.value, constant.variable)
+                    else {
+                        return Err(invalid("captured module binding without a root slot"));
+                    };
+                    body.push(S::Init(slot, value));
+                    body.push(S::InitModuleConstant(
+                        index,
+                        unions::widen(
+                            Expr {
+                                span,
+                                ty,
+                                kind: E::Local(slot),
+                            },
+                            Some(storage),
+                            self.types,
+                        )?,
+                    ));
+                    body.extend(self.mark_initialized(index, span));
+                    locals.insert(name.id.sym.to_string(), constant);
+                    continue;
+                }
+                let flagged = early.flagged.contains(name.id.sym.as_ref());
                 // V38 (`module_evaluation`): a primitive `const` whose
                 // initializer runs code has no literal to fold; it is stored
                 // like a module variable that no code may assign.
@@ -599,6 +841,9 @@ impl Lower<'_> {
                     && self.types.profile.module_evaluation()
                     && !ty.needs_root()
                     && fold(&value, &folded).is_none();
+                // A binding that code may read before its initialization is
+                // read in its root slot after a flag test, never folded.
+                let computed = computed || flagged && var.kind == ast::VarDeclKind::Const;
                 if var.kind != ast::VarDeclKind::Const || computed {
                     // A module variable (v37) always lives in its root slot;
                     // a primitive is boxed so the slot holds a handle.
@@ -638,6 +883,13 @@ impl Lower<'_> {
                             self.types,
                         )?,
                     ));
+                    if flagged {
+                        let flag = *stored;
+                        *stored += 1;
+                        let shown = crate::desugar::display_name(name.id.sym.as_ref()).to_owned();
+                        self.types.module_flags.insert(index, (flag, shown));
+                        body.extend(self.mark_initialized(index, span));
+                    }
                     // Later initializers (closures) reach the stored variable.
                     if let Some(binding) = self
                         .scopes

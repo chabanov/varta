@@ -4024,13 +4024,25 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   dictionary field `INDEX_FIELD` (a private name no source spells); every
   member access path calls `Lower::class_index` before choosing record,
   class or dictionary lowering, and a new member-access path must too.
+  Its descriptor key is `value::INDEX_SIGNATURE_KEY`; both serializers
+  (`varta_intrinsics::json` `index_members`, the host's
+  `json::presence`) splice its entries into the instance in own-key order
+  and must stay identical (`linked_stringify_tests` compares them on every
+  case program).
 - Module evaluation (`module_evaluation`, `lower::module_evaluation`): an
-  initializer may run code. Keep the compile-time temporal-dead-zone check
-  (`reachable` over-approximates: names reach whole declarations, classes
-  their instance members, `C.m` a static method) in `module_constants::
-  check`, reserve the initializer index for effectful chunks, and never let
-  `prune::unread_constants` drop an initializer that calls code. Top-level
-  `await` stays refused.
+  initializer may run code. `module_constants::check` refuses only a read
+  while an initializer is evaluated (`module_evaluation::immediate`,
+  TS2448) and an early `var` or static-field read (JavaScript reads
+  `undefined`); it returns the `Early` bindings (mentioned by function
+  values of earlier initializers, or `reachable` from effectful ones:
+  names reach whole declarations, classes their instance members, `C.m` a
+  static method). Those are stored in root slots, never folded, with a
+  flag slot in `ValueTypes::module_flags`; `globals::global_read`
+  and `global_store` test it, the initializer sets it
+  (`mark_initialized`), and `module_constants::has_early_bindings` must
+  agree with `check` so the Error root exists. Reserve the initializer
+  index for effectful chunks, and never let `prune::unread_constants` drop
+  an initializer that calls code. Top-level `await` stays refused.
 - Class forms are a pre-layout rewrite (`classes::forms`, after
   `private_names` and `parameter_properties`): setters become methods named
   `forms::setter_key` (no string key can spell it), abstract members get an

@@ -3,12 +3,14 @@
 //! initializer may therefore call functions and construct objects, and
 //! class static fields and static blocks run where the class is defined.
 //! Initializers run in dependency order before `main`, before each HTTP v2
-//! request (a request's fresh Store is its own instance) and before each
-//! tool invocation.
+//! request (a request's fresh Store is its own instance).
 //!
 //! A binding read before its initialization throws `ReferenceError` in
-//! JavaScript; here such a read is refused at compile time whenever an
-//! initializer can reach it through the module's own code. Reachability
+//! JavaScript. A read while an initializer is evaluated ([`immediate`]) is
+//! refused at compile time, as tsc refuses it (TS2448); a binding that
+//! function values mention ([`mentioned`]) or that code an initializer runs
+//! can reach ([`reachable`]) is checked at run time through an
+//! initialization flag (`module_constants::Early`). Reachability
 //! over-approximates calls: naming a function or binding reaches its whole
 //! body, naming a class reaches its constructor, instance fields and
 //! instance methods, and `C.m` reaches the static method `m`. Other modules
@@ -69,6 +71,67 @@ pub(super) fn effectful(value: &ast::Expr) -> bool {
     let mut calls = Calls(false);
     value.visit_with(&mut calls);
     calls.0
+}
+
+/// The identifiers an initializer reads while it is evaluated: outside
+/// function values, except an immediately invoked one, whose body runs at
+/// once. TypeScript reports such a read of a later declaration (TS2448);
+/// a read inside any other function value is deferred to its call.
+pub(super) fn immediate(value: &ast::Expr) -> BTreeSet<String> {
+    struct Immediate(BTreeSet<String>);
+    impl Visit for Immediate {
+        fn visit_ts_type(&mut self, _: &ast::TsType) {}
+        fn visit_ident(&mut self, id: &ast::Ident) {
+            self.0.insert(id.sym.to_string());
+        }
+        fn visit_call_expr(&mut self, call: &ast::CallExpr) {
+            if let ast::Callee::Expr(callee) = &call.callee {
+                match stmt::unparen(callee) {
+                    ast::Expr::Arrow(arrow) => {
+                        arrow.params.visit_with(self);
+                        arrow.body.visit_with(self);
+                    }
+                    ast::Expr::Fn(function) => {
+                        function.function.params.visit_with(self);
+                        function.function.body.visit_with(self);
+                    }
+                    other => other.visit_with(self),
+                }
+            }
+            call.args.visit_with(self);
+        }
+        fn visit_arrow_expr(&mut self, _: &ast::ArrowExpr) {}
+        fn visit_function(&mut self, _: &ast::Function) {}
+        fn visit_class(&mut self, _: &ast::Class) {}
+        fn visit_getter_prop(&mut self, _: &ast::GetterProp) {}
+        fn visit_setter_prop(&mut self, _: &ast::SetterProp) {}
+    }
+    let mut found = Immediate(BTreeSet::new());
+    value.visit_with(&mut found);
+    found.0
+}
+
+/// Every identifier a node mentions, read at once or by function values.
+pub(super) fn mentioned(value: &ast::Expr) -> BTreeSet<String> {
+    struct Mentioned(BTreeSet<String>);
+    impl Visit for Mentioned {
+        fn visit_ts_type(&mut self, _: &ast::TsType) {}
+        fn visit_ident(&mut self, id: &ast::Ident) {
+            self.0.insert(id.sym.to_string());
+        }
+    }
+    let mut found = Mentioned(BTreeSet::new());
+    value.visit_with(&mut found);
+    found.0
+}
+
+/// Whether the module variable `name` is the generated static field of one
+/// of the module-level classes `classes` (`crate::desugar::statics`), which
+/// JavaScript reads as `undefined` before its definition.
+pub(super) fn static_field(name: &str, classes: &BTreeSet<String>) -> bool {
+    classes
+        .iter()
+        .any(|class| crate::desugar::is_static_field(name, class))
 }
 
 /// Whether an initializer awaits outside a function value (top-level

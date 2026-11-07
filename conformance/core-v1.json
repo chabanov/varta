@@ -3725,6 +3725,38 @@
       "baseline": {
         "status": "supported"
       }
+    },
+    {
+      "id": "class-index-json",
+      "feature": "class-index-signatures",
+      "path": "cases/class-index-json.ts",
+      "sha256": "efe04a57f8e7bd26003d15ab8d261a4f39038e01731924b38ee8a8147ff0f1f9",
+      "stdout": [
+        "varta log: {\"2\":3,\"10\":2,\"count\":1,\"size\":2,\"z\":1,\"a\":4}",
+        "varta log: [{\"count\":0,\"size\":2,\"bonus\":5,\"top\":9},{\"inner\":{\"2\":3,\"10\":2,\"count\":1,\"size\":2,\"z\":1,\"a\":4}}]",
+        "varta log: {\"top\":9,\"count\":0}",
+        "varta log: {\"0\":\"first\",\"title\":\"notes\",\"body\":\"text\"}",
+        "varta log: {\"count\":0,\"size\":2}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "module-tdz",
+      "feature": "temporal-dead-zone",
+      "path": "cases/module-tdz.ts",
+      "sha256": "c509b48d5f94e143541d243d4e274f1a2eb46022b90683d61f848adc8a25b614",
+      "stdout": [
+        "varta log: ReferenceError: Cannot access 'LIMITS' before initialization | 2",
+        "varta log: hi there",
+        "varta log: Cannot access 'STEP' before initialization | 2 | 2",
+        "varta log: Cannot access 'total' before initialization | reset 0",
+        "varta log: 120"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
     }
   ]
 }

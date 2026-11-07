@@ -5877,13 +5877,28 @@ called through, and a class expression is admitted as the initializer of its
 own `const`, like a class declared inside a function (neither may capture the
 function's locals).
 Modules evaluate as in JavaScript: initializers may call functions, and static
-fields and `static { … }` blocks run where their class is defined; reading a
-binding before its declaration, which JavaScript reports as a
-`ReferenceError`, is a compile error. Enums and namespaces are also objects:
-`Object.keys(Color)` lists `"0"`, `"1"`, …, then the member names, and a
-namespace passes as a value of type `typeof NS`. A class with an index
+fields and `static { … }` blocks run where their class is defined. Code that
+runs during module evaluation and reads or writes a binding before its
+declaration throws a `ReferenceError`, as in JavaScript:
+
+```ts
+function limits(): number[] { return LIMITS; }
+function measure(): string {
+  try { return String(limits().length); }
+  catch (e) { return e instanceof Error ? e.message : 'other'; }
+}
+const early = measure(); // Cannot access 'LIMITS' before initialization
+const LIMITS: number[] = [3, 4];
+const late = measure();  // 2
+```
+
+Only a read while an initializer itself is evaluated (`const a = b; const b
+= 1;`) is a compile error, as in tsc (TS2448). Enums and namespaces are also
+objects: `Object.keys(Color)` lists `"0"`, `"1"`, …, then the member names,
+and a namespace passes as a value of type `typeof NS`. A class with an index
 signature `[key: string]: T` keeps undeclared members of its instances as own
-properties. Decorators are not supported yet.
+properties, and `JSON.stringify` lists them with the fields in JavaScript's
+key order. Decorators are not supported yet.
 
 #### Type-level TypeScript (opt-in v38)
 

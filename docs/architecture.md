@@ -12078,9 +12078,18 @@ time (`new.target.name`, an Error subclass's `name`).
   dictionary operation on it (a missing key reads `undefined`). Every
   declared field must be of the index's value type and methods and
   accessors are refused unless it is `unknown` (TS2411). Static, readonly
-  and non-string index signatures are refused by name, and `JSON.stringify`
-  of such an instance is refused (JavaScript would list the extra
-  properties after the fields).
+  and non-string index signatures are refused by name. The hidden field's
+  descriptor key is `value::INDEX_SIGNATURE_KEY` (a private key no source
+  can spell). Serialization (owner decision of 2026-11-06), by the linked
+  serializer and the host's `json_stringify_owned` alike, never writes that
+  field: it lists the dictionary's entries as the instance's own properties
+  in JavaScript's own-key order, so `JSON.stringify` (also nested, with a
+  replacer list or indentation) writes the canonical array-index keys of
+  fields and entries ascending, then the fields in insertion order, then
+  the other entries in insertion order; entries holding `undefined` are
+  omitted, as for fields. One difference remains: an extra property that a
+  base constructor adds before a subclass's own fields are defined is
+  listed after those fields, where JavaScript lists it before them.
 - **Not admitted yet.** Standard decorators (they need classes as values
   and the decorator context objects) and generic overload signatures are
   refused by name (`decorator`, `generic overload signature`). Legacy
@@ -12100,19 +12109,38 @@ load()`, `static instance = new C()`, static blocks); only a top-level
 stored like a module variable that no code may assign. Initializers that
 run code are never pruned as unread (`program_limits`).
 
-JavaScript throws `ReferenceError` when code reads a binding before its
-initialization. Varta refuses such a read at compile time whenever an
-effectful initializer can reach it: the reachable code is the initializer
-plus, transitively, every module function, function-valued binding and
-class it names (a class with its constructor, instance fields and instance
-methods; a static method through `C.m`), and no binding of the module
-declared at or after the initializer may be read by it (`binding used
-before initialization: X is read by code this initializer runs`). The
-analysis over-approximates calls (a program that only names a later
-binding on a path it never takes is refused too); other modules cannot
-reach this module's bindings early, since imports are acyclic and
-initialized first. A module variable whose type is `undefined` or `null`
-alone is refused (it has no boxed form).
+JavaScript throws `ReferenceError` when code reads or writes a binding
+before its initialization (owner decision of 2026-11-06: by the
+specification, at run time). A read while an initializer is evaluated,
+outside function values or in an immediately invoked one, is refused at
+compile time as tsc refuses it (`binding used before initialization: X
+(TS2448)`); inside a function, a direct read before the declaration is the
+same TS2448 error. Every other early access is checked at run time. The
+bindings that code may reach before their initialization are found
+syntactically: those that function values of an earlier (or their own)
+initializer mention, and those that an initializer running code reaches
+through the initializer plus, transitively, every module function,
+function-valued binding and class it names (a class with its constructor,
+instance fields and instance methods; a static method through `C.m`).
+Such a binding is stored in its root slot like a module variable (never
+folded to a literal) with an initialization flag in a further root slot
+(`0` or `1`, below the heap base, so the collector skips it); its
+initializer sets the flag, and every read and write through the root slot
+tests it first and throws an Error-root instance named `ReferenceError`
+with Node's message (`Cannot access 'X' before initialization`), a write
+after evaluating its right side. The analysis over-approximates calls,
+which costs only the flag test. A binding mentioned by a function value of
+an earlier initializer is reached through its root slot before its own
+initializer is lowered, so its type must follow from its annotation or its
+function syntax (otherwise `annotate the binding`). Two early reads stay
+refused because JavaScript reads `undefined` there, which the declared
+type does not admit: a static field read before its definition and a
+module `var` (`X is read before its definition by code this initializer
+runs`). Other modules cannot reach this module's bindings early, since
+imports are acyclic and initialized first. A module-level class reached
+before its declaration still constructs (JavaScript throws there; the
+class binding has no flag yet). A module variable whose type is
+`undefined` or `null` alone is refused (it has no boxed form).
 
 #### Bytes held by unknown (`byte_values`)
 

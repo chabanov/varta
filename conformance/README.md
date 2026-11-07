@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 105 feature rows and 180 cases:
-175 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 105 feature rows and 182 cases:
+177 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -492,4 +492,10 @@ v24.20.0 prints the stored output.
 The `class-index-signatures` row (typescript_handbook; CORE-02) adds
 `class-index-signature`: undeclared members of instances with a string index
 signature, by name and computed key, also through a subclass; it matches
+Node.js v24.20.0.
+The runtime temporal dead zone of module bindings (owner decision of
+2026-11-06) adds `module-tdz` under `temporal-dead-zone`: module code reads
+and writes later bindings before their initialization and catches
+`ReferenceError`; `class-index-json` serializes instances with index
+signatures, nested and with a replacer list, in own-key order. Both match
 Node.js v24.20.0.

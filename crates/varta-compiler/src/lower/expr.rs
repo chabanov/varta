@@ -275,7 +275,7 @@ impl Lower<'_> {
                 }
                 if !binding.initialized {
                     return Err(invalid(format!(
-                        "binding used before initialization: {}",
+                        "binding used before initialization: {} (TS2448)",
                         name.sym
                     )));
                 }

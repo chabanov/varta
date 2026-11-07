@@ -360,6 +360,10 @@ pub(crate) struct ValueTypes {
     pub overloads: crate::lower::overloads::Overloads,
     /// K9 type-level state (v38 `type_level`); see `lower::type_level`.
     pub type_level: crate::lower::type_level::TypeLevel,
+    /// V38 (`module_evaluation`): module bindings that code may read before
+    /// their initialization, by root slot: the slot of their initialization
+    /// flag and the binding's source name (`ReferenceError` text).
+    pub module_flags: std::collections::BTreeMap<u32, (u32, String)>,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1), or under value

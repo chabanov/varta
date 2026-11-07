@@ -92,6 +92,16 @@ const CASES: &[(&str, &str, &str)] = &[
         include_str!("declaration_form_cases/module_evaluation.expected"),
     ),
     (
+        "index_json",
+        include_str!("declaration_form_cases/index_json.ts"),
+        include_str!("declaration_form_cases/index_json.expected"),
+    ),
+    (
+        "module_tdz",
+        include_str!("declaration_form_cases/module_tdz.ts"),
+        include_str!("declaration_form_cases/module_tdz.expected"),
+    ),
+    (
         "static_super",
         include_str!("declaration_form_cases/static_super.ts"),
         include_str!("declaration_form_cases/static_super.expected"),
@@ -206,11 +216,13 @@ fn enum_assignability_matches_tsc() {
     );
 }
 
-/// Class index signatures: undeclared members are a hidden dictionary;
-/// members that do not fit the index type are TS2411.
+/// Class index signatures: undeclared members are a hidden dictionary,
+/// serialized as own properties in own-key order; members that do not fit
+/// the index type are TS2411.
 #[test]
 fn class_index_signatures_match_node() {
     matches_node("index_signatures");
+    matches_node("index_json");
     refused(
         V38,
         "class C { [key: string]: number; m(): number { return 1; } } export function main(): void { console.log('x'); }",
@@ -237,6 +249,51 @@ fn enum_and_namespace_objects_match_node() {
 #[test]
 fn module_evaluation_and_static_blocks_match_node() {
     matches_node("module_evaluation");
+}
+
+/// A module binding read or written before its initialization by code
+/// that runs during module evaluation throws `ReferenceError` at run time;
+/// only a read while an initializer is evaluated, which tsc reports too, is
+/// refused (TS2448), and a `var` or static field read early (JavaScript
+/// reads `undefined`) stays refused.
+#[test]
+fn module_temporal_dead_zone_matches_node() {
+    matches_node("module_tdz");
+    for (source, diagnostic) in [
+        (
+            "const a = b; const b = 1; export function main(): void { console.log(String(a)); }",
+            "binding used before initialization: b (TS2448)",
+        ),
+        (
+            "const a = (() => b)(); const b = 1; export function main(): void { console.log(String(a)); }",
+            "binding used before initialization: b (TS2448)",
+        ),
+        (
+            "function f(): number { return v; } const a = f(); var v = 1; export function main(): void { console.log(String(a)); }",
+            "v is read before its definition by code this initializer runs (JavaScript reads undefined",
+        ),
+        (
+            "export function main(): void { console.log(String(x)); const x = 1; }",
+            "binding used before initialization: x (TS2448)",
+        ),
+    ] {
+        refused(V38, source, diagnostic);
+    }
+    // Uncaught, the error ends the program as in Node.
+    let bytes = compile_in(
+        V38,
+        "function f(): number { return M; } const r = f(); const M = 1; export function main(): void { console.log(String(r)); }",
+    );
+    let error = VartaRuntime::new()
+        .run_wasm_bytes(&bytes, &[])
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(
+        error.contains("ReferenceError")
+            && error.contains("Cannot access 'M' before initialization"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -496,12 +553,8 @@ fn unsupported_declaration_forms_are_refused_by_name() {
             "assignment to the inherited static field n through a subclass",
         ),
         (
-            "function limit(): number[] { return LIMITS; } const first = limit(); const LIMITS: number[] = [3]; export function main(): void { console.log(String(first.length)); }",
-            "binding used before initialization: LIMITS is read by code this initializer runs",
-        ),
-        (
             "class C { static make(): C { return new C(); } static x = C.make(); constructor() { console.log(String(C.later)); } static later = 2; } export function main(): void { console.log('x'); }",
-            "binding used before initialization: later is read by code this initializer runs",
+            "later is read before its definition by code this initializer runs (JavaScript reads undefined",
         ),
         (
             "export function main(): void { const k = 2; const C = class { v = k; }; console.log(String(new C().v)); }",

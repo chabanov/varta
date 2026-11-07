@@ -58,6 +58,48 @@ pub(crate) fn display_name(name: &str) -> &str {
     }
 }
 
+/// Whether `name` is the generated module variable of a static field of
+/// class `class` (`generated(&[class, field])`), not one of its static
+/// blocks (`generated(&[class, "static", index])`).
+pub(crate) fn is_static_field(name: &str, class: &str) -> bool {
+    let (name, class) = (untagged(name), untagged(class));
+    let Some(field) = name
+        .strip_prefix(&generated(&[&class]))
+        .and_then(|rest| rest.strip_prefix(SEPARATOR))
+    else {
+        return false;
+    };
+    let block = field
+        .strip_prefix(statics::BLOCK)
+        .and_then(|rest| rest.strip_prefix(SEPARATOR))
+        .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()));
+    !field.is_empty() && !block
+}
+
+/// Hex digits of a module tag's path hash ([`module_hash`]).
+const MODULE_HASH_DIGITS: usize = 16;
+/// The leading segment character of a module tag ([`tag`]).
+const MODULE_TAG: char = 'm';
+
+/// A generated name without the module tag that [`tag`] inserts.
+fn untagged(name: &str) -> String {
+    let tagged = name
+        .strip_prefix(PREFIX)
+        .and_then(|rest| rest.strip_prefix(SEPARATOR))
+        .and_then(|rest| rest.strip_prefix(MODULE_TAG))
+        .filter(|rest| {
+            rest.len() > MODULE_HASH_DIGITS
+                && rest.as_bytes()[..MODULE_HASH_DIGITS]
+                    .iter()
+                    .all(u8::is_ascii_hexdigit)
+                && rest[MODULE_HASH_DIGITS..].starts_with(SEPARATOR)
+        });
+    match tagged {
+        Some(rest) => format!("{PREFIX}{}", &rest[MODULE_HASH_DIGITS..]),
+        None => name.to_owned(),
+    }
+}
+
 /// A generated name from its segments.
 fn generated(segments: &[&str]) -> String {
     let mut name = PREFIX.to_owned();
@@ -220,7 +262,7 @@ fn tag(module: &mut ast::Module, exports: Exports, source: &Source) -> Exports {
             }
         }
     }
-    let mut tag = Tag(format!("{SEPARATOR}m{}", module_hash(source)));
+    let mut tag = Tag(format!("{SEPARATOR}{MODULE_TAG}{}", module_hash(source)));
     module.visit_mut_with(&mut tag);
     let symbols = exports
         .symbols
@@ -236,7 +278,7 @@ fn module_hash(source: &Source) -> String {
     for byte in source.file.name.to_string().bytes() {
         hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
     }
-    format!("{hash:016x}")
+    format!("{hash:0width$x}", width = MODULE_HASH_DIGITS)
 }
 
 /// Whether a module item declares an enum, a namespace or a class with

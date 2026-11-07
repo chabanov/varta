@@ -28,10 +28,11 @@ use varta_common::{
     function::check_closure_envelope,
     value::{
         ARRAY_META_BYTES, ARRAY_SLOT_BYTES, Dictionary, ErrorObject,
-        HASHED_DICTIONARY_VALUE_VERSION as VERSION, ModuleBounds, PRIVATE_KEY_PREFIX,
-        PROMISE_REASON_FIELD, PROMISE_STATE_FIELD, PROMISE_VALUE_FIELD, PrimitiveBox, PromiseState,
-        RecordShape, ReferenceBox, ValueKind as Kind, Vector, byte_at, byte_vector,
-        function_field_layout, read_record_with, record_descriptor, string_range,
+        HASHED_DICTIONARY_VALUE_VERSION as VERSION, INDEX_SIGNATURE_KEY, ModuleBounds,
+        PRIVATE_KEY_PREFIX, PROMISE_REASON_FIELD, PROMISE_STATE_FIELD, PROMISE_VALUE_FIELD,
+        PrimitiveBox, PromiseState, RecordShape, ReferenceBox, ValueKind as Kind, Vector,
+        array_index_units, byte_at, byte_vector, function_field_layout, read_record_with,
+        record_descriptor, string_range,
     },
 };
 
@@ -310,11 +311,14 @@ enum Frame {
         depth: usize,
         written: bool,
     },
-    /// `fields` by slot; `order` the present slots in output order.
+    /// `fields` by slot; `order` the present slots in output order, where
+    /// `fields.len() + p` is the entry at position `p` of `extra`, a class
+    /// instance's index dictionary (v38).
     Record {
         ptr: usize,
         fields: Vec<Field>,
         order: Vec<usize>,
+        extra: Option<alloc::boxed::Box<Dictionary>>,
         index: usize,
         depth: usize,
         written: bool,
@@ -862,6 +866,7 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
                 (index.is_none(), index.unwrap_or(0))
             });
         }
+        let extra = self.index_members(&fields, &mut order)?;
         self.path.insert(ptr);
         self.punct(b'{')?;
         // Every reserved slot, absent ones included, consumes the traversal
@@ -874,15 +879,77 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
                 }
             }
         }
+        if extra.is_some() {
+            self.visit(depth + 1)?;
+        }
         self.stack.push(Frame::Record {
             ptr,
             fields,
             order,
+            extra,
             index: 0,
             depth,
             written: false,
         });
         Ok(())
+    }
+    /// V38 (`declaration_forms`): the index dictionary of a class instance
+    /// (its present [`INDEX_SIGNATURE_KEY`] field), whose entries are own
+    /// properties beside the fields. `order` becomes the own-key order of
+    /// both: array indices ascending, then the fields, then the other
+    /// entries, each in insertion order; the dictionary field itself is no
+    /// member.
+    fn index_members(
+        &mut self,
+        fields: &[Field],
+        order: &mut Vec<usize>,
+    ) -> Result<Option<alloc::boxed::Box<Dictionary>>, EncodeError> {
+        let memory = self.memory;
+        let Some(slot) = fields.iter().position(|field| {
+            field.present
+                && field.kind == Kind::Dictionary as u32
+                && field.payload != 0
+                && field.len == INDEX_SIGNATURE_KEY.len()
+                && memory.borrow(field.key, field.len).as_deref()
+                    == Some(INDEX_SIGNATURE_KEY.as_bytes())
+        }) else {
+            return Ok(None);
+        };
+        let dictionary = Dictionary::read_in(memory, fields[slot].payload, VERSION, self.bounds)
+            .map_err(layout)?;
+        let mut members: Vec<(u8, u32, usize)> = Vec::with_capacity(order.len());
+        for (ordinal, &member) in order.iter().enumerate() {
+            if member == slot {
+                continue;
+            }
+            members.push(match self.index_key(fields[member]) {
+                Some(index) => (0, index, member),
+                None => (1, u32::try_from(ordinal).map_err(layout)?, member),
+            });
+        }
+        for position in 0..dictionary.keys.length {
+            let Some((key, _)) = dictionary.entry(memory, position).map_err(layout)? else {
+                continue;
+            };
+            let (start, len) = string_range(key);
+            let bytes = memory.borrow(start, len).ok_or(EncodeError::Layout)?;
+            let index = array_index_units(
+                bytes
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|unit| u16::from_le_bytes(*unit)),
+            );
+            let member = fields.len() + position;
+            members.push(match index {
+                Some(index) => (0, index, member),
+                None => (2, u32::try_from(position).map_err(layout)?, member),
+            });
+        }
+        members.sort_by_key(|(class, key, _)| (*class, *key));
+        order.clear();
+        order.extend(members.into_iter().map(|(.., member)| member));
+        Ok(Some(alloc::boxed::Box::new(dictionary)))
     }
     /// The index in [`Self::shapes`] of the validated shape of the record
     /// `payload`.
@@ -1107,6 +1174,7 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
                 ptr,
                 fields,
                 order,
+                extra,
                 index,
                 depth,
                 written,
@@ -1118,8 +1186,43 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
             let Some(&slot) = order.get(at) else {
                 return self.close(ptr, b'}');
             };
-            let field = fields[slot];
             *index += 1;
+            let dictionary = extra.as_deref().copied();
+            // An entry of the instance's index dictionary.
+            if let Some(position) = slot.checked_sub(fields.len()) {
+                let Some(dictionary) = dictionary else {
+                    return Err(EncodeError::Layout);
+                };
+                let values = dictionary.values.kind as u32;
+                let Some((key, value)) = dictionary.entry(self.memory, position).map_err(layout)?
+                else {
+                    return Err(EncodeError::Layout);
+                };
+                let (kind, value) = self.resolve(values, value)?;
+                if kind == Kind::Undefined as u32 {
+                    self.visit(depth + 1)?;
+                    if value != 0 {
+                        return Err(EncodeError::Layout);
+                    }
+                    continue;
+                }
+                if let Some(Frame::Record { written, .. }) = self.stack.last_mut() {
+                    *written = true;
+                }
+                if was_written {
+                    self.punct(b',')?;
+                }
+                let (start, len) = string_range(key);
+                let memory = self.memory;
+                let bytes = memory.borrow(start, len).ok_or(EncodeError::Layout)?;
+                if !len.is_multiple_of(2) {
+                    return Err(EncodeError::Layout);
+                }
+                self.string16(&bytes)?;
+                self.punct(b':')?;
+                return self.value(kind, value, depth + 1);
+            }
+            let field = fields[slot];
             if field.kind == Kind::Undefined as u32 {
                 continue;
             }
