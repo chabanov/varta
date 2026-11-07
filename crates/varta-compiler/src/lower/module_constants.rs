@@ -23,6 +23,9 @@ pub(super) struct Constant {
     /// Graph-unique declaration identity: two star re-export sources that
     /// forward the same declaration are not ambiguous.
     id: usize,
+    /// V38 (`expression_forms`): the property key of a string or number
+    /// literal initializer, for computed keys.
+    key: Option<String>,
 }
 impl Constant {
     pub(super) fn id(&self) -> usize {
@@ -655,11 +658,17 @@ impl Lower<'_> {
                             readonly: computed,
                             variable: Some((storage, !computed)),
                             id: *ids,
+                            key: None,
                         },
                     );
                     *ids += 1;
                     continue;
                 }
+                let key = if self.types.profile.expression_forms() {
+                    self.constant_key_of(&value)
+                } else {
+                    None
+                };
                 let constant = if ty.needs_root() {
                     let index = *stored;
                     *stored += 1;
@@ -693,6 +702,7 @@ impl Lower<'_> {
                         readonly: binding.readonly,
                         variable: None,
                         id: *ids,
+                        key,
                     },
                 );
                 *ids += 1;
@@ -731,6 +741,11 @@ impl Lower<'_> {
                     },
                 );
                 continue;
+            }
+            if let Some(key) = &constant.key {
+                self.types
+                    .constant_keys
+                    .insert((self.index, slot), key.clone());
             }
             bindings.insert(
                 name.clone(),
