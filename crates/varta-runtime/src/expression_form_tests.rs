@@ -48,6 +48,10 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("object_methods"),
     case!("method_receivers"),
     case!("accessors"),
+    case!("accessor_order"),
+    case!("accessor_json"),
+    case!("spread_order"),
+    case!("accessor_cycles"),
     case!("computed_keys"),
     case!("destructuring"),
     case!("callback_patterns"),
@@ -87,7 +91,10 @@ fn matches_node(name: &str) {
         .find(|(case, ..)| *case == name)
         .unwrap_or_else(|| panic!("missing case {name}"));
     let expected: Vec<&str> = expected.lines().collect();
-    assert_eq!(logs(source), expected, "{name}");
+    // A logged message may span several lines.
+    let actual = logs(source).join("\n");
+    let actual: Vec<&str> = actual.lines().collect();
+    assert_eq!(actual, expected, "{name}");
 }
 
 fn refused(profile: LanguageProfile, source: &str, diagnostic: &str) {
@@ -145,6 +152,37 @@ fn object_literal_methods_with_this_match_node() {
 #[test]
 fn object_literal_accessors_match_node() {
     matches_node("accessors");
+}
+
+/// Own keys of an object with accessors follow OrdinaryOwnPropertyKeys
+/// (integer keys ascending, then creation order), and `Object.values` and
+/// `Object.entries` call each getter when its key is reached.
+#[test]
+fn accessor_keys_and_getter_calls_follow_node_order() {
+    matches_node("accessor_order");
+}
+
+/// `JSON.stringify` calls a getter once per occurrence of its object, in
+/// SerializeJSONProperty order, and writes keys in the objects' own order.
+/// SerializeJSONObject/SerializeJSONArray step 1: an ancestor reached
+/// again (here through getters) throws V8's circular-structure `TypeError`
+/// with its path; a repeated object that is no ancestor is serialized again.
+#[test]
+fn json_cycles_through_getters_throw_like_node() {
+    matches_node("accessor_cycles");
+}
+
+/// CopyDataProperties: spreads create their keys in the source's own-key
+/// order (integer keys first), literal members in place, and rest patterns
+/// and `Object.assign` keep it.
+#[test]
+fn spreads_copy_keys_in_source_order_like_node() {
+    matches_node("spread_order");
+}
+
+#[test]
+fn json_of_accessor_objects_matches_node() {
+    matches_node("accessor_json");
 }
 
 #[test]
@@ -207,14 +245,22 @@ fn expression_language_guide_example_matches_node() {
 #[test]
 fn expression_forms_survive_collector_stress() {
     for (name, source, expected) in CASES {
-        let expected: Vec<String> = expected
-            .lines()
-            .map(|line| format!("varta log: {line}"))
-            .collect();
+        let expected: Vec<&str> = expected.lines().collect();
         for units in STRESS_UNITS {
             let run = run_test_budgets(&stressed(source, units), STRESS_BUDGETS);
+            // A logged message may span several lines.
+            let logged = run
+                .lines
+                .iter()
+                .map(|line| {
+                    line.strip_prefix("varta log: ")
+                        .unwrap_or_else(|| panic!("not a log line: {line}"))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let actual: Vec<&str> = logged.lines().collect();
             assert_eq!(
-                (&run.lines, &run.error),
+                (&actual, &run.error),
                 (&expected, &None),
                 "{name}: stress build ({units} units per allocation)"
             );
@@ -232,6 +278,10 @@ fn unsupported_expression_forms_are_refused_by_name() {
         (
             "export function main(): void { const o = { get x(): number { return 1; } }; const u: unknown = o; console.log(JSON.stringify(u)); }",
             "held by unknown may be an object with getters",
+        ),
+        (
+            "interface P { readonly v: number } class Holder { p: P; constructor(p: P) { this.p = p; } } export function main(): void { const h = new Holder({ get v(): number { return 1; } }); console.log(JSON.stringify(h)); }",
+            "JSON.stringify of a Holder that may hold an object with getters",
         ),
         (
             "export function main(): void { const base = { n: 1 }; const o = { ...base, get two(): number { return 2; } }; console.log(String(o.two)); }",

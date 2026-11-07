@@ -1,0 +1,17 @@
+TypeError: Converting circular structure to JSON
+    --> starting at object with constructor 'Object'
+    --- property 'self' closes the circle
+TypeError: Converting circular structure to JSON
+    --> starting at object with constructor 'Object'
+    |     property 'x' -> object with constructor 'Object'
+    |     property 'y' -> object with constructor 'Array'
+    |     index 0 -> object with constructor 'Object'
+    --- property 'z' closes the circle
+TypeError: Converting circular structure to JSON
+    --> starting at object with constructor 'Object'
+    |     property 'a' -> object with constructor 'Object'
+    |     property 'b' -> object with constructor 'Object'
+    |     ...
+    |     property 'e' -> object with constructor 'Object'
+    --- property 'f' closes the circle
+{"a":{"n":7},"b":{"inner":{"n":7}},"c":[{"n":7}]}

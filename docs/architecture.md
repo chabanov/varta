@@ -10350,9 +10350,14 @@ such members.
   source fields that are present; fields only optional sources provide are
   optional. `...x` of `R | undefined` or `R | null` copies nothing when
   nullish. A spread whose first source is a dictionary builds a dictionary;
-  dictionary spreads also accept `D | undefined`. Key order: fields every
-  member provides come first in member order, the others follow in the order
-  they become present (JavaScript orders by first definition).
+  dictionary spreads also accept `D | undefined`. Key order: under v38
+  (`expression_forms`) it follows CopyDataProperties and property
+  definition — each key takes its position when it is first defined, a
+  spread's keys in the source object's own-key order (integer keys first,
+  ascending), a literal member in its place, and rest patterns and
+  `Object.assign` keep the source's order; earlier profiles put the fields
+  every member provides first in member order and the others in the order
+  they become present.
 - `obj.m?.()` on a class method is the ordinary call.
 - V38 boolean discriminants: `if (result.ok)`, its negation, logical guards
   and ternaries narrow the owning record/class union like an explicit comparison
@@ -11698,32 +11703,57 @@ Node 24 is the reference for every output below.
   read through the getter and write through the setter; an assignment to a
   getter-only property throws `TypeError: Cannot set property p of
   #<Object> which has only a getter`; `in` and `Object.hasOwn` report the
-  property; spreads, `Object.keys`/`values`/`entries`, `Object.assign`
-  sources and `for...in` read through the getter, so a spread copy has a
-  data property. The literal's type is its contextual record type, or the
-  record of its data fields, annotated methods and annotated accessors (a
-  getter's return or a setter's parameter type). The object has a physical
-  shape of its own: its data fields and, per accessor, the getter and
-  setter closures in fields with reserved private names, and the literal's
-  value is a [structural view](#structural-subtyping-structural_subtyping)
-  of that shape as its type, so member accesses select the layout by the
-  object's descriptor and call the accessor functions. No value layout or
-  host ABI changes (the owner had accepted a new value ABI version; none is
-  needed): hosts read records as data and skip private fields, so the
-  compiler never lets an object with accessors reach a host read silently.
-  `JSON.stringify` of a record or array that may hold such an object
-  serializes a copy made by a synthesized materializer, which reads every
-  property through its getter (nested records and arrays included); every
-  other host operation (`varta.kv`, logging of objects, HTTP bodies) of a
-  value that may hold one, and an `unknown` cell that may hold one, is
-  refused by name. Deviations: the own keys of an object with accessors,
-  and of the objects a `JSON.stringify` materializer copies, are in the
-  order of the type's members (sorted by name) rather than creation order,
-  and a cyclic graph of such objects exhausts the materializer instead of
-  throwing JavaScript's `TypeError`. Refused: a setter without a getter, a
-  spread in a literal with accessors, a `this` parameter of a setter, an
-  optional member in a type whose objects `JSON.stringify` copies, and
-  accessors in an `unknown` or other non-record context.
+  property. The literal's type is its contextual record type, or the record
+  of its data fields, annotated methods and annotated accessors (a getter's
+  return or a setter's parameter type).
+  - *Layout* (a value layout 18 addition, approved 2026-11-06 like the
+    `Symbol` tag and the console display trailer): the object is a record of
+    a physical shape of its own whose fields are its data properties, one
+    data slot per accessor property at the property's creation position
+    (holding `undefined` until a structured refresh writes the getter's
+    result into it), and the reserved fields `#get p` and `#set p` (the
+    getter and setter closures).
+    The reserved names cannot be spelled by source keys; they are not
+    properties: enumeration skips them and the KV codec skips them. The
+    literal's value is a [structural view](#structural-subtyping-structural_subtyping)
+    of the physical shape as the literal's type, so member accesses select
+    the layout by the descriptor and call the accessor closures.
+  - *Own keys and multi-property reads* follow OrdinaryOwnPropertyKeys:
+    integer keys ascending, then the object's own insertion order, accessor
+    properties included. `Object.keys`, `for...in`, `Object.values`,
+    `Object.entries`, spreads, rest patterns and `Object.assign` sources
+    enumerate the keys first and read each value (calling its getter) when
+    its key is reached, as EnumerableOwnProperties and CopyDataProperties
+    do; a rest pattern's named properties are not read again.
+  - *`JSON.stringify`* of a record, array, dictionary or union that may hold such an
+    object is a guest walk (`object_accessors::json_walk`): each object's
+    own keys in order, each property read (its getter called) when it is
+    reached and serialized at once, as SerializeJSONProperty does — a
+    getter runs once per occurrence of its object, and a getter's
+    exception propagates before any text exists. An object reached again
+    while it is being serialized (a getter returning an ancestor, or a data
+    cycle through such objects) throws V8's `TypeError: Converting circular
+    structure to JSON` with its `-->`/`|`/`---` path lines (the first two
+    levels, `...` for more than three, and the last). Values that cannot
+    hold such an object keep the host serializer.
+  - *Structured readers* read every object once by identity, as
+    StructuredSerializeInternal does: before a reader runs, the structured
+    refresh (`Lower::structured_refreshed`, a hook for every structured
+    reader, `structuredClone` included) visits the reachable objects depth
+    first in own-key order, skipping every object (record or array) it has
+    already seen by identity, so a cycle ends, and calls each getter of an
+    object with accessors once, writing the result into the property's data
+    slot, which the reader then reads as data. KV staging (`varta.kv.set`) uses it; Deno 2.9.7 stores the same
+    value and calls the getter as often.
+  - *View props* are ordinary guest objects: a component reading
+    `props.p` calls the getter on every read, as in JavaScript.
+  - Refused by name: a setter without a getter, a spread in a literal with
+    accessors, a `this` parameter of a setter, accessors in a context that
+    is not a closed object type, and (until the console notation shows
+    accessors and `unknown` readers dispatch on them) logging a value that
+    may hold an object with accessors, such an object held by `unknown`,
+    and a class instance whose fields may hold one reaching a host
+    (`JSON.stringify`, KV, logging).
 - **Computed keys.** `{ [k]: v }` with a constant key — a string or number
   literal, a template without substitutions, or a `const` binding or
   module constant initialized by such a literal — names a closed record

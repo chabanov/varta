@@ -422,22 +422,21 @@ fn checked_deviations_are_pinned() {
          catch(e){console.log(e instanceof TypeError?'TypeError':'other');}}",
         &["TypeError"],
     );
-    // Spread key order: fields every member provides come first; Node
-    // prints {"retries":3,"reconnect":false,"label":"y"}.
+    // Spread key order follows the source's own keys, then the literal's
+    // members (CopyDataProperties), as in Node.
     run(
         "interface O{reconnect?:boolean;retries?:number;label?:string}\
          function f(o:O|undefined,label:string):O{return {...o,label,reconnect:false};}\
          export function main():void{console.log(JSON.stringify(f({retries:3,reconnect:true},'y')));}",
-        &[r#"{"label":"y","reconnect":false,"retries":3}"#],
+        &[r#"{"retries":3,"reconnect":false,"label":"y"}"#],
     );
-    // Key enumeration through a view holding another source's object lists
-    // the view's members in canonical order (Node: tag,limit,cursor); an
-    // object of the view's own layout keeps its order.
+    // Key enumeration through a view holding another record layout's
+    // object follows that object's own insertion order, as in Node.
     run(
         "interface P{limit?:number;cursor?:string;tag:string}\
          function keys(p:P):string{let out='';for(const k in p)out+=k+';';return `${Object.keys(p).join(',')} ${out}`;}\
          export function main():void{const b:P={tag:'t',limit:2};console.log(keys({...b,cursor:'c'}));console.log(keys(b));}",
-        &["cursor,limit,tag cursor;limit;tag;", "tag,limit tag;limit;"],
+        &["tag,limit,cursor tag;limit;cursor;", "tag,limit tag;limit;"],
     );
     // A function value converted to a narrower signature is a fresh adapter
     // closure, so two conversions of one function differ (Node: true).

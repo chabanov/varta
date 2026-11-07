@@ -204,6 +204,18 @@ impl Liveness<'_> {
                 live.extend([*source, *target, *index, *cursor]);
                 live
             }
+            S::RecordOrder {
+                target,
+                source,
+                slots,
+                ..
+            } => {
+                let mut live = out;
+                live.insert(*target);
+                live.extend(source.map(|(source, _)| source));
+                live.extend(slots);
+                live
+            }
             S::SetField(object, _, value) => {
                 let mut live = out;
                 self.uses(object, &mut live)?;
@@ -493,6 +505,15 @@ fn statement_fields(statement: &S, visit: &mut dyn FnMut(u32)) {
             ..
         } => [*source, *target, *index, *cursor]
             .into_iter()
+            .for_each(visit),
+        S::RecordOrder {
+            target,
+            source,
+            slots,
+            ..
+        } => std::iter::once(*target)
+            .chain(source.map(|(source, _)| source))
+            .chain(slots.iter().copied())
             .for_each(visit),
         S::TryCatch {
             binding, marker, ..

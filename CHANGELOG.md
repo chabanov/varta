@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- V38 K9 C accessor objects by the specification (owner approval
+  2026-11-06, a value layout 18 addition): an object literal with getters
+  and setters keeps one data slot per accessor property at its creation
+  position, so its own keys, `Object.keys`/`values`/`entries`, `for...in`,
+  spreads, rest patterns and `Object.assign` follow OrdinaryOwnPropertyKeys
+  and read each getter when its key is reached. `JSON.stringify` walks such
+  values in the guest as SerializeJSONProperty does: a getter runs once per
+  occurrence, its exception propagates before any text, and a cycle throws
+  V8's circular-structure `TypeError` with its path. `varta.kv.set` stages
+  them after a structured refresh that calls each getter once per object by
+  identity (the hook `structuredClone` will use). Under v38 object spreads
+  create their keys in CopyDataProperties order (the source's own-key order,
+  literal members in place), as rest patterns and `Object.assign` do.
+  Dictionaries of such objects are walked the same way. Logging,
+  `unknown` holders and class-instance fields of such objects reaching a
+  host stay refused by name. Earlier profiles are unchanged.
 - V38 K9 C owner decisions (2026-11-06), `expression_forms`: tagged
   templates pass GetTemplateObject's per-site template object, so
   `TemplateStringsArray.raw` works and every evaluation of a site sees the
@@ -18,10 +34,9 @@
   waiting importer) and the entry module calls `main` at its end. Object
   literals have getters and setters (accessor properties): reads, writes,
   compound assignments, views, spreads, own keys, entries and
-  `JSON.stringify` (through a materializing copy) go through them; other
-  host reads of such objects are refused. No host ABI or value layout
-  change (the accepted value ABI bump was not needed); v37 keeps rejecting
-  every form.
+  `JSON.stringify` go through them; other host reads of such objects are
+  refused. No host ABI change (the accepted value ABI bump was not needed);
+  v37 keeps rejecting every form.
 - V38 K9 type level, step 2 (owner decisions): branded primitives
   (`string & { __brand: … }` is the primitive), `typeof` of local bindings,
   overloaded call/construct signatures and function intersections (calls

@@ -142,6 +142,8 @@ impl Lower<'_> {
         } else {
             self.kv_checked(value.ty, span)?;
             let value = self.physical_array(value)?;
+            // V38 (`object_accessors`): getters are read once per object.
+            let value = self.structured_refreshed(value)?;
             (StageMode::Value, value)
         };
         Ok(Expr {

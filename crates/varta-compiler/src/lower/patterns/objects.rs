@@ -113,17 +113,38 @@ impl Lower<'_> {
                             Ok((old as u32, new as u32))
                         })
                         .collect::<Result<_>>()?;
+                    // V38 (`object_accessors`): with accessor objects in the
+                    // program, a rest of required fields reads the source in
+                    // its own-key order (a getter runs when its key is
+                    // reached) and takes the source's key order.
+                    let keyed = self.types.receivers.has_accessors()
+                        && !self.types.records[from as usize]
+                            .fields
+                            .iter()
+                            .any(|field| field.optional);
+                    let record = ty;
+                    let cached = if keyed {
+                        let (reads, locals) = self.read_in_key_order(
+                            source,
+                            from,
+                            &excluded.iter().cloned().collect::<Vec<_>>(),
+                            span,
+                        )?;
+                        roots.extend(locals.iter().copied());
+                        rest_body.extend(reads);
+                        Some(locals)
+                    } else {
+                        None
+                    };
                     let fields = mapping
                         .iter()
                         .map(|(old, new)| {
-                            (
-                                *new,
-                                Expr {
-                                    span,
-                                    ty: self.types.records[from as usize].fields[*old as usize].ty,
-                                    kind: E::Field(Box::new(local(span, source, ty)), *old),
-                                },
-                            )
+                            let ty = self.types.records[from as usize].fields[*old as usize].ty;
+                            let kind = match &cached {
+                                Some(locals) => E::Local(locals[*old as usize]),
+                                None => E::Field(Box::new(local(span, source, record)), *old),
+                            };
+                            (*new, Expr { span, ty, kind })
                         })
                         .collect();
                     let output = self.hidden(result);
@@ -136,15 +157,31 @@ impl Lower<'_> {
                             kind: E::Record(fields),
                         },
                     ));
-                    rest_body.push(S::RecordRest {
-                        source,
-                        target: output,
-                        from,
-                        to,
-                        mapping,
-                        index: self.hidden(Type::Number),
-                        cursor: self.hidden(Type::Number),
-                    });
+                    if keyed {
+                        let slots = [
+                            self.hidden(Type::Number),
+                            self.hidden(Type::Number),
+                            self.hidden(Type::Number),
+                        ];
+                        rest_body.push(S::RecordOrder {
+                            target: output,
+                            shape: to,
+                            source: Some((source, from)),
+                            mapping,
+                            start: true,
+                            slots,
+                        });
+                    } else {
+                        rest_body.push(S::RecordRest {
+                            source,
+                            target: output,
+                            from,
+                            to,
+                            mapping,
+                            index: self.hidden(Type::Number),
+                            cursor: self.hidden(Type::Number),
+                        });
+                    }
                     if let Some(target) = prepared {
                         body.extend(self.finish_pattern_target(
                             target,

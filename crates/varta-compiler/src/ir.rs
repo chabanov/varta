@@ -1243,6 +1243,21 @@ pub(crate) enum Statement {
         slots: [u32; 4],
         values: Vec<Expr>,
     },
+    /// V38: rewrite the insertion order of the fresh record in local
+    /// `target` (of record `shape`): append, in order and skipping slots
+    /// already placed or absent, the slots `mapping` maps the present slots
+    /// of `source` (a local of record shape, in its own insertion order) to,
+    /// or with no source the mapped slots themselves. `start` begins a new
+    /// order; `slots` are the hidden cursor, index and probe locals.
+    /// CopyDataProperties creates a spread's keys in the source's order.
+    RecordOrder {
+        target: u32,
+        shape: u32,
+        source: Option<(u32, u32)>,
+        mapping: Vec<(u32, u32)>,
+        start: bool,
+        slots: [u32; 3],
+    },
     RecordRest {
         source: u32,
         target: u32,

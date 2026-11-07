@@ -1633,6 +1633,14 @@ impl Emitter<'_> {
                     index,
                     cursor,
                 } => self.record_rest((*source, *target), (*from, *to), mapping, (*index, *cursor)),
+                S::RecordOrder {
+                    target,
+                    shape,
+                    source,
+                    mapping,
+                    start,
+                    slots,
+                } => self.record_order(*target, *shape, *source, mapping, *start, *slots),
                 S::Throw(value) => self.throw_value(value)?,
                 S::TryCatch {
                     body,

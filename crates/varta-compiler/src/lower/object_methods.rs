@@ -50,10 +50,17 @@ pub(crate) struct Receivers {
     /// `JSON.stringify` materializers of objects with accessors, by type
     /// (`object_accessors`): the function and whether its body is written.
     pub(super) materializers: BTreeMap<Type, (usize, bool)>,
+    /// Structured refreshes of objects with accessors, by type
+    /// (`object_accessors`): the function and whether its body is written.
+    pub(super) refreshers: BTreeMap<Type, (usize, bool)>,
     /// The source and span of the first materialized `JSON.stringify`.
     pub(super) origin: Option<(Source, swc_common::Span)>,
 }
 impl Receivers {
+    /// Whether the program has an object literal with a getter or setter.
+    pub(crate) fn has_accessors(&self) -> bool {
+        self.accessors
+    }
     /// The `TypeError` of assigning the getter-only accessor `name` of an
     /// object of physical shape `shape`.
     pub(crate) fn read_only(&self, shape: u32, name: &str) -> Option<&Expr> {

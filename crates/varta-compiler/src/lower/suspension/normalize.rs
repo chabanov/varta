@@ -291,6 +291,7 @@ impl<'a> Normalizer<'a> {
             other @ (S::Trap
             | S::Rebind(_)
             | S::RecordRest { .. }
+            | S::RecordOrder { .. }
             | S::Return(None)
             | S::BreakLabel(_)
             | S::ContinueLabel(_)

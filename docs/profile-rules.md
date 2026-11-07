@@ -4016,11 +4016,22 @@ Contract: [architecture.md](architecture.md#expression-forms-expression_forms).
   them); the value is a view (`Views::note_view`) of that shape as the
   literal's type. `subtyping` reads (`accessor_call`), writes (setter or
   the stored read-only `TypeError`), `has` and own-key names understand the
-  reserved fields. Every host read of a value that may hold such an object
-  must go through a `JSON.stringify` materializer or is refused by
-  `refuse_host_reads`; a new host operation that reads records needs no
-  change, but a new path that serializes guest values on the guest side
-  must call the getters itself.
+  reserved fields (`hidden_field`). Each accessor property has a data slot
+  at its creation position, so own-key order is the object's own; reads of
+  several properties (enumerations, spreads, rest patterns,
+  `Object.assign`) go through `read_in_key_order`/`values_in_key_order` so a
+  getter runs when its key is reached, and spreads and rests set the
+  result's key order with `S::RecordOrder`. Every host read of a value that
+  may hold such an object goes through the JSON walk (`json_serialized`:
+  per occurrence, with the circular-structure stack) or the structured
+  refresh (`structured_refreshed`: once per object by identity; the hook
+  for every structured reader, KV staging today and `structuredClone`
+  next), or `finish` refuses it (`refuse_host_reads`); a new host operation
+  that reads records needs no change, but a new structured reader must call
+  `structured_refreshed` and a new guest-side serializer must call the
+  getters itself. `reaches` decides which types may hold such an object
+  (records, arrays, unions, dictionaries, class instance fields); keep it
+  complete, since a type it misses reaches a host as stale data.
 - Top-level `await` (`top_level_await`): a module that awaits is one
   async initializer (`module_constants::link_module`, split with
   `split_async`); the evaluator text is generated from the static plan and

@@ -135,3 +135,129 @@ fn word(offset: usize) -> wasm_encoder::MemArg {
         ..strings::WORD
     }
 }
+
+impl Emitter<'_> {
+    /// `S::RecordOrder`: append mapped slots to the insertion order of the
+    /// fresh record `target` (V38 CopyDataProperties order).
+    pub(super) fn record_order(
+        &mut self,
+        target: u32,
+        shape: u32,
+        source: Option<(u32, u32)>,
+        mapping: &[(u32, u32)],
+        start: bool,
+        slots: [u32; 3],
+    ) {
+        let target = self.local_slots[target as usize];
+        let [cursor, index, probe] = slots.map(|slot| self.local_slots[slot as usize]);
+        let count = self.records[shape as usize].fields.len();
+        let to = values::order_offset(count);
+        if start {
+            self.code.extend([I::I32Const(0), I::LocalSet(cursor)]);
+        }
+        let Some((source, source_shape)) = source else {
+            for (_, new) in mapping {
+                self.append_order(target, count, to, *new, cursor, probe);
+            }
+            return;
+        };
+        let source = self.local_slots[source as usize];
+        let source_count = self.records[source_shape as usize].fields.len();
+        let from = values::order_offset(source_count);
+        self.code.extend([
+            I::I32Const(0),
+            I::LocalSet(index),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(index),
+        ]);
+        self.present_count(&[I::LocalGet(source), I::I32WrapI64], source_count);
+        self.code.extend([I::I32GeU, I::BrIf(1)]);
+        for (old, new) in mapping {
+            self.code.extend([
+                I::LocalGet(source),
+                I::I32WrapI64,
+                I::LocalGet(index),
+                I::I32Const(WORD_BYTES as i32),
+                I::I32Mul,
+                I::I32Add,
+                I::I32Load(word(from)),
+                I::I32Const(*old as i32),
+                I::I32Eq,
+                I::If(BlockType::Empty),
+            ]);
+            self.append_order(target, count, to, *new, cursor, probe);
+            self.code.push(I::End);
+        }
+        self.code.extend([
+            I::LocalGet(index),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(index),
+            I::Br(0),
+            I::End,
+            I::End,
+        ]);
+    }
+    /// Append `slot` to the order of `target` unless it is absent or
+    /// already placed.
+    fn append_order(
+        &mut self,
+        target: u32,
+        count: usize,
+        to: usize,
+        slot: u32,
+        cursor: u32,
+        probe: u32,
+    ) {
+        let (presence, bit) = values::presence_bit(count, slot as usize);
+        self.code.extend([
+            I::Block(BlockType::Empty),
+            I::LocalGet(target),
+            I::I32WrapI64,
+            I::I32Load(word(presence)),
+            I::I32Const(bit as i32),
+            I::I32And,
+            I::I32Eqz,
+            I::BrIf(0),
+            I::I32Const(0),
+            I::LocalSet(probe),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(probe),
+            I::LocalGet(cursor),
+            I::I32GeU,
+            I::BrIf(1),
+            I::LocalGet(target),
+            I::I32WrapI64,
+            I::LocalGet(probe),
+            I::I32Const(WORD_BYTES as i32),
+            I::I32Mul,
+            I::I32Add,
+            I::I32Load(word(to)),
+            I::I32Const(slot as i32),
+            I::I32Eq,
+            I::BrIf(2),
+            I::LocalGet(probe),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(probe),
+            I::Br(0),
+            I::End,
+            I::End,
+            I::LocalGet(target),
+            I::I32WrapI64,
+            I::LocalGet(cursor),
+            I::I32Const(WORD_BYTES as i32),
+            I::I32Mul,
+            I::I32Add,
+            I::I32Const(slot as i32),
+            I::I32Store(word(to)),
+            I::LocalGet(cursor),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(cursor),
+            I::End,
+        ]);
+    }
+}

@@ -130,6 +130,24 @@ impl Views {
             views.extend(more);
         }
     }
+    /// The record shapes with an edge into record `target` (before
+    /// `resolve`), transitively.
+    pub(crate) fn view_sources(&self, target: u32) -> Vec<u32> {
+        let edges = self.edges.borrow();
+        let mut found = Vec::new();
+        let mut stack = vec![target];
+        while let Some(shape) = stack.pop() {
+            for (source, _) in edges.iter().filter(|(_, t)| *t == shape) {
+                if let Type::Record(id) = source
+                    && !found.contains(id)
+                {
+                    found.push(*id);
+                    stack.push(*id);
+                }
+            }
+        }
+        found
+    }
     /// Whether a value of record `shape` entered an `unknown` cell.
     pub(crate) fn is_boxed(&self, shape: u32) -> bool {
         self.boxed.borrow().contains(&shape)
@@ -878,25 +896,17 @@ fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result
         };
         let fields = &types.records[shape as usize].fields;
         // V38 (`object_accessors`): an accessor object's own keys are its
-        // data fields and accessor properties, in the order of its type's
-        // members (records keep their fields sorted by name).
-        if matches!(ty, Type::Record(_))
-            && fields
-                .iter()
-                .any(|field| super::object_accessors::accessor_field(&field.name).is_some())
-        {
-            let mut names: Vec<&str> = fields
-                .iter()
-                .filter_map(
-                    |field| match super::object_accessors::accessor_field(&field.name) {
-                        Some((property, true)) => Some(property),
-                        Some((_, false)) => None,
-                        None => Some(field.name.as_str()),
-                    },
-                )
-                .collect();
-            names.sort_unstable();
-            return Some(names);
+        // data fields and the data slots of its accessor properties (the
+        // object enumerates them in its own creation order); the getter and
+        // setter fields are not properties.
+        if matches!(ty, Type::Record(_)) {
+            return Some(
+                fields
+                    .iter()
+                    .filter(|field| !super::object_accessors::hidden_field(&field.name))
+                    .map(|field| field.name.as_str())
+                    .collect(),
+            );
         }
         Some(fields.iter().map(|field| field.name.as_str()).collect())
     };
@@ -1067,6 +1077,18 @@ struct Rewriter<'a> {
     adapt_only: bool,
 }
 impl Rewriter<'_> {
+    /// The record layouts (not class instances) viewed as record `view`.
+    fn record_sources(&self, view: u32) -> Vec<u32> {
+        self.types
+            .subtyping
+            .sources_of(view)
+            .iter()
+            .filter_map(|source| match source {
+                Type::Record(id) => Some(*id),
+                _ => None,
+            })
+            .collect()
+    }
     fn view(&self, ty: Type) -> Option<u32> {
         if self.adapt_only {
             return None;
@@ -1096,6 +1118,92 @@ impl Rewriter<'_> {
             | S::ContinueLabel(_)
             | S::Break
             | S::Continue => {}
+            S::RecordOrder {
+                target,
+                shape,
+                source: Some((local_slot, from)),
+                mapping,
+                start,
+                slots,
+            } => {
+                if let Some(view) = self.view(Type::Record(*from)) {
+                    // An object of another layout maps its slots by name.
+                    let span = self.span;
+                    let original = S::RecordOrder {
+                        target: *target,
+                        shape: *shape,
+                        source: Some((*local_slot, *from)),
+                        mapping: mapping.clone(),
+                        start: *start,
+                        slots: *slots,
+                    };
+                    let view_fields = self.types.records[view as usize].fields.clone();
+                    let mut chain = Vec::new();
+                    for source in self
+                        .types
+                        .subtyping
+                        .sources_of(view)
+                        .to_vec()
+                        .into_iter()
+                        .rev()
+                    {
+                        let layout = match source {
+                            Type::Record(id) => id,
+                            Type::Class(id) => self.types.classes.shape(id),
+                            _ => continue,
+                        };
+                        let fields = &self.types.records[layout as usize].fields;
+                        let remapped = mapping
+                            .iter()
+                            .filter_map(|(old, new)| {
+                                let name = &view_fields[*old as usize].name;
+                                fields
+                                    .iter()
+                                    .position(|field| field.name == *name)
+                                    .map(|slot| (slot as u32, *new))
+                            })
+                            .collect();
+                        let descriptor = self.locals.len() as u32;
+                        self.locals.push(Type::Number);
+                        chain = vec![S::If(
+                            Expr {
+                                span,
+                                ty: Type::Boolean,
+                                kind: E::IsClass {
+                                    value: Box::new(local(span, *local_slot, Type::Record(view))),
+                                    shapes: vec![layout],
+                                    slot: descriptor,
+                                },
+                            },
+                            vec![S::RecordOrder {
+                                target: *target,
+                                shape: *shape,
+                                source: Some((*local_slot, layout)),
+                                mapping: remapped,
+                                start: *start,
+                                slots: *slots,
+                            }],
+                            chain,
+                        )];
+                    }
+                    let descriptor = self.locals.len() as u32;
+                    self.locals.push(Type::Number);
+                    *statement = S::If(
+                        Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::IsClass {
+                                value: Box::new(local(span, *local_slot, Type::Record(view))),
+                                shapes: vec![view],
+                                slot: descriptor,
+                            },
+                        },
+                        vec![original],
+                        chain,
+                    );
+                }
+            }
+            S::RecordOrder { .. } => {}
             S::RecordRest { from, .. } => {
                 if self.view(Type::Record(*from)).is_some() {
                     return Err(self.locate(
@@ -1148,7 +1256,48 @@ impl Rewriter<'_> {
                     let span = self.span;
                     let descriptor = self.locals.len() as u32;
                     self.locals.push(Type::Number);
-                    let viewed = self.view_enumeration(view, source, target, values)?;
+                    let mut viewed = self.view_enumeration(view, source, target, values.clone())?;
+                    // An object of another record layout (one with
+                    // accessors included) enumerates its own slots in its
+                    // own insertion order (OrdinaryOwnPropertyKeys).
+                    for accessor in self.record_sources(view) {
+                        let fields = &self.types.records[view as usize].fields;
+                        let mapped = self.types.records[accessor as usize]
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                fields
+                                    .iter()
+                                    .position(|own| own.name == field.name)
+                                    .map_or_else(|| values[0].clone(), |slot| values[slot].clone())
+                            })
+                            .collect();
+                        let own = S::RecordEnumerate {
+                            source,
+                            target,
+                            shape: accessor,
+                            slots: match &original {
+                                S::RecordEnumerate { slots, .. } => *slots,
+                                _ => unreachable!("matched above"),
+                            },
+                            values: mapped,
+                        };
+                        let descriptor = self.locals.len() as u32;
+                        self.locals.push(Type::Number);
+                        viewed = S::If(
+                            Expr {
+                                span,
+                                ty: Type::Boolean,
+                                kind: E::IsClass {
+                                    value: Box::new(local(span, source, Type::Record(view))),
+                                    shapes: vec![accessor],
+                                    slot: descriptor,
+                                },
+                            },
+                            vec![own],
+                            vec![viewed],
+                        );
+                    }
                     *statement = S::If(
                         Expr {
                             span,
@@ -1857,6 +2006,12 @@ impl Rewriter<'_> {
         let types = self.types;
         let receiver = |ty: Type| local(span, 0, ty);
         let value = match source {
+            // V38 (`object_accessors`): the getter of an accessor.
+            Type::Record(_)
+                if let Some(call) = accessor_call(source, name, true, &[], span, locals, types) =>
+            {
+                Some(call)
+            }
             Type::Record(id) => types.records[id as usize]
                 .fields
                 .iter()
@@ -1865,9 +2020,7 @@ impl Rewriter<'_> {
                     span,
                     ty: types.records[id as usize].fields[slot].ty,
                     kind: E::Field(Box::new(receiver(source)), slot as u32),
-                })
-                // V38 (`object_accessors`): the getter of an accessor.
-                .or_else(|| accessor_call(source, name, true, &[], span, locals, types)),
+                }),
             Type::Class(class) => match types.classes.field(class, name) {
                 Some((slot, field)) => Some(Expr {
                     span,
@@ -2107,10 +2260,7 @@ impl Rewriter<'_> {
         // V38 (`object_accessors`): an accessor property calls its setter;
         // one without a setter throws `TypeError`.
         if let Type::Record(id) = source
-            && !types.records[id as usize]
-                .fields
-                .iter()
-                .any(|field| field.name == *name)
+            && super::object_accessors::is_accessor(id, name, types)
         {
             let argument = local(span, 1, value);
             if let Some(call) = accessor_call(source, name, false, &[argument], span, locals, types)

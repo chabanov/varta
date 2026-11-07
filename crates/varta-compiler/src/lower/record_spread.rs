@@ -25,6 +25,123 @@ fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
     }
 }
 
+/// One member of a spread literal, in source order.
+enum Member {
+    Spread(u32, u32, Option<Type>),
+    Value(String),
+}
+impl Lower<'_> {
+    /// The statements that give the spread result `output` (record `id`)
+    /// the key order of its members.
+    fn spread_order(
+        &mut self,
+        output: u32,
+        id: u32,
+        members: &[Member],
+        span: swc_common::Span,
+    ) -> Result<Vec<S>> {
+        let slots = [
+            self.hidden(Type::Number),
+            self.hidden(Type::Number),
+            self.hidden(Type::Number),
+        ];
+        let fields = self.types.records[id as usize].fields.clone();
+        let slot_of = |name: &str| {
+            fields
+                .iter()
+                .position(|field| field.name == name)
+                .map(|slot| slot as u32)
+        };
+        let mut body = vec![S::RecordOrder {
+            target: output,
+            shape: id,
+            source: None,
+            mapping: Vec::new(),
+            start: true,
+            slots,
+        }];
+        for member in members {
+            match member {
+                Member::Spread(slot, shape, nullable) => {
+                    let mapping: Vec<(u32, u32)> = self.types.records[*shape as usize]
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(field, declared)| {
+                            slot_of(&declared.name).map(|new| (field as u32, new))
+                        })
+                        .collect();
+                    match nullable {
+                        None => body.push(S::RecordOrder {
+                            target: output,
+                            shape: id,
+                            source: Some((*slot, *shape)),
+                            mapping,
+                            start: false,
+                            slots,
+                        }),
+                        Some(cell) => {
+                            let record = Type::Record(*shape);
+                            let source = self.hidden(record);
+                            body.push(S::If(
+                                Expr {
+                                    span,
+                                    ty: Type::Boolean,
+                                    kind: E::IsNullish(Box::new(local(span, *slot, *cell))),
+                                },
+                                vec![],
+                                vec![
+                                    S::Init(
+                                        source,
+                                        Expr {
+                                            span,
+                                            ty: record,
+                                            kind: E::UnboxUnion(Box::new(local(
+                                                span, *slot, *cell,
+                                            ))),
+                                        },
+                                    ),
+                                    S::RecordOrder {
+                                        target: output,
+                                        shape: id,
+                                        source: Some((source, *shape)),
+                                        mapping,
+                                        start: false,
+                                        slots,
+                                    },
+                                ],
+                            ));
+                        }
+                    }
+                }
+                Member::Value(name) => {
+                    if let Some(new) = slot_of(name) {
+                        body.push(S::RecordOrder {
+                            target: output,
+                            shape: id,
+                            source: None,
+                            mapping: vec![(new, new)],
+                            start: false,
+                            slots,
+                        });
+                    }
+                }
+            }
+        }
+        // Every present field has a place (one no member placed keeps its
+        // field order).
+        body.push(S::RecordOrder {
+            target: output,
+            shape: id,
+            source: None,
+            mapping: (0..fields.len() as u32).map(|slot| (slot, slot)).collect(),
+            start: false,
+            slots,
+        });
+        Ok(body)
+    }
+}
+
 /// One member providing a field.
 #[derive(Clone, Copy)]
 enum Provider {
@@ -39,6 +156,8 @@ enum Provider {
         ty: Type,
         optional: bool,
         nullable: Option<Type>,
+        /// V38 (`object_accessors`): the value read in key order.
+        cached: Option<u32>,
     },
 }
 impl Provider {
@@ -74,6 +193,8 @@ impl Lower<'_> {
         };
         let mut body = Vec::new();
         let mut roots = Vec::new();
+        // The members in source order, for the result's key order.
+        let mut members: Vec<Member> = Vec::new();
         // Field names in order of their first member, with their providers.
         let mut providers: Vec<(String, Vec<Provider>)> = Vec::new();
         let mut provide =
@@ -119,6 +240,17 @@ impl Lower<'_> {
                     let slot = self.hidden(value.ty);
                     roots.push(slot);
                     body.push(S::Init(slot, value));
+                    members.push(Member::Spread(slot, shape, nullable));
+                    // V38 (`object_accessors`): a getter runs when its key is
+                    // reached in the source's own-key order.
+                    let cached = if nullable.is_none() && self.types.receivers.has_accessors() {
+                        let (reads, locals) = self.read_in_key_order(slot, shape, &[], span)?;
+                        roots.extend(locals.iter().copied());
+                        body.extend(reads);
+                        Some(locals)
+                    } else {
+                        None
+                    };
                     for (field, declared) in self.types.records[shape as usize]
                         .fields
                         .clone()
@@ -134,6 +266,7 @@ impl Lower<'_> {
                                 ty: declared.ty,
                                 optional: declared.optional,
                                 nullable,
+                                cached: cached.as_ref().map(|locals| locals[field]),
                             },
                         );
                     }
@@ -163,6 +296,7 @@ impl Lower<'_> {
                         roots.push(slot);
                     }
                     body.push(S::Init(slot, value));
+                    members.push(Member::Value(name.clone()));
                     provide(&name, Provider::Value { slot, ty });
                 }
             }
@@ -213,6 +347,11 @@ impl Lower<'_> {
         let read = |this: &Self, provider: Provider, ty: Type| -> Result<Expr> {
             let value = match provider {
                 Provider::Value { slot, ty } => local(span, slot, ty),
+                Provider::Spread {
+                    cached: Some(cached),
+                    ty,
+                    ..
+                } => local(span, cached, ty),
                 Provider::Spread {
                     slot,
                     shape,
@@ -333,6 +472,11 @@ impl Lower<'_> {
             },
         ));
         body.extend(later);
+        // V38: CopyDataProperties creates the spread keys in each source's
+        // own-key order, then the literal's members in place.
+        if self.types.profile.expression_forms() {
+            body.extend(self.spread_order(output, id, &members, span)?);
+        }
         let marker = self.hidden(Type::Number);
         Ok(Expr {
             span,

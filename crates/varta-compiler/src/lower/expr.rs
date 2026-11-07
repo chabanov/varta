@@ -1269,8 +1269,6 @@ impl Lower<'_> {
                     .locate(collections::opaque("JSON.stringify"), value.span));
             }
             let value = self.physical_array(value)?;
-            // V38 (`object_accessors`): accessors are read by their getters.
-            let value = self.json_materialized(value)?;
             if value.ty.profile_kind(self.types.profile).is_none()
                 || value.ty == Type::BigInt && !self.types.profile.bigint_values()
             {
@@ -1323,20 +1321,30 @@ impl Lower<'_> {
             } else {
                 Type::String
             };
-            let status = self
-                .types
-                .profile
-                .bigint_values()
-                .then(|| self.hidden(Type::Number));
-            let result = Expr {
-                span: call.span,
-                ty,
-                kind: E::Json(Box::new(value), status),
+            // V38 (`object_accessors`): a value that may hold an object
+            // with accessors is serialized by a guest walk.
+            let (value, serialized) = match self.json_serialized(value.clone(), ty)? {
+                Some(text) => (value, Some(text)),
+                None => (value, None),
             };
-            let result = if let Some(status) = status {
-                self.bigint_checked_result(result, status)?
+            let result = if let Some(text) = serialized {
+                text
             } else {
-                result
+                let status = self
+                    .types
+                    .profile
+                    .bigint_values()
+                    .then(|| self.hidden(Type::Number));
+                let result = Expr {
+                    span: call.span,
+                    ty,
+                    kind: E::Json(Box::new(value), status),
+                };
+                if let Some(status) = status {
+                    self.bigint_checked_result(result, status)?
+                } else {
+                    result
+                }
             };
             // V38 types the result `string`, as TypeScript does; a value
             // without a JSON form (`undefined`, a function) throws instead.

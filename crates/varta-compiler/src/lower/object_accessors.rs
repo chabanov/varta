@@ -33,6 +33,12 @@ fn annotated(annotation: &ast::TsTypeAnn, types: &mut ir::ValueTypes) -> Result<
         .ok_or_else(|| CompilerError::Internal("missing accessor annotation".into()))
 }
 
+/// Whether a field of an object with accessors is not a property: a getter
+/// or a setter.
+pub(crate) fn hidden_field(name: &str) -> bool {
+    accessor_field(name).is_some()
+}
+
 /// The property a reserved accessor field belongs to, and whether it holds
 /// the getter.
 pub(crate) fn accessor_field(name: &str) -> Option<(&str, bool)> {
@@ -212,6 +218,21 @@ impl Lower<'_> {
                     span,
                 ));
             }
+            // An accessor property owns a data slot at its creation position
+            // (its first definition): the cache readers see after a refresh.
+            if let Some((property, _)) = accessor_field(&name)
+                && !values.iter().any(|(existing, _)| existing == property)
+            {
+                let property = property.to_owned();
+                let ty = field_type(self, &property, span)?;
+                let cache = unions::intern(vec![ty, Type::Undefined], self.types)?;
+                let undefined = Expr {
+                    span,
+                    ty: Type::Undefined,
+                    kind: E::Integer(0),
+                };
+                values.push((property, unions::widen(undefined, Some(cache), self.types)?));
+            }
             values.push((name, value));
         }
         if let Some(name) = setters.iter().find(|name| !getters.contains(name)) {
@@ -225,8 +246,7 @@ impl Lower<'_> {
         // Every declared member is provided: a data field, a method or an
         // accessor with a getter.
         for field in &self.types.records[logical as usize].fields.clone() {
-            let provided =
-                values.iter().any(|(name, _)| *name == field.name) || getters.contains(&field.name);
+            let provided = values.iter().any(|(name, _)| *name == field.name);
             if !provided && !field.optional {
                 return Err(self.source.locate(
                     type_error(format!(
@@ -410,12 +430,22 @@ impl Lower<'_> {
 }
 
 impl Lower<'_> {
-    /// The value `JSON.stringify` serializes (v38): a record or array that
-    /// may hold an object with accessors goes through its materializer,
-    /// which copies it into plain objects whose accessor properties hold
-    /// their getters' values; the host then serializes data fields only.
-    pub(super) fn json_materialized(&mut self, value: Expr) -> Result<Expr> {
-        if !self.types.receivers.accessors || !matches!(value.ty, Type::Record(_) | Type::Array(_))
+    /// A value a structured reader (KV staging; `structuredClone`) reads
+    /// as data (v38): in a program with accessor objects, the value after a
+    /// structured refresh — every object with accessors reachable from it is
+    /// visited once by identity, depth first in own-key order as
+    /// StructuredSerializeInternal reads it, and each getter's result is
+    /// written into its property's data slot, which the reader then sees.
+    pub(super) fn structured_refreshed(&mut self, value: Expr) -> Result<Expr> {
+        if !self.types.receivers.accessors
+            || !matches!(
+                value.ty,
+                Type::Record(_)
+                    | Type::Array(_)
+                    | Type::Dictionary(_)
+                    | Type::Union(_)
+                    | Type::ReferenceUnion(_)
+            )
         {
             return Ok(value);
         }
@@ -424,17 +454,1221 @@ impl Lower<'_> {
             .receivers
             .origin
             .get_or_insert_with(|| (self.source.clone(), span));
-        let index = materializer(value.ty, self.types, self.generated, self.next_function)?;
+        let ty = value.ty;
+        let index = refresher(ty, self.types, self.generated, self.next_function)?;
+        let seen = identities(self.types)?;
+        let slot = self.hidden(ty);
+        let output = self.hidden(ty);
+        let marker = self.hidden(Type::Number);
         Ok(Expr {
             span,
-            ty: value.ty,
-            kind: E::Call(index, vec![value]),
+            ty,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![slot],
+                body: vec![
+                    S::Init(slot, value),
+                    S::Expr(Expr {
+                        span,
+                        ty: Type::Void,
+                        kind: E::Call(
+                            index,
+                            vec![
+                                local_value(span, slot, ty),
+                                Expr {
+                                    span,
+                                    ty: seen,
+                                    kind: E::Array(Vec::new()),
+                                },
+                            ],
+                        ),
+                    }),
+                    S::Init(output, local_value(span, slot, ty)),
+                ],
+            },
         })
+    }
+
+    /// The body of the structured refresh of `ty` (local 0; local 1 holds the
+    /// identities of the objects the refresh has seen).
+    fn refresh_walk(
+        &mut self,
+        ty: Type,
+        views: &BTreeSet<u32>,
+        span: swc_common::Span,
+    ) -> Result<Vec<S>> {
+        if !reaches(ty, views, self.types, &mut BTreeSet::new()) {
+            return Ok(vec![S::Return(None)]);
+        }
+        let mut body = Vec::new();
+        if matches!(ty, Type::Record(_) | Type::Array(_) | Type::Dictionary(_)) {
+            body.extend(self.refresh_enter(ty, span)?);
+        }
+        match ty {
+            Type::Record(shape) => {
+                let record = Type::Record(shape);
+                let accessors = accessor_shapes(shape, self.types);
+                let fields = self.types.records[shape as usize].fields.clone();
+                let keys = self.enumerate_value(
+                    local_value(span, 0, record),
+                    super::object_enumeration::Kind::Keys,
+                    span,
+                )?;
+                let keys_ty = keys.ty;
+                let (key_slot, index) = (self.hidden(keys_ty), self.hidden(Type::Float64));
+                body.extend([S::Init(key_slot, keys), S::Init(index, float(span, 0.0))]);
+                let key = Expr {
+                    span,
+                    ty: Type::String,
+                    kind: E::Index(
+                        Box::new(local_value(span, key_slot, keys_ty)),
+                        Box::new(local_value(span, index, Type::Float64)),
+                    ),
+                };
+                let mut dispatch = Vec::new();
+                for (slot, field) in fields.iter().enumerate().rev() {
+                    let value = self.hidden(field.ty);
+                    let mut branch = vec![S::Init(
+                        value,
+                        Expr {
+                            span,
+                            ty: field.ty,
+                            kind: E::Field(Box::new(local_value(span, 0, record)), slot as u32),
+                        },
+                    )];
+                    // The getter's result is the property's data.
+                    for physical in &accessors {
+                        let fields = &self.types.records[*physical as usize].fields;
+                        if !is_accessor(*physical, &field.name, self.types) {
+                            continue;
+                        }
+                        let Some(cache) = fields.iter().position(|own| own.name == field.name)
+                        else {
+                            continue;
+                        };
+                        let cache_ty = fields[cache].ty;
+                        let descriptor = self.hidden(Type::Number);
+                        let stored = unions::widen(
+                            local_value(span, value, field.ty),
+                            Some(cache_ty),
+                            self.types,
+                        )?;
+                        branch.push(S::If(
+                            Expr {
+                                span,
+                                ty: Type::Boolean,
+                                kind: E::IsClass {
+                                    value: Box::new(local_value(span, 0, record)),
+                                    shapes: vec![*physical],
+                                    slot: descriptor,
+                                },
+                            },
+                            vec![S::SetField(
+                                local_value(span, 0, Type::Record(*physical)),
+                                cache as u32,
+                                stored,
+                            )],
+                            vec![],
+                        ));
+                    }
+                    if let Some(call) =
+                        self.refresh_call(local_value(span, value, field.ty), span)?
+                    {
+                        branch.push(call);
+                    }
+                    let test = Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::Binary(
+                            ast::BinaryOp::EqEqEq,
+                            Box::new(key.clone()),
+                            Box::new(string(span, &field.name, self.types)),
+                        ),
+                    };
+                    dispatch = vec![S::If(test, branch, dispatch)];
+                }
+                dispatch.push(S::Set(index, increment(span, index)));
+                body.push(S::While(
+                    Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::Binary(
+                            ast::BinaryOp::Lt,
+                            Box::new(local_value(span, index, Type::Float64)),
+                            Box::new(Expr {
+                                span,
+                                ty: Type::Float64,
+                                kind: E::Length(Box::new(local_value(span, key_slot, keys_ty))),
+                            }),
+                        ),
+                    },
+                    dispatch,
+                ));
+            }
+            Type::Dictionary(_) => {
+                let walk = self.own_key_loop(ty, span, |this, key| {
+                    let read = this.dictionary_get(local_value(span, 0, ty), key)?;
+                    Ok(this.refresh_call(read, span)?.into_iter().collect())
+                })?;
+                body.extend(walk);
+            }
+            Type::Array(id) => {
+                let array = Type::Array(id);
+                let element = self.types.arrays[id as usize];
+                let index = self.hidden(Type::Float64);
+                body.push(S::Init(index, float(span, 0.0)));
+                let read = Expr {
+                    span,
+                    ty: element,
+                    kind: E::Index(
+                        Box::new(local_value(span, 0, array)),
+                        Box::new(local_value(span, index, Type::Float64)),
+                    ),
+                };
+                let mut step = Vec::new();
+                if let Some(call) = self.refresh_call(read, span)? {
+                    step.push(call);
+                }
+                step.push(S::Set(index, increment(span, index)));
+                body.push(S::While(
+                    Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::Binary(
+                            ast::BinaryOp::Lt,
+                            Box::new(local_value(span, index, Type::Float64)),
+                            Box::new(Expr {
+                                span,
+                                ty: Type::Float64,
+                                kind: E::Length(Box::new(local_value(span, 0, array))),
+                            }),
+                        ),
+                    },
+                    step,
+                ));
+            }
+            Type::Union(id) | Type::ReferenceUnion(id) => {
+                for member in self.types.unions[id as usize].clone() {
+                    if !matches!(member, Type::Record(_) | Type::Array(_) | Type::Dictionary(_)) {
+                        continue;
+                    }
+                    let value = Expr {
+                        span,
+                        ty: member,
+                        kind: E::UnboxUnion(Box::new(local_value(span, 0, ty))),
+                    };
+                    if let Some(call) = self.refresh_call(value, span)? {
+                        body.push(S::If(
+                            Expr {
+                                span,
+                                ty: Type::Boolean,
+                                kind: E::IsUnionMember(Box::new(local_value(span, 0, ty)), member),
+                            },
+                            vec![call],
+                            vec![],
+                        ));
+                    }
+                }
+            }
+            other => {
+                return Err(unsupported(&format!(
+                    "a structured read of a {} that may hold an object with getters",
+                    subtyping::describe(other, self.types)
+                )));
+            }
+        }
+        body.push(S::Return(None));
+        Ok(body)
+    }
+
+    /// The start of an object's refresh (local 0): an object the refresh has
+    /// seen (local 1) returns, as StructuredSerializeInternal's memory does,
+    /// so every object is read once and a cycle ends; otherwise it is seen.
+    fn refresh_enter(&mut self, ty: Type, span: swc_common::Span) -> Result<Vec<S>> {
+        let number = self.types.number();
+        let seen = identities(self.types)?;
+        let identity = self.hidden(number);
+        Ok(vec![
+            S::Init(
+                identity,
+                Expr {
+                    span,
+                    ty: number,
+                    kind: E::Intrinsic(ir::Intrinsic::Identity, vec![local_value(span, 0, ty)]),
+                },
+            ),
+            S::If(
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::ArraySearch(
+                        ir::ArraySearch::Includes,
+                        Box::new(local_value(span, 1, seen)),
+                        Box::new(local_value(span, identity, number)),
+                        Box::new(float(span, 0.0)),
+                    ),
+                },
+                vec![S::Return(None)],
+                vec![],
+            ),
+            push(
+                span,
+                local_value(span, 1, seen),
+                local_value(span, identity, number),
+            ),
+        ])
+    }
+
+    /// The refresh of a nested value, or `None` for a value that holds no
+    /// object.
+    fn refresh_call(&mut self, value: Expr, span: swc_common::Span) -> Result<Option<S>> {
+        if !matches!(
+            value.ty,
+            Type::Record(_)
+                    | Type::Array(_)
+                    | Type::Dictionary(_)
+                    | Type::Union(_)
+                    | Type::ReferenceUnion(_)
+        ) {
+            return Ok(None);
+        }
+        let seen = identities(self.types)?;
+        let index = refresher(value.ty, self.types, self.generated, self.next_function)?;
+        Ok(Some(S::Expr(Expr {
+            span,
+            ty: Type::Void,
+            kind: E::Call(index, vec![value, local_value(span, 1, seen)]),
+        })))
+    }
+
+    /// `JSON.stringify(value)` of a record, array or union in a program with
+    /// accessor objects (v38): the value's serializer, which is the host
+    /// serializer for types that cannot hold an object with accessors and a
+    /// guest walk for those that can (`finish`). `ty` is the result type the
+    /// host serialization has.
+    pub(super) fn json_serialized(&mut self, value: Expr, ty: Type) -> Result<Option<Expr>> {
+        if !self.types.receivers.accessors
+            || !matches!(
+                value.ty,
+                Type::Record(_)
+                    | Type::Array(_)
+                    | Type::Dictionary(_)
+                    | Type::Union(_)
+                    | Type::ReferenceUnion(_)
+            )
+        {
+            return Ok(None);
+        }
+        let span = value.span;
+        self.types
+            .receivers
+            .origin
+            .get_or_insert_with(|| (self.source.clone(), span));
+        let index = serializer(value.ty, self.types, self.generated, self.next_function)?;
+        let (identities, path) = (identities(self.types)?, path_type(self.types)?);
+        let text = Expr {
+            span,
+            ty: text_type(self.types)?,
+            kind: E::Call(
+                index,
+                vec![
+                    value,
+                    Expr {
+                        span,
+                        ty: identities,
+                        kind: E::Array(Vec::new()),
+                    },
+                    Expr {
+                        span,
+                        ty: path,
+                        kind: E::Array(Vec::new()),
+                    },
+                    string(span, "", self.types),
+                ],
+            ),
+        };
+        // The host serialization's type: a `string` result is the text.
+        if ty == Type::String {
+            return Ok(Some(Expr {
+                span,
+                ty,
+                kind: E::UnboxUnion(Box::new(text)),
+            }));
+        }
+        Ok(Some(text))
+    }
+
+    /// `JSON.stringify` of `value` by the host serializer, as the call
+    /// itself lowers it: the text, or `undefined` for a value without one.
+    fn json_host_text(&mut self, value: Expr, span: swc_common::Span) -> Result<Expr> {
+        let function = |ty: &Type| matches!(ty, Type::Function(_));
+        let ty = if value.ty == Type::Unknown
+            || value.ty.is_union()
+                && unions::members(value.ty, self.types)
+                    .iter()
+                    .any(|ty| *ty == Type::Undefined || function(ty))
+        {
+            text_type(self.types)?
+        } else if value.ty == Type::Undefined || function(&value.ty) {
+            Type::Undefined
+        } else {
+            Type::String
+        };
+        let status = self
+            .types
+            .profile
+            .bigint_values()
+            .then(|| self.hidden(Type::Number));
+        let result = Expr {
+            span,
+            ty,
+            kind: E::Json(Box::new(value), status),
+        };
+        let result = match status {
+            Some(status) => self.bigint_checked_result(result, status)?,
+            None => result,
+        };
+        unions::widen(result, Some(text_type(self.types)?), self.types)
+    }
+
+    /// The body of the serializer of `ty` (local 0; locals 1 to 3 are the
+    /// walk's ancestor identities, their keys and constructors, and the key
+    /// the value was reached by): the host serializer when no object with
+    /// accessors can be reached, else a walk that reads each own property
+    /// when it is reached (calling its getter) and serializes it at once, as
+    /// SerializeJSONProperty does.
+    fn json_walk(
+        &mut self,
+        ty: Type,
+        views: &BTreeSet<u32>,
+        span: swc_common::Span,
+    ) -> Result<Vec<S>> {
+        let param = |ty: Type| local_value(span, 0, ty);
+        if !reaches(ty, views, self.types, &mut BTreeSet::new()) {
+            let value = self.json_host_text(param(ty), span)?;
+            return Ok(vec![S::Return(Some(value))]);
+        }
+        match ty {
+            Type::Record(shape) => self.json_record(shape, span),
+            Type::Array(id) => self.json_array(id, span),
+            Type::Dictionary(id) => self.json_dictionary(id, span),
+            Type::Union(id) | Type::ReferenceUnion(id) => {
+                let mut body = Vec::new();
+                for member in self.types.unions[id as usize].clone() {
+                    if !matches!(member, Type::Record(_) | Type::Array(_) | Type::Dictionary(_))
+                        || !reaches(member, views, self.types, &mut BTreeSet::new())
+                    {
+                        continue;
+                    }
+                    let value = self.json_value(
+                        Expr {
+                            span,
+                            ty: member,
+                            kind: E::UnboxUnion(Box::new(param(ty))),
+                        },
+                        local_value(span, JSON_KEY, Type::String),
+                        span,
+                    )?;
+                    body.push(S::If(
+                        Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::IsUnionMember(Box::new(param(ty)), member),
+                        },
+                        vec![S::Return(Some(value))],
+                        vec![],
+                    ));
+                }
+                let rest = self.json_host_text(param(ty), span)?;
+                body.push(S::Return(Some(rest)));
+                Ok(body)
+            }
+            other => Err(unsupported(&format!(
+                "JSON.stringify of a {} that may hold an object with getters",
+                subtyping::describe(other, self.types)
+            ))),
+        }
+    }
+
+    /// The serialized text of a nested value (`string | undefined`) reached
+    /// by `key` (its description in a circular-structure message).
+    fn json_value(&mut self, value: Expr, key: Expr, span: swc_common::Span) -> Result<Expr> {
+        if matches!(
+            value.ty,
+            Type::Record(_)
+                    | Type::Array(_)
+                    | Type::Dictionary(_)
+                    | Type::Union(_)
+                    | Type::ReferenceUnion(_)
+        ) {
+            let index = serializer(value.ty, self.types, self.generated, self.next_function)?;
+            let (identities, path) = (identities(self.types)?, path_type(self.types)?);
+            return Ok(Expr {
+                span,
+                ty: text_type(self.types)?,
+                kind: E::Call(
+                    index,
+                    vec![
+                        value,
+                        local_value(span, JSON_IDENTITIES, identities),
+                        local_value(span, JSON_PATH, path),
+                        key,
+                    ],
+                ),
+            });
+        }
+        self.json_host_text(value, span)
+    }
+
+    /// The cycle check of the object in local 0 (SerializeJSONObject and
+    /// SerializeJSONArray step 1): an object already on the walk's stack
+    /// throws V8's `TypeError: Converting circular structure to JSON`
+    /// message; otherwise the object is pushed with its key and constructor.
+    fn json_enter(
+        &mut self,
+        ty: Type,
+        constructor: &str,
+        span: swc_common::Span,
+    ) -> Result<Vec<S>> {
+        let number = self.types.number();
+        let (identities, path) = (identities(self.types)?, path_type(self.types)?);
+        let ids = || local_value(span, JSON_IDENTITIES, identities);
+        let trail = || local_value(span, JSON_PATH, path);
+        let (identity, start, message, cursor, end) = (
+            self.hidden(number),
+            self.hidden(number),
+            self.hidden(Type::String),
+            self.hidden(number),
+            self.hidden(number),
+        );
+        let num = |slot| local_value(span, slot, number);
+        let text = |this: &Self, value: &str| string(span, value, this.types);
+        let path_at = |level: Expr, offset: f64| Expr {
+            span,
+            ty: Type::String,
+            kind: E::Index(
+                Box::new(trail()),
+                Box::new(binary(
+                    span,
+                    ast::BinaryOp::Add,
+                    binary(span, ast::BinaryOp::Mul, level, float(span, 2.0)),
+                    float(span, offset),
+                )),
+            ),
+        };
+        let length = Expr {
+            span,
+            ty: number,
+            kind: E::Length(Box::new(ids())),
+        };
+        // `|     <key> -> object with constructor '<C>'` of level `cursor`.
+        let line = concat(
+            span,
+            vec![
+                local_value(span, message, Type::String),
+                text(self, "\n    |     "),
+                path_at(num(cursor), 0.0),
+                text(self, " -> object with constructor '"),
+                path_at(num(cursor), 1.0),
+                text(self, "'"),
+            ],
+        );
+        let lines = |until: u32| {
+            S::While(
+                binary(span, ast::BinaryOp::Lt, num(cursor), num(until)),
+                vec![
+                    S::Set(message, line.clone()),
+                    S::Set(cursor, increment(span, cursor)),
+                ],
+            )
+        };
+        let target = unions::intern(vec![Type::String, Type::Undefined], self.types)?;
+        let error = Expr {
+            span,
+            ty: Type::from_error_class(varta_common::value::ErrorClass::TypeError),
+            kind: E::NewError(
+                varta_common::value::ErrorClass::TypeError,
+                Box::new(unions::widen(
+                    local_value(span, message, Type::String),
+                    Some(target),
+                    self.types,
+                )?),
+            ),
+        };
+        let thrown = self.exception_type()?;
+        let error = unions::widen(error, Some(thrown), self.types)?;
+        // V8 prints the first two levels after the start, an ellipsis for
+        // more than three, and the last one.
+        let circular = vec![
+            S::Set(
+                message,
+                concat(
+                    span,
+                    vec![
+                        text(
+                            self,
+                            "Converting circular structure to JSON\n    --> starting at object with constructor '",
+                        ),
+                        path_at(num(start), 1.0),
+                        text(self, "'"),
+                    ],
+                ),
+            ),
+            S::Set(
+                cursor,
+                binary(span, ast::BinaryOp::Add, num(start), float(span, 1.0)),
+            ),
+            S::Init(
+                end,
+                binary(span, ast::BinaryOp::Add, num(start), float(span, 3.0)),
+            ),
+            S::If(
+                binary(span, ast::BinaryOp::Gt, num(end), length.clone()),
+                vec![S::Set(end, length.clone())],
+                vec![],
+            ),
+            lines(end),
+            S::If(
+                binary(
+                    span,
+                    ast::BinaryOp::Gt,
+                    length.clone(),
+                    binary(span, ast::BinaryOp::Add, num(start), float(span, 4.0)),
+                ),
+                vec![S::Set(
+                    message,
+                    concat(
+                        span,
+                        vec![
+                            local_value(span, message, Type::String),
+                            text(self, "\n    |     ..."),
+                        ],
+                    ),
+                )],
+                vec![],
+            ),
+            S::If(
+                binary(
+                    span,
+                    ast::BinaryOp::Lt,
+                    num(cursor),
+                    binary(span, ast::BinaryOp::Sub, length.clone(), float(span, 1.0)),
+                ),
+                vec![S::Set(
+                    cursor,
+                    binary(span, ast::BinaryOp::Sub, length.clone(), float(span, 1.0)),
+                )],
+                vec![],
+            ),
+            S::Set(end, length.clone()),
+            lines(end),
+            S::Set(
+                message,
+                concat(
+                    span,
+                    vec![
+                        local_value(span, message, Type::String),
+                        text(self, "\n    --- "),
+                        local_value(span, JSON_KEY, Type::String),
+                        text(self, " closes the circle"),
+                    ],
+                ),
+            ),
+            S::Throw(error),
+        ];
+        let entry = Expr {
+            span,
+            ty: path,
+            kind: E::Array(vec![
+                Some(local_value(span, JSON_KEY, Type::String)),
+                Some(text(self, constructor)),
+            ]),
+        };
+        Ok(vec![
+            S::Init(
+                identity,
+                Expr {
+                    span,
+                    ty: number,
+                    kind: E::Intrinsic(ir::Intrinsic::Identity, vec![local_value(span, 0, ty)]),
+                },
+            ),
+            S::Init(
+                start,
+                Expr {
+                    span,
+                    ty: number,
+                    kind: E::ArraySearch(
+                        ir::ArraySearch::IndexOf,
+                        Box::new(ids()),
+                        Box::new(num(identity)),
+                        Box::new(float(span, 0.0)),
+                    ),
+                },
+            ),
+            S::Init(message, text(self, "")),
+            S::Init(cursor, float(span, 0.0)),
+            S::Init(end, float(span, 0.0)),
+            S::If(
+                binary(span, ast::BinaryOp::GtEq, num(start), float(span, 0.0)),
+                circular,
+                vec![],
+            ),
+            push(span, ids(), num(identity)),
+            S::Expr(Expr {
+                span,
+                ty: number,
+                kind: E::ArrayPush(Box::new(trail()), Box::new(entry)),
+            }),
+        ])
+    }
+
+    /// The end of an object's serialization: it leaves the walk's stack.
+    fn json_leave(&mut self, span: swc_common::Span) -> Result<Vec<S>> {
+        let number = self.types.number();
+        let (identities, path) = (identities(self.types)?, path_type(self.types)?);
+        let popped = |array: Expr, element: Type, types: &mut ir::ValueTypes| -> Result<S> {
+            Ok(S::Expr(Expr {
+                span,
+                ty: unions::intern(vec![element, Type::Undefined], types)?,
+                kind: E::ArrayPop(Box::new(array)),
+            }))
+        };
+        Ok(vec![
+            popped(
+                local_value(span, JSON_IDENTITIES, identities),
+                number,
+                self.types,
+            )?,
+            popped(local_value(span, JSON_PATH, path), Type::String, self.types)?,
+            popped(local_value(span, JSON_PATH, path), Type::String, self.types)?,
+        ])
+    }
+
+    /// `{"key":value,…}` over the object's own keys in order; a property
+    /// whose value has no JSON text is left out.
+    fn json_record(&mut self, shape: u32, span: swc_common::Span) -> Result<Vec<S>> {
+        let record = Type::Record(shape);
+        let text = text_type(self.types)?;
+        let fields = self.types.records[shape as usize].fields.clone();
+        let mut body = self.json_enter(record, "Object", span)?;
+        let source = self.hidden(record);
+        body.push(S::Init(source, local_value(span, 0, record)));
+        let keys = self.enumerate_value(
+            local_value(span, source, record),
+            super::object_enumeration::Kind::Keys,
+            span,
+        )?;
+        let keys_ty = keys.ty;
+        let (key_slot, index, out, separator, value, described) = (
+            self.hidden(keys_ty),
+            self.hidden(Type::Float64),
+            self.hidden(Type::String),
+            self.hidden(Type::String),
+            self.hidden(text),
+            self.hidden(Type::String),
+        );
+        body.extend([
+            S::Init(key_slot, keys),
+            S::Init(index, float(span, 0.0)),
+            S::Init(out, string(span, "{", self.types)),
+            S::Init(separator, string(span, "", self.types)),
+            S::Init(value, self.json_host_text(undefined(span), span)?),
+            S::Init(described, string(span, "", self.types)),
+        ]);
+        let key = Expr {
+            span,
+            ty: Type::String,
+            kind: E::Index(
+                Box::new(local_value(span, key_slot, keys_ty)),
+                Box::new(local_value(span, index, Type::Float64)),
+            ),
+        };
+        let mut dispatch = Vec::new();
+        for (slot, field) in fields.iter().enumerate().rev() {
+            let read = Expr {
+                span,
+                ty: field.ty,
+                kind: E::Field(Box::new(local_value(span, source, record)), slot as u32),
+            };
+            let serialized =
+                self.json_value(read, local_value(span, described, Type::String), span)?;
+            let test = Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Binary(
+                    ast::BinaryOp::EqEqEq,
+                    Box::new(key.clone()),
+                    Box::new(string(span, &field.name, self.types)),
+                ),
+            };
+            dispatch = vec![S::If(test, vec![S::Set(value, serialized)], dispatch)];
+        }
+        // `property '<key>'` names the key in a circular-structure message.
+        dispatch.insert(
+            0,
+            S::Set(
+                described,
+                concat(
+                    span,
+                    vec![
+                        string(span, "property '", self.types),
+                        key.clone(),
+                        string(span, "'", self.types),
+                    ],
+                ),
+            ),
+        );
+        let quoted = self.json_host_text(key.clone(), span)?;
+        let quoted = Expr {
+            span,
+            ty: Type::String,
+            kind: E::UnboxUnion(Box::new(quoted)),
+        };
+        let member = concat(
+            span,
+            vec![
+                local_value(span, out, Type::String),
+                local_value(span, separator, Type::String),
+                quoted,
+                string(span, ":", self.types),
+                Expr {
+                    span,
+                    ty: Type::String,
+                    kind: E::UnboxUnion(Box::new(local_value(span, value, text))),
+                },
+            ],
+        );
+        dispatch.push(S::If(
+            Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::IsUndefined(Box::new(local_value(span, value, text))),
+            },
+            vec![],
+            vec![
+                S::Set(out, member),
+                S::Set(separator, string(span, ",", self.types)),
+            ],
+        ));
+        dispatch.push(S::Set(index, increment(span, index)));
+        body.push(S::While(
+            Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Binary(
+                    ast::BinaryOp::Lt,
+                    Box::new(local_value(span, index, Type::Float64)),
+                    Box::new(Expr {
+                        span,
+                        ty: Type::Float64,
+                        kind: E::Length(Box::new(local_value(span, key_slot, keys_ty))),
+                    }),
+                ),
+            },
+            dispatch,
+        ));
+        body.extend(self.json_leave(span)?);
+        let closed = concat(
+            span,
+            vec![
+                local_value(span, out, Type::String),
+                string(span, "}", self.types),
+            ],
+        );
+        let closed = unions::widen(closed, Some(text), self.types)?;
+        body.push(S::Return(Some(closed)));
+        Ok(body)
+    }
+
+    /// A loop over the own keys of the record or dictionary in local 0, in
+    /// own-key order; `step` gives the statements of one key.
+    fn own_key_loop(
+        &mut self,
+        ty: Type,
+        span: swc_common::Span,
+        step: impl FnOnce(&mut Self, Expr) -> Result<Vec<S>>,
+    ) -> Result<Vec<S>> {
+        let keys = self.enumerate_value(
+            local_value(span, 0, ty),
+            super::object_enumeration::Kind::Keys,
+            span,
+        )?;
+        let keys_ty = keys.ty;
+        let (key_slot, index) = (self.hidden(keys_ty), self.hidden(Type::Float64));
+        let key = Expr {
+            span,
+            ty: Type::String,
+            kind: E::Index(
+                Box::new(local_value(span, key_slot, keys_ty)),
+                Box::new(local_value(span, index, Type::Float64)),
+            ),
+        };
+        let mut each = step(self, key)?;
+        each.push(S::Set(index, increment(span, index)));
+        Ok(vec![
+            S::Init(key_slot, keys),
+            S::Init(index, float(span, 0.0)),
+            S::While(
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::Binary(
+                        ast::BinaryOp::Lt,
+                        Box::new(local_value(span, index, Type::Float64)),
+                        Box::new(Expr {
+                            span,
+                            ty: Type::Float64,
+                            kind: E::Length(Box::new(local_value(span, key_slot, keys_ty))),
+                        }),
+                    ),
+                },
+                each,
+            ),
+        ])
+    }
+
+    /// `{"key":value,…}` of a dictionary: each own key in order, its value
+    /// read when the key is reached (SerializeJSONObject).
+    fn json_dictionary(&mut self, id: u32, span: swc_common::Span) -> Result<Vec<S>> {
+        let ty = Type::Dictionary(id);
+        let text = text_type(self.types)?;
+        let mut body = self.json_enter(ty, "Object", span)?;
+        let (out, separator, value) = (
+            self.hidden(Type::String),
+            self.hidden(Type::String),
+            self.hidden(text),
+        );
+        body.extend([
+            S::Init(out, string(span, "{", self.types)),
+            S::Init(separator, string(span, "", self.types)),
+            S::Init(value, self.json_host_text(undefined(span), span)?),
+        ]);
+        let walk = self.own_key_loop(ty, span, |this, key| {
+            let described = concat(
+                span,
+                vec![
+                    string(span, "property '", this.types),
+                    key.clone(),
+                    string(span, "'", this.types),
+                ],
+            );
+            let read = this.dictionary_get(local_value(span, 0, ty), key.clone())?;
+            let serialized = this.json_value(read, described, span)?;
+            let quoted = this.json_host_text(key, span)?;
+            let member = concat(
+                span,
+                vec![
+                    local_value(span, out, Type::String),
+                    local_value(span, separator, Type::String),
+                    Expr {
+                        span,
+                        ty: Type::String,
+                        kind: E::UnboxUnion(Box::new(quoted)),
+                    },
+                    string(span, ":", this.types),
+                    Expr {
+                        span,
+                        ty: Type::String,
+                        kind: E::UnboxUnion(Box::new(local_value(span, value, text))),
+                    },
+                ],
+            );
+            Ok(vec![
+                S::Set(value, serialized),
+                S::If(
+                    Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::IsUndefined(Box::new(local_value(span, value, text))),
+                    },
+                    vec![],
+                    vec![
+                        S::Set(out, member),
+                        S::Set(separator, string(span, ",", this.types)),
+                    ],
+                ),
+            ])
+        })?;
+        body.extend(walk);
+        body.extend(self.json_leave(span)?);
+        let closed = concat(
+            span,
+            vec![
+                local_value(span, out, Type::String),
+                string(span, "}", self.types),
+            ],
+        );
+        body.push(S::Return(Some(unions::widen(closed, Some(text), self.types)?)));
+        Ok(body)
+    }
+
+    /// `[value,…]` with `null` for an element without JSON text.
+    fn json_array(&mut self, id: u32, span: swc_common::Span) -> Result<Vec<S>> {
+        let array = Type::Array(id);
+        let element = self.types.arrays[id as usize];
+        let text = text_type(self.types)?;
+        let mut body = self.json_enter(array, "Array", span)?;
+        let (index, out, separator, value) = (
+            self.hidden(Type::Float64),
+            self.hidden(Type::String),
+            self.hidden(Type::String),
+            self.hidden(text),
+        );
+        body.extend([
+            S::Init(index, float(span, 0.0)),
+            S::Init(out, string(span, "[", self.types)),
+            S::Init(separator, string(span, "", self.types)),
+        ]);
+        let read = Expr {
+            span,
+            ty: element,
+            kind: E::Index(
+                Box::new(local_value(span, 0, array)),
+                Box::new(local_value(span, index, Type::Float64)),
+            ),
+        };
+        // `index <n>` names the element in a circular-structure message.
+        let position =
+            self.primitive_convert(local_value(span, index, Type::Float64), &[], false, span)?;
+        let described = concat(span, vec![string(span, "index ", self.types), position]);
+        let serialized = self.json_value(read, described, span)?;
+        body.push(S::Init(value, self.json_host_text(undefined(span), span)?));
+        let item = Expr {
+            span,
+            ty: Type::String,
+            kind: E::Conditional(
+                Box::new(Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::IsUndefined(Box::new(local_value(span, value, text))),
+                }),
+                Box::new(string(span, "null", self.types)),
+                Box::new(Expr {
+                    span,
+                    ty: Type::String,
+                    kind: E::UnboxUnion(Box::new(local_value(span, value, text))),
+                }),
+            ),
+        };
+        let appended = concat(
+            span,
+            vec![
+                local_value(span, out, Type::String),
+                local_value(span, separator, Type::String),
+                item,
+            ],
+        );
+        body.push(S::While(
+            Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Binary(
+                    ast::BinaryOp::Lt,
+                    Box::new(local_value(span, index, Type::Float64)),
+                    Box::new(Expr {
+                        span,
+                        ty: Type::Float64,
+                        kind: E::Length(Box::new(local_value(span, 0, array))),
+                    }),
+                ),
+            },
+            vec![
+                S::Set(value, serialized),
+                S::Set(out, appended),
+                S::Set(separator, string(span, ",", self.types)),
+                S::Set(index, increment(span, index)),
+            ],
+        ));
+        body.extend(self.json_leave(span)?);
+        let closed = concat(
+            span,
+            vec![
+                local_value(span, out, Type::String),
+                string(span, "]", self.types),
+            ],
+        );
+        body.push(S::Return(Some(unions::widen(
+            closed,
+            Some(text),
+            self.types,
+        )?)));
+        Ok(body)
     }
 }
 
-/// The materializer of `ty`, reserved with a placeholder body.
-fn materializer(
+/// The locals of a serializer after its value (local 0): the identities
+/// of the objects being serialized, their keys and constructors (two
+/// entries per object) and the key the value was reached by.
+const JSON_IDENTITIES: u32 = 1;
+const JSON_PATH: u32 = 2;
+const JSON_KEY: u32 = 3;
+
+/// `number[]`: the identities a walk has entered.
+fn identities(types: &mut ir::ValueTypes) -> Result<Type> {
+    arrays::intern(types.number(), types)
+}
+
+/// `string[]`: the keys and constructors of a JSON walk's stack.
+fn path_type(types: &mut ir::ValueTypes) -> Result<Type> {
+    arrays::intern(Type::String, types)
+}
+
+/// A binary numeric operation or comparison.
+fn binary(span: swc_common::Span, op: ast::BinaryOp, left: Expr, right: Expr) -> Expr {
+    use ast::BinaryOp::{Gt, GtEq, Lt, LtEq};
+    let ty = if matches!(op, Gt | GtEq | Lt | LtEq) {
+        Type::Boolean
+    } else {
+        Type::Float64
+    };
+    Expr {
+        span,
+        ty,
+        kind: E::Binary(op, Box::new(left), Box::new(right)),
+    }
+}
+
+/// `array.push(item)` as a statement.
+fn push(span: swc_common::Span, array: Expr, item: Expr) -> S {
+    let ty = array.ty;
+    S::Expr(Expr {
+        span,
+        ty: Type::Float64,
+        kind: E::ArrayPush(
+            Box::new(array),
+            Box::new(Expr {
+                span,
+                ty,
+                kind: E::Array(vec![Some(item)]),
+            }),
+        ),
+    })
+}
+
+/// `string | undefined`, the type of a serialized value.
+fn text_type(types: &mut ir::ValueTypes) -> Result<Type> {
+    unions::intern(vec![Type::String, Type::Undefined], types)
+}
+fn local_value(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
+    Expr {
+        span,
+        ty,
+        kind: E::Local(slot),
+    }
+}
+fn float(span: swc_common::Span, value: f64) -> Expr {
+    Expr {
+        span,
+        ty: Type::Float64,
+        kind: E::Float64(value),
+    }
+}
+fn undefined(span: swc_common::Span) -> Expr {
+    Expr {
+        span,
+        ty: Type::Undefined,
+        kind: E::Integer(0),
+    }
+}
+fn string(span: swc_common::Span, text: &str, types: &ir::ValueTypes) -> Expr {
+    Expr {
+        span,
+        ty: Type::String,
+        kind: E::String(types.profile.string_bytes(text)),
+    }
+}
+fn increment(span: swc_common::Span, slot: u32) -> Expr {
+    Expr {
+        span,
+        ty: Type::Float64,
+        kind: E::Binary(
+            ast::BinaryOp::Add,
+            Box::new(local_value(span, slot, Type::Float64)),
+            Box::new(float(span, 1.0)),
+        ),
+    }
+}
+fn concat(span: swc_common::Span, parts: Vec<Expr>) -> Expr {
+    let mut parts = parts.into_iter();
+    let first = parts.next().unwrap_or_else(|| Expr {
+        span,
+        ty: Type::String,
+        kind: E::String(Vec::new()),
+    });
+    parts.fold(first, |left, right| Expr {
+        span,
+        ty: Type::String,
+        kind: E::Binary(ast::BinaryOp::Add, Box::new(left), Box::new(right)),
+    })
+}
+
+/// The accessor-object shapes a value of record `shape` may be: those
+/// viewed as it and the shape itself.
+fn accessor_shapes(shape: u32, types: &ir::ValueTypes) -> Vec<u32> {
+    let accessor = |id: u32| {
+        types.records[id as usize]
+            .fields
+            .iter()
+            .any(|field| accessor_field(&field.name).is_some())
+    };
+    let mut shapes: Vec<u32> = types
+        .subtyping
+        .view_sources(shape)
+        .into_iter()
+        .filter(|id| accessor(*id))
+        .collect();
+    if accessor(shape) {
+        shapes.push(shape);
+    }
+    shapes
+}
+
+/// The structured refresh of `ty`, reserved with a placeholder body.
+fn refresher(
+    ty: Type,
+    types: &mut ir::ValueTypes,
+    generated: &mut BTreeMap<usize, ir::Function>,
+    next: &mut usize,
+) -> Result<usize> {
+    if let Some((index, _)) = types.receivers.refreshers.get(&ty) {
+        return Ok(*index);
+    }
+    let Some((source, span)) = types.receivers.origin.clone() else {
+        return Err(CompilerError::Internal("refresh without origin".into()));
+    };
+    let index = *next;
+    if index >= types.function_limit() {
+        return Err(invalid("too many functions including structured refreshes"));
+    }
+    *next += 1;
+    let seen = identities(types)?;
+    generated.insert(
+        index,
+        ir::Function {
+            shape: ir::ParameterShape::fixed(2),
+            self_slot: None,
+            receiver: None,
+            cells: Default::default(),
+            captures: vec![],
+            environment: false,
+            generator: None,
+            source,
+            span,
+            params: vec![ty, seen],
+            result: Type::Void,
+            locals: vec![ty, seen],
+            body: vec![S::Trap],
+        },
+    );
+    types.receivers.refreshers.insert(ty, (index, false));
+    Ok(index)
+}
+
+/// The serializer of `ty`, reserved with a placeholder body that `finish`
+/// writes.
+fn serializer(
     ty: Type,
     types: &mut ir::ValueTypes,
     generated: &mut BTreeMap<usize, ir::Function>,
@@ -444,19 +1678,19 @@ fn materializer(
         return Ok(*index);
     }
     let Some((source, span)) = types.receivers.origin.clone() else {
-        return Err(CompilerError::Internal(
-            "materializer without origin".into(),
-        ));
+        return Err(CompilerError::Internal("serializer without origin".into()));
     };
     let index = *next;
     if index >= types.function_limit() {
-        return Err(invalid("too many functions including JSON materializers"));
+        return Err(invalid("too many functions including JSON serializers"));
     }
     *next += 1;
+    let text = text_type(types)?;
+    let params = json_params(ty, types)?;
     generated.insert(
         index,
         ir::Function {
-            shape: ir::ParameterShape::fixed(1),
+            shape: ir::ParameterShape::fixed(params.len()),
             self_slot: None,
             receiver: None,
             cells: Default::default(),
@@ -465,9 +1699,9 @@ fn materializer(
             generator: None,
             source,
             span,
-            params: vec![ty],
-            result: ty,
-            locals: vec![ty],
+            params: params.clone(),
+            result: text,
+            locals: params,
             body: vec![S::Trap],
         },
     );
@@ -475,15 +1709,23 @@ fn materializer(
     Ok(index)
 }
 
-/// Hosts read records as data and skip the accessor functions, so an
-/// object with accessors may reach the host only through a `JSON.stringify`
-/// materializer: a host operation or an `unknown` cell that may receive one
-/// is refused (it would silently lose the accessor properties).
-fn refuse_host_reads(
+/// The parameters of the serializer of `ty`.
+fn json_params(ty: Type, types: &mut ir::ValueTypes) -> Result<Vec<Type>> {
+    Ok(vec![
+        ty,
+        identities(types)?,
+        path_type(types)?,
+        Type::String,
+    ])
+}
+
+/// Hosts read records as data: an `unknown` cell or a host operation other
+/// than the `JSON.stringify` serializers that may receive an object with
+/// accessors is refused.
+fn refuse_host_reads<'f>(
     views: &BTreeSet<u32>,
     types: &ir::ValueTypes,
-    functions: &[ir::Function],
-    generated: &BTreeMap<usize, ir::Function>,
+    functions: impl Iterator<Item = &'f ir::Function>,
 ) -> Result<()> {
     if let Some(shape) = views.iter().find(|shape| types.subtyping.is_boxed(**shape)) {
         return Err(unsupported(&format!(
@@ -491,30 +1733,27 @@ fn refuse_host_reads(
             subtyping::describe(Type::Record(*shape), types)
         )));
     }
-    let materializers: BTreeSet<usize> = types
-        .receivers
-        .materializers
-        .values()
-        .map(|(index, _)| *index)
-        .collect();
-    for function in functions.iter().chain(generated.values()) {
+    for function in functions {
         let mut found = None;
         let mut body = function.body.clone();
         prune::statements(&mut body, &mut |expr| {
             if let E::Host(host, args) = &expr.kind {
                 for arg in args {
-                    let materialized =
-                        matches!(&arg.kind, E::Call(index, _) if materializers.contains(index));
-                    if !materialized && reaches(arg.ty, views, types, &mut BTreeSet::new()) {
-                        found.get_or_insert((*host, arg.ty, arg.span));
+                    if reaches(arg.ty, views, types, &mut BTreeSet::new()) {
+                        found.get_or_insert((format!("{host:?}"), arg.ty, arg.span));
                     }
                 }
+            }
+            if let E::Json(value, _) = &expr.kind
+                && reaches(value.ty, views, types, &mut BTreeSet::new())
+            {
+                found.get_or_insert(("JSON.stringify".to_owned(), value.ty, value.span));
             }
         });
         if let Some((host, ty, span)) = found {
             return Err(function.source.locate(
                 unsupported(&format!(
-                    "{host:?} of a {} that may hold an object with getters; only JSON.stringify reads accessor properties",
+                    "{host} of a {} that may hold an object with getters; only JSON.stringify reads accessor properties",
                     subtyping::describe(ty, types)
                 )),
                 span,
@@ -547,12 +1786,20 @@ fn reaches(
             .iter()
             .any(|member| reaches(*member, views, types, seen)),
         Type::Dictionary(id) => reaches(types.dictionaries[id as usize].value, views, types, seen),
+        // A class instance's fields are those of its instance layout.
+        Type::Class(class) => reaches(
+            Type::Record(types.classes.get(class).shape),
+            views,
+            types,
+            seen,
+        ),
         _ => false,
     }
 }
 
-/// After every body is lowered: write each materializer's body, reserving
-/// the materializers of nested records and arrays it needs.
+/// After every body is lowered: write each serializer's body (reserving the
+/// serializers of the nested types it needs), then refuse every other host
+/// read of an object with accessors.
 pub(super) fn finish(
     types: &mut ir::ValueTypes,
     functions: &[ir::Function],
@@ -563,178 +1810,260 @@ pub(super) fn finish(
         return Ok(());
     }
     let views = types.subtyping.accessor_views(types);
-    refuse_host_reads(&views, types, functions, generated)?;
-    if types.receivers.materializers.is_empty() {
-        return Ok(());
-    }
-    let Some((source, span)) = types.receivers.origin.clone() else {
-        return Ok(());
-    };
-    loop {
-        let pending: Vec<(Type, usize)> = types
-            .receivers
-            .materializers
-            .iter()
-            .filter(|(_, (_, written))| !written)
-            .map(|(ty, (index, _))| (*ty, *index))
-            .collect();
-        if pending.is_empty() {
-            return Ok(());
+    if let Some((source, span)) = types.receivers.origin.clone() {
+        let functions_map = BTreeMap::new();
+        let mut effects = BTreeMap::new();
+        loop {
+            let refreshes: Vec<(Type, usize)> = types
+                .receivers
+                .refreshers
+                .iter()
+                .filter(|(_, (_, written))| !written)
+                .map(|(ty, (index, _))| (*ty, *index))
+                .collect();
+            for (ty, index) in &refreshes {
+                let function = {
+                    let mut lower = Lower::root(
+                        &source,
+                        types,
+                        &functions_map,
+                        (generated, next, &mut effects),
+                        *index,
+                    );
+                    lower.hidden(*ty);
+                    let seen = identities(lower.types)?;
+                    lower.hidden(seen);
+                    let body = lower
+                        .refresh_walk(*ty, &views, span)
+                        .map_err(|error| source.locate(error, span))?;
+                    lower.function(body, vec![*ty, seen], Type::Void, span)
+                };
+                generated.insert(*index, function);
+                types.receivers.refreshers.insert(*ty, (*index, true));
+            }
+            let pending: Vec<(Type, usize)> = types
+                .receivers
+                .materializers
+                .iter()
+                .filter(|(_, (_, written))| !written)
+                .map(|(ty, (index, _))| (*ty, *index))
+                .collect();
+            if pending.is_empty() && refreshes.is_empty() {
+                break;
+            }
+            for (ty, index) in pending {
+                let function = {
+                    let mut lower = Lower::root(
+                        &source,
+                        types,
+                        &functions_map,
+                        (generated, next, &mut effects),
+                        index,
+                    );
+                    let params = json_params(ty, lower.types)?;
+                    for param in &params {
+                        lower.hidden(*param);
+                    }
+                    let body = lower
+                        .json_walk(ty, &views, span)
+                        .map_err(|error| source.locate(error, span))?;
+                    let text = text_type(lower.types)?;
+                    lower.function(body, params, text, span)
+                };
+                generated.insert(index, function);
+                types.receivers.materializers.insert(ty, (index, true));
+            }
         }
-        for (ty, index) in pending {
-            let (body, locals) = materializer_body(ty, &views, types, generated, next, span)
-                .map_err(|error| source.locate(error, span))?;
-            let function = generated
-                .get_mut(&index)
-                .ok_or_else(|| CompilerError::Internal("missing materializer".into()))?;
-            function.body = body;
-            function.locals = locals;
-            types.receivers.materializers.insert(ty, (index, true));
+    }
+    let serializers: BTreeSet<usize> = types
+        .receivers
+        .materializers
+        .values()
+        .chain(types.receivers.refreshers.values())
+        .map(|(index, _)| *index)
+        .collect();
+    let others = generated
+        .iter()
+        .filter(|(index, _)| !serializers.contains(index))
+        .map(|(_, function)| function);
+    refuse_host_reads(&views, types, functions.iter().chain(others))
+}
+
+impl<'a> Lower<'a> {
+    /// A lowering context for a synthesized function `index` outside every
+    /// source function.
+    fn root(
+        source: &'a Source,
+        types: &'a mut ir::ValueTypes,
+        functions: &'a BTreeMap<String, Signature>,
+        (generated, next_function, call_effects): (
+            &'a mut BTreeMap<usize, ir::Function>,
+            &'a mut usize,
+            &'a mut BTreeMap<usize, flow_calls::Impact>,
+        ),
+        index: usize,
+    ) -> Self {
+        Lower {
+            source,
+            types,
+            functions,
+            scopes: vec![BTreeMap::new()],
+            next: 0,
+            local_types: BTreeMap::new(),
+            refinements: BTreeMap::new(),
+            writes: Default::default(),
+            call_writes: Default::default(),
+            call_unknown: false,
+            direct_writes: Default::default(),
+            call_parameters: Default::default(),
+            parameter_values: Default::default(),
+            parameter_roots: Default::default(),
+            known_calls: Default::default(),
+            call_effects,
+            reachable: true,
+            control: Default::default(),
+            guard_blocked: Default::default(),
+            outer_narrows: Default::default(),
+            result: Type::Void,
+            infer_returns: false,
+            entry: usize::MAX,
+            loops: 0,
+            labels: Vec::new(),
+            next_label: 0,
+            switches: 0,
+            depth: 0,
+            repeat_slots: None,
+            generated,
+            next_function,
+            index,
+            outer: Default::default(),
+            captures: Default::default(),
+            cells: Default::default(),
+            guarded: Default::default(),
+            generator: None,
+            asynchronous: None,
+            core: Default::default(),
+        }
+    }
+    /// The synthesized function of this context's locals and `body`.
+    fn function(
+        self,
+        body: Vec<S>,
+        params: Vec<Type>,
+        result: Type,
+        span: swc_common::Span,
+    ) -> ir::Function {
+        ir::Function {
+            shape: ir::ParameterShape::fixed(params.len()),
+            self_slot: None,
+            receiver: None,
+            cells: self.cells,
+            captures: vec![],
+            environment: false,
+            generator: None,
+            source: self.source.clone(),
+            span,
+            params,
+            result,
+            locals: (0..self.next)
+                .map(|slot| self.local_types.get(&slot).copied().unwrap_or(Type::Number))
+                .collect(),
+            body,
         }
     }
 }
 
-fn materializer_body(
-    ty: Type,
-    views: &BTreeSet<u32>,
-    types: &mut ir::ValueTypes,
-    generated: &mut BTreeMap<usize, ir::Function>,
-    next: &mut usize,
-    span: swc_common::Span,
-) -> Result<(Vec<S>, Vec<Type>)> {
-    let local = |slot: u32, ty: Type| Expr {
-        span,
-        ty,
-        kind: E::Local(slot),
-    };
-    let mut locals = vec![ty];
-    if !reaches(ty, views, types, &mut BTreeSet::new()) {
-        return Ok((vec![S::Return(Some(local(0, ty)))], locals));
-    }
-    // A nested value: its own materializer, or itself.
-    let mut nested = |value: Expr, types: &mut ir::ValueTypes| -> Result<Expr> {
-        if !reaches(value.ty, views, types, &mut BTreeSet::new()) {
-            return Ok(value);
-        }
-        if !matches!(value.ty, Type::Record(_) | Type::Array(_)) {
-            return Err(unsupported(&format!(
-                "JSON.stringify of a {} that may hold an object with getters (only records and arrays are copied through their getters)",
-                subtyping::describe(value.ty, types)
-            )));
-        }
-        let index = materializer(value.ty, types, generated, next)?;
-        Ok(Expr {
-            span,
-            ty: value.ty,
-            kind: E::Call(index, vec![value]),
-        })
-    };
-    match ty {
-        Type::Record(id) => {
-            let fields = types.records[id as usize].fields.clone();
-            if let Some(field) = fields.iter().find(|field| field.optional) {
-                return Err(unsupported(&format!(
-                    "JSON.stringify of an object with getters whose type has the optional member {}",
-                    field.name
-                )));
-            }
-            let mut values = Vec::with_capacity(fields.len());
-            for (slot, field) in fields.iter().enumerate() {
-                let read = Expr {
+/// Whether `name` is an accessor property of record `shape`.
+pub(crate) fn is_accessor(shape: u32, name: &str, types: &ir::ValueTypes) -> bool {
+    types.records[shape as usize]
+        .fields
+        .iter()
+        .any(|field| accessor_field(&field.name).is_some_and(|(property, _)| property == name))
+}
+
+impl Lower<'_> {
+    /// Read every field of the record in local `source` (record `shape`)
+    /// into a new local, in the object's own-key order: the keys are
+    /// enumerated first, then each value is read (a getter runs) when its
+    /// key is reached. Returns the statements and the locals, by slot.
+    pub(super) fn read_in_key_order(
+        &mut self,
+        source: u32,
+        shape: u32,
+        skip: &[String],
+        span: swc_common::Span,
+    ) -> Result<(Vec<S>, Vec<u32>)> {
+        let record = Type::Record(shape);
+        let fields = self.types.records[shape as usize].fields.clone();
+        let mut body = Vec::new();
+        let mut locals = Vec::with_capacity(fields.len());
+        for field in &fields {
+            let slot = self.hidden(field.ty);
+            body.push(S::Init(
+                slot,
+                Expr {
                     span,
                     ty: field.ty,
-                    kind: E::Field(Box::new(local(0, ty)), slot as u32),
-                };
-                values.push((slot as u32, nested(read, types)?));
-            }
-            Ok((
-                vec![S::Return(Some(Expr {
-                    span,
-                    ty,
-                    kind: E::Record(values),
-                }))],
-                locals,
-            ))
+                    kind: E::Zero,
+                },
+            ));
+            locals.push(slot);
         }
-        Type::Array(id) => {
-            let element = types.arrays[id as usize];
-            let number = types.number();
-            let (copy, index, count) = (1, 2, 3);
-            locals.extend([ty, number, number]);
+        let keys = self.enumerate_value(
+            local_value(span, source, record),
+            super::object_enumeration::Kind::Keys,
+            span,
+        )?;
+        let keys_ty = keys.ty;
+        let (key_slot, index) = (self.hidden(keys_ty), self.hidden(Type::Float64));
+        body.extend([S::Init(key_slot, keys), S::Init(index, float(span, 0.0))]);
+        let key = Expr {
+            span,
+            ty: Type::String,
+            kind: E::Index(
+                Box::new(local_value(span, key_slot, keys_ty)),
+                Box::new(local_value(span, index, Type::Float64)),
+            ),
+        };
+        let mut dispatch = Vec::new();
+        for (slot, field) in fields.iter().enumerate().rev() {
+            // An excluded key (a rest pattern's named property) is not read.
+            if skip.contains(&field.name) {
+                continue;
+            }
             let read = Expr {
                 span,
-                ty: element,
-                kind: E::Index(Box::new(local(0, ty)), Box::new(local(index, number))),
+                ty: field.ty,
+                kind: E::Field(Box::new(local_value(span, source, record)), slot as u32),
             };
-            let value = nested(read, types)?;
-            let constant = |value: f64| Expr {
+            let test = Expr {
                 span,
-                ty: number,
-                kind: E::Float64(value),
+                ty: Type::Boolean,
+                kind: E::Binary(
+                    ast::BinaryOp::EqEqEq,
+                    Box::new(key.clone()),
+                    Box::new(string(span, &field.name, self.types)),
+                ),
             };
-            let binary = |op: ast::BinaryOp, left: Expr, right: Expr, ty: Type| Expr {
-                span,
-                ty,
-                kind: E::Binary(op, Box::new(left), Box::new(right)),
-            };
-            Ok((
-                vec![
-                    S::Init(
-                        copy,
-                        Expr {
-                            span,
-                            ty,
-                            kind: E::Array(Vec::new()),
-                        },
-                    ),
-                    S::Init(
-                        count,
-                        Expr {
-                            span,
-                            ty: number,
-                            kind: E::Length(Box::new(local(0, ty))),
-                        },
-                    ),
-                    S::Init(index, constant(0.0)),
-                    S::While(
-                        binary(
-                            ast::BinaryOp::Lt,
-                            local(index, number),
-                            local(count, number),
-                            Type::Boolean,
-                        ),
-                        vec![
-                            S::Expr(Expr {
-                                span,
-                                ty: number,
-                                kind: E::ArrayPush(
-                                    Box::new(local(copy, ty)),
-                                    Box::new(Expr {
-                                        span,
-                                        ty,
-                                        kind: E::Array(vec![Some(value)]),
-                                    }),
-                                ),
-                            }),
-                            S::Set(
-                                index,
-                                binary(
-                                    ast::BinaryOp::Add,
-                                    local(index, number),
-                                    constant(1.0),
-                                    number,
-                                ),
-                            ),
-                        ],
-                    ),
-                    S::Return(Some(local(copy, ty))),
-                ],
-                locals,
-            ))
+            dispatch = vec![S::If(test, vec![S::Set(locals[slot], read)], dispatch)];
         }
-        other => Err(unsupported(&format!(
-            "JSON.stringify of a {} that may hold an object with getters",
-            subtyping::describe(other, types)
-        ))),
+        dispatch.push(S::Set(index, increment(span, index)));
+        body.push(S::While(
+            Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Binary(
+                    ast::BinaryOp::Lt,
+                    Box::new(local_value(span, index, Type::Float64)),
+                    Box::new(Expr {
+                        span,
+                        ty: Type::Float64,
+                        kind: E::Length(Box::new(local_value(span, key_slot, keys_ty))),
+                    }),
+                ),
+            },
+            dispatch,
+        ));
+        Ok((body, locals))
     }
 }
