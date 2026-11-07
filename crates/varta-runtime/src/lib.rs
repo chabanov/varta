@@ -246,6 +246,8 @@ mod view;
 #[cfg(test)]
 mod view_tests;
 #[cfg(test)]
+mod weak_reference_tests;
+#[cfg(test)]
 mod web_bytes_tests;
 pub use varta_view::{
     GeometryRequest as ViewGeometryRequest, ImageError as ViewImageError, ImageSet as ViewImageSet,

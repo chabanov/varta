@@ -53,7 +53,19 @@ function createScheduler(profile, renderReason) {
       unhandled--; reasons.delete(id);
     },
   };
+  // V38 (`weak_references`): once the queue is empty, the module's weak
+  // checkpoint export clears the kept objects and may queue finalization
+  // cleanup jobs, which this checkpoint drains too.
   const drain = (instance, checkException) => {
+    for (;;) {
+      drainQueue(instance, checkException);
+      const checkpoint = instance.exports?.[S.weakCheckpointExport];
+      if (typeof checkpoint !== "function") return;
+      checkpoint(); checkException();
+      if (head >= queue.length) return;
+    }
+  };
+  const drainQueue = (instance, checkException) => {
     while (head < queue.length) {
       const token = queue[head++]; held.delete(token);
       if (jobs >= S.maxJobs) fail(E.jobs);

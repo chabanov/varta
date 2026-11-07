@@ -9860,7 +9860,8 @@ export const registry = freeze({
       "stateError": "invalid timer operation",
       "unref": 2
     },
-    "truncated": " [reason truncated]"
+    "truncated": " [reason truncated]",
+    "weakCheckpointExport": "varta.weak.checkpoint"
   },
   "schemaVersion": 1,
   "values": {

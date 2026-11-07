@@ -933,6 +933,9 @@ impl Lower<'_> {
         {
             return Ok(value);
         }
+        if let Some(value) = self.weak_call(call)? {
+            return Ok(value);
+        }
         if call.type_args.is_some() {
             return Err(unsupported("generic call"));
         }

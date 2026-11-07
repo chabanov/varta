@@ -11,6 +11,7 @@ pub(super) fn scheduler() -> Value {
         "reasonUnits":s::MAX_REJECTION_REASON_UNITS,"reasonBytes":s::MAX_REJECTION_REASON_BYTES,
         "truncated":s::REJECTION_TRUNCATION_MARKER,"notRetained":s::REJECTION_NOT_RETAINED,
         "resumeExport":frame::RESUME_EXPORT,"normal":frame::Completion::Normal as i32,
+        "weakCheckpointExport":crate::weak::CHECKPOINT_EXPORT,
         "outcomes":[frame::Outcome::Suspended as i32,frame::Outcome::Returned as i32],
         "errors":{"jobs":E::JobBudget.to_string(),"serials":E::SerialBudget.to_string(),
             "duplicate":E::DuplicateToken.to_string(),"unknown":E::UnknownSerial.to_string(),

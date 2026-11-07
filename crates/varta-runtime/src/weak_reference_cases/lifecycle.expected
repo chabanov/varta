@@ -1,0 +1,15 @@
+key value
+collected collected
+first second third
+third
+collected collected collected
+member true
+unregister true false
+after gc 0
+cleanup held 3
+cleanup held 2
+cleanup held 0
+after turn held 3, held 2, held 0
+collected collected collected
+kept kept
+cleaned 3

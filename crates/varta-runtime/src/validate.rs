@@ -135,6 +135,19 @@ pub(crate) fn module_with(
             return Err(error("invalid idle collection export"));
         }
     }
+    // V38 (`weak_references`): the weak checkpoint export exists only in a
+    // profile that admits weak references, as `() -> ()`.
+    if let Some(export) = module.get_export(varta_common::weak::CHECKPOINT_EXPORT) {
+        let wasmtime::ExternType::Func(ty) = export else {
+            return Err(error("the weak checkpoint export must be a function"));
+        };
+        if !language.profile.is_some_and(|p| p.weak_references())
+            || ty.params().len() != 0
+            || ty.results().len() != 0
+        {
+            return Err(error("invalid weak checkpoint export"));
+        }
+    }
     crate::exceptions::validate(&module, language.profile.unwrap_or_default())?;
     check_exports(&module)?;
     let tools = crate::contracts::validate(&module, bytes)?;

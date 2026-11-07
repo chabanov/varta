@@ -318,6 +318,7 @@ fn lower_with(
         );
     }
     let view_event = view::event_function(&types);
+    let weak_checkpoint = weak::checkpoint_function(&types);
     let mut program = ir::Program {
         functions,
         main: evaluator.unwrap_or(main),
@@ -326,6 +327,7 @@ fn lower_with(
         http_async,
         http_stream,
         view_event,
+        weak_checkpoint,
         types,
         constants: constants.stored,
         initializers: constants.initializers,

@@ -541,8 +541,10 @@ mod updates;
 mod using_declarations;
 mod view;
 mod void_functions;
+mod weak;
 mod web_bytes;
 mod web_text;
+pub(crate) use weak::with_exposed_gc;
 
 impl Lower<'_> {
     fn declare(

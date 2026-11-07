@@ -2103,7 +2103,14 @@ FIFO order, including tokens queued meanwhile, and for each calls
 `varta_resume(token, 0, 0)` (`Normal` completion, `undefined` input). The result
 must be the `Suspended` or `Returned` outcome code; then the exception channel must
 be empty. When the queue is empty, any outstanding unhandled rejection fails the
-execution. Scheduler imports are not charged to the host-call budget but still
+execution. Otherwise, when the module exports `varta.weak.checkpoint` (v38
+`weak_references`, a `() -> ()` function, `weak::CHECKPOINT_EXPORT`; any other
+signature or profile is a validation error), the host MUST call it then, with
+the exception channel checked afterwards as for a job: it ends the turn's kept
+objects and may queue finalization cleanup jobs, which the host drains as
+part of the same checkpoint before calling it again. A host that never calls
+it keeps every target a `WeakRef` read alive and runs no cleanup callback.
+Scheduler imports are not charged to the host-call budget but still
 observe the deadline.
 
 #### Scheduler limits

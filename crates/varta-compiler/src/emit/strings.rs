@@ -35,6 +35,7 @@ mod string_search;
 mod string_trim;
 mod text_codes;
 mod text_units;
+pub(super) mod weak;
 use std::collections::BTreeMap;
 use varta_common::abi;
 use wasm_encoder::{BlockType, Function, Instruction as I, MemArg, ValType};
@@ -90,6 +91,9 @@ pub(super) struct Globals {
     /// The module's declared memory maximum
     /// (`varta_common::limits::DataLimits::memory_bytes`): the heap's bound.
     pub memory_bytes: u32,
+    /// V38 (`weak_references`): the weak list and the pending-finalization
+    /// flag of a module with ephemeron tables.
+    pub weak: Option<weak::WeakGlobals>,
 }
 impl Globals {
     /// Trap, first recording `resource` and the amount in local `amount` when
@@ -162,6 +166,23 @@ pub(super) enum Helper {
     ShadeObject,
     /// V38: make a block handed out while marking black.
     Blacken,
+    /// V38 (`weak_references`): the weak phase of an incremental cycle.
+    CollectWeak,
+    /// V38 (`weak_references`): `(kind, capacity) -> table`, a fresh
+    /// ephemeron table.
+    WeakTable,
+    /// V38: `(table, position) -> pair address`, bounds-checked.
+    WeakPair,
+    /// V38: occupy a pair (`(table, position, identity, bits, reference)`).
+    WeakPut,
+    /// V38: vacate an occupied pair.
+    WeakRemove,
+    /// V38: copy an occupied pair into an empty pair of another table.
+    WeakMove,
+    /// V38: empty every pair of a table.
+    WeakClear,
+    /// V38: the test-only `gc()`, one complete collection.
+    WeakGc,
     RootPush,
     ArrayIndex,
     ArrayKeys,
@@ -344,6 +365,26 @@ impl Helper {
             Self::CollectTrace => (vec![ValType::I32; 3], vec![ValType::I32]),
             Self::Shade => (vec![ValType::I64], vec![]),
             Self::ShadeObject | Self::Blacken => (vec![ValType::I32], vec![]),
+            Self::CollectWeak => (vec![], vec![ValType::I32]),
+            Self::WeakTable => (vec![ValType::I32, ValType::F64], vec![ValType::I64]),
+            Self::WeakPair => (vec![ValType::I64, ValType::F64], vec![ValType::I32]),
+            Self::WeakPut => (
+                vec![
+                    ValType::I64,
+                    ValType::F64,
+                    ValType::I32,
+                    ValType::I64,
+                    ValType::I32,
+                ],
+                vec![],
+            ),
+            Self::WeakRemove => (vec![ValType::I64, ValType::F64], vec![]),
+            Self::WeakMove => (
+                vec![ValType::I64, ValType::F64, ValType::I64, ValType::F64],
+                vec![],
+            ),
+            Self::WeakClear => (vec![ValType::I64], vec![]),
+            Self::WeakGc => (vec![], vec![]),
             Self::FrameTable => (vec![ValType::I64, ValType::I32], vec![ValType::I32]),
             Self::PrimitiveText(_) => (vec![ValType::I64], vec![ValType::I64]),
             Self::NumberText => (vec![ValType::F64], vec![ValType::I64]),
@@ -417,6 +458,7 @@ impl Helper {
             trace: *helpers.get(&Self::CollectTrace)?,
             shade: *helpers.get(&Self::Shade)?,
             blacken: *helpers.get(&Self::Blacken)?,
+            weak: helpers.get(&Self::CollectWeak).copied(),
         })
     }
     /// As [`Self::collector_calls`] for a collector helper, which exists only
@@ -429,6 +471,7 @@ impl Helper {
             trace: 0,
             shade: 0,
             blacken: 0,
+            weak: None,
         })
     }
     /// The write barrier of a v38 module (`incremental_collection`).
@@ -536,6 +579,21 @@ impl Helper {
             Self::Shade => incremental::shade(globals),
             Self::ShadeObject => incremental::shade_object(globals, helpers[&Self::CollectTrace]),
             Self::Blacken => incremental::blacken(globals),
+            Self::CollectWeak => weak::incremental(
+                globals,
+                collect::edge_flags(profile.closures(), frames.is_some()),
+            ),
+            Self::WeakTable => weak::table(
+                globals,
+                helpers[&Self::Allocate],
+                profile.data().array_elements,
+            ),
+            Self::WeakPair => weak::pair_helper(),
+            Self::WeakPut => weak::put(Self::barrier(Some(globals), helpers)),
+            Self::WeakRemove => weak::remove(Self::barrier(Some(globals), helpers)),
+            Self::WeakMove => weak::moved(),
+            Self::WeakClear => weak::clear(Self::barrier(Some(globals), helpers)),
+            Self::WeakGc => weak::gc(globals, helpers[&Self::Collect]),
             Self::FrameTable => super::frames::table_helper(
                 globals,
                 frames,

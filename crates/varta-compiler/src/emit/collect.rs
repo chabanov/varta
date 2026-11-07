@@ -11,6 +11,8 @@ pub(super) struct Collected<'a> {
     pub schemas: BTreeMap<Type, Location<'a>>,
     /// V38 (`json_decoders`): the checked parse targets of compiled decoders.
     pub decoders: BTreeSet<Type>,
+    /// V38 (`weak_references`): the program uses ephemeron tables.
+    pub weak: bool,
     schema_types: BTreeSet<Type>,
     types: &'a ir::ValueTypes,
 }
@@ -27,6 +29,7 @@ impl<'a> Collected<'a> {
             types: &program.types,
             schemas: BTreeMap::new(),
             decoders: BTreeSet::new(),
+            weak: false,
             schema_types: BTreeSet::new(),
         };
         for function in &program.functions {
@@ -486,6 +489,12 @@ impl<'a> Collected<'a> {
                             .insert(strings::Helper::Collection(*probe, *hash));
                         if *hash == ir::KeyHash::Units {
                             self.helpers.insert(strings::Helper::StringEquals);
+                        }
+                    }
+                    ir::Intrinsic::Weak(op) => {
+                        self.weak = true;
+                        if let Some(helper) = super::weak::helper(*op) {
+                            self.helpers.insert(helper);
                         }
                     }
                 }

@@ -38,6 +38,7 @@ mod static_data;
 mod string_builder;
 mod strings;
 mod unions;
+mod weak;
 use crate::{
     CompilerError,
     ir::{self, Expr, Expression as E, Host, Statement as S, Type},
@@ -414,6 +415,16 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     if incremental {
         helpers.extend(COLLECTOR_HELPERS);
     }
+    // V38 (`weak_references`): ephemeron tables need the v38 collector.
+    let weak = collected.weak;
+    if weak && !incremental {
+        return Err(CompilerError::Internal(
+            "weak references without the incremental collector".into(),
+        ));
+    }
+    if weak {
+        helpers.insert(strings::Helper::CollectWeak);
+    }
     let mut placement = static_data::Placement::new(program.types.profile);
     let mut offsets = BTreeMap::new();
     for (string, (span, source)) in strings {
@@ -573,7 +584,8 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         + frame_layouts.len()
         + usize::from(!frame_layouts.is_empty())
         + generator_types
-        + usize::from(program.view_event.is_some())) as u32;
+        + usize::from(program.view_event.is_some())
+        + usize::from(program.weak_checkpoint.is_some())) as u32;
     let decoder_plan = decoder_graph
         .as_ref()
         .map(|(graph, _)| {
@@ -589,6 +601,8 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         .as_ref()
         .map(|plan| plan.signatures().into_iter().map(&mut intern).collect())
         .unwrap_or_default();
+    // V38 (`weak_references`): the checkpoint export `() -> ()`.
+    let checkpoint_type = program.weak_checkpoint.map(|_| intern((vec![], vec![])));
     let view_type = program.view_event.map(|_| {
         intern((
             varta_common::view::EVENT_EXPORT_PARAMS
@@ -637,6 +651,9 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     // The v38 view event export follows every other function but the
     // decoders.
     if let Some(ty) = view_type {
+        functions.function(ty);
+    }
+    if let Some(ty) = checkpoint_type {
         functions.function(ty);
     }
     for ty in &decoder_types {
@@ -707,6 +724,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         classes: collect_policy.then_some(globals.len() + 4),
         collector: None,
         memory_bytes: memory_limit as u32,
+        weak: None,
     };
     if needs_arena {
         for initial in [
@@ -752,6 +770,23 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
                 stress: strings::incremental::stress(),
             });
             for _ in strings::incremental::Slot::ALL {
+                globals.global(
+                    wasm_encoder::GlobalType {
+                        val_type: ValType::I32,
+                        mutable: true,
+                        shared: false,
+                    },
+                    &wasm_encoder::ConstExpr::i32_const(0),
+                );
+            }
+        }
+        if weak {
+            // The weak list head and the pending-finalization flag.
+            memory_globals.weak = Some(strings::weak::WeakGlobals {
+                head: globals.len(),
+                pending: globals.len() + 1,
+            });
+            for _ in 0..2 {
                 globals.global(
                     wasm_encoder::GlobalType {
                         val_type: ValType::I32,
@@ -888,7 +923,8 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         .map(|id| steps_begin + id)
         .collect();
     let view_export = steps_begin + generator_types as u32;
-    if view_export + u32::from(program.view_event.is_some()) != decoders_begin {
+    let checkpoint_export = view_export + u32::from(program.view_event.is_some());
+    if checkpoint_export + u32::from(program.weak_checkpoint.is_some()) != decoders_begin {
         return Err(CompilerError::Internal(
             "decoder function index mismatch".into(),
         ));
@@ -908,6 +944,13 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             varta_common::view::EVENT_EXPORT,
             wasm_encoder::ExportKind::Func,
             view_export,
+        );
+    }
+    if program.weak_checkpoint.is_some() {
+        exports.export(
+            varta_common::weak::CHECKPOINT_EXPORT,
+            wasm_encoder::ExportKind::Func,
+            checkpoint_export,
         );
     }
     if !frame_layouts.is_empty() {
@@ -1303,6 +1346,13 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             functions_begin + dispatch as u32,
         ));
     }
+    if let Some(checkpoint) = program.weak_checkpoint {
+        name(&|| format!("<export {}>", varta_common::weak::CHECKPOINT_EXPORT));
+        code.function(&checkpoint_body(
+            functions_begin + checkpoint as u32,
+            program.functions[checkpoint].result.width(),
+        ));
+    }
     if let (Some(plan), Some(globals), Some((_, powers))) =
         (&decoder_plan, decoder_globals, &decoder_graph)
     {
@@ -1528,6 +1578,19 @@ fn view_event_body(snapshot: u32, dispatch: u32) -> wasm_encoder::Function {
     ] {
         body.instruction(&instruction);
     }
+    body
+}
+
+/// The v38 weak checkpoint export `() -> ()` (`weak_references`): call the
+/// weak prelude's checkpoint. A pending exception stays in the exception
+/// channel for the host to finish.
+fn checkpoint_body(checkpoint: u32, results: u32) -> wasm_encoder::Function {
+    let mut body = wasm_encoder::Function::new([]);
+    body.instruction(&I::Call(checkpoint));
+    for _ in 0..results {
+        body.instruction(&I::Drop);
+    }
+    body.instruction(&I::End);
     body
 }
 

@@ -1,0 +1,14 @@
+TypeError: FinalizationRegistry.prototype.register: invalid target
+TypeError: Invalid unregisterToken ('Symbol(token)')
+TypeError: Invalid unregisterToken ('Symbol(token)')
+TypeError: FinalizationRegistry.prototype.register: target and holdings must not be same
+TypeError: WeakRef: invalid target
+true
+false false
+self 0, self 1, self 2
+symbol b, symbol a
+false
+true false
+count 31
+count 32
+1 1 false false

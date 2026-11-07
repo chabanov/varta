@@ -4736,6 +4736,34 @@
       "baseline": {
         "status": "supported"
       }
+    },
+    {
+      "id": "weak-collections",
+      "feature": "weak-reference-lifecycle",
+      "path": "cases/weak-collections.ts",
+      "sha256": "f7032ebc754a3945b06374eda15a9e83e6535d6820c9690c5f95ad30dabbffe6",
+      "stdout": [
+        "varta log: 3 2 false true false",
+        "varta log: true false true false",
+        "varta log: Invalid value used in weak set"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "weak-ref-registry",
+      "feature": "weak-reference-lifecycle",
+      "path": "cases/weak-ref-registry.ts",
+      "sha256": "e0b33ab25eed6cac9843d93b6415c97ad3495f2bf6734449c2e0bc7b2666d636",
+      "stdout": [
+        "varta log: 7 true",
+        "varta log: true false",
+        "varta log: FinalizationRegistry.prototype.register: target and holdings must not be same"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
     }
   ]
 }

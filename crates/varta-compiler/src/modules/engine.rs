@@ -414,6 +414,29 @@ pub(crate) const INTEGRITY: Prelude = Prelude {
     ],
     lifted: None,
 };
+/// `WeakMap`, `WeakSet`, `WeakRef` and `FinalizationRegistry` (v38
+/// `weak_references`, K9 D5) over the ephemeron tables of `lower::weak`; a
+/// builtin, so their instances stay opaque to every host value reader.
+pub(crate) const WEAK: Prelude = Prelude {
+    path: "<varta>/builtins/weak.ts",
+    source: include_str!("../prelude/weak.ts"),
+    exports: &[
+        ("WeakMap", Namespace::Class),
+        ("WeakSet", Namespace::Class),
+        ("WeakRef", Namespace::Class),
+        ("FinalizationRegistry", Namespace::Class),
+        ("WeakKey", Namespace::Type),
+    ],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::weak_references,
+    extended: None,
+    loads: &[],
+    lifted: None,
+};
+/// The weak prelude function the synthesized checkpoint export calls
+/// (`varta_common::weak::CHECKPOINT_EXPORT`).
+pub(crate) const WEAK_CHECKPOINT: &str = "weakCheckpoint";
 /// The global that loads [`SYMBOL`].
 pub(crate) const SYMBOL_GLOBAL: &str = "Symbol";
 /// The class of a symbol's private record in [`SYMBOL`].
@@ -898,7 +921,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 25] = [
+pub(crate) const PRELUDES: [&Prelude; 26] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -913,6 +936,7 @@ pub(crate) const PRELUDES: [&Prelude; 25] = [
     &CONSOLE,
     &SYMBOL,
     &INTEGRITY,
+    &WEAK,
     &REGEXP,
     &BLOB,
     &FETCH,
@@ -992,6 +1016,7 @@ pub(crate) const BUILTINS: [&Prelude; 8] = [
     &STANDARD,
     &SYMBOL,
     &INTEGRITY,
+    &WEAK,
 ];
 
 /// Whether `source` is a v37 builtin prelude module.
