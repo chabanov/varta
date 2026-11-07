@@ -5202,6 +5202,7 @@ dependencies = [
 name = "varta-compiler"
 version = "0.1.0"
 dependencies = [
+ "icu_properties",
  "swc_common",
  "swc_ecma_ast",
  "swc_ecma_parser",

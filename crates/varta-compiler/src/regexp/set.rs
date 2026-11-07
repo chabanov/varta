@@ -77,6 +77,29 @@ impl Set {
             self.add(low, high);
         }
     }
+    /// The members of both sets (v38 class intersection).
+    pub(crate) fn intersection(&self, other: &Self) -> Self {
+        let mut ranges = Vec::new();
+        let (mut a, mut b) = (0, 0);
+        while a < self.ranges.len() && b < other.ranges.len() {
+            let (a_low, a_high) = self.ranges[a];
+            let (b_low, b_high) = other.ranges[b];
+            let (low, high) = (a_low.max(b_low), a_high.min(b_high));
+            if low <= high {
+                ranges.push((low, high));
+            }
+            if a_high < b_high {
+                a += 1;
+            } else {
+                b += 1;
+            }
+        }
+        Self { ranges }
+    }
+    /// The members of `self` outside `other` (v38 class subtraction).
+    pub(crate) fn difference(&self, other: &Self) -> Self {
+        self.intersection(&other.complement(MAX_CODE_POINT))
+    }
     /// The complement within `0..=max`.
     pub(crate) fn complement(&self, max: u32) -> Self {
         let mut ranges = Vec::new();

@@ -273,6 +273,42 @@
       "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-regexp-regular-expression-objects"
     },
     {
+      "id": "regexp-backtracking",
+      "title": "RegExp backreferences and lookaround (backtracking matcher)",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-backreference-matcher"
+    },
+    {
+      "id": "regexp-named-groups-modifiers",
+      "title": "RegExp duplicate named groups and pattern modifiers",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-compileatom"
+    },
+    {
+      "id": "regexp-unicode-sets",
+      "title": "RegExp Unicode property escapes and the v flag",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-compiletocharset"
+    },
+    {
+      "id": "regexp-match-indices",
+      "title": "RegExp match indices (d flag)",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-makematchindicesindexpairarray"
+    },
+    {
       "id": "generators",
       "title": "Generator iteration",
       "core": [
@@ -1552,6 +1588,73 @@
         "varta log: [\"a\",\"1\",\"b\",\"2\",\"c\"] [\"a\",\"b\"]",
         "varta log: 1@1;22@3; 4",
         "varta log: 3 3"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "regexp-backtracking",
+      "feature": "regexp-backtracking",
+      "path": "cases/regexp-backtracking.ts",
+      "sha256": "ce17e4a78d8a824d7fd331e97abcc47d6022318647a1689746c9f620ca8d1908",
+      "stdout": [
+        "varta log: 8 i y",
+        "varta log: a b cd",
+        "varta log: 10,30",
+        "varta log: 7",
+        "varta log: 42.50",
+        "varta log: 1,234,567",
+        "varta log: hi"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "regexp-named-groups-modifiers",
+      "feature": "regexp-named-groups-modifiers",
+      "path": "cases/regexp-named-groups-modifiers.ts",
+      "sha256": "6e9dde825077c0ad6e096b0b7469b1bdd5d9a92b008c474ccaa62179a541df4b",
+      "stdout": [
+        "varta log: 2026 11",
+        "varta log: 2026 11",
+        "varta log: 2026.11",
+        "varta log: aBc",
+        "varta log: Ab",
+        "varta log: >a|>b"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "regexp-unicode-sets",
+      "feature": "regexp-unicode-sets",
+      "path": "cases/regexp-unicode-sets.ts",
+      "sha256": "a62af3ad0c073a627d8e3e4e767d02280b28b41fca5331d0cd364817a276fd75",
+      "stdout": [
+        "varta log: héllo,wörld,мир",
+        "varta log: αβγ",
+        "varta log: h,ll,w,rld",
+        "varta log: α,β",
+        "varta log: abc,d,x",
+        "varta log: 👍🏽,🇺🇦,👨‍👩‍👧",
+        "varta log: _,1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "regexp-match-indices",
+      "feature": "regexp-match-indices",
+      "path": "cases/regexp-match-indices.ts",
+      "sha256": "73b28328c3315984e03cd251c240fcdd0c74e11018ed4a03f69070456d157ad5",
+      "stdout": [
+        "varta log: true d",
+        "varta log: 0-4 ~ 3",
+        "varta log: 1-2;3-5;"
       ],
       "baseline": {
         "status": "supported"

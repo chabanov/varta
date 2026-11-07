@@ -118,6 +118,13 @@ impl Builder {
     }
     fn node(&mut self, node: &Node) -> Result<(), RegExpError> {
         match node {
+            // The v38 forms never reach the v37 compiler (the v37 parser
+            // rejects them by name).
+            Node::Backref(_) | Node::Look { .. } | Node::Modified(..) => {
+                return Err(RegExpError::Unsupported(
+                    "RegExp construct of checked-f64-utf16-v38".into(),
+                ));
+            }
             Node::Empty => {}
             Node::Char(ch) => self.class(&Set::single(*ch), false)?,
             Node::Class { set, negated } => self.class(set, *negated)?,

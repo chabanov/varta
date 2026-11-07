@@ -830,6 +830,16 @@ impl LanguageProfile {
     pub fn standard_library(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 D3 full-RegExp stream: the whole ECMAScript 2025
+    /// pattern language (backreferences, lookaround, pattern modifiers,
+    /// duplicate named groups, Unicode property escapes, the `d` and `v`
+    /// flags) compiled ahead of time to backtracking programs (format 2)
+    /// that the linked `regexp_exec` runs as guest code metered by fuel, and
+    /// match indices. V37 keeps the linear-time subset and its matcher.
+    #[must_use]
+    pub fn full_regexp(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, K9 B module evaluation: a module initializer may run
     /// program code (calls, `new`), as ECMAScript evaluates a module body once
     /// per instance in source order, so static field initializers and static
@@ -3212,6 +3222,8 @@ mod tests {
             // Linked serialization and the logged text of a value.
             H::JsonStringifyOwned,
             H::ValueFormatV12,
+            // K9 D3: the backtracking RegExp matcher.
+            H::RegExpExec,
         ] {
             assert!(operation.linked() && v38.links(operation), "{operation:?}");
             assert!(operation.capability().is_none(), "{operation:?}");

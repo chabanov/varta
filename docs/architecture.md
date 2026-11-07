@@ -8559,7 +8559,9 @@ and the clock.
 
 #### RegExp (`regexp()`)
 
-Selector `regexp()`. V37 admits regular expression literals, `new RegExp`
+V38 replaces this subset with the [full RegExp](#full-regexp-full_regexp)
+language and a backtracking matcher; everything below stays the v37
+contract. Selector `regexp()`. V37 admits regular expression literals, `new RegExp`
 with constant arguments, `RegExp.prototype.exec`/`test`, `lastIndex`, match
 arrays and the regex string methods `search`, `match`, `matchAll`, `replace`,
 `replaceAll` and `split` (with RegExp and string patterns). It adds no value
@@ -11708,6 +11710,109 @@ prelude loads only for programs that name one of its methods
   `structuredClone`, `Object.freeze`/`seal`/`preventExtensions` and their
   predicates, descriptor and prototype functions, and `Intl` fail with the
   missing value-model part in the diagnostic.
+
+#### Full RegExp (`full_regexp`)
+
+K9 D3 (2026-11-06), under the selector `LanguageProfile::full_regexp()`: the
+whole ECMAScript 2025 pattern language (§22.2) replaces the v37
+[linear-time subset](#regexp-regexp) in v38. Patterns are still compiled
+only ahead of time (literals and `new RegExp` with constant arguments, as in
+v37); V37 keeps its subset, its program format 1, its emitted Pike VM and
+its diagnostics and bytes unchanged.
+
+- **Admitted syntax.** Everything v37 admits, plus numbered and named
+  backreferences (`\1`, `\k<name>`, forward references match empty),
+  lookahead and lookbehind (`(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)`; Annex B
+  quantified lookahead without `u`), pattern modifiers `(?ims-ims:…)`
+  (ES2025), duplicate named groups in different alternatives (ES2025
+  MightBothParticipate), `\u` escapes in group names, Unicode property
+  escapes `\p{…}`/`\P{…}` (`General_Category`/`gc` values and groups,
+  `Script`/`sc`, `Script_Extensions`/`scx`, the binary properties of
+  ECMA-262's table, `Any`, `ASCII`, `Assigned`), the `d` (`hasIndices`) and
+  `v` (`unicodeSets`) flags, and under `v` the class set notation: nested
+  classes, `&&`, `--`, `\q{…|…}` and the emoji properties of strings
+  (`Basic_Emoji`, `Emoji_Keycap_Sequence`, `RGI_Emoji_Modifier_Sequence`,
+  `RGI_Emoji_Flag_Sequence`, `RGI_Emoji_Tag_Sequence`,
+  `RGI_Emoji_ZWJ_Sequence`, `RGI_Emoji`). Early errors are compile-time
+  `invalid` diagnostics with V8's text (`Duplicate capture group name`,
+  `Invalid named capture referenced`, `Repeated flag in flag group`,
+  `Invalid property name`, `Invalid set operation in character class`,
+  `Negated character class may contain strings`, …); `u` with `v` is
+  `Invalid flags supplied to RegExp constructor 'uv'`. Flags print in
+  `dgimsuvy` order.
+- **Property data.** Code point properties come from the ICU4X 2.4 compiled
+  data (`icu_properties`, already locked; strict name matching as the
+  specification requires), resolved at compile time into class ranges; the
+  properties of strings come from the Unicode Emoji 17.0 data
+  (`regexp/emoji_sequences.txt`, from `emoji-sequences.txt` and
+  `emoji-zwj-sequences.txt`). Node 24.20.0 ships ICU 78.3 with Unicode 17.0,
+  and every case pinned against it agrees.
+- **Programs (format 2).** The compiler (`regexp::backtrack`) emits a
+  backtracking program, a static string of UTF-16 code units shared with the
+  matcher through `varta_common::regexp`: a header (format version 2,
+  `UNICODE`/`ANCHORED`/`PREFILTER` flags, capture and register counts, the
+  code offset and an ASCII first-unit prefilter), variable-length
+  instructions (`MATCH`, `CHAR`, `CHAR32`, `ANY`, `CLASS`, `JUMP`, `SPLIT`,
+  `SAVE`, `RESET`, `ASSERT`, `BACKREF`, `LOOK`, `LOOK_END`, `REPEAT_INIT`,
+  `REPEAT`, `ENTER`, `REPEAT_END`, `STAR`) whose consuming instructions and
+  backreferences carry a backward bit inside lookbehind, and sorted class
+  range tables. Offsets are single code units, so a program has at most
+  65 535 units (`RegExp program larger than 65535 code units` beyond);
+  counted repetitions use counters and are not expanded (`a{100000}` is
+  small). Case-insensitive characters and classes are widened at compile
+  time as in v37 (under `v` with `i`, operands are folded with simple case
+  folding before set operations and complemented among the folded
+  characters, MaybeSimpleCaseFolding); only case-insensitive
+  backreferences compare by Canonicalize at run time.
+- **Matcher.** `regexp_exec` is a linked intrinsic (`HostOperation::RegExpExec`,
+  pure, capability-free, linked in every v38 module and imported by no
+  profile, see the [linked intrinsics table](embedding.md)): the backtracking interpreter
+  `varta_intrinsics::regexp`, one implementation compiled into the guest.
+  It follows §22.2.2 as a continuation machine: `SPLIT` and quantifiers push
+  choice points, every capture and register write is undone when matching
+  backtracks past it, `REPEAT` counts iterations (RepeatMatcher: the
+  minimum without choice, then greedy or lazy priority, captures cleared per
+  iteration, an optional iteration that consumes nothing fails), `STAR`
+  runs a quantified single character without captures without
+  per-iteration state, lookarounds are atomic (a positive one keeps its
+  captures and drops its choice points, a negative one undoes its body) and
+  lookbehind bodies read backward with their captures recorded end first.
+  Under `u` or `v` the matcher reads code points, a start inside a surrogate
+  pair backs up to the pair, and the search advances by code point.
+- **Work is fuel.** Matching may take time exponential in the input, as in
+  every backtracking engine. Because the matcher is guest code, every step
+  is metered as ordinary fuel and its backtracking stack is arena memory
+  under the memory budget: a catastrophic pattern (`/^(a+)+$/` on 64 `a`s
+  and `!`) ends with the turn's typed `BudgetExhausted` fuel error, the same
+  on every run, instead of hanging, and an exhausted memory budget is the
+  typed memory failure. Browser hosts run the same Wasm, so the official
+  metered browser bundle charges matching like any guest code. Measured under the
+  production budgets (`full_regexp_tests`): about 3 700 fuel of fixed work
+  per run including the RegExp object (v37: about 3 000), about 33 fuel per
+  skipped input unit for a search led by a literal or a class (the prefilter
+  skips units without a run), and about 160 fuel per unit for `/^(a+)+$/`
+  on a matching input (v37: about 1 450). Production budgets are unchanged.
+- **Prelude.** V38 compiles `prelude/regexp_v38.ts` in place of the v37
+  prelude (`Prelude::lifted`): `hasIndices` and `unicodeSets` reflect their
+  flags; `exec`, `match` without `g`, `matchAll` and replacer match arrays
+  carry `indices` (a `RegExpIndicesArray` of `[start, end]` pairs or
+  `undefined`, with `groups`, when the RegExp has `d`, otherwise
+  `undefined`); a groups object holds one key per name in first-group order
+  whose value is the group that took part; `$<name>` substitutes the
+  participating group of a shared name; AdvanceStringIndex is by code point
+  under `u` or `v`. A replacer's groups parameter is the (defined) groups
+  object. Match arrays and indices arrays are read like v37 match arrays
+  (index, destructuring, `for…of`).
+- **Deviations.** Patterns are compiled ahead of time only (a run-time
+  pattern, `new RegExp(regexp)`, `RegExp(…)` without `new`, `RegExp.escape`
+  and Annex B `compile` stay compile-time errors: a run-time pattern would
+  need the pattern compiler in the guest); `matchAll` returns an array;
+  match arrays have no array methods; `split` throws for a capture that did
+  not take part (its result is `string[]`); `Symbol.match`/`matchAll`/
+  `replace`/`search`/`split` protocols wait for symbol values; legacy static
+  properties are not modelled. Behaviour is pinned against Node 24.20.0
+  (`varta-runtime` `full_regexp_cases`, including a 600-pattern
+  differential corpus) and conformance cases `regexp-*`.
 
 #### Type level (`type_level`)
 

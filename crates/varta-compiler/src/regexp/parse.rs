@@ -1,7 +1,10 @@
 //! ECMAScript 2025 RegExp pattern syntax (§22.2.1), parsed ahead of time.
 //! Patterns without `u` follow the web-compatibility grammar of Annex B.1.2
 //! (literal `]`/`{`/`}`, identity escapes, legacy octal escapes and `\c`).
-//! Constructs the linear-time matcher cannot run are rejected by name.
+//! Under v37 constructs the linear-time matcher cannot run are rejected by
+//! name; v38 (`full`) admits the whole grammar: backreferences, lookaround,
+//! pattern modifiers, duplicate named groups, Unicode property escapes and
+//! the `v` flag's class set expressions (`classes`).
 use super::RegExpError;
 use super::set::{self, Set};
 
@@ -14,10 +17,15 @@ pub(crate) struct Flags {
     pub dot_all: bool,
     pub unicode: bool,
     pub sticky: bool,
+    /// V38: `d` (`hasIndices`).
+    pub has_indices: bool,
+    /// V38: `v` (`unicodeSets`).
+    pub unicode_sets: bool,
 }
 
 impl Flags {
-    pub(crate) fn parse(text: &str) -> Result<Self, RegExpError> {
+    /// The flags of `text`; `full` (v38) admits `d` and `v`.
+    pub(crate) fn parse(text: &str, full: bool) -> Result<Self, RegExpError> {
         let mut flags = Self::default();
         let mut seen = String::new();
         for flag in text.chars() {
@@ -34,6 +42,8 @@ impl Flags {
                 's' => &mut flags.dot_all,
                 'u' => &mut flags.unicode,
                 'y' => &mut flags.sticky,
+                'd' if full => &mut flags.has_indices,
+                'v' if full => &mut flags.unicode_sets,
                 'd' => {
                     return Err(RegExpError::Unsupported(
                         "RegExp flag d (hasIndices match indices)".into(),
@@ -52,16 +62,23 @@ impl Flags {
             };
             *slot = true;
         }
+        if flags.unicode && flags.unicode_sets {
+            return Err(RegExpError::Syntax(format!(
+                "Invalid flags supplied to RegExp constructor '{text}'"
+            )));
+        }
         Ok(flags)
     }
     /// The canonical `flags` text (`dgimsuvy` order).
     pub(crate) fn text(self) -> String {
         [
+            (self.has_indices, 'd'),
             (self.global, 'g'),
             (self.ignore_case, 'i'),
             (self.multiline, 'm'),
             (self.dot_all, 's'),
             (self.unicode, 'u'),
+            (self.unicode_sets, 'v'),
             (self.sticky, 'y'),
         ]
         .into_iter()
@@ -101,15 +118,42 @@ pub(crate) enum Node {
         max: Option<u32>,
         greedy: bool,
     },
+    /// V38: a backreference to the first of `groups` that took part
+    /// (several for a name shared by groups in different alternatives).
+    Backref(Vec<usize>),
+    /// V38: a lookahead or lookbehind assertion.
+    Look {
+        behind: bool,
+        negative: bool,
+        node: Box<Node>,
+    },
+    /// V38: a pattern modifier group `(?ims-ims:…)`: the flags it sets.
+    Modified(Modifiers, Box<Node>),
+}
+
+/// The flags a modifier group turns on (`Some(true)`) or off.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Modifiers {
+    pub ignore_case: Option<bool>,
+    pub multiline: Option<bool>,
+    pub dot_all: Option<bool>,
+}
+impl Modifiers {
+    pub(crate) fn apply(self, mut flags: Flags) -> Flags {
+        flags.ignore_case = self.ignore_case.unwrap_or(flags.ignore_case);
+        flags.multiline = self.multiline.unwrap_or(flags.multiline);
+        flags.dot_all = self.dot_all.unwrap_or(flags.dot_all);
+        flags
+    }
 }
 
 impl Node {
     /// Whether the node can match without consuming input.
     pub(crate) fn nullable(&self) -> bool {
         match self {
-            Self::Empty | Self::Assert(_) => true,
+            Self::Empty | Self::Assert(_) | Self::Backref(_) | Self::Look { .. } => true,
             Self::Char(_) | Self::Class { .. } | Self::Dot => false,
-            Self::Group(node, _) => node.nullable(),
+            Self::Group(node, _) | Self::Modified(_, node) => node.nullable(),
             Self::Concat(nodes) => nodes.iter().all(Self::nullable),
             Self::Alternation(nodes) => nodes.iter().any(Self::nullable),
             Self::Repeat { node, min, .. } => *min == 0 || node.nullable(),
@@ -125,12 +169,19 @@ impl Node {
             }
         }
         match self {
-            Self::Empty | Self::Char(_) | Self::Class { .. } | Self::Dot | Self::Assert(_) => None,
+            Self::Empty
+            | Self::Char(_)
+            | Self::Class { .. }
+            | Self::Dot
+            | Self::Assert(_)
+            | Self::Backref(_) => None,
             Self::Group(node, index) => join(index.map(|i| (i, i)), node.groups()),
             Self::Concat(nodes) | Self::Alternation(nodes) => nodes
                 .iter()
                 .fold(None, |acc, node| join(acc, node.groups())),
-            Self::Repeat { node, .. } => node.groups(),
+            Self::Repeat { node, .. } | Self::Look { node, .. } | Self::Modified(_, node) => {
+                node.groups()
+            }
         }
     }
 }
@@ -179,22 +230,34 @@ fn characters(pattern: &str, unicode: bool) -> Vec<u32> {
     }
 }
 
-pub(crate) fn parse(pattern: &str, flags: Flags) -> Result<Pattern, RegExpError> {
-    let chars = characters(pattern, flags.unicode);
-    let (total, named) = prescan(&chars);
+pub(crate) fn parse(pattern: &str, flags: Flags, full: bool) -> Result<Pattern, RegExpError> {
+    // Under `v` the pattern grammar is the Unicode one (with class sets).
+    let mut grammar = flags;
+    grammar.unicode = flags.unicode || flags.unicode_sets;
+    let chars = characters(pattern, grammar.unicode);
+    let (total, named) = prescan(&chars, flags.unicode_sets);
     let mut parser = Parser {
         chars,
         at: 0,
-        flags,
+        flags: grammar,
+        original: flags,
+        full,
         named,
         total,
         names: vec![None],
         pattern,
+        paths: Vec::new(),
+        path: Vec::new(),
+        disjunctions: 0,
+        references: Vec::new(),
     };
-    let node = parser.disjunction()?;
+    let mut node = parser.disjunction()?;
     if parser.at < parser.chars.len() {
         // Only an unmatched `)` stops a top-level disjunction early.
         return Err(parser.error("Unmatched ')'"));
+    }
+    if full {
+        parser.resolve(&mut node)?;
     }
     Ok(Pattern {
         node,
@@ -204,15 +267,16 @@ pub(crate) fn parse(pattern: &str, flags: Flags) -> Result<Pattern, RegExpError>
 }
 
 /// CountLeftCapturingParensWithin, and whether a group name occurs (which
-/// selects the `NamedCaptureGroups` grammar without `u`).
-fn prescan(chars: &[u32]) -> (usize, bool) {
-    let (mut count, mut named, mut class, mut at) = (0, false, false, 0);
+/// selects the `NamedCaptureGroups` grammar without `u`). Under `v` classes
+/// nest.
+fn prescan(chars: &[u32], sets: bool) -> (usize, bool) {
+    let (mut count, mut named, mut class, mut at) = (0, false, 0usize, 0);
     while at < chars.len() {
         match chars[at] {
             ch if ch == c(b'\\') => at += 1,
-            ch if ch == c(b'[') => class = true,
-            ch if ch == c(b']') => class = false,
-            ch if ch == c(b'(') && !class => {
+            ch if ch == c(b'[') => class = if sets { class + 1 } else { 1 },
+            ch if ch == c(b']') => class = class.saturating_sub(1),
+            ch if ch == c(b'(') && class == 0 => {
                 if chars.get(at + 1) != Some(&c(b'?')) {
                     count += 1;
                 } else if chars.get(at + 2) == Some(&c(b'<'))
@@ -235,31 +299,79 @@ enum ClassAtom {
     Set(Set),
 }
 
-struct Parser<'a> {
-    chars: Vec<u32>,
-    at: usize,
-    flags: Flags,
+pub(super) struct Parser<'a> {
+    pub(super) chars: Vec<u32>,
+    pub(super) at: usize,
+    /// The flags in effect (pattern modifiers change `i`, `m` and `s`);
+    /// `unicode` is set under `v` too.
+    pub(super) flags: Flags,
+    /// The pattern's flags, for diagnostics.
+    original: Flags,
+    /// V38: the full ECMAScript 2025 grammar.
+    full: bool,
     named: bool,
     total: usize,
     names: Vec<Option<String>>,
     pattern: &'a str,
+    /// V38: each named group's name and alternative path (MightBothParticipate).
+    paths: Vec<(String, Vec<(usize, usize)>)>,
+    /// V38: the (disjunction, alternative) path to the cursor.
+    path: Vec<(usize, usize)>,
+    disjunctions: usize,
+    /// V38: the names of named backreferences, resolved after parsing.
+    references: Vec<String>,
 }
 
+/// The marker of an unresolved named backreference: `Backref([NAMED, i])`
+/// names `references[i]`.
+const NAMED: usize = usize::MAX;
+
 impl Parser<'_> {
-    fn error(&self, message: &str) -> RegExpError {
+    pub(super) fn error(&self, message: &str) -> RegExpError {
         RegExpError::Syntax(format!(
             "Invalid regular expression: /{}/{}: {message}",
             self.pattern,
-            self.flags.text()
+            self.original.text()
         ))
     }
-    fn peek(&self) -> Option<u32> {
+    /// V38: named backreferences become the groups of their name.
+    fn resolve(&self, node: &mut Node) -> Result<(), RegExpError> {
+        match node {
+            Node::Backref(groups) if groups.first() == Some(&NAMED) => {
+                let index = groups.get(1).copied().unwrap_or(0);
+                let name = &self.references[index];
+                let found: Vec<usize> = self
+                    .names
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, group)| group.as_deref() == Some(name.as_str()))
+                    .map(|(group, _)| group)
+                    .collect();
+                if found.is_empty() {
+                    return Err(self.error("Invalid named capture referenced"));
+                }
+                *groups = found;
+            }
+            Node::Group(inner, _)
+            | Node::Repeat { node: inner, .. }
+            | Node::Look { node: inner, .. }
+            | Node::Modified(_, inner) => self.resolve(inner)?,
+            Node::Concat(nodes) | Node::Alternation(nodes) => {
+                for inner in nodes {
+                    self.resolve(inner)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    pub(super) fn peek(&self) -> Option<u32> {
         self.chars.get(self.at).copied()
     }
-    fn peek_at(&self, offset: usize) -> Option<u32> {
+    pub(super) fn peek_at(&self, offset: usize) -> Option<u32> {
         self.chars.get(self.at + offset).copied()
     }
-    fn eat(&mut self, ch: u8) -> bool {
+    pub(super) fn eat(&mut self, ch: u8) -> bool {
         if self.peek() == Some(c(ch)) {
             self.at += 1;
             true
@@ -267,7 +379,7 @@ impl Parser<'_> {
             false
         }
     }
-    fn max(&self) -> u32 {
+    pub(super) fn max(&self) -> u32 {
         if self.flags.unicode {
             set::MAX_CODE_POINT
         } else {
@@ -276,10 +388,17 @@ impl Parser<'_> {
     }
 
     fn disjunction(&mut self) -> Result<Node, RegExpError> {
+        let id = self.disjunctions;
+        self.disjunctions += 1;
+        self.path.push((id, 0));
         let mut alternatives = vec![self.alternative()?];
         while self.eat(b'|') {
+            if let Some(last) = self.path.last_mut() {
+                last.1 += 1;
+            }
             alternatives.push(self.alternative()?);
         }
+        self.path.pop();
         Ok(if alternatives.len() == 1 {
             alternatives.pop().unwrap_or(Node::Empty)
         } else {
@@ -311,7 +430,13 @@ impl Parser<'_> {
                 Some(Assertion::NotWordBoundary)
             }
             Some(ch) if ch == c(b'(') && self.peek_at(1) == Some(c(b'?')) => {
-                self.lookaround()?;
+                if self.full {
+                    if let Some(node) = self.lookaround_full()? {
+                        return Ok(node);
+                    }
+                } else {
+                    self.lookaround()?;
+                }
                 None
             }
             _ => None,
@@ -336,6 +461,41 @@ impl Parser<'_> {
                 greedy,
             }),
             None => Ok(atom),
+        }
+    }
+    /// V38: a lookaround assertion at the cursor (`(?=`, `(?!`, `(?<=`,
+    /// `(?<!`), with the Annex B quantifier of a lookahead without `u`.
+    fn lookaround_full(&mut self) -> Result<Option<Node>, RegExpError> {
+        let (behind, negative, header) = match (self.peek_at(2), self.peek_at(3)) {
+            (Some(ch), _) if ch == c(b'=') => (false, false, 3),
+            (Some(ch), _) if ch == c(b'!') => (false, true, 3),
+            (Some(lt), Some(ch)) if lt == c(b'<') && ch == c(b'=') => (true, false, 4),
+            (Some(lt), Some(ch)) if lt == c(b'<') && ch == c(b'!') => (true, true, 4),
+            _ => return Ok(None),
+        };
+        self.at += header;
+        let node = self.disjunction()?;
+        if !self.eat(b')') {
+            return Err(self.error("Unterminated group"));
+        }
+        let look = Node::Look {
+            behind,
+            negative,
+            node: Box::new(node),
+        };
+        let start = self.at;
+        match self.quantifier()? {
+            None => Ok(Some(look)),
+            Some(_) if behind || self.flags.unicode => {
+                self.at = start;
+                Err(self.error("Invalid quantifier"))
+            }
+            Some((min, max, greedy)) => Ok(Some(Node::Repeat {
+                node: Box::new(look),
+                min,
+                max,
+                greedy,
+            })),
         }
     }
     /// Lookaround groups are not linear-time; name them precisely.
@@ -402,7 +562,7 @@ impl Parser<'_> {
         (self.chars.get(at) == Some(&c(b'}'))).then_some((min, Some(max), at + 1))
     }
     /// Decimal digits at `at`, saturating; `None` without a digit.
-    fn decimal(&self, at: &mut usize) -> Option<u32> {
+    pub(super) fn decimal(&self, at: &mut usize) -> Option<u32> {
         let start = *at;
         let mut value: u32 = 0;
         while let Some(digit) = self.chars.get(*at).and_then(|&ch| digit(ch, DECIMAL_RADIX)) {
@@ -454,7 +614,9 @@ impl Parser<'_> {
             } else if self.peek() == Some(c(b'<')) {
                 self.at += 1;
                 let name = self.group_name()?;
-                if self
+                if self.full {
+                    self.declare(&name)?;
+                } else if self
                     .names
                     .iter()
                     .flatten()
@@ -466,6 +628,8 @@ impl Parser<'_> {
                 }
                 self.names.push(Some(name));
                 Some(self.names.len() - 1)
+            } else if self.full {
+                return self.modified();
             } else if matches!(self.peek(), Some(ch) if [c(b'i'), c(b'm'), c(b's'), c(b'-')].contains(&ch))
             {
                 return Err(RegExpError::Unsupported(
@@ -484,6 +648,67 @@ impl Parser<'_> {
         }
         Ok(Node::Group(Box::new(node), index))
     }
+    /// V38: a group name may repeat only where the groups cannot both take
+    /// part: in different alternatives of a disjunction (ES2025
+    /// MightBothParticipate).
+    fn declare(&mut self, name: &str) -> Result<(), RegExpError> {
+        let path = &self.path;
+        let clash = self.paths.iter().any(|(other, other_path)| {
+            other == name
+                && !path
+                    .iter()
+                    .zip(other_path)
+                    .find(|(a, b)| a != b)
+                    .is_some_and(|((a, x), (b, y))| a == b && x != y)
+        });
+        if clash {
+            return Err(self.error("Duplicate capture group name"));
+        }
+        self.paths.push((name.to_owned(), path.clone()));
+        Ok(())
+    }
+    /// V38: a pattern modifier group `(?ims-ims:…)` after `(?`.
+    fn modified(&mut self) -> Result<Node, RegExpError> {
+        let mut modifiers = Modifiers::default();
+        let mut seen = String::new();
+        let mut removing = false;
+        loop {
+            let Some(ch) = self.peek().and_then(char::from_u32) else {
+                return Err(self.error("Invalid group"));
+            };
+            let slot = match ch {
+                ':' => break,
+                '-' if removing => return Err(self.error("Multiple dashes in flag group")),
+                '-' => {
+                    removing = true;
+                    self.at += 1;
+                    continue;
+                }
+                'i' => &mut modifiers.ignore_case,
+                'm' => &mut modifiers.multiline,
+                's' => &mut modifiers.dot_all,
+                _ => return Err(self.error("Invalid group")),
+            };
+            if seen.contains(ch) {
+                return Err(self.error("Repeated flag in flag group"));
+            }
+            seen.push(ch);
+            *slot = Some(!removing);
+            self.at += 1;
+        }
+        if removing && seen.is_empty() {
+            return Err(self.error("Invalid flag group"));
+        }
+        self.at += 1;
+        let outer = self.flags;
+        self.flags = modifiers.apply(outer);
+        let node = self.disjunction()?;
+        self.flags = outer;
+        if !self.eat(b')') {
+            return Err(self.error("Unterminated group"));
+        }
+        Ok(Node::Modified(modifiers, Box::new(node)))
+    }
     /// RegExpIdentifierName `>` after `<`.
     fn group_name(&mut self) -> Result<String, RegExpError> {
         let mut name = String::new();
@@ -495,7 +720,9 @@ impl Parser<'_> {
             if ch == c(b'>') {
                 break;
             }
-            if ch == c(b'\\') {
+            if ch == c(b'\\') && self.full {
+                ch = self.name_escape()?;
+            } else if ch == c(b'\\') {
                 return Err(RegExpError::Unsupported(
                     "RegExp escape sequence in a capture group name".into(),
                 ));
@@ -534,6 +761,11 @@ impl Parser<'_> {
         let Some(next) = self.peek_at(1) else {
             return Err(self.error("\\ at end of pattern"));
         };
+        if self.full
+            && let Some(node) = self.atom_escape_full(next)?
+        {
+            return Ok(node);
+        }
         if let Some(set) = self.class_escape(next)? {
             self.at += 2;
             return Ok(Node::Class {
@@ -566,8 +798,74 @@ impl Parser<'_> {
         self.at += 1;
         Ok(Node::Char(self.character_escape(false)?))
     }
+    /// V38 escapes of an atom with the cursor on the backslash:
+    /// backreferences, named backreferences and Unicode property escapes
+    /// (whose strings under `v` become alternatives).
+    fn atom_escape_full(&mut self, next: u32) -> Result<Option<Node>, RegExpError> {
+        if self.flags.unicode && (next == c(b'p') || next == c(b'P')) {
+            let value = self.property()?;
+            return Ok(Some(value.into_node()));
+        }
+        if next == c(b'k') && (self.flags.unicode || self.named) {
+            self.at += 2;
+            if !self.eat(b'<') {
+                return Err(self.error("Invalid named reference"));
+            }
+            let name = self.group_name()?;
+            self.references.push(name);
+            return Ok(Some(Node::Backref(vec![NAMED, self.references.len() - 1])));
+        }
+        if (c(b'1')..=c(b'9')).contains(&next) {
+            let mut at = self.at + 1;
+            let number = self.decimal(&mut at).unwrap_or(0);
+            if number as usize <= self.total {
+                self.at = at;
+                return Ok(Some(Node::Backref(vec![number as usize])));
+            }
+        }
+        Ok(None)
+    }
+    /// The code point of a `\u` escape in a group name (after the
+    /// backslash): `\uXXXX` (a surrogate pair of two escapes is one code
+    /// point) or `\u{…}`.
+    fn name_escape(&mut self) -> Result<u32, RegExpError> {
+        const HEX4: usize = 4;
+        let invalid = |parser: &Self| parser.error("Invalid capture group name");
+        if self.peek() != Some(c(b'u')) {
+            return Err(invalid(self));
+        }
+        if self.peek_at(1) == Some(c(b'{')) {
+            let mut at = self.at + 2;
+            let mut value: u32 = 0;
+            while let Some(d) = self.chars.get(at).and_then(|&ch| digit(ch, HEX_RADIX)) {
+                value = value.saturating_mul(HEX_RADIX).saturating_add(d);
+                at += 1;
+            }
+            if at == self.at + 2
+                || self.chars.get(at) != Some(&c(b'}'))
+                || value > set::MAX_CODE_POINT
+            {
+                return Err(invalid(self));
+            }
+            self.at = at + 1;
+            return Ok(value);
+        }
+        let Some(value) = self.hex(1, HEX4) else {
+            return Err(invalid(self));
+        };
+        self.at += 1 + HEX4;
+        if is_high(value)
+            && self.peek() == Some(c(b'\\'))
+            && self.peek_at(1) == Some(c(b'u'))
+            && let Some(low) = self.hex(2, HEX4).filter(|&low| is_low(low))
+        {
+            self.at += 2 + HEX4;
+            return Ok(combine(value, low));
+        }
+        Ok(value)
+    }
     /// `\d \D \s \S \w \W` (and `\p`, `\P` under `u`) after the backslash.
-    fn class_escape(&self, next: u32) -> Result<Option<Set>, RegExpError> {
+    pub(super) fn class_escape(&self, next: u32) -> Result<Option<Set>, RegExpError> {
         let max = self.max();
         let word = || {
             let mut word = set::word();
@@ -596,7 +894,7 @@ impl Parser<'_> {
     }
     /// A CharacterEscape (or Annex B identity/octal escape) with the cursor
     /// on the character after the backslash.
-    fn character_escape(&mut self, class: bool) -> Result<u32, RegExpError> {
+    pub(super) fn character_escape(&mut self, class: bool) -> Result<u32, RegExpError> {
         let Some(ch) = self.peek() else {
             return Err(self.error("\\ at end of pattern"));
         };
@@ -759,6 +1057,9 @@ impl Parser<'_> {
     }
 
     fn class(&mut self) -> Result<Node, RegExpError> {
+        if self.full && self.flags.unicode_sets {
+            return self.class_set();
+        }
         self.at += 1;
         let negated = self.eat(b'^');
         let mut members = Set::default();
@@ -813,6 +1114,9 @@ impl Parser<'_> {
         let Some(next) = self.peek_at(1) else {
             return Err(self.error("\\ at end of pattern"));
         };
+        if self.full && self.flags.unicode && (next == c(b'p') || next == c(b'P')) {
+            return Ok(ClassAtom::Set(self.property()?.set));
+        }
         if let Some(set) = self.class_escape(next)? {
             self.at += 2;
             return Ok(ClassAtom::Set(set));

@@ -6006,6 +6006,35 @@ depth, and `JSON.stringify` takes property lists but no replacer
 function. `Symbol()`, `WeakMap`/`WeakSet`/`WeakRef`, `Proxy`, `Reflect`,
 `structuredClone`, `Object.freeze` and `Intl` are refused with the reason.
 
+#### Full RegExp (opt-in v38)
+
+The whole ECMAScript 2025 pattern language: backreferences, lookahead and
+lookbehind, pattern modifiers, duplicate named groups, Unicode property
+escapes, match indices (`d`) and the `v` flag's set notation and emoji
+properties of strings. Patterns are still written as literals or `new
+RegExp` with constant arguments:
+
+```ts
+export function main(): void {
+  const date = /(?<y>\d{4})-(?<m>\d{2})|(?<m>\d{2})\/(?<y>\d{4})/d;
+  const found = date.exec("due 11/2026");
+  console.log(found?.groups?.y + " " + found?.groups?.m); // 2026 11
+  console.log(String(found?.indices?.groups?.y?.[0])); // 7
+  console.log("aa bb cd".replace(/(\w)\1/g, "<$1>")); // <a> <b> cd
+  console.log("$42.50 or €7".match(/(?<=\$)\d+(\.\d+)?/)?.[0]); // 42.50
+  console.log("camelCaseText".split(/(?=[A-Z])/).join(" ")); // camel Case Text
+  console.log("Ab ab AB".replace(/a(?i:b)/g, "x")); // Ab x AB
+  console.log("ΑΒΓ abc".match(/\p{Script=Greek}+/u)?.[0]); // ΑΒΓ
+  console.log("x1y2".replace(/[\w--\d]/gv, "_")); // _1_2
+  console.log(String(/^\p{RGI_Emoji}$/v.test("👩‍💻"))); // true
+}
+```
+
+Matching backtracks like JavaScript engines do, and every step is fuel: a
+pattern that backtracks catastrophically ends the turn with the typed fuel
+exhaustion instead of hanging. `matchAll` returns an array, match arrays have
+no array methods, and `split` throws for a capture that did not take part.
+
 #### Web bytes (opt-in v38)
 
 Response bodies are bytes, as in browsers and Node: a reader yields
