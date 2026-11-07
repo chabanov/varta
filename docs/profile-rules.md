@@ -4235,7 +4235,7 @@ Contract: [architecture.md](architecture.md#standard-library-standard_library).
 - `Date` members that `Object.prototype` or JSON reserve (`toString`,
   `valueOf`, `toJSON`) are prelude functions reached through
   `date_conversion`; the local time zone enters only through `zoneOffset`
-  (UTC until an owner-decided host zone exists).
+  and `utcTime` ([local time](#local-time-local_time)).
 - `refusal` names the missing value-model part for weak
   collections, `Proxy`, `Reflect`, `structuredClone`, integrity levels,
   descriptors/prototypes and `Intl`; admitting one of them replaces its row.
@@ -4246,6 +4246,37 @@ Contract: [architecture.md](architecture.md#standard-library-standard_library).
   `array-copying-methods`, `iterator-helpers`, `set-methods`, `grouping`,
   `aggregate-error` and the new cases of `json-stringify`, `date`,
   `string-builtins` and `math`.
+
+### Local time (`local_time`)
+
+Contract: [architecture.md](architecture.md#local-time-local_time).
+
+- The zone and locale are recorded host inputs: hosts pass text
+  (`intl_time_zone`, `intl_locale`), never offsets, rules or names. Keep
+  every offset, transition and name in `varta-intl` (linked through
+  `date_zone_offset`/`date_zone_name`); never add time zone logic to the
+  runtime, the launcher or the browser bridge.
+- Library and test runs use `RunOptions::host_inputs` (default UTC,
+  `en-US`); only embedders call `system_host_inputs`. A test that needs a
+  zone states it; no test reads the machine's `TZ` or locale.
+- The date prelude reads the inputs once (`readHost`); `LocalTime` and
+  `UTC(t)` go through `zoneOffset` and `utcTime` only. ISO date-time strings
+  without an offset are local (`DATE_V38_LOCAL_ISO` lifts the v37 parser);
+  v37's text stays unchanged.
+- Follow ECMA-262 where V8 differs (fractional `getTimezoneOffset`), and
+  Node where ECMA-262 leaves the choice to the implementation (the zone name:
+  V8's equivalent-year daylight flag, ICU's current metazone and fallback).
+  Record each such choice in the contract.
+- New tzdata or ICU4X data changes outputs: regenerate the Node fixtures
+  (`node_offsets.txt`, `node_zones.txt`, `node_names.txt`,
+  `local_time_cases/*.expected`) with the matching Node, rebuild the
+  intrinsic library, and keep every pinned difference explained.
+- Linked code may call indirectly only through table 0
+  ([linked intrinsics](architecture.md#linked-intrinsics-linked_intrinsics));
+  the effect analysis treats such a call as reaching every table function.
+- Tests: `varta-intl` unit tests, `varta-runtime` `local_time_tests`, the
+  linker test `indirect_calls_of_linked_code_get_appended_table_slots`, the
+  browser registry facts and the conformance case `date-local-time`.
 
 ### Type level (`type_level`)
 

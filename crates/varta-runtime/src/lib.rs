@@ -46,6 +46,7 @@ mod http;
 #[cfg(test)]
 mod http_abi_tests;
 mod http_contract;
+mod local_time;
 mod references;
 mod resources;
 mod server;
@@ -137,6 +138,7 @@ mod net_loopback;
 #[cfg(test)]
 mod net_tests;
 mod replay;
+pub use local_time::system_host_inputs;
 pub use replay::NetworkMode;
 pub use varta_common::net::replay::{NetworkLog, NetworkLogError, ReplayError};
 #[cfg(test)]
@@ -147,6 +149,8 @@ mod expression_form_tests;
 mod full_regexp_tests;
 #[cfg(test)]
 mod iteration_protocol_tests;
+#[cfg(test)]
+mod local_time_tests;
 mod number;
 mod number_format;
 #[cfg(test)]
@@ -290,6 +294,9 @@ pub enum RuntimeError {
     Budget(#[from] BudgetExhausted),
     #[error(transparent)]
     Permission(#[from] PermissionError),
+    /// V38: a zone or locale host input that is not a well-formed setting.
+    #[error(transparent)]
+    HostInput(#[from] varta_common::host_inputs::HostInputError),
     #[error(transparent)]
     Event(#[from] varta_common::events::EventError),
     #[error(transparent)]
@@ -369,6 +376,8 @@ pub(crate) struct RuntimeContext {
     /// V38 view protocol: the renderer and its commit-per-turn rule; its
     /// event records are host tasks of the instance (`events`).
     view: view::Session,
+    /// V38 local time: the recorded zone and locale (`local_time`).
+    inputs: varta_common::host_inputs::HostInputs,
 }
 
 /// A fuel-profiled execution ([`VartaRuntime::run_fuel_profile`]). A trap or
@@ -806,6 +815,7 @@ impl VartaRuntime {
                     output,
                     observer: options.observer.clone(),
                     policy: options.http.as_ref(),
+                    inputs: options.host_inputs.clone(),
                 });
                 report.http = finished.requests;
                 match finished.result {
@@ -886,7 +896,9 @@ impl VartaRuntime {
             },
             task: false,
         };
+        options.host_inputs.validate()?;
         let mut execution = execution::Execution::with_setup(&self.engine, setup)?;
+        execution.store.data_mut().inputs = options.host_inputs.clone();
         if let Some(idle) = options.network_idle {
             let context = execution.store.data_mut();
             context.network_idle = context.network_idle.min(idle);
@@ -954,6 +966,11 @@ pub struct RunOptions {
     /// v2 service ([`varta_common::http::HttpLimits::lowered`]). A package
     /// never supplies them.
     pub http: Option<varta_common::http::HttpPolicy>,
+    /// V38 local time: the host's time zone and default locale, recorded in
+    /// [`RunReport::host_inputs`]. The default (UTC, `en-US`) keeps a run
+    /// independent of the machine; a native embedder passes the system's
+    /// (`varta-project`'s `system_host_inputs`).
+    pub host_inputs: varta_common::host_inputs::HostInputs,
 }
 impl RunOptions {
     /// The options of a package manifest and an optional host ceiling
@@ -980,6 +997,7 @@ impl RunOptions {
             fuel_profile: false,
             network_idle: None,
             http: host.and_then(|host| host.http.clone()),
+            host_inputs: varta_common::host_inputs::HostInputs::default(),
         })
     }
 }
@@ -1008,6 +1026,10 @@ pub struct RunReport {
     /// [`NetworkMode::Record`]: every completion the guest received from a
     /// transport up to the end of the instance, also of a failed one.
     pub network_log: Option<NetworkLog>,
+    /// The zone and locale the instance was given (v38 `local_time`), so a
+    /// replay can supply the same recorded inputs; `None` when the run
+    /// failed before an instance existed.
+    pub host_inputs: Option<varta_common::host_inputs::HostInputs>,
 }
 impl RunReport {
     fn new(artifact: String) -> Self {
@@ -1030,6 +1052,7 @@ impl RunReport {
     fn collect(&mut self, context: &mut RuntimeContext) {
         self.output = std::mem::take(&mut context.output);
         self.budget = Some(context.turns.report(context.budgets, context.output_bytes));
+        self.host_inputs = Some(context.inputs.clone());
         let (audit, dropped) = context.broker.audit_log();
         self.audit = audit;
         self.audit_dropped = dropped;

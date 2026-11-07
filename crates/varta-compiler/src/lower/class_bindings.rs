@@ -17,10 +17,23 @@
 use super::*;
 
 impl Lower<'_> {
+    /// `value`, the lowered `expression`, after the flag test of the class
+    /// it references outside the class body, when code may reach that
+    /// class early. Kept out of `expr_lowered` so its frame stays small.
+    #[inline(never)]
+    pub(super) fn class_binding_guard(
+        &mut self,
+        expression: &ast::Expr,
+        value: Expr,
+    ) -> Result<Expr> {
+        Ok(match self.class_binding_check(expression)? {
+            Some(check) => self.class_binding_guarded(check, value),
+            None => value,
+        })
+    }
     /// The flag test before `expression`, a reference to a module-level
     /// class outside its body whose binding code may reach early.
-    #[inline(never)]
-    pub(super) fn class_binding_check(&mut self, expression: &ast::Expr) -> Result<Option<S>> {
+    fn class_binding_check(&mut self, expression: &ast::Expr) -> Result<Option<S>> {
         if !self.types.profile.module_evaluation() || self.types.classes.class_flags.is_empty() {
             return Ok(None);
         }
@@ -43,7 +56,7 @@ impl Lower<'_> {
             .map(Some)
     }
     /// `value` after the flag test `check`.
-    pub(super) fn class_binding_guarded(&mut self, check: S, value: Expr) -> Expr {
+    fn class_binding_guarded(&mut self, check: S, value: Expr) -> Expr {
         let (span, ty) = (value.span, value.ty);
         let output = self.hidden(ty);
         let marker = self.hidden(Type::Number);

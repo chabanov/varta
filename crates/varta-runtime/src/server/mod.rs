@@ -120,6 +120,8 @@ struct Shared {
     requested: Vec<CapabilityGrant>,
     ceiling: Option<Vec<CapabilityGrant>>,
     files: policy::FileMode,
+    /// The recorded zone and locale every request's store receives.
+    inputs: varta_common::host_inputs::HostInputs,
     stop: HttpShutdown,
     /// The module linked once to the host operations (H2); every request
     /// instantiates its own Store from it.
@@ -158,6 +160,8 @@ pub(super) struct Start<'a> {
     pub observer: Option<RuntimeObserver>,
     /// The host policy's HTTP settings.
     pub policy: Option<&'a HttpPolicy>,
+    /// The recorded zone and locale of the run (v38 `local_time`).
+    pub inputs: varta_common::host_inputs::HostInputs,
 }
 pub(super) struct Finished {
     pub result: Result<RunOutput, RuntimeError>,
@@ -185,6 +189,7 @@ fn run_owned(
         output,
         observer,
         policy,
+        inputs,
     } = start;
     // A host may only lower the registry's limits; an invalid policy fails
     // before any socket exists.
@@ -297,6 +302,7 @@ fn run_owned(
         requested: requested.to_vec(),
         ceiling: ceiling.map(ToOwned::to_owned),
         files,
+        inputs,
         stop,
         linked,
         workers: Arc::new(tokio::sync::Semaphore::new(workers)),

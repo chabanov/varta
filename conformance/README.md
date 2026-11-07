@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 122 feature rows and 216 cases:
-212 pass, 4 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 122 feature rows and 217 cases:
+213 pass, 4 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -35,7 +35,10 @@ empty requested/ceiling grants, unless its manifest row lists reviewed `grants`:
 those are then both the requested grants and the host ceiling. Only `time.timer`
 (v36 timers, which wait on the runtime event loop within the execution deadline
 and have no other effect) is admitted; any other, duplicate or unsorted grant
-fails inventory loading. Compilation, validation and execution have a
+fails inventory loading. A row may also list `hostInputs` (`timeZone`,
+`locale`): the recorded zone and locale of v38 local time the case runs with;
+without it the runtime's defaults apply (UTC and `en-US`), so no case reads the
+machine's settings. Compilation, validation and execution have a
 15-second wall limit (configurable to 1–60000 milliseconds with `--timeout-ms`).
 The guest retains ordinary production fuel, deadline, memory and host-call limits.
 Workers accept source snapshots over bounded stdin; concurrent pipe drains keep a
@@ -440,6 +443,13 @@ expected output is Node.js v24.20.0's with `TZ=UTC`. `Array.prototype.shift`,
 listed above as a rejected form, is admitted now. The `symbol-type` gap is
 unchanged: `Symbol()` is refused with the reason (a value tag awaiting an
 owner decision).
+
+K9 D4 local time (2026-11-06) adds `date-local-time` on `date`: local
+components across the Kyiv 2024 transitions (the skipped and the repeated
+hour), local getters and setters, `getTimezoneOffset`, a local date-time
+`Date.parse` and the Ukrainian zone names of `toString`, run with the row's
+`hostInputs` (`Europe/Kyiv`, `uk-UA`). Its expected output is Node.js
+v24.20.0's with `TZ=Europe/Kyiv LANG=uk_UA.UTF-8`.
 
 The v38 expressions-and-functions review (K9 C, 2026-11-06) adds eleven
 feature rows (`expression-operators`, `await-operands`, `tagged-templates`,

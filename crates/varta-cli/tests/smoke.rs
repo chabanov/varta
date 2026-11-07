@@ -17135,6 +17135,80 @@ fn v38_standard_library_runs_in_dev_and_artifacts() {
     assert!(!combined(&rejected).contains("varta log:"));
 }
 
+/// V38 local time: `varta dev` and `varta run` read the zone and locale from
+/// the system (`TZ`, `LANG`) or from `--time-zone`/`--locale`; the packaged
+/// executable and the `varta-runtime` companion read the system's. Node 24
+/// prints the same lines with `TZ=Europe/Kyiv LANG=uk_UA.UTF-8` (and New
+/// York in English). A malformed input fails before the program runs.
+#[test]
+fn v38_local_time_follows_the_system_or_the_flags() {
+    let source = "export function main():void{const d=new Date(2024,2,31,3,30);\
+         console.log(`${d.getHours()} ${d.getTimezoneOffset()} ${d.toString()}`);}";
+    let project = RegressionProject::new(source, serde_json::json!({}));
+    project.language_profile("checked-f64-utf16-v38");
+    let kyiv =
+        "varta log: 4 -180 Sun Mar 31 2024 04:30:00 GMT+0300 (за східноєвропейським літнім часом)";
+    let new_york = "varta log: 3 240 Sun Mar 31 2024 03:30:00 GMT-0400 (Eastern Daylight Time)";
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let system = |command: &mut Command| {
+        command
+            .env("TZ", "Europe/Kyiv")
+            .env("LANG", "uk_UA.UTF-8")
+            .env_remove("LC_ALL")
+            .env_remove("LC_MESSAGES");
+    };
+    let mut dev = varta();
+    system(&mut dev);
+    let output = dev.current_dir(&project.0).arg("dev").output().unwrap();
+    assert!(output.status.success(), "{}", combined(&output));
+    assert_eq!(logs(&output), [kyiv]);
+    let mut flags = varta();
+    system(&mut flags);
+    let output = flags
+        .current_dir(&project.0)
+        .args([
+            "dev",
+            "--time-zone",
+            "America/New_York",
+            "--locale",
+            "en-US",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", combined(&output));
+    assert_eq!(logs(&output), [new_york]);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        system(&mut command);
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), [kyiv]);
+    }
+    let bad = project.command(&["dev", "--time-zone", "Europe/Kyiv zone"]);
+    assert!(!bad.status.success());
+    assert!(
+        combined(&bad).contains("invalid time zone host input"),
+        "{}",
+        combined(&bad)
+    );
+    assert!(logs(&bad).is_empty());
+}
+
 #[test]
 fn v38_declaration_forms_run_in_dev_and_artifacts() {
     let source = "import {Kind, Units, Shape, Square} from './shapes.ts';\

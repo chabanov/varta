@@ -62,8 +62,6 @@ impl Lower<'_> {
         {
             self.optional_index(expression);
         }
-        // V38: a class reached outside its body before its initialization.
-        let guard = self.class_binding_check(expression);
         let result = match expression {
             // V38 K9 C forms (`expression_forms`), claimed syntactically.
             _ if self.types.profile.expression_forms() && expression_forms::handles(expression) => {
@@ -174,11 +172,8 @@ impl Lower<'_> {
             _ if let Some(value) = self.class_value_expression(expression) => value,
             _ => self.expr_inner(expression),
         };
-        let result = match guard {
-            Ok(Some(check)) => result.map(|value| self.class_binding_guarded(check, value)),
-            Ok(None) => result,
-            Err(error) => Err(error),
-        };
+        // V38: a class reached outside its body before its initialization.
+        let result = result.and_then(|value| self.class_binding_guard(expression, value));
         if let Ok(value) = &result {
             self.path_effects(expression);
             self.observe_class_hole(expression.span(), value.ty);
@@ -268,10 +263,6 @@ impl Lower<'_> {
             }
             ast::Expr::Bin(binary) if binary.op == ast::BinaryOp::InstanceOf => {
                 if let Some(class) = self.class_callee(&binary.right) {
-                    // V38 (`symbol_values`): `static [Symbol.hasInstance]`.
-                    if let Some(test) = self.has_instance(binary, class)? {
-                        return Ok(test);
-                    }
                     return self.class_instance_of(binary, class);
                 }
                 if let Some(test) = self.collection_instance_of(binary)? {

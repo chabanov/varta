@@ -280,11 +280,32 @@ fn date_v38() -> &'static str {
             .source
             .split_once(DATE_V37_CLASS)
             .map_or(DATE.source, |(helpers, _)| helpers);
-        let helpers = lift(helpers, DATE_V37_PARSE, DATE_V38_PARSE);
+        let mut helpers = lift(helpers, DATE_V37_PARSE, DATE_V38_PARSE);
+        for (from, to) in DATE_V38_LOCAL_ISO {
+            helpers = lift(&helpers, from, to);
+        }
         format!("{helpers}{}", include_str!("../prelude/date_local.ts"))
     });
     &LIFTED
 }
+/// V38 (`local_time`): a date-time string without an offset is local time
+/// (ECMA-262 §21.4.3.2, Date Time String Format: "When the UTC offset
+/// representation is absent, date-only forms are interpreted as a UTC time
+/// and date-time forms are interpreted as a local time"); v37 read it as UTC.
+const DATE_V38_LOCAL_ISO: [(&str, &str); 3] = [
+    (
+        "  let time = 0;\n  if (!scan.done()) {\n    if (!(scan.take(0x54)",
+        "  let time = 0;\n  let local = false;\n  if (!scan.done()) {\n    local = true;\n    if (!(scan.take(0x54)",
+    ),
+    (
+        "    if (!scan.done()) {\n      if (scan.take(0x5a) || scan.take(0x7a)) {",
+        "    if (!scan.done()) {\n      local = false;\n      if (scan.take(0x5a) || scan.take(0x7a)) {",
+    ),
+    (
+        "  return clip(daysFromCivil(year, month, day) * MS_PER_DAY + time);\n}\n\n// The RFC 9110",
+        "  const value = daysFromCivil(year, month, day) * MS_PER_DAY + time;\n  return clip(local ? utcTime(value) : value);\n}\n\n// The RFC 9110",
+    ),
+];
 /// Where the v37 `Date` class starts in `prelude/date.ts`.
 const DATE_V37_CLASS: &str = "export class Date {";
 const DATE_V37_PARSE: &str = "  return Number.isNaN(iso) ? parseImf(text) : iso;";

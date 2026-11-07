@@ -64,7 +64,16 @@ pub(crate) fn execute(request: Request) -> Observation {
             value: varta_common::CapabilityValue::Boolean(true),
         })
         .collect();
-    match varta_runtime::VartaRuntime::new().run_wasm_bytes_with_policy(&bytes, &grants, &grants) {
+    let options = varta_runtime::RunOptions {
+        requested: grants.clone(),
+        ceiling: Some(grants),
+        host_inputs: request.host_inputs.unwrap_or_default(),
+        ..varta_runtime::RunOptions::default()
+    };
+    match varta_runtime::VartaRuntime::new()
+        .run_with(&bytes, options)
+        .into_result()
+    {
         Ok(output) => Observation::Executed {
             lines: output.lines,
             exit_code: output.exit_code,

@@ -6153,12 +6153,33 @@ export function main(): void {
 }
 ```
 
-Local time is UTC unless the host grants the program a time zone (not
-defined yet), so a `Date` prints what Node prints with `TZ=UTC`. Sorting
+Local time is the host's time zone (below); with the default inputs of a
+library run it is UTC, so this `Date` prints what Node prints with `TZ=UTC`. Sorting
 without a comparator needs primitive elements, `flat` needs a literal
 depth, and `JSON.stringify` takes property lists but no replacer
 function. `Symbol()`, `WeakMap`/`WeakSet`/`WeakRef`, `Proxy`, `Reflect`,
 `structuredClone`, `Object.freeze` and `Intl` are refused with the reason.
+
+#### Local time (opt-in v38)
+
+`Date` local time follows the host's time zone, and `toString` names the
+zone in the host's language, as Node does. The zone and locale are host
+inputs: `varta run` and `varta dev` read them from `TZ`, `/etc/localtime`
+and `LC_ALL`/`LC_MESSAGES`/`LANG`, and `--time-zone`/`--locale` state them
+explicitly; a browser passes its own. No capability is needed.
+
+```ts
+export function main(): void {
+  const start = new Date(2024, 2, 31, 3, 30); // a skipped hour in Kyiv
+  console.log(start.toString());
+  // varta dev --time-zone Europe/Kyiv --locale uk-UA:
+  // Sun Mar 31 2024 04:30:00 GMT+0300 (за східноєвропейським літнім часом)
+  console.log(Date.parse("2024-07-01T12:00") - Date.parse("2024-07-01T12:00Z")); // -10800000
+}
+```
+
+A date-time string without an offset is local time, a date-only string UTC.
+`Intl` and the `toLocale*String` methods are not available yet.
 
 #### Full RegExp (opt-in v38)
 

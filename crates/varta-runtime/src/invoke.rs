@@ -212,6 +212,7 @@ fn runtime_error(error: RuntimeError) -> Error {
         RuntimeError::ViewLayout(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::ViewScript(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::Policy(error) => Error::InvalidPolicy(error.to_string()),
+        RuntimeError::HostInput(error) => Error::InvalidPolicy(error.to_string()),
         RuntimeError::FileRoot(error) => Error::InvalidPolicy(error.to_string()),
         RuntimeError::Execution(error) => execution_error(error),
         RuntimeError::ToolContract(error) => Error::InvalidArtifact(error.to_string()),
