@@ -73,8 +73,9 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
             .as_slice(),
         ),
         // The local-time and locale layer of the linked intrinsics (bundled
-        // tzdata and ICU4X data); it depends on no Varta crate.
-        ("varta-intl", [].as_slice()),
+        // tzdata and ICU4X data); its locale-segment format comes from
+        // common's no_std core, without host or tooling dependencies.
+        ("varta-intl", ["varta-common"].as_slice()),
         // The CSS style engine reads common's `no_std` view grammars; the
         // native renderer links it and, compiled to wasm32, the browser
         // host runs it.
@@ -153,6 +154,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                 if matches!(
                     name,
                     "varta-bigint"
+                        | "varta-intl"
                         | "varta-intrinsics"
                         | "varta-intrinsics-wasm"
                         | "varta-kv-codec"

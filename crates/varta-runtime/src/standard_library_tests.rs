@@ -246,10 +246,6 @@ fn unsupported_standard_forms_are_refused_by_name() {
             "to a Math function (a number[] is required)",
         ),
         (
-            "class K {} export function main(): void { const m = new WeakMap<K, number>(); m.set(new K(), 1); }",
-            "weak collections and references",
-        ),
-        (
             "export function main(): void { const o = { a: 1 }; const p = new Proxy(o, {}); console.log(p.a); }",
             "Proxy (traps would intercept property access",
         ),
@@ -268,6 +264,16 @@ fn unsupported_standard_forms_are_refused_by_name() {
     ] {
         refused(V38, source, diagnostic);
     }
+}
+
+/// Weak collections are now part of v38, including empty class keys.
+#[test]
+fn weak_maps_with_empty_class_keys_run_in_v38() {
+    let source = "class K {} export function main(): void { \
+        const key = new K(); const m = new WeakMap<K, number>(); \
+        m.set(key, 1); console.log(m.get(key)); }";
+    assert_eq!(logs(source), ["1"]);
+    assert!(varta_compiler::compile_typescript_with_profile(source, V37).is_err());
 }
 
 /// V37 keeps rejecting every form the stream admits.
