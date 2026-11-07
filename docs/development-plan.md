@@ -8468,6 +8468,14 @@ same day ([contract](architecture.md#view-css-engine-k8-t2-and-t3)).
   and TSX `data-*` lowering in the compiler; this needs the K9 owners of
   the compiler files (9 of the 37 remaining application candidates are
   Headless UI's `data-*` variants).
+- Gate (S4 remainder first part and S5 second part together, merged with
+  main at `4a3b41b5`): `python3 scripts/verify.py full` PASS at `c0c45ce9`
+  (4439 Rust tests passed, 0 failed, 25 ignored; 186 browser Node tests;
+  conformance baseline; sources unchanged), report
+  `target/verification/20261107-034839-yy_i6udf/report.json` (macOS only).
+  One compiler test changed (`stylesheet_text_imports_are_checked_with_
+  locations_inside_the_resource`): its refused selector is now `#1x`, a
+  hash that is no id, since id selectors are admitted.
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
