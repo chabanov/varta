@@ -443,11 +443,14 @@ fn probe(equality: Equality, mode: Mode) -> Function {
 /// the same key as local `key` (an f64 local `entry` is the scratch of a
 /// number comparison).
 fn equal(f: &mut Function, equality: Equality, key: u32, entry: u32) {
+    if let Equality::Slot(KeyHash::Cell) = equality {
+        instructions(f, cell_payload());
+    }
     match equality {
         Equality::Content(equals) => {
             instructions(f, [I::LocalGet(key), I::Call(equals)]);
         }
-        Equality::Slot(KeyHash::Identity | KeyHash::Units) => {
+        Equality::Slot(KeyHash::Identity | KeyHash::Units | KeyHash::Cell) => {
             instructions(f, [I::LocalGet(key), I::I64Eq]);
         }
         // SameValueZero: entry == key (+0 equals -0), or both are NaN, whose
@@ -473,6 +476,12 @@ fn equal(f: &mut Function, equality: Equality, key: u32, entry: u32) {
             ],
         ),
     }
+}
+
+/// Replace the key vector entry on the stack, a union cell, by its payload:
+/// the reference the cell holds ([`KeyHash::Cell`]).
+fn cell_payload() -> [I<'static>; 2] {
+    [I::I32WrapI64, I::I64Load(crate::emit::records::field(0))]
 }
 
 /// The `Map`/`Set` probe `probe` for keys hashed as `hash`
@@ -558,9 +567,12 @@ fn indexed(keys: KeyHash) -> Function {
             I::I32Shl,
             I::I32Add,
             I::I64Load(SLOT),
-            I::LocalSet(KEY),
         ],
     );
+    if keys == KeyHash::Cell {
+        instructions(&mut f, cell_payload());
+    }
+    f.instruction(&I::LocalSet(KEY));
     home(&mut f, &p, keys);
     store(
         &mut f,

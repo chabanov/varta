@@ -636,7 +636,8 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
     /// validated by its own reader when it is written.
     fn resolve(&mut self, kind: u32, payload: u64) -> Result<(u32, u64), EncodeError> {
         if kind == Kind::Function as u32 {
-            check_closure_envelope(self.memory, payload, &self.bounds.limits).map_err(layout)?;
+            check_closure_envelope(self.memory, payload, &self.bounds.limits, VERSION)
+                .map_err(layout)?;
             if function_field_layout(VERSION) && self.mode == Mode::Diagnostic {
                 return Ok((kind, payload));
             }

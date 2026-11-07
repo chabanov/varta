@@ -178,6 +178,23 @@ impl Lower<'_> {
                 "erased call of a non-function".into(),
             ));
         };
+        let instance = self.erased_instance(call, generic)?;
+        let erased = self.types.functions[erased_id as usize].clone();
+        let args = self.call_arguments(&call.args, &instance.params, &instance.shape)?;
+        let args = self.bind_arguments(args, &instance.params, &instance.shape, span)?;
+        let passed = self.erased_arguments(args, &erased.params, generic)?;
+        let result = self.invoke_bound_receiver(callee, None, passed, span)?;
+        self.erased_result(result, &instance, generic, span)
+    }
+    /// The instantiation of the generic signature `generic` at `call`:
+    /// explicit type arguments, or those inferred from whole-parameter
+    /// arguments (v38 `type_level`), then defaults, then `unknown`.
+    pub(super) fn erased_instance(
+        &mut self,
+        call: &ast::CallExpr,
+        generic: u32,
+    ) -> Result<ir::FunctionType> {
+        let span = call.span;
         let declaration = self.types.erased.list[generic as usize].clone();
         let explicit = match &call.type_args {
             Some(arguments) => generics::arguments(arguments, self.types)
@@ -218,42 +235,59 @@ impl Lower<'_> {
         let Type::Function(instance_id) = instantiated else {
             return Err(CompilerError::Internal("instantiated method type".into()));
         };
-        let instance = self.types.functions[instance_id as usize].clone();
-        let erased = self.types.functions[erased_id as usize].clone();
-        let args = self.call_arguments(&call.args, &instance.params, &instance.shape)?;
-        let args = self.bind_arguments(args, &instance.params, &instance.shape, span)?;
+        Ok(self.types.functions[instance_id as usize].clone())
+    }
+    /// Arguments bound to an instance's parameters, passed at the erased
+    /// parameter types `erased` (`unknown` where a type parameter stands).
+    pub(super) fn erased_arguments(
+        &mut self,
+        args: Vec<Expr>,
+        erased: &[Type],
+        generic: u32,
+    ) -> Result<Vec<Expr>> {
         let mut passed = Vec::new();
-        for (value, ty) in args.into_iter().zip(&erased.params) {
+        for (value, ty) in args.into_iter().zip(erased) {
             let value = if value.ty == *ty {
                 value
             } else if *ty == Type::Unknown {
                 unknown::widen(value, self.types)?
             } else {
+                let name = &self.types.erased.list[generic as usize].name;
                 return Err(self.source.locate(
                     unsupported(&format!(
-                        "type parameter of {what} inside a parameter type; it may only be a \
-                         whole parameter or result type"
+                        "type parameter of method {name} inside a parameter type; it may only \
+                         be a whole parameter or result type"
                     )),
                     value.span,
                 ));
             };
             passed.push(value);
         }
-        let result = self.invoke_bound_receiver(callee, None, passed, span)?;
+        Ok(passed)
+    }
+    /// The erased result `result` checked back to the instance's result.
+    pub(super) fn erased_result(
+        &mut self,
+        result: Expr,
+        instance: &ir::FunctionType,
+        generic: u32,
+        span: swc_common::Span,
+    ) -> Result<Expr> {
         if result.ty == instance.result {
             return Ok(result);
         }
+        let declared = self.types.erased.list[generic as usize].name.clone();
         if result.ty != Type::Unknown {
             return Err(self.source.locate(
                 unsupported(&format!(
-                    "type parameter of {what} inside its result type; it may only be a whole \
-                     parameter or result type"
+                    "type parameter of method {declared} inside its result type; it may only be \
+                     a whole parameter or result type"
                 )),
                 span,
             ));
         }
         let name = subtyping::describe(instance.result, self.types);
-        let message = format!("result of {} is not a {name}", declaration.name);
+        let message = format!("result of {declared} is not a {name}");
         self.assert_value(result, instance.result, &name, &message, span)
     }
     /// Type arguments inferred from the arguments of whole-parameter type

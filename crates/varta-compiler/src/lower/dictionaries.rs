@@ -97,7 +97,12 @@ pub(super) fn signature(
         return Ok(None);
     };
     if literal.members.len() == 1 {
-        return intern(index_value(index, types)?, types).map(Some);
+        return match index_signature(index, types)? {
+            (value, None) => intern(value, types).map(Some),
+            (value, keys) => {
+                mixed_records::intern_keyed(value, Vec::new(), false, keys, types).map(Some)
+            }
+        };
     }
     if !types.profile.mixed_index_records() {
         return Err(unsupported(
@@ -109,7 +114,7 @@ pub(super) fn signature(
             "more than one index signature in an object type",
         ));
     }
-    let value = index_value(index, types)?;
+    let (value, keys) = index_signature(index, types)?;
     let members: Vec<_> = literal
         .members
         .iter()
@@ -117,14 +122,15 @@ pub(super) fn signature(
         .cloned()
         .collect();
     let fields = records::type_fields(&members, types)?;
-    mixed_records::intern(value, fields, false, types).map(Some)
+    mixed_records::intern_keyed(value, fields, false, keys, types).map(Some)
 }
 
-/// The value type `T` of one `[key: string]: T` signature.
-pub(super) fn index_value(
+/// The value type and, for a template literal key type (v38 `type_level`,
+/// `[key: `on${string}`]: T`), the pattern key set of one index signature.
+pub(super) fn index_signature(
     index: &ast::TsIndexSignature,
     types: &mut ir::ValueTypes,
-) -> Result<Type> {
+) -> Result<(Type, Option<u32>)> {
     if index.readonly || index.is_static {
         return Err(unsupported("readonly or static index signature"));
     }
@@ -137,13 +143,33 @@ pub(super) fn index_value(
         Some(ann) => keyword_type(&ann.type_ann, types)?,
         None => return Err(invalid("index signature keys require an annotation")),
     };
-    if key != Type::String {
-        return Err(unsupported(
-            "index signature key other than string (number and symbol keys)",
-        ));
-    }
-    annotation(index.type_ann.as_deref(), types)?
-        .ok_or_else(|| invalid("index signatures require a value annotation"))
+    let keys = match key {
+        Type::String => None,
+        Type::Literal(ir::LiteralBase::String, set)
+            if types.profile.type_level() && types.literals.has_pattern(set) =>
+        {
+            if !types
+                .literals
+                .values(set)
+                .iter()
+                .all(|value| matches!(value, literals::LiteralValue::Pattern(_)))
+            {
+                return Err(type_error(
+                    "an index signature parameter type cannot be a literal type; use a mapped \
+                     object type instead",
+                ));
+            }
+            Some(set)
+        }
+        _ => {
+            return Err(unsupported(
+                "index signature key other than string (number and symbol keys)",
+            ));
+        }
+    };
+    let value = annotation(index.type_ann.as_deref(), types)?
+        .ok_or_else(|| invalid("index signatures require a value annotation"))?;
+    Ok((value, keys))
 }
 
 /// Whether a dictionary of type `source` may be used as `target` without a
@@ -416,6 +442,12 @@ impl Lower<'_> {
                 ty: Type::String,
                 kind: E::String(self.types.profile.string_bytes(&id.sym)),
             }),
+            // V38 (`type_level`): the key keeps its literal type, so a
+            // pattern index signature can check it (`index_key`); the
+            // dictionary operations erase it (`dictionary_key_value`).
+            ast::MemberProp::Computed(key) if self.types.profile.type_level() => {
+                self.expr_preserving(&key.expr)
+            }
             ast::MemberProp::Computed(key) => self.expr(&key.expr),
             _ => Err(unsupported("private dictionary property")),
         }
@@ -432,6 +464,7 @@ impl Lower<'_> {
         mixed_records::object_key(value.ty, member, self.types)
             .map_err(|e| self.source.locate(e, member.prop.span()))?;
         let key = self.dictionary_key(member)?;
+        self.index_key(value.ty, member, &key)?;
         self.dictionary_get(value, key)
     }
     /// The stored `T` under `key`, or `undefined` for an absent own key.
@@ -497,6 +530,9 @@ impl Lower<'_> {
                 .map_err(|e| self.source.locate(e, member.prop.span()))?;
         }
         let key = self.dictionary_key(member)?;
+        if declared.is_none() {
+            self.index_key(base.ty, member, &key)?;
+        }
         if self.types.profile.mixed_index_records() {
             let Type::Dictionary(id) = base.ty else {
                 return Err(invalid("missing dictionary type"));
@@ -726,6 +762,7 @@ impl Lower<'_> {
                 .map_err(|e| self.source.locate(e, member.prop.span()))?,
         }
         let key = self.dictionary_key(member)?;
+        self.index_key(base.ty, member, &key)?;
         if self.types.profile.mixed_index_records() {
             let key = self.dictionary_key_value(key)?;
             return self.dictionary_helper_call(DictionaryHelper::Delete, vec![base, key]);
@@ -876,6 +913,7 @@ impl Lower<'_> {
             return self.dictionary_spread_literal(object, id);
         }
         let dictionary = self.types.dictionaries[id as usize];
+        let literal_ty = Type::Dictionary(id);
         let span = object.span;
         if object.props.len() > self.types.profile.data().array_elements {
             return Err(invalid("dictionary literal entry count exceeds limit"));
@@ -902,11 +940,13 @@ impl Lower<'_> {
             let (name, value) = match &**property {
                 ast::Prop::KeyValue(field) => {
                     let name = records::property_key(&field.key)?;
+                    self.literal_key(literal_ty, &name, field.key.span(), true)?;
                     let value = self.expr_expected(&field.value, Some(expected(&name)))?;
                     (name, value)
                 }
                 ast::Prop::Shorthand(id) => {
                     let name = records::key(id.sym.to_string())?;
+                    self.literal_key(literal_ty, &name, id.span, true)?;
                     let value =
                         self.expr_expected(&ast::Expr::Ident(id.clone()), Some(expected(&name)))?;
                     (name, value)

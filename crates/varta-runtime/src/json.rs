@@ -477,6 +477,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 self.data,
                 handle,
                 &self.module.limits,
+                self.version,
             )
             .map_err(wasmtime::Error::new)?;
             return Ok(());

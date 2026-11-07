@@ -62,6 +62,11 @@ pub(super) fn effectful(value: &ast::Expr) -> bool {
         fn visit_tagged_tpl(&mut self, _: &ast::TaggedTpl) {
             self.0 = true;
         }
+        // A generated expando initializer (v38) defines a property.
+        fn visit_assign_expr(&mut self, assign: &ast::AssignExpr) {
+            self.0 |= crate::desugar::expando_target(&ast::Expr::Assign(assign.clone())).is_some();
+            assign.visit_children_with(self);
+        }
         // A function value's body runs later, when it is called.
         fn visit_arrow_expr(&mut self, _: &ast::ArrowExpr) {}
         fn visit_function(&mut self, _: &ast::Function) {}

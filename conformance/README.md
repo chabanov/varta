@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 122 feature rows and 209 cases:
-205 pass, 4 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 122 feature rows and 215 cases:
+211 pass, 4 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -424,6 +424,18 @@ signatures, `this` in object types, pattern template types). Their output
 is Node.js v24.20.0's; the two intentional deviations (a lying predicate's
 `TypeError`, the copy of a `B[]` viewed as `A[]`) are pinned by runtime tests,
 not inventory cases.
+
+The K9 A step-4 review (2026-11-06) adds six cases on existing rows:
+`ts-callable-objects.ts` (functions with own properties from callable
+object types, intersections, `Object.assign` and expando assignments),
+`ts-pattern-checks.ts` (checked assertions and `JSON.parse(text) as T` to
+pattern template types), `ts-pattern-keys.ts` (index signatures of pattern
+key types from `Record`, mapped types and interfaces), `ts-generic-overloads.ts`
+(overloads with type parameters and `this` parameters), `ts-generic-constructors.ts`
+(generic construct signatures and constructor types) and `ts-shared-keys.ts`
+(`Map`/`Set` keyed by a class whose arrays are shared with nullable union
+arrays). Their output is Node.js v24.20.0's; the pattern assertion's
+`TypeError` on a mismatch is pinned by a runtime test.
 
 The K9 D standard-library review (2026-11-06, selector `standard_library`)
 adds five feature rows with seven passing cases and four cases on existing

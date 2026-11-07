@@ -23,11 +23,14 @@
 mod class_expressions;
 mod constants;
 mod enums;
+mod expandos;
 mod namespaces;
 mod overloads;
 mod rewrite;
 mod scope;
 mod statics;
+
+pub(crate) use expandos::target as expando_target;
 
 use crate::CompilerError;
 use crate::modules::{Dependency, Export};
@@ -194,6 +197,7 @@ pub(crate) fn declarations(
         Exports::default()
     };
     overloads::mark(module, source)?;
+    expandos::lower(module);
     Ok(tag(module, exports, source))
 }
 

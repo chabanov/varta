@@ -333,6 +333,46 @@ impl Emitter<'_> {
                     }
                     // The low word of every managed handle is its payload address.
                     ir::Intrinsic::Identity => self.code.extend([I::I32WrapI64, I::F64ConvertI32U]),
+                    ir::Intrinsic::FunctionProperties => self.code.extend([
+                        I::I32WrapI64,
+                        I::I64Load(wasm_encoder::MemArg {
+                            offset: varta_common::function::PROPERTIES_OFFSET,
+                            ..strings::ROOT
+                        }),
+                    ]),
+                    ir::Intrinsic::SetFunctionProperties => {
+                        let slot = wasm_encoder::MemArg {
+                            offset: varta_common::function::PROPERTIES_OFFSET,
+                            ..strings::ROOT
+                        };
+                        self.code.extend([
+                            I::LocalSet(self.string_temporary),
+                            I::I32WrapI64,
+                            I::LocalSet(self.temporary),
+                        ]);
+                        self.slot_barrier(self.temporary, slot);
+                        self.code.extend([
+                            I::LocalGet(self.temporary),
+                            I::LocalGet(self.string_temporary),
+                            I::I64Store(slot),
+                        ]);
+                    }
+                    ir::Intrinsic::FunctionSignature => {
+                        let Some(Type::Function(signature)) = args.first().map(|arg| arg.ty) else {
+                            return Err(CompilerError::Internal(
+                                "missing checked function signature".into(),
+                            ));
+                        };
+                        self.code.extend([
+                            I::I32WrapI64,
+                            I::I32Load(wasm_encoder::MemArg {
+                                offset: varta_common::function::SIGNATURE_OFFSET,
+                                ..strings::WORD
+                            }),
+                            I::I32Const(signature as i32),
+                            I::I32Eq,
+                        ]);
+                    }
                 }
             }
             E::StringRepeat {

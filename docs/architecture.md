@@ -8991,7 +8991,9 @@ identities of its own (see the [version matrix](#version-matrix)):
 - **Value ABI and layout** `value::HASHED_DICTIONARY_VALUE_VERSION`
   (value18, [dictionary hashing](#dictionary-hashing-dictionary_hashing)),
   for v38 alone: every value17 tag and layout with its value17 meaning except
-  the dictionary storage record, which gains a hole count and a hash table.
+  the dictionary storage record, which gains a hole count and a hash table,
+  and the closure, which gains an
+  [own-property overflow storage](#own-property-overflow-storage) edge.
   `LanguageProfile::value_layout` equals `value_abi`, so descriptors,
   catalogs, frames and exception cells are stamped value18. V38 binds the
   twelve value18 readers (`HostOperation::value17_counterpart`: `value_log_v12`,
@@ -12100,6 +12102,31 @@ its diagnostics and bytes unchanged.
   (`varta-runtime` `full_regexp_cases`, including a 600-pattern
   differential corpus) and conformance cases `regexp-*`.
 
+#### Own-property overflow storage
+
+Value layout 18 gives an object an **own-property overflow storage**: a slot
+holding zero or the handle of an ordinary dictionary storage record (the
+value18 dictionary layout with its hash table, values held as `unknown`
+cells) that holds the object's own properties beyond its static layout.
+Entries keep ECMAScript own-key order for string keys (array-index keys
+ascending, then other strings in creation order); a symbol-keyed property is
+stored under its member key (`modules::symbol_keys`: the private-key prefix
+and `[`), which the string-key enumerations (`Object.keys`, `entries`,
+`values`, `for…in`, `in`), JSON, KV and the value readers skip. The storage
+is created on the first definition of such a property; the slot is an
+ordinary traced edge (its mask bit is always set, the collector skips a zero
+handle) and is written with the incremental write barrier. Readers check the
+edge to be zero or a record block and read entries through the dictionary
+readers. The first object with the slot is the closure (K9 A step 4,
+[callable objects](#type-level-type_level)): 32 bytes, `[signature:u32,
+fields=3:u32, code:u32, reserved-zero:u32, environment:i64,
+properties:i64]`, mask `function::PROPERTIES_MASK` beside the environment
+bit, selected by `value::function_properties_layout`; the closure envelope
+readers (`function::check_closure_envelope`,
+`ClosureView::read_envelope_within`) take the layout version. Value17 readers
+keep the 24-byte closure. Other objects (records receiving properties they do
+not declare) are to extend the same representation.
+
 #### Type level (`type_level`)
 
 K9 track A (2026-11-06), under the selector `LanguageProfile::type_level()`:
@@ -12109,8 +12136,9 @@ cited source. Varta monomorphizes: every type parameter is bound to a
 resolved type before a type expression is lowered, so each operator below is
 evaluated at compile time over resolved types and yields an existing closed
 type (record, dictionary, literal set, tuple, union, function type). No host
-import, value tag, value layout, frame catalog or ABI changes; nothing generic
-or deferred reaches emission. V1–v37 keep rejecting every form below with
+import, value tag, frame catalog or ABI changes, and no value layout change
+but the value18 closure's property storage edge of step 4 (callable objects,
+below); nothing generic or deferred reaches emission. V1–v37 keep rejecting every form below with
 their earlier diagnostics. A construct without a sound static layout is
 refused with an `unsupported …` diagnostic that names it (list below).
 
@@ -12288,13 +12316,11 @@ refused with an `unsupported …` diagnostic that names it (list below).
     literal type is expected takes the template type of its parts
     (`` `on${name}` `` with `name: string` is `` `on${string}` ``). A union
     drops the string literals its patterns match, and `` `${string}` `` is
-    `string`. `Record` and mapped types over a pattern key type are string
-    index signatures (their keys are not checked against the pattern), and
-    `Omit` drops the keys a pattern matches. Refused by name: a checked
-    assertion (`x as T`, `JSON.parse(text) as T`) to a type with a pattern,
-    which has no run-time test, `Pick` with pattern keys, and an intrinsic
-    type over a pattern with a `number`, `bigint` or other mapped
-    placeholder.
+    `string`. `Record` and mapped types over a pattern key type are index
+    signatures of that key type (step 4, below), and `Omit` drops the keys a
+    pattern matches. Refused by name: `Pick` with pattern keys (a tsc error
+    unless the type has such an index signature) and an intrinsic type over
+    a pattern with a `number`, `bigint` or other mapped placeholder.
   - *`infer`* inside a declared generic type's arguments (`Box<infer U>`: the
     declaration body with its parameters as inference positions), in a union
     pattern with one inferring member (`infer U | undefined`) and over
@@ -12333,9 +12359,11 @@ refused with an `unsupported …` diagnostic that names it (list below).
   their subclasses; `null`/`undefined` against the element union) and
   throws `TypeError` (`array element is not a value of the array's element
   type`) on a mismatch, consistent with the checked predicate reads.
-  Programs without such conversions keep their code. A collection whose
-  key vector is an array type with a changed representation is refused by
-  name.
+  Programs without such conversions keep their code. A `Map` or `Set`
+  keyed by such a class keeps its key vector in the class array's
+  representation; when that is union cells, its hash probes read each
+  cell's payload (`ir::KeyHash::Cell`: the instance, hashed and compared by
+  identity, step 4).
 - **Intentional deviations from Node.** (1) A type predicate that lies
   (narrows to a member the value does not hold) throws `TypeError` at the
   narrowed read (`value does not have the type its type predicate
@@ -12343,7 +12371,12 @@ refused with an `unsupported …` diagnostic that names it (list below).
   with the mistyped value. (2) An element of a shared class array that the
   read's element type does not admit (an `A` stored through `A[]` and read
   through `B[]`) throws `TypeError` at the read; Node continues with the
-  mistyped value.
+  mistyped value. (3) Under the same heading of checked reads at
+  TypeScript's unsoundness (step 4): a checked assertion of a string to a
+  pattern template type it does not match, and of a function held by
+  `unknown` to a function type of another signature, throws `TypeError`;
+  Node continues with the value (pending the owner's confirmation for the
+  function case).
 
 - **Step 3 admissions (2026-11-06).** `infer` inside an intersection pattern
   (`T extends { a: infer A } & { b: infer B }`: the check type matches
@@ -12361,12 +12394,115 @@ refused with an `unsupported …` diagnostic that names it (list below).
   call selects the first overload whose parameters (rest elements
   included) accept the arguments.
 
+- **Step 4 admissions (2026-11-06).**
+  - *Index signatures of pattern key types* (TypeScript 4.4): `[key:
+    `on${string}`]: T` in an object type or interface, `Record<K, T>` and
+    mapped types whose key type has pattern members (`Record<"id" |
+    `aria-${string}`, T>` declares `id` beside the index signature) are a
+    dictionary whose static view (`ir::MixedMembers::keys`) admits only the
+    declared fields and the keys the patterns describe, as tsc does: a
+    property name no pattern matches does not exist on the type (reads,
+    writes, compound updates, `delete`; an object literal property is an
+    excess property), and a computed key must have a type assignable to the
+    key type (a `string` key is TS7053). The storage is the plain
+    dictionary's, so the keyed type and `Record<string, T>` convert into
+    each other freely (as in tsc), `keyof` is the pattern type with the
+    declared names, and JSON, `Object.keys`, `in` and `for…in` are the
+    dictionary's. A declared property no pattern matches must be assignable
+    to the index type (every entry is stored as it).
+  - *Checked assertions to pattern types*: `x as T` and `JSON.parse(text) as
+    T` (and the declared reads that convert from `unknown`) test a string
+    against each pattern member of `T` at run time with the compile-time
+    rule (`patternMatches` of the patterns prelude,
+    `prelude/patterns.ts`), throwing `TypeError` on a mismatch like every
+    checked assertion. A JSON target with a pattern takes the general
+    checked conversion, never the direct decoder.
+  - *Overloads with type parameters or `this` parameters*: a generic call
+    signature in an overload set takes part through its erased signature
+    (`unknown` where a type parameter stands, as for generic method
+    signatures); a call tries the overloads in declaration order, as tsc's
+    overload resolution does, instantiating a generic overload from explicit
+    type arguments or by inference from its arguments before testing it, and
+    checks the merged result back to the selected instance's result. A call
+    signature may declare `this`; the merged receiver is the union of the
+    overloads' `this` types, a method-style call (`object.f(…)`) must have a
+    receiver the selected overload admits, and a call without one selects
+    only an overload whose `this` admits `undefined`. A value converts to
+    the overloaded type when its own signature (receiver included) is the
+    merged one. Explicit type arguments are admitted on a call of a generic
+    or overloaded function value.
+  - *Generic construct signatures* (`new <T>(value: T) => Box<T>`, `{ new
+    <T>(value: T): Box<T> }`; coordinator decision under the owner's
+    delegated authority): a whole-program pass gives each constructor value
+    a table of the instantiations the program constructs. A value of such a
+    type is physically a function `(selector: number) => unknown` (so
+    `typeof` is `"function"`, JSON skips it and identity is the function's):
+    `new ctor<T>(args)` takes explicit type arguments or infers them from
+    its arguments as a generic call does (then defaults, then `unknown`),
+    numbers the instantiation, calls the table with that selector and
+    calls the returned closure, typed by the instantiated signature, with the
+    checked arguments. A class named where such a type is expected becomes
+    its table (one per class, signature family and module, so `Box ===
+    Box`); after every body is lowered, `type_level::fill_constructors`
+    gives each table one entry per instantiation constructed through any
+    signature of its family, an instance of a synthesized generic function
+    `__vartaDeclNew…<P…, R>(a…): R { return new C(a…); }` declared in the
+    module that named the class, so each construction is inferred and
+    checked like the source `new C(a…)`; the fill and the generic bodies
+    run to a fixpoint. Converting a value between two generic construct
+    types joins their families; the instance types of an instantiation must
+    then agree (a type error otherwise). Overloaded generic construct
+    signatures are refused by name.
+
+  - *Callable objects with properties* (coordinator decision under the
+    owner's delegated authority: functions are objects, so function values
+    get their own property storage, an addition to value layout 18): a type
+    with call signatures and other members (`interface Counter { (step:
+    number): number; count: number }`), an intersection of a function type
+    with an object type, `Object.assign(fn, …)` and a module function with
+    expando assignments (`tick.calls = 0;` at module level, TypeScript's
+    property assignment declarations; the statement runs in module
+    evaluation order as the initializer of a generated constant,
+    `desugar::expandos`) are a function type marked with its declared own
+    properties (`FunctionType::properties`, a keyed dictionary view of
+    `unknown` whose keys are exactly the declared names). Physically it is
+    the function: every value18 closure has a property storage edge, an
+    ordinary dictionary storage record created on the first property access
+    (`Lower::function_property_storage`), so any function value — a named
+    function, an arrow, a class value — holds own properties, as in
+    JavaScript ([own-property overflow
+    storage](#own-property-overflow-storage)). Member reads, writes,
+    compound updates and `delete` go through that dictionary under the
+    declared view, symbol-keyed members included: a declared read
+    converts the stored value with a checked test (`TypeError` when another
+    view stored a value of another type), an undeclared name does not exist
+    on the type (TS2339). `Object.keys`, `Object.entries`, `in` and `for…in`
+    see the string-keyed own properties in own-key order (none for a function
+    without any); `typeof` stays `"function"`, JSON skips the function, identity is
+    the function's, and `Object.assign` returns the function itself, typed
+    as the callable object with the sources' properties. A function literal
+    whose context is a callable object type with a required property takes
+    the call signature (TS2741 when it is not asserted); the conversion
+    between callable object types of one call signature keeps the function
+    when the target's required properties are declared by the source. A
+    function held by `unknown` is asserted to a function type by its
+    closure's semantic signature (`ir::Intrinsic::FunctionSignature`,
+    `TypeError` on a mismatch). `name` and `length` are the function's own
+    non-writable properties (track D1b) and never storage entries: declaring
+    them on a callable object is refused by name, and `Object.assign` from a
+    source declaring them too. A construct signature together with
+    properties is refused by name (a class's static members are not
+    properties of its constructor value). Console output of a function
+    shows no own properties yet (Node prints `[Function: f] { count: 1 }`;
+    the inspector of track D1 owns function display).
+
 `unique symbol` is a `symbol` under the [symbol
-stream](#symbol-values-symbol_values). Still refused, each by name: `import("…")` types, callable objects with properties (a call signature together with
-other members: no closed layout holds a function value and fields),
-overloads with a `this` parameter or type parameters, generic construct
-signatures and constructor types (a monomorphized class has one layout per
-instantiation, so one constructor value cannot build every instantiation),
+stream](#symbol-values-symbol_values). Still refused, each by name:
+`import("…")` types, a construct signature together with properties, the
+own `name` and `length` of a callable object, expando assignments inside
+function bodies and on `const` function bindings (a module function's
+only), an overload set in which only some overloads declare `this`,
+overloaded generic construct signatures,
 intersections of object types whose shared property has no common type,
 mapped types over `number` or symbol key sets, `keyof never`, `typeof` of a
 generic function or class and of a module initializer whose type would need

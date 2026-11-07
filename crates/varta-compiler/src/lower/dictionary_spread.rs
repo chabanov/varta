@@ -133,6 +133,7 @@ impl Lower<'_> {
                     if names.contains(&name) {
                         return Err(unsupported("duplicate object key"));
                     }
+                    self.literal_key(ty, &name, property.span(), true)?;
                     names.push(name.clone());
                     let expected = declared
                         .iter()
@@ -231,7 +232,7 @@ impl Lower<'_> {
     /// Copy the own entries of `source` into the dictionary `target`. Returns
     /// the declared names the source always provides, the hidden roots and
     /// the statements.
-    fn spread_entries(
+    pub(super) fn spread_entries(
         &mut self,
         source: Expr,
         target: Expr,

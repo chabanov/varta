@@ -38,6 +38,9 @@ impl Lower<'_> {
                 .map_err(|e| self.source.locate(e, member.prop.span()))?;
         }
         let key = self.dictionary_key(member)?;
+        if declared.is_none() {
+            self.index_key(base.ty, member, &key)?;
+        }
         let key = self.dictionary_key_value(key)?;
         let Type::Dictionary(id) = base.ty else {
             return Err(invalid("missing dictionary type"));

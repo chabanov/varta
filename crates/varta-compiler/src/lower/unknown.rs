@@ -328,6 +328,8 @@ fn checkable_visit(
             storage_descriptor(types)
                 || primitive_kind(types.dictionaries[id as usize].value).is_some()
         }
+        // V38 (`type_level`): the closure's semantic signature.
+        Type::Function(_) => types.profile.type_level(),
         _ => false,
     }
 }
@@ -462,6 +464,22 @@ impl Lower<'_> {
             Ok(narrowed) => return Ok(narrowed),
             Err(value) => value,
         };
+        // V38 (`type_level`): a function whose own signature is the merged
+        // one of an overloaded type (`fn as Overloaded`), also with a `this`
+        // parameter.
+        let value = type_level::overloaded_value(value, Some(target), self.types);
+        if value.ty == target {
+            return Ok(value);
+        }
+        // V38 (`type_level`): a function asserted to a callable object type
+        // of its call signature, or the reverse: the same function.
+        if type_level::same_call(value.ty, target, self.types) {
+            return Ok(Expr {
+                span: value.span,
+                ty: target,
+                kind: E::Reinterpret(Box::new(value)),
+            });
+        }
         let value = match self.function_adapter(value, target)? {
             Ok(adapted) => return Ok(adapted),
             Err(value) => value,
@@ -475,7 +493,12 @@ impl Lower<'_> {
         {
             return self.dictionary_from_record(value, target);
         }
-        if !admissible(source, self.types) || !admissible(target, self.types) {
+        // V38 (`type_level`): a function held by `unknown` is tested by its
+        // closure's semantic signature (`cell_test`).
+        let function = self.types.profile.type_level()
+            && source == Type::Unknown
+            && matches!(target, Type::Function(_));
+        if !function && (!admissible(source, self.types) || !admissible(target, self.types)) {
             return Err(unsupported(&format!("type assertion to {name}")));
         }
         // V36: a downcast between dictionaries of one storage (a plain
@@ -620,16 +643,15 @@ impl Lower<'_> {
             | Type::Symbol
             | Type::Error
             | Type::NativeError(_) => member(target),
-            // A pattern template literal type (v38) has no run-time test here.
-            Type::Literal(_, set) if self.types.literals.has_pattern(set) => {
-                return Err(unsupported(&format!(
-                    "type assertion to {name}: a pattern template literal type has no run-time \
-                     check; assert string and match the pattern explicitly"
-                )));
-            }
             Type::Literal(base, set) => {
                 let base = base.erased();
                 let mut values = boolean(span, false);
+                // A pattern template literal type (v38) is tested by the
+                // patterns prelude, as the compile-time relation matches.
+                for pattern in self.types.literals.set_patterns(set).into_iter().rev() {
+                    let matched = self.pattern_test(unboxed(base), &pattern, span)?;
+                    values = or(span, matched, values);
+                }
                 for constant in literals::constants(set, span, self.types).into_iter().rev() {
                     let equal = test(
                         span,
@@ -715,6 +737,15 @@ impl Lower<'_> {
             }
             // V38 (`byte_values`): a `Uint8Array` has a tag of its own.
             Type::Collection(..) if bytes(target, self.types) => member(target),
+            // V38 (`type_level`): a function of exactly this signature (a
+            // callable object's own properties are read when used).
+            Type::Function(_) if self.types.profile.type_level() => {
+                let signature = test(
+                    span,
+                    E::Intrinsic(ir::Intrinsic::FunctionSignature, vec![unboxed(target)]),
+                );
+                and(span, member(target), signature)
+            }
             // V38 (`web_bytes`): `unknown` never holds a Map or Set (its state
             // is private), so such a member of an asserted union never
             // matches; the union's other members are tested.

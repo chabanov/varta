@@ -6000,18 +6000,44 @@ export function main(): void {
   const parse = ((v: string | number) => (typeof v === 'string' ? v.length : String(v))) as Parse;
   const same: Identity = (value) => value;
   const squares: Square[] = [new Square()];
-  const shapes: Shape[] = squares;          // a copy: Varta never aliases a wider view
+  const shapes: Shape[] = squares;          // one array, as in JavaScript
   const point = { x: 1, y: 2 };
   const next: typeof point = { x: 3, y: 4 };
   console.log(`${id} ${parse('abc') + 1} ${same(5)} ${shapes[0].area()} ${next.x}`);
 }
 ```
 
-Two behaviours deviate from Node on purpose: a type predicate that lies
-throws `TypeError` where its narrowed value is read, and a `Square[]` used
-as `Shape[]` is copied, so pushing through one name is not seen through the
-other. `unique symbol` is a `symbol` (see Symbol values below). Still refused
-by name: callable objects that also have properties, and overloads with type parameters or rest parameters.
+Callable objects with properties, generic and `this` overloads, generic
+construct signatures and pattern index signatures are admitted as well:
+
+```ts
+interface Counter { (step: number): number; count: number }
+interface Pick { <T>(value: T, fallback: T): T; (count: number): string }
+interface BoxConstructor { new <T>(value: T): Box<T> }
+class Box<T> { constructor(public value: T) {} }
+
+function tick(): number { return ++tick.calls; }
+tick.calls = 0;                              // an own property of tick
+
+export function main(): void {
+  const counter: Counter = ((step: number) => (counter.count += step)) as Counter;
+  counter.count = 1;
+  const pick = ((v: unknown, f?: unknown) => (f === undefined ? `#${String(v)}` : v)) as Pick;
+  const make: BoxConstructor = Box;
+  const handlers: Record<`on${string}`, number> = { onClick: 1 };
+  tick();
+  console.log(`${counter(2)} ${pick(3, 4)} ${pick(2)} ${new make('x').value} ${tick.calls} ${handlers.onClick}`);
+}
+```
+
+Behaviours that deviate from Node on purpose: a type predicate that lies
+throws `TypeError` where its narrowed value is read; an element of a shared
+`Square[]` read through a name whose element type does not admit it (a
+`Shape` pushed through `Shape[]`) throws `TypeError`; and a checked
+assertion to a pattern template type or to a function type throws
+`TypeError` when the value does not match. `unique symbol` is a `symbol`
+(see Symbol values below). Still refused by name: a construct signature with
+properties and the own `name`/`length` of a callable object.
 
 #### Symbol values (opt-in v38)
 

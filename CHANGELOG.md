@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- V38 K9 type level, step 4 (coordinator decisions under the owner's
+  delegated authority): index signatures of pattern key types
+  (`Record<`on${string}`, T>`, mapped types and `[key: `on${string}`]: T`)
+  admit only the keys their patterns describe, as in tsc; checked
+  assertions and `JSON.parse(text) as T` to pattern types test the string
+  at run time (`TypeError` on a mismatch); overloads may have type
+  parameters and `this` parameters and resolve per call in declaration
+  order with inference; generic construct signatures (`new <T>(value: T) =>
+  Box<T>`) construct every instantiation the program uses through
+  per-class tables built by a whole-program pass; `Map`/`Set` keyed by a
+  class whose arrays are shared with nullable union arrays hash the
+  instances; callable objects with properties (call signatures with other
+  members, function/object intersections, `Object.assign(fn, …)`,
+  module-level expando assignments) store a function's own properties in a
+  dictionary behind a new property edge of every value18 closure, with
+  `typeof`, JSON, identity and enumeration as in JavaScript.
+  Conformance: 211 passed, 4 known unsupported of 215.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
   2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as

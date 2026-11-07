@@ -88,7 +88,8 @@ impl Lower<'_> {
                 ),
                 value.span,
             )),
-            None => Ok(value),
+            // V38 (`type_level`): a function's own properties.
+            None => self.function_object(value),
         }
     }
     /// `"key" in x` (positive branch): an `object` or object view gains the

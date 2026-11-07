@@ -468,6 +468,14 @@ impl<'a> Check<'a> {
                     .to_owned(),
             ]);
         }
+        // V38 (`type_level`): a callable object's required own properties
+        // must be declared by the source (an adapter has none).
+        if into.properties.is_some() && from.properties != into.properties {
+            return Err(vec![
+                "a callable object's own properties are not declared by the source function"
+                    .to_owned(),
+            ]);
+        }
         let mark = self.edges.len();
         let reasons = self.call_through(
             Callee {
@@ -2419,7 +2427,8 @@ pub(super) fn identity_operands(
             },
         )
     } else {
-        (left, right)
+        // V38 (`type_level`): two function types of one physical signature.
+        type_level::function_operands(op, left, right, types)
     }
 }
 

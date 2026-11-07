@@ -21,9 +21,11 @@ pub(super) fn callable(literal: &ast::TsTypeLit) -> bool {
     })
 }
 
-/// `{ (x: number): number }` and `{ new (x: number): C }`.
+/// `{ (x: number): number }` and `{ new (x: number): C }`; with other
+/// members, a callable object (`{ (): number; count: number }`, step 4).
 pub(super) fn type_literal(literal: &ast::TsTypeLit, types: &mut ir::ValueTypes) -> Result<Type> {
     let mut signatures = Vec::new();
+    let mut properties = Vec::new();
     for member in &literal.members {
         signatures.push(match member {
             ast::TsTypeElement::TsCallSignatureDecl(call) if call.type_params.is_some() => {
@@ -38,23 +40,38 @@ pub(super) fn type_literal(literal: &ast::TsTypeLit, types: &mut ir::ValueTypes)
             ast::TsTypeElement::TsCallSignatureDecl(call) => {
                 signature(&call.params, call.type_ann.as_deref(), false, types)?
             }
-            ast::TsTypeElement::TsConstructSignatureDecl(construct) => {
-                if construct.type_params.is_some() {
-                    return Err(unsupported("generic construct signature"));
-                }
-                signature(&construct.params, construct.type_ann.as_deref(), true, types)?
-            }
-            _ => {
-                return Err(unsupported(
-                    "object type with a call or construct signature and other members (a callable object has no closed layout)",
-                ));
+            // Step 4: a generic construct signature's instantiation table.
+            ast::TsTypeElement::TsConstructSignatureDecl(construct) => match &construct.type_params
+            {
+                Some(type_params) => generic_constructors::signature(
+                    construct.span,
+                    &construct.params,
+                    construct.type_ann.as_deref(),
+                    type_params,
+                    types,
+                )?,
+                None => signature(
+                    &construct.params,
+                    construct.type_ann.as_deref(),
+                    true,
+                    types,
+                )?,
+            },
+            other => {
+                properties.push(other.clone());
+                continue;
             }
         });
     }
-    match signatures.as_slice() {
-        [one] => Ok(*one),
-        _ => overloads::overloaded(signatures, types),
+    let call = match signatures.as_slice() {
+        [one] => *one,
+        _ => overloads::overloaded(signatures, types)?,
+    };
+    if properties.is_empty() {
+        return Ok(call);
     }
+    let fields = records::type_fields(&properties, types)?;
+    callables::with_properties(call, fields, types)
 }
 
 /// `new (params) => T` and `abstract new (params) => T`.
@@ -62,8 +79,14 @@ pub(super) fn constructor_type(
     constructor: &ast::TsConstructorType,
     types: &mut ir::ValueTypes,
 ) -> Result<Type> {
-    if constructor.type_params.is_some() {
-        return Err(unsupported("generic constructor type"));
+    if let Some(type_params) = &constructor.type_params {
+        return generic_constructors::signature(
+            constructor.span,
+            &constructor.params,
+            Some(&constructor.type_ann),
+            type_params,
+            types,
+        );
     }
     signature(
         &constructor.params,
@@ -82,9 +105,24 @@ fn signature(
     let mut patterns = Vec::new();
     for parameter in params {
         patterns.push(match parameter {
+            // A call signature's `this` parameter (step 4): the function
+            // type of `(this: T, …) => R`.
+            ast::TsFnParam::Ident(id) if id.id.sym == "this" && !construct => {
+                return functions::type_annotation(
+                    &ast::TsFnType {
+                        span: id.span(),
+                        params: params.to_vec(),
+                        type_params: None,
+                        type_ann: Box::new(result.cloned().ok_or_else(|| {
+                            type_error("a call or construct signature requires a result type")
+                        })?),
+                    },
+                    types,
+                );
+            }
             ast::TsFnParam::Ident(id) if id.id.sym == "this" => {
-                return Err(unsupported(
-                    "this parameter in a call or construct signature",
+                return Err(type_error(
+                    "a construct signature cannot declare a this parameter",
                 ));
             }
             ast::TsFnParam::Ident(id) => ast::Pat::Ident(id.clone()),
@@ -212,6 +250,9 @@ impl Lower<'_> {
             return Err(invalid("missing constructor type"));
         };
         let signature = self.types.functions[function as usize].clone();
+        if signature.constructors.is_some() {
+            return self.generic_constructor_value(id, class, expected);
+        }
         if signature.shape.rest {
             return Err(self.source.locate(
                 unsupported("class value for a constructor type with a rest parameter"),
@@ -292,6 +333,9 @@ impl Lower<'_> {
             return Err(type_error("constructed value is not of a constructor type"));
         };
         let signature = self.types.functions[index as usize].clone();
+        if let Some(entry) = signature.constructors {
+            return self.generic_construct(new, callee, entry);
+        }
         let args = new.args.as_deref().unwrap_or(&[]);
         if args.iter().any(|arg| arg.spread.is_some()) {
             return Err(unsupported("spread argument to a constructor value"));

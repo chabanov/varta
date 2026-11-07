@@ -21,6 +21,8 @@ impl Lower<'_> {
         base: Expr,
         span: swc_common::Span,
     ) -> Result<Expr> {
+        // V38 (`type_level`): an own property of a callable object.
+        let base = self.class_index(member, base)?;
         if matches!(base.ty, Type::Dictionary(_)) {
             return self.dictionary_delete(member, base);
         }

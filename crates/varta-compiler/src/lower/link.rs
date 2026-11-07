@@ -208,14 +208,21 @@ fn lower_with(
         classes::dispatch_bodies(&types, &mut functions)?;
     }
     if profile.generics() {
-        generics::bodies(
-            graph,
-            &scopes,
-            &constants.scopes,
-            main,
-            &mut types,
-            (&mut generated, &mut next, &mut call_effects),
-        )?;
+        // V38 (`type_level`): the tables of generic construct signatures
+        // and the instances they request, to a fixpoint.
+        loop {
+            generics::bodies(
+                graph,
+                &scopes,
+                &constants.scopes,
+                main,
+                &mut types,
+                (&mut generated, &mut next, &mut call_effects),
+            )?;
+            if !type_level::fill_constructors(&mut types, &mut generated, &mut next)? {
+                break;
+            }
+        }
     }
     // Tagged template objects (v38) are built before any module code runs.
     object_accessors::finish(&mut types, &functions, &mut generated, &mut next)?;

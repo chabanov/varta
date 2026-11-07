@@ -30,8 +30,18 @@ enum Value {
     },
 }
 
+/// One expando assignment: the property name, the assigned value and its
+/// module's source.
+type Expando = (String, ast::Expr, Source);
+
 #[derive(Default)]
-pub(super) struct Values(BTreeMap<(usize, String), Value>);
+pub(super) struct Values(
+    BTreeMap<(usize, String), Value>,
+    /// Expando properties of module functions (step 4, TypeScript's
+    /// property assignments on a function declaration in its own scope):
+    /// each `f.name = value` statement at module level, in source order.
+    BTreeMap<(usize, String), Vec<Expando>>,
+);
 
 pub(super) fn register(module: usize, unit: &Unit, graph: &Graph, types: &mut ir::ValueTypes) {
     let values = &mut types.type_level.values.0;
@@ -68,6 +78,45 @@ pub(super) fn register(module: usize, unit: &Unit, graph: &Graph, types: &mut ir
             _ => {}
         }
     }
+    // `f.name = value;` statements of the module's own functions (the
+    // initializers of the constants `desugar::expandos` generates).
+    for item in &unit.ast.body {
+        let ast::ModuleItem::Stmt(ast::Stmt::Decl(ast::Decl::Var(var))) = item else {
+            continue;
+        };
+        let [declarator] = var.decls.as_slice() else {
+            continue;
+        };
+        let Some(init) = declarator.init.as_deref() else {
+            continue;
+        };
+        let Some(function) = crate::desugar::expando_target(init) else {
+            continue;
+        };
+        let ast::Expr::Assign(assign) = init else {
+            continue;
+        };
+        let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) = &assign.left
+        else {
+            continue;
+        };
+        let ast::MemberProp::Ident(property) = &member.prop else {
+            continue;
+        };
+        let key = (module, function.to_owned());
+        if !matches!(
+            types.type_level.values.0.get(&key),
+            Some(Value::Function { .. })
+        ) {
+            continue;
+        }
+        types.type_level.values.1.entry(key).or_default().push((
+            property.sym.to_string(),
+            (*assign.right).clone(),
+            unit.source.clone(),
+        ));
+    }
+    let values = &mut types.type_level.values.0;
     for import in &unit.imports {
         let Some(target) = graph.order.iter().position(|path| *path == import.target) else {
             continue;
@@ -165,13 +214,16 @@ fn declared(name: &str, value: &Value, types: &mut ir::ValueTypes) -> Result<Typ
                 )));
             }
             let signature = signature::check(declaration, 0, source, types)?;
-            functions::intern_full(
+            let call = functions::intern_full(
                 signature.receiver,
                 signature.params,
                 signature.shape,
                 signature.result,
                 types,
-            )
+            )?;
+            let module = named::current(types);
+            let fields = expando_fields(module, name, types)?;
+            callables::with_properties(call, fields, types)
         }
         Value::Constant {
             declarator,
@@ -192,6 +244,68 @@ fn declared(name: &str, value: &Value, types: &mut ir::ValueTypes) -> Result<Typ
         }
         Value::Import { .. } => Err(invalid("unresolved import in a typeof query")),
     }
+}
+
+/// The expando properties of the module function `name` of `module` (with
+/// their declaration types, widened as TypeScript's property assignment
+/// declarations are; the first assignment of a name declares it).
+pub(super) fn expando_fields(
+    module: usize,
+    name: &str,
+    types: &mut ir::ValueTypes,
+) -> Result<Vec<RecordField>> {
+    let Some(assignments) = types
+        .type_level
+        .values
+        .1
+        .get(&(module, name.to_owned()))
+        .cloned()
+    else {
+        return Ok(Vec::new());
+    };
+    let caller = named::current(types);
+    named::enter(types, module);
+    let mut fields: Vec<RecordField> = Vec::new();
+    let mut result = Ok(());
+    for (property, value, source) in assignments {
+        if fields.iter().any(|field| field.name == property) {
+            continue;
+        }
+        match infer(&value, Fresh::Widened, types) {
+            Ok(ty) => fields.push(RecordField {
+                name: property,
+                ty,
+                optional: false,
+            }),
+            Err(error) => {
+                result = Err(source.locate(
+                    unsupported(&format!(
+                        "expando property {property} of function {name} whose value needs \
+                         lowering to be typed ({error}); declare the function's type with the \
+                         property instead"
+                    )),
+                    value.span(),
+                ));
+                break;
+            }
+        }
+    }
+    named::enter(types, caller);
+    result.map(|()| fields)
+}
+
+/// The module and name a value `name` of the current module resolves to
+/// through imports.
+pub(super) fn declaring(name: &str, types: &ir::ValueTypes) -> Option<(usize, String)> {
+    let mut key = (named::current(types), name.to_owned());
+    for _ in 0..MAX_TYPE_DEPTH {
+        match types.type_level.values.0.get(&key)? {
+            Value::Import { module, name } => key = (*module, name.clone()),
+            Value::Function { .. } => return Some(key),
+            Value::Constant { .. } => return None,
+        }
+    }
+    None
 }
 
 /// The type of `expression as const`.

@@ -310,6 +310,12 @@ pub(super) fn name_of(types: &ir::ValueTypes, ty: Type) -> Option<String> {
     if !matches!(ty, Type::Record(_)) {
         return None;
     }
+    declared_name(types, ty)
+}
+
+/// The name of the declaration that resolved to `ty`, with its type
+/// arguments, for any type (v38 diagnostics).
+pub(super) fn declared_name(types: &ir::ValueTypes, ty: Type) -> Option<String> {
     let ((_, name), arguments) = types
         .named
         .resolved

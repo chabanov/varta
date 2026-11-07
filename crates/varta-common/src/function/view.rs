@@ -143,13 +143,18 @@ pub struct ClosureView<'a> {
     pub environment: Option<EnvironmentView<'a>>,
 }
 /// The signature, code and environment handle of a canonical v12+ closure
-/// envelope under `limits`; the environment itself is not read.
+/// envelope under `limits`, in the value layout `version` (value18 closures
+/// carry a property storage edge, checked to be zero or a record block); the
+/// environment itself is not read.
 fn closure_fields<M: Memory + ?Sized>(
     data: &M,
     handle: u64,
     limits: &crate::limits::ProgramLimits,
+    version: u32,
 ) -> Result<(u32, u32, u64), ValueAbiError> {
-    let ptr = envelope(data, handle, CLOSURE_BYTES, HEAP_FLAG)?;
+    let properties = value::function_properties_layout(version);
+    let (bytes, fields, fixed) = closure_layout(properties);
+    let ptr = envelope(data, handle, bytes, HEAP_FLAG)?;
     let signature = word(data, ptr)?;
     let code = word(data, ptr + CODE_OFFSET as usize)?;
     let environment = wide(data, ptr + ENVIRONMENT_OFFSET as usize)?;
@@ -159,32 +164,71 @@ fn closure_fields<M: Memory + ?Sized>(
     )?;
     if signature as usize >= limits.function_types
         || code as usize >= limits.user_functions
-        || word(data, ptr + 4)? != FUNCTION_FIELDS as u32
+        || word(data, ptr + 4)? != fields as u32
         || word(data, ptr + 12)? != 0
         || mask
-            != if environment == 0 {
-                0
-            } else {
-                ENVIRONMENT_MASK as u32
-            }
+            != fixed as u32
+                | if environment == 0 {
+                    0
+                } else {
+                    ENVIRONMENT_MASK as u32
+                }
     {
         return Err(invalid());
     }
+    if properties {
+        let storage = wide(data, ptr + PROPERTIES_OFFSET as usize)?;
+        if storage != 0 {
+            property_block(data, storage)?;
+        }
+    }
     Ok((signature, code, environment))
+}
+/// A property storage edge: a managed record block (a dictionary's storage
+/// record). Its entries are read by the dictionary readers where needed.
+fn property_block<M: Memory + ?Sized>(data: &M, handle: u64) -> Result<(), ValueAbiError> {
+    let bytes = (handle >> 32) as usize;
+    let ptr = handle as u32 as usize;
+    if bytes < value::RECORD_META_BYTES
+        || ptr < abi::OWNED_STRING_BASE + abi::STRING_HEADER_BYTES
+        || !ptr.is_multiple_of(value::HEAP_ALIGNMENT)
+    {
+        return Err(invalid());
+    }
+    let header = ptr - abi::STRING_HEADER_BYTES;
+    let allocated = word(data, header)? as usize;
+    let flags = word(data, header + value::HEAP_FLAGS_OFFSET)?;
+    if allocated < abi::STRING_HEADER_BYTES + bytes
+        || header
+            .checked_add(allocated)
+            .is_none_or(|end| end > data.size())
+        || flags & value::HEAP_ALLOCATED_FLAG == 0
+        || flags & value::HEAP_RECORD_FLAG as u32 == 0
+    {
+        return Err(invalid());
+    }
+    Ok(())
 }
 impl<'a> ClosureView<'a> {
     /// Read the v12+ physical closure form; legacy v11 cells stay distinct.
     #[cfg(feature = "std")]
     pub fn read_envelope(data: &'a [u8], handle: u64) -> Result<Self, ValueAbiError> {
-        Self::read_envelope_within(data, handle, &crate::limits::FROZEN)
+        Self::read_envelope_within(
+            data,
+            handle,
+            &crate::limits::FROZEN,
+            value::FUNCTION_FIELD_VALUE_VERSION,
+        )
     }
-    /// [`Self::read_envelope`] with a profile's function and signature limits.
+    /// [`Self::read_envelope`] with a profile's function and signature
+    /// limits, in the value layout `version`.
     pub fn read_envelope_within(
         data: &'a [u8],
         handle: u64,
         limits: &crate::limits::ProgramLimits,
+        version: u32,
     ) -> Result<Self, ValueAbiError> {
-        let (signature, code, environment) = closure_fields(data, handle, limits)?;
+        let (signature, code, environment) = closure_fields(data, handle, limits, version)?;
         let environment = if environment == 0 {
             None
         } else {
@@ -204,8 +248,9 @@ pub fn check_closure_envelope<M: Memory + ?Sized>(
     data: &M,
     handle: u64,
     limits: &crate::limits::ProgramLimits,
+    version: u32,
 ) -> Result<(), ValueAbiError> {
-    let (_, _, environment) = closure_fields(data, handle, limits)?;
+    let (_, _, environment) = closure_fields(data, handle, limits, version)?;
     if environment != 0 {
         environment_block(data, environment)?;
     }

@@ -14,10 +14,13 @@
 use super::*;
 use std::collections::BTreeSet;
 
+mod callables;
 mod conditional;
 mod constructors;
 mod containers;
 mod covariance;
+mod generic_constructors;
+mod index_keys;
 mod literal_inference;
 mod mapped;
 mod objects;
@@ -31,8 +34,13 @@ mod template_types;
 mod tuple_types;
 mod utilities;
 
+pub(super) use callables::{
+    callable_context, function_operands, properties_of as callable_properties, same_call,
+};
 pub(super) use containers::covariant_array;
 pub(super) use covariance::resolve as resolve_covariance;
+pub(super) use generic_constructors::fill as fill_constructors;
+pub(super) use overloads::overloaded_value;
 pub(crate) use patterns::Pattern;
 pub(super) use patterns::{describe as describe_pattern, value_in};
 
@@ -114,6 +122,8 @@ pub(crate) struct TypeLevel {
     /// Overload sets of overloaded function types: each overload's function
     /// type, in declaration order.
     overloads: Vec<Vec<Type>>,
+    /// Generic construct signatures and their instantiation tables.
+    constructors: generic_constructors::Constructors,
     /// Class-instance arrays viewed under a wider element type: (source
     /// array type, target array type), resolved by `covariance::resolve`.
     covariance: std::cell::RefCell<BTreeSet<(u32, u32)>>,

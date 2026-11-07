@@ -295,6 +295,12 @@ impl Lower<'_> {
             return self.receiver_field_call(call, callee, value);
         }
         self.unbound(&value)?;
+        // An overloaded function field (v38 `type_level`).
+        if let Type::Function(id) = value.ty
+            && let Some(set) = self.types.functions[id as usize].overloads
+        {
+            return self.overloaded_call(call, value, set, None);
+        }
         // A generic method signature's erased function (v38).
         if let Type::Function(id) = value.ty
             && let Some(generic) = self.types.functions[id as usize].generic
