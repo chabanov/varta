@@ -21,7 +21,8 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = (
     "varta", "varta-artifact", "varta-bigint", "varta-common", "varta-compiler",
-    "varta-conformance", "varta-desktop", "varta-intrinsics", "varta-kv-codec", "varta-launcher",
+    "varta-conformance", "varta-desktop", "varta-intl", "varta-intrinsics", "varta-kv-codec",
+    "varta-launcher",
     "varta-project", "varta-runtime", "varta-style", "varta-tailwind", "varta-view",
 )
 # The checked-in browser KV codec must match its sources (scripts/build-kv-codec.py).
@@ -227,9 +228,10 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
     return [
         cargo("fmt", "--all", "--", "--check"),
         check + ["--lib", "--locked"],
-        # The value-layout core the wasm32 intrinsic library builds against.
+        # The value-layout core the wasm32 intrinsic library builds against,
+        # and its no_std local-time layer.
         cargo("check", "-p", "varta-common", "-p", "varta-intrinsics", "-p", "varta-kv-codec",
-              "--no-default-features", "--lib", "--locked"),
+              "-p", "varta-intl", "--no-default-features", "--lib", "--locked"),
         KV_CODEC_CHECK,
         VIEW_ENGINE_CHECK,
         companion(),

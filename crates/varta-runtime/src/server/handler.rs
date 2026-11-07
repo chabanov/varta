@@ -128,6 +128,7 @@ async fn execute_owned(
         },
     )?;
     let context = execution.store.data_mut();
+    context.inputs = shared.inputs.clone();
     context.cancellation = cancellation;
     // `http_stop` checks the grant form the service listens with.
     context.http_control = Some((shared.listen.clone(), shared.stop.clone()));
@@ -321,6 +322,7 @@ fn legacy_owned(shared: &Shared, request: Vec<u8>) -> Result<HttpResponse, Runti
         },
     )?;
     execution.store.data_mut().http_control = Some((shared.listen.clone(), shared.stop.clone()));
+    execution.store.data_mut().inputs = shared.inputs.clone();
     let response = invoke_legacy(shared, &mut execution, &request);
     let logs = std::mem::take(&mut execution.store.data_mut().output.lines);
     drop(execution);

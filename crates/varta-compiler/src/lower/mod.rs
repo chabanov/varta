@@ -280,6 +280,16 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
         ast::TsType::TsLitType(literal) if types.profile.literal_types() => {
             return literals::annotation(literal, types);
         }
+        // V38 (`symbol_values`): `unique symbol` is a `symbol` whose
+        // declaration fixes its identity (`symbols::unique_key`).
+        ast::TsType::TsTypeOperator(operator)
+            if types.profile.symbol_values()
+                && operator.op == ast::TsTypeOperatorOp::Unique
+                && matches!(&*operator.type_ann, ast::TsType::TsKeywordType(keyword)
+                    if keyword.kind == ast::TsKeywordTypeKind::TsSymbolKeyword) =>
+        {
+            return Ok(symbols::use_type(types));
+        }
         _ => {}
     }
     if let ast::TsType::TsTypeLit(literal) = ty {
@@ -322,6 +332,10 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
         ast::TsKeywordTypeKind::TsBooleanKeyword => Type::Boolean,
         ast::TsKeywordTypeKind::TsStringKeyword => Type::String,
         ast::TsKeywordTypeKind::TsBigIntKeyword if types.profile.bigint() => Type::BigInt,
+        // V38 (`symbol_values`): ECMAScript symbols.
+        ast::TsKeywordTypeKind::TsSymbolKeyword if types.profile.symbol_values() => {
+            symbols::use_type(types)
+        }
         ast::TsKeywordTypeKind::TsVoidKeyword => Type::Void,
         ast::TsKeywordTypeKind::TsNullKeyword => Type::Null,
         ast::TsKeywordTypeKind::TsUndefinedKeyword if types.profile.has_undefined() => {
@@ -446,6 +460,7 @@ mod labels;
 mod link;
 mod literal_erasure;
 pub(crate) mod literals;
+mod local_time;
 mod logical_assignments;
 mod math;
 mod math_hypot;
@@ -482,6 +497,7 @@ mod primitive_unary;
 pub(crate) mod promises;
 mod prune;
 mod simplify;
+pub(crate) mod symbols;
 pub(crate) use prune::LINKED_FUNCTIONS;
 mod property_deletion;
 mod record_reads;

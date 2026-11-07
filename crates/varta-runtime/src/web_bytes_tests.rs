@@ -163,7 +163,6 @@ fn typeof_of_other_identifiers_stays_rejected() {
         "ReadonlyMap",
         "RegExpExecArray",
         "ViewEvent",
-        "Symbol",
         "window",
     ] {
         let error = varta_compiler::compile_typescript_with_profile(&source(name), V38)
