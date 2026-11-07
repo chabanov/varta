@@ -1,0 +1,85 @@
+local 2024/0/15/12/0: 1705270500000 Mon Jan 15 2024 12:00:00 GMT+1345 (Chatham Daylight Time)
+  2024-0-15 12:0:0.0 day 1 offset -825
+local 2024/6/15/12/0: 1720998900000 Mon Jul 15 2024 12:00:00 GMT+1245 (Chatham Standard Time)
+  2024-6-15 12:0:0.0 day 1 offset -765
+local 2024/2/10/2/30: 1709988300000 Sun Mar 10 2024 02:30:00 GMT+1345 (Chatham Daylight Time)
+  2024-2-10 2:30:0.0 day 0 offset -825
+local 2024/2/31/2/30: 1711802700000 Sun Mar 31 2024 02:30:00 GMT+1345 (Chatham Daylight Time)
+  2024-2-31 2:30:0.0 day 0 offset -825
+local 2024/3/7/2/30: 1712407500000 Sun Apr 07 2024 02:30:00 GMT+1345 (Chatham Daylight Time)
+  2024-3-7 2:30:0.0 day 0 offset -825
+local 2024/9/6/2/30: 1728132300000 Sun Oct 06 2024 02:30:00 GMT+1345 (Chatham Daylight Time)
+  2024-9-6 2:30:0.0 day 0 offset -825
+local 2024/9/27/0/30: 1729939500000 Sun Oct 27 2024 00:30:00 GMT+1345 (Chatham Daylight Time)
+  2024-9-27 0:30:0.0 day 0 offset -825
+local 2024/10/3/1/30: 1730547900000 Sun Nov 03 2024 01:30:00 GMT+1345 (Chatham Daylight Time)
+  2024-10-3 1:30:0.0 day 0 offset -825
+local 2024/9/27/2/30: 1729946700000 Sun Oct 27 2024 02:30:00 GMT+1345 (Chatham Daylight Time)
+  2024-9-27 2:30:0.0 day 0 offset -825
+local 1970/0/1/0/0: -45900000 Thu Jan 01 1970 00:00:00 GMT+1245 (Chatham Daylight Time)
+  1970-0-1 0:0:0.0 day 4 offset -765
+local 1943/6/1/12/0: -836439300000 Thu Jul 01 1943 12:00:00 GMT+1215 (Chatham Standard Time)
+  1943-6-1 12:0:0.0 day 4 offset -735
+local 1960/0/1/0/0: -315665100000 Fri Jan 01 1960 00:00:00 GMT+1245 (Chatham Daylight Time)
+  1960-0-1 0:0:0.0 day 5 offset -765
+local 2100/6/1/12/0: 4118080500000 Thu Jul 01 2100 12:00:00 GMT+1245 (Chatham Standard Time)
+  2100-6-1 12:0:0.0 day 4 offset -765
+local 12000/0/1/0/0: 316516155300000 Sat Jan 01 12000 00:00:00 GMT+1345 (Chatham Daylight Time)
+  12000-0-1 0:0:0.0 day 6 offset -825
+instant 1710053999999: 1710053999999 Sun Mar 10 2024 20:44:59 GMT+1345 (Chatham Daylight Time)
+  2024-2-10 20:44:59.999 day 0 offset -825 | Sun Mar 10 2024 | 20:44:59 GMT+1345 (Chatham Daylight Time)
+instant 1710054000000: 1710054000000 Sun Mar 10 2024 20:45:00 GMT+1345 (Chatham Daylight Time)
+  2024-2-10 20:45:0.0 day 0 offset -825 | Sun Mar 10 2024 | 20:45:00 GMT+1345 (Chatham Daylight Time)
+instant 1711846799999: 1711846799999 Sun Mar 31 2024 14:44:59 GMT+1345 (Chatham Daylight Time)
+  2024-2-31 14:44:59.999 day 0 offset -825 | Sun Mar 31 2024 | 14:44:59 GMT+1345 (Chatham Daylight Time)
+instant 1711846800000: 1711846800000 Sun Mar 31 2024 14:45:00 GMT+1345 (Chatham Daylight Time)
+  2024-2-31 14:45:0.0 day 0 offset -825 | Sun Mar 31 2024 | 14:45:00 GMT+1345 (Chatham Daylight Time)
+instant 1712415540000: 1712415540000 Sun Apr 07 2024 03:44:00 GMT+1245 (Chatham Standard Time)
+  2024-3-7 3:44:0.0 day 0 offset -765 | Sun Apr 07 2024 | 03:44:00 GMT+1245 (Chatham Standard Time)
+instant 1712415600000: 1712415600000 Sun Apr 07 2024 03:45:00 GMT+1245 (Chatham Standard Time)
+  2024-3-7 3:45:0.0 day 0 offset -765 | Sun Apr 07 2024 | 03:45:00 GMT+1245 (Chatham Standard Time)
+instant 1728142140000: 1728142140000 Sun Oct 06 2024 05:14:00 GMT+1345 (Chatham Daylight Time)
+  2024-9-6 5:14:0.0 day 0 offset -825 | Sun Oct 06 2024 | 05:14:00 GMT+1345 (Chatham Daylight Time)
+instant 1728142200000: 1728142200000 Sun Oct 06 2024 05:15:00 GMT+1345 (Chatham Daylight Time)
+  2024-9-6 5:15:0.0 day 0 offset -825 | Sun Oct 06 2024 | 05:15:00 GMT+1345 (Chatham Daylight Time)
+instant 1729990740000: 1729990740000 Sun Oct 27 2024 14:44:00 GMT+1345 (Chatham Daylight Time)
+  2024-9-27 14:44:0.0 day 0 offset -825 | Sun Oct 27 2024 | 14:44:00 GMT+1345 (Chatham Daylight Time)
+instant 1729990800000: 1729990800000 Sun Oct 27 2024 14:45:00 GMT+1345 (Chatham Daylight Time)
+  2024-9-27 14:45:0.0 day 0 offset -825 | Sun Oct 27 2024 | 14:45:00 GMT+1345 (Chatham Daylight Time)
+instant 1730613540000: 1730613540000 Sun Nov 03 2024 19:44:00 GMT+1345 (Chatham Daylight Time)
+  2024-10-3 19:44:0.0 day 0 offset -825 | Sun Nov 03 2024 | 19:44:00 GMT+1345 (Chatham Daylight Time)
+instant 1730613600000: 1730613600000 Sun Nov 03 2024 19:45:00 GMT+1345 (Chatham Daylight Time)
+  2024-10-3 19:45:0.0 day 0 offset -825 | Sun Nov 03 2024 | 19:45:00 GMT+1345 (Chatham Daylight Time)
+instant 0: 0 Thu Jan 01 1970 12:45:00 GMT+1245 (Chatham Standard Time)
+  1970-0-1 12:45:0.0 day 4 offset -765 | Thu Jan 01 1970 | 12:45:00 GMT+1245 (Chatham Standard Time)
+instant -1: -1 Thu Jan 01 1970 12:44:59 GMT+1245 (Chatham Daylight Time)
+  1970-0-1 12:44:59.999 day 4 offset -765 | Thu Jan 01 1970 | 12:44:59 GMT+1245 (Chatham Daylight Time)
+instant -5351616000000: -5351616000000 Sun Jun 01 1800 12:13:48 GMT+1213 (Chatham Standard Time)
+  12:13:48 12:13:48 GMT+1213 (Chatham Standard Time)
+instant 8640000000000000: 8640000000000000 Sat Sep 13 275760 12:45:00 GMT+1245 (Chatham Standard Time)
+  12:45:0 12:45:00 GMT+1245 (Chatham Standard Time)
+instant -8640000000000000: -8640000000000000 Tue Apr 20 -271821 12:13:48 GMT+1213 (Chatham Standard Time)
+  12:13:48 12:13:48 GMT+1213 (Chatham Standard Time)
+setMonth: 1709374499999 Sat Mar 02 2024 23:59:59 GMT+1345 (Chatham Daylight Time)
+setHours: 1709988359999 Sun Mar 10 2024 02:30:59 GMT+1345 (Chatham Daylight Time)
+setFullYear: 1678538759999 Sun Mar 12 2023 02:30:59 GMT+1345 (Chatham Daylight Time)
+setMinutes: 1678542359999 Sun Mar 12 2023 03:30:59 GMT+1345 (Chatham Daylight Time)
+setSeconds: 1678542299999 Sun Mar 12 2023 03:29:59 GMT+1345 (Chatham Daylight Time)
+setMilliseconds: 1678542300500 Sun Mar 12 2023 03:30:00 GMT+1345 (Chatham Daylight Time)
+setUTCHours: 1719900000000 Tue Jul 02 2024 18:45:00 GMT+1245 (Chatham Standard Time)
+NaN NaN Invalid Date NaN
+1704017700000
+parse 2024-07-01T12:00: 1719789300000
+parse 2024-07-01T12:00:30.5: 1719789330500
+parse 2024-03-10T02:30: 1709988300000
+parse 2024-07-01: 1719792000000
+parse 2024-07: 1719792000000
+parse 2024-07-01T12:00Z: 1719835200000
+parse 2024-07-01T12:00+02:00: 1719828000000
+parse +002024-07-01T00:00: 1719746100000
+parse Mon Jul 01 2024: 1719746100000
+parse Mon Jul 01 2024 12:00:00: 1719789300000
+parse Mon Jul 01 2024 12:00:00 GMT+0200: 1719828000000
+parse Mon, 01 Jul 2024 12:00:00 GMT: 1719835200000
+round trip true 1714821300000 2024-05-04T17:22:08.009Z Sat, 04 May 2024 17:22:08 GMT {"at":"2024-05-04T17:22:08.009Z"}
+1704067200000 1999

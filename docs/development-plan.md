@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with the K9 C expression forms with object-literal accessors, template raw strings, dynamic `this` and top-level `await`, K9 D3 full RegExp, K9 A steps 1–3 (shared covariant class arrays, pattern template types), K9 B declarations and classes, the K8 CSS engine's font-metric units, logical properties and selectors, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-07, the commit that records it: **4417 Rust tests passed, 0 failures, 25 ignored; 186 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261107-000755-zz38unzh/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **209 passed, 4 known unsupported out of 213** after the K9 A (steps 1–3), B, C, D, D2 and D3 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures, full RegExp (2026-11-06) and the D3 follow-up (run-time patterns, match arrays, `matchAll` iterators, `split`, replacers and symbol protocols, 2026-11-07), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **210 passed, 4 known unsupported out of 214** after the K9 A (steps 1–3), B, C, D, D2, D3 and D4 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures, full RegExp (2026-11-06) and the D3 follow-up (run-time patterns, match arrays, `matchAll` iterators, `split`, replacers and symbol protocols, 2026-11-07), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -369,10 +369,9 @@ Not done, each refused by name with its reason:
   (ephemerons) in the exact-root collector and deterministic cleanup turns
   in both schedulers. A strong-reference stand-in would leak and is not
   admitted.
-- **Local time zones**: the zone is a recorded host input. The owner
-  decides the grant that reveals the host zone (proposal: `time.zone`, the
-  zone recorded with the run for replay, resolved by ICU4X/TZif data in
-  guest code so both hosts agree); without it the zone is UTC.
+- **Local time zones**: done by K9 D4 (below): the owner decided that the
+  host zone needs no grant; it is a recorded host input resolved by TZif
+  and ICU4X data in guest code.
 - **Full RegExp** (backreferences, lookaround, `\p{…}`, `d`/`v`, modifiers):
   a backtracking matcher bounded by fuel would replace the linear-time
   contract of v37; needs a new matcher contract.
@@ -443,6 +442,121 @@ type the result `string | undefined` only where the argument's static type
 includes `undefined`, a function or a symbol (tsc-valid code with such
 arguments still breaks); (c) the owner's literal decision, with the SDK
 changed.
+
+### K9 D4 local time — 2026-11-06
+
+Track K9 D4 (local-time `Date`, then `Intl`), first batch: `Date` in the
+host's time zone, to ECMA-262 §21.4 with Node 24.20.0 as the oracle, under
+the selector `local_time()`
+([contract](architecture.md#local-time-local_time),
+[rules](profile-rules.md#local-time-local_time)). Owner decisions applied:
+local time always uses the host's zone without a grant, recorded as a host
+input for replay; locale data through ICU4X with deterministic data.
+
+Implemented:
+
+- Two capability-free host inputs, `intl_time_zone` and `intl_locale`
+  (registry, lowering, runtime handler, `varta.d.ts`, generated browser
+  registry, Worker forwarding of the browser's resolved zone and locale,
+  documentation tables). Embedders pass `RunOptions::host_inputs` (default
+  UTC/`en-US`); `RunReport::host_inputs` records them; the native hosts read
+  `TZ`//etc/localtime and `LC_ALL`/`LC_MESSAGES`/`LANG` as ICU does, and
+  `varta run`/`dev` take `--time-zone`/`--locale`.
+- The engine crate `varta-intl` (`no_std`, no `unsafe`): TZif v2–4 and POSIX
+  TZ footer evaluation (`zone`, `posix`), ECMA-262 LocalTime/UTC with the
+  earliest-instant and offset-before-the-gap rules, and the localized zone
+  name of `toString` (`names`) over ICU4X, with V8's equivalent-year rule for
+  the daylight flag outside 1970–2038. Linked into guest Wasm as
+  `date_zone_offset` and `date_zone_name`; the date prelude calls them.
+- The intrinsic linker links indirect calls: address-taken library
+  functions get slots appended to the guest's table, every table index
+  relocation (including position-independent `__table_base`-relative ones)
+  is rewritten, and the runtime's effect analysis counts an indirect call as
+  a call of every table function. ICU4X (through `core::fmt`) needs it; every
+  later `Intl` service does too.
+- Local `Date.parse` of date-time forms without an offset (§21.4.3.2).
+
+New dependencies (exact pins, `[workspace.dependencies]`): `jiff-tzdb`
+=0.1.9 (the IANA tzdata 2026e as TZif, data only, `no_std`, no
+dependencies; the only maintained bundled TZif crate, and in ICU's rearguard
+form, which matches V8's daylight flags), `icu_datetime` =2.4.0 and
+`icu_time` =2.4.0 with compiled data (zone names, metazones; same ICU4X 2.4
+line as `icu_properties`), `icu_locale_core` =2.4.0, `icu_provider` =2.4.0
+and `writeable` =0.6.4 (already locked through `icu_properties`/`parley`).
+ICU4X's other data crates (`icu_datetime_data`, `icu_time_data`,
+`icu_calendar` and its data, `icu_decimal`, `icu_plurals`, `icu_pattern`,
+`fixed_decimal`, `calendrical_calculations`) come with them. They are built
+only into the wasm32 intrinsic library and `varta-intl`'s own tests.
+
+Evidence: `varta-intl` tests (offsets of 30 zones at 4872 instants and
+18144 local times, and of all 436 zones Node lists at 228 instants, against
+Node; POSIX rule forms; 2349 zone names in nine locales against Node with
+every difference pinned by cause), `varta-runtime` `local_time_tests` (one
+program, ten zone/locale pairs, Node 24.20.0 output; defaults and recorded
+inputs; unknown zones; fractional offsets; malformed inputs; imports; one
+read per instance; v37 unchanged), the linker test
+`indirect_calls_of_linked_code_get_appended_table_slots`, the conformance
+case `date-local-time` (run with `hostInputs`).
+
+Sizes (macOS arm64): the checked-in intrinsic library grows from 519 KB to
+3.6 MB. A v38 program that uses `Date` links the tzdata, about 225 KB of
+data (333 KB module for a one-line program); one that calls
+`toString`/`toTimeString` also links ICU4X's zone names of every CLDR
+locale, about 2.5 MB (2.85 MB module).
+
+Differences from Node 24.20.0 that need the owner (not documented as
+accepted deviations yet):
+
+1. **CLDR version.** ICU4X 2.4 ships CLDR 49; Node 24.20.0 ships CLDR 48
+   (ICU 78.3). Zone names differ where CLDR 49 changed them (17% of the
+   2349 pinned name samples, mostly outside English; in `en-US` Honolulu,
+   Apia, Casablanca and two historic summer names). ICU4X 2.3 has CLDR
+   48.2.1 but cannot share a lockfile with `icu_segmenter` 2.4 that the
+   vendored Parley uses. Options: accept CLDR 49 (newer than Node) and pin
+   its text, or generate Varta's own ICU4X data from CLDR 48 JSON
+   (`icu_provider_export`, checked-in baked data).
+2. **`getTimezoneOffset` with seconds.** The specification gives a fraction
+   for local mean time offsets (296.0333… for New York before 1883); V8
+   truncates to 296. Varta follows the specification.
+3. **tzdata 2026e vs Node's 2026c**: Manitoba and Inuvik differ from 2027.
+
+Data selection for `Intl` (proposal; nothing shipped as a subset). Measured
+wasm32 data of ICU4X 2.4's compiled data for every locale, each reached by
+runtime-chosen options: `DateTimeFormat` with all calendars and zone names
+3.8 MB, `DisplayNames` (languages, regions, scripts, locales) 3.3 MB,
+`Segmenter` with LSTM models 2.4 MB (the dictionary models ICU4C uses are
+larger), zone names alone 2.4 MB, `Collator` 1.1 MB, `RelativeTimeFormat`
+0.37 MB, currency names about 2.5 MB and unit names about 0.6 MB (estimated
+from the data sources), `ListFormat` 47 KB, compact decimals 43 KB,
+`PluralRules` 13 KB, decimal symbols 10 KB, locale canonicalization 87 KB,
+tzdata 225 KB: about 17 MB for the full surface. Linked data sits in each
+instance's linear memory and counts toward its memory budget (an HTTP
+request keeps 8 MiB), and the checked-in intrinsic library would carry it
+all. Proposal:
+
+- **A (no subset).** Keep every locale, but move locale data out of
+  baked statics into one versioned data blob per service that the linker
+  appends as *passive* segments, one per (data marker, locale); the guest
+  copies only the locales it uses into its arena on first use (`memory.init`
+  through a synthesized accessor). Artifact size grows with the services a
+  program uses (up to about 17 MB), memory only with the locales it touches.
+- **B (selected locales).** ECMA-402 lets an implementation choose its
+  available locales (`[[AvailableLocales]]`). A project lists them
+  (`"locales": ["en", "uk"]` in `varta.config.json`; default: a small set the
+  owner names, or all); `varta build` generates the data blob for exactly
+  those (`icu_provider_export`), and the host's default locale resolves
+  through CLDR fallback to the best available one. `supportedLocalesOf` and
+  `resolvedOptions().locale` report the selection, which is conformant but
+  differs from Node for locales outside it.
+- Both keep the formatting code in the linked library and the data
+  deterministic and versioned (CLDR, ICU4X and tzdata versions in the
+  artifact). B with A's lazy segments gives the smallest artifacts and
+  memory.
+
+Not done in this batch: `Intl` (DateTimeFormat, NumberFormat, PluralRules,
+Collator, RelativeTimeFormat, ListFormat, DisplayNames, Segmenter, Locale,
+`getCanonicalLocales`, `supportedValuesOf`) and the `toLocale*` family,
+pending the data-selection decision; the full gate of this batch.
 
 ### Native CSS `scale()` — native backlog batch, 2026-11-06
 
@@ -3609,7 +3723,8 @@ The selectors are registered; the table records what each stream admits.
 | `strict_members()` | Strict members: undeclared member access rejected, per-union member limits from the registry, discriminant dispatch, exhaustive discriminant switches | Implemented ([contract](architecture.md#strict-members-and-wide-unions-strict_members)): `property X is not declared by Owner` for every static access form; `union_members`/`json_union_members` in `ProgramLimits` (frozen 16/7, v38 the entity bound); one discriminant lookup and a flat literal chain (about 55 fuel per member before the match, 9 after); flat or balanced lowering above 16 members; exhaustive `switch` over `x.kind` and nested paths with a diagnostic naming unhandled members. Pending: `varta dev --profile-fuel` of programs with checked conversions fails (`value ABI helpers cannot call host imports`), pre-existing |
 | `file_roots()` | Virtual file roots (wave 2): `fs.*` paths and grants are virtual paths `/<root>/...`; the configuration names roots inside the project, the host policy maps them for packaged runs | Implemented ([contract](architecture.md#virtual-file-roots-file_roots)): `fs.roots` in the configuration pinned no-follow at load, manifest `fsRoots` names (host ABI 34), host-policy `fsRoots` mapping pinned at startup, canonical virtual paths with whole-component matching against request and ceiling, no-follow reads below the root descriptor; run, application, view, HTTP request stores and tool invocation. V1–v37 keep host paths |
 | `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Iterable<T>` value annotations (`Array.from` with a map function: `standard_library()`) |
-| `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag, host time-zone grant; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
+| `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
+| `local_time()` | K9 D4 local time (2026-11-06): `Date` in the host's time zone, zone and locale as recorded host inputs | Implemented ([contract](architecture.md#local-time-local_time), [record](#k9-d4-local-time--2026-11-06)): `intl_time_zone`/`intl_locale` (host ABI 34, no capability), linked `date_zone_offset`/`date_zone_name` over `varta-intl` (tzdata 2026e, ICU4X 2.4 / CLDR 49), linked indirect calls. Pending owner decisions: CLDR 49 vs Node's 48, Intl data selection; pending work: Intl and `toLocale*` |
 | `expression_forms()` | K9 C — expressions and functions (2026-11-06): `await` anywhere, comma, `new.target` comparisons, tagged templates, spreads into fixed parameters, `this` parameters and field arrows, object-literal methods with `this`, computed keys, destructuring everywhere, hand-written iterators, `using`, structural thenables | Implemented in part ([contract](architecture.md#expression-forms-expression_forms), [record](#k9-c--expressions-and-functions-2026-11-06)): no ABI, value-layout, scheduler or host change. Pending: `SuppressedError` for double throws in `using`, `await` in `switch` case tests |
 | `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results. No ABI, value-layout or host change. Pending (owner decision): static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
 | `full_regexp()` | K9 D3 full RegExp (2026-11-06): the ES2025 pattern language with a backtracking matcher bounded by fuel, match indices, the `v` flag | Implemented ([contract](architecture.md#full-regexp-full_regexp), [record](#k9--typescript-completeness-and-the-first-release-agreed-2026-11-06)): program format 2, the linked `regexp_exec` and (follow-up, 2026-11-07, [record](#k9-d3-follow-up--2026-11-07)) the linked pattern compiler `regexp_compile` for run-time patterns, `RegExp.escape`, match arrays as arrays, lazy `matchAll`, `undefined` split captures and run-time replacer arguments, and (after K9 D2) the RegExp symbol protocols and custom matchers; V37 keeps the linear-time subset |
@@ -7969,7 +8084,7 @@ documented deviations without approval; Node 24 is the oracle. Closed in v38
   `SyntaxError` with V8's text (constant arguments included). Case classes
   and emoji sequences became checked-in tables with generators and checks;
   set unions became linear merges so run-time compiles stay cheap. Size:
-  `intrinsics.wasm` 536 282 → 1 190 098 bytes (code +114 KB, data +276 KB,
+  `intrinsics.wasm` 3 631 108 → 4 288 991 bytes (on `main` with K9 D4; +657 883) (code +114 KB, data +276 KB,
   the rest relocations); only modules that construct a pattern at run time
   link the pattern compiler and its Unicode data. Fuel: about 37 000 for a
   small pattern, 3.3 million for `\p{L}+`, 48 million for `\p{RGI_Emoji}`
@@ -7997,8 +8112,8 @@ documented deviations without approval; Node 24 is the oracle. Closed in v38
 Evidence: `full_regexp_cases` `runtime_patterns`, `match_arrays` and
 `replacers` (Node 24.20.0), the pattern-compiler table and message tests,
 the CLI smoke test `v38_runtime_regexp_patterns_run_in_dev_and_artifacts`
-and five conformance cases in five new feature rows (204 → 209 passing of
-208 → 213 after the K9 D2 merge). V37 keeps its prelude, programs and diagnostics (the v37
+and five conformance cases in five new feature rows (205 → 210 passing of
+209 → 214 after the K9 D2 and D4 merges). V37 keeps its prelude, programs and diagnostics (the v37
 `regexp_cases` and v37 rejections pass unchanged). Fuel goldens: v38 match
 arrays read element 0 live (one checked element read instead of a field
 read); no recorded golden moved. Refused: `replaceAll`/`matchAll` with a custom matcher that also has

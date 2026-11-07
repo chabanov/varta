@@ -64,8 +64,17 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
         ),
         (
             "varta-intrinsics-wasm",
-            ["varta-intrinsics", "varta-common", "varta-bigint"].as_slice(),
+            [
+                "varta-intrinsics",
+                "varta-common",
+                "varta-bigint",
+                "varta-intl",
+            ]
+            .as_slice(),
         ),
+        // The local-time and locale layer of the linked intrinsics (bundled
+        // tzdata and ICU4X data); it depends on no Varta crate.
+        ("varta-intl", [].as_slice()),
         // The CSS style engine reads common's `no_std` view grammars; the
         // native renderer links it and, compiled to wasm32, the browser
         // host runs it.
@@ -169,6 +178,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                         | "varta-intrinsics-wasm"
                         | "varta-kv-codec"
                         | "varta-kv-codec-wasm"
+                        | "varta-intl"
                         | "varta-style"
                         | "varta-style-wasm"
                         | "varta-view"
@@ -184,6 +194,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                                 | "varta-bigint"
                                 | "varta-intrinsics"
                                 | "varta-kv-codec"
+                                | "varta-intl"
                                 | "varta-style"
                                 | "varta-view"
                                 | "varta-compiler"

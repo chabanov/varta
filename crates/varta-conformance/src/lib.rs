@@ -60,6 +60,7 @@ pub fn run_suite(
                 profile: i.profile,
                 source: source.clone(),
                 grants: case.grants.clone(),
+                host_inputs: case.host_inputs.clone(),
             },
             timeout,
         );

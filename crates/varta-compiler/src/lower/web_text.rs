@@ -118,6 +118,9 @@ impl Lower<'_> {
                 kind: E::Host(Host::DateNow, vec![]),
             }));
         }
+        if let Some(expr) = self.local_time_intrinsic(call, name)? {
+            return Ok(Some(expr));
+        }
         if name == "varta.array.get" {
             // An element read without the `undefined` of a hole or an
             // out-of-range index: the engine prelude only reads indexes it

@@ -16,7 +16,7 @@
   arguments counted at run time. With K9 D2 symbol values, `RegExp` has
   `[Symbol.match]`, `[Symbol.matchAll]`, `[Symbol.replace]`,
   `[Symbol.search]` and `[Symbol.split]`, and the String methods call custom
-  matchers. Conformance: 209 passed, 4 known unsupported of 213.
+  matchers. Conformance: 210 passed, 4 known unsupported of 214.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
   2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as

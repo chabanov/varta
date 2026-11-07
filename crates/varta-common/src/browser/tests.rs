@@ -147,6 +147,16 @@ fn pilot_effect_facts_name_registered_operations_capabilities_and_collector_cons
     assert!(booleans.contains(&effects["exit"]["capability"]));
     assert_eq!(effects["random"]["sampleBits"], json!(f64::MANTISSA_DIGITS));
     assert_eq!(effects["exit"]["minimum"], json!(i32::MIN));
+    // Local time: capability-free recorded inputs, admitted under v38 only.
+    for (key, operation) in [
+        ("timeZone", HostOperation::IntlTimeZone),
+        ("locale", HostOperation::IntlLocale),
+    ] {
+        assert_eq!(effects["localTime"][key], json!(operation.name()));
+        assert_eq!(operation.capability(), None);
+        assert!(admits(LanguageProfile::CheckedF64Utf16V38, operation));
+        assert!(!admits(LanguageProfile::CheckedF64Utf16V37, operation));
+    }
     let collector = &effects["collector"];
     assert_eq!(collector["idleExport"], json!(c::IDLE_EXPORT));
     assert_eq!(collector["stepUnits"], json!(c::IDLE_STEP_UNITS));

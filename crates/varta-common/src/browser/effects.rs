@@ -84,6 +84,13 @@ pub(super) fn registry() -> Value {
         // by 2^-sampleBits, exactly as the native sampler converts it.
         "random":{"operation":H::MathRandom.name(),"wordBits":u64::BITS,"sampleBits":f64::MANTISSA_DIGITS},
         "environment":{"operation":H::EnvSnapshot.name(),"capability":capability(H::EnvSnapshot)},
+        // V38 local time: the recorded host inputs the bridge forwards (the
+        // browser's resolved zone and locale, read once per Worker) with the
+        // native syntax limits and defaults.
+        "localTime":{"timeZone":H::IntlTimeZone.name(),"locale":H::IntlLocale.name(),
+            "maxBytes":crate::host_inputs::MAX_INPUT_BYTES,
+            "defaultTimeZone":crate::host_inputs::DEFAULT_TIME_ZONE,
+            "defaultLocale":crate::host_inputs::DEFAULT_LOCALE},
         // The native host-failure texts of an invalid input and of a result
         // above `abi::MAX_RESULT_BYTES`.
         "failures":{"invalid":"<invalid host input>","tooLarge":"<result too large>"},

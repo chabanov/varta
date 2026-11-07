@@ -3,22 +3,42 @@
 // `Date` class of the date prelude under v38 (`modules::engine::date_v38`);
 // the parser and calendar helpers above are shared.
 //
-// Local time is the program's time zone, a recorded host input. Without a
-// host-granted zone it is UTC (offset 0, named "Coordinated Universal
-// Time"), so local and UTC accessors agree and every output is the output of
-// Node with `TZ=UTC`. `LocalTime`/`UTC` (§21.4.1.25–26) go through
-// `zoneOffset`, the one place a granted zone would enter.
+// Local time (`local_time`, K9 D4) is the host's time zone, a recorded
+// host input (`varta.date.timeZone()`, read once per instance on first use),
+// and the zone name of `toString` is localized in the host's default locale
+// (`varta.date.locale()`). Offsets, transitions and names come from the
+// linked `date_zone_offset`/`date_zone_name` over the bundled tzdata and
+// CLDR data, so every host computes the same local time; a zone the data
+// does not know is UTC. `LocalTime`/`UTC` (§21.4.1.25–26) go through
+// `zoneOffset` and `utcTime`.
 
-const ZONE_NAME = 'Coordinated Universal Time';
-const MINUTES_PER_HOUR = 60;
 const YEAR_WINDOW = 1900;
 const MAX_TWO_DIGIT_YEAR = 99;
 const INVALID_DATE = 'Invalid Date';
+const OFFSET_AT_INSTANT = 0;
+const OFFSET_OF_LOCAL = 1;
 
-// The offset of local time from UTC at time value `time`, in ms: 0 in the
-// UTC zone at every time.
+// The host's zone identifier and locale tag, read on first use.
+let hostZone = '';
+let hostLocale = '';
+let hostRead = false;
+
+function readHost(): void {
+  if (!hostRead) {
+    hostZone = varta.date.timeZone();
+    hostLocale = varta.date.locale();
+    hostRead = true;
+  }
+}
+
+// GetNamedTimeZoneOffsetNanoseconds (§21.4.1.21) of the system time zone at
+// time value `time`, in ms.
 function zoneOffset(time: number): number {
-  return Number.isNaN(time) ? 0 : 0;
+  if (!Number.isFinite(time)) {
+    return 0;
+  }
+  readHost();
+  return varta.date.zoneOffset(hostZone, time, OFFSET_AT_INSTANT);
 }
 
 // LocalTime(t) (§21.4.1.25).
@@ -26,9 +46,14 @@ function localTime(time: number): number {
   return time + zoneOffset(time);
 }
 
-// UTC(t) (§21.4.1.26) of a local time value.
+// UTC(t) (§21.4.1.26) of a local time value: the earliest instant of a
+// repeated local time, the offset before the transition for a skipped one.
 function utcTime(local: number): number {
-  return local - zoneOffset(local);
+  if (!Number.isFinite(local)) {
+    return NaN;
+  }
+  readHost();
+  return local - varta.date.zoneOffset(hostZone, local, OFFSET_OF_LOCAL);
 }
 
 // ToIntegerOrInfinity of a finite number (the callers check finiteness).
@@ -145,12 +170,19 @@ function timeString(local: number): string {
   return `${pad(f[HOURS]!, 2)}:${pad(f[MINUTES]!, 2)}:${pad(f[SECONDS]!, 2)} GMT`;
 }
 
-// TimeZoneString(tv) (§21.4.4.41.3).
+// TimeZoneString(tv) (§21.4.4.41.3): the offset's hours and minutes
+// (HourFromTime and MinFromTime of its magnitude, so seconds of a local mean
+// time offset are dropped) and the implementation-defined zone name, here
+// the localized long name Node shows.
 function zoneString(time: number): string {
   const offset = zoneOffset(time);
-  const minutes = Math.abs(offset) / MS_PER_MINUTE;
+  const magnitude = Math.abs(offset);
   const sign = offset >= 0 ? '+' : '-';
-  return `${sign}${pad(Math.floor(minutes / MINUTES_PER_HOUR), 2)}${pad(minutes % MINUTES_PER_HOUR, 2)} (${ZONE_NAME})`;
+  const hours = Math.floor(magnitude / MS_PER_HOUR);
+  const minutes = Math.floor(magnitude / MS_PER_MINUTE) % 60;
+  readHost();
+  const name = varta.date.zoneName(hostZone, hostLocale, time);
+  return `${sign}${pad(hours, 2)}${pad(minutes, 2)} (${name})`;
 }
 
 // The legacy forms that toString, toDateString and toUTCString produce
