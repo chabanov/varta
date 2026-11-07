@@ -376,9 +376,24 @@ pub(crate) struct ValueTypes {
     /// (v38 `expression_forms`); see `lower::object_methods`.
     pub receivers: crate::lower::object_methods::Receivers,
     /// V38 (`module_evaluation`): module bindings that code may read before
-    /// their initialization, by root slot: the slot of their initialization
-    /// flag and the binding's source name (`ReferenceError` text).
-    pub module_flags: std::collections::BTreeMap<u32, (u32, String)>,
+    /// their initialization, by root slot.
+    pub module_flags: std::collections::BTreeMap<u32, ModuleFlag>,
+}
+/// The initialization flag of a module binding that code may reach before
+/// its initialization (v38 `module_evaluation`).
+#[derive(Clone, Debug)]
+pub struct ModuleFlag {
+    /// The root slot of the flag (`0` or `1`).
+    pub flag: u32,
+    /// The binding's source name (diagnostic text).
+    pub name: String,
+    /// A `var` or a static field: JavaScript reads `undefined` before its
+    /// definition and a write defines it, so an early read is a checked
+    /// read (a `TypeError` when the declared type does not admit
+    /// `undefined`) and an early write sets the flag. Otherwise the binding
+    /// is in its temporal dead zone and every early access throws
+    /// `ReferenceError`.
+    pub hoisted: bool,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1), or under value

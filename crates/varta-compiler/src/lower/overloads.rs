@@ -26,6 +26,9 @@ pub(crate) struct Overload {
     /// instantiates it for the argument types (`generic_calls::
     /// instantiate_overload`).
     pub(super) generic: Option<Rc<generics::Function>>,
+    /// The type arguments of the generic class instance that declares a
+    /// generic method overload (empty otherwise).
+    pub(super) outer: generics::Frame,
 }
 
 #[derive(Default)]
@@ -56,17 +59,17 @@ impl Overloads {
 fn signatures(
     declarations: &[Declaration],
     implementation: &Signature,
-    (source, functions): (&Source, bool),
+    (source, functions, outer): (&Source, bool, &generics::Frame),
     types: &mut ir::ValueTypes,
 ) -> Result<Rc<[Overload]>> {
     let mut overloads = Vec::new();
     for (name, function) in declarations {
-        // V38: a generic overload of a module function is instantiated per
-        // call; a generic method overload is not admitted yet.
-        let generic = match &function.type_params {
-            Some(params) if functions => Some(Rc::new(generics::Function {
+        // V38: a generic overload signature of a module function or a method
+        // is instantiated per call.
+        let generic = function.type_params.as_ref().map(|params| {
+            Rc::new(generics::Function {
                 module: named::current(types),
-                kind: "function",
+                kind: if functions { "function" } else { "method" },
                 name: name.sym.to_string(),
                 declaration: ast::FnDecl {
                     ident: name.clone(),
@@ -75,14 +78,8 @@ fn signatures(
                 },
                 params: (**params).clone(),
                 source: source.clone(),
-            })),
-            Some(_) => {
-                return Err(
-                    source.locate(unsupported("generic method overload signature"), name.span)
-                );
-            }
-            None => None,
-        };
+            })
+        });
         if function.return_type.is_none() {
             return Err(source.locate(
                 type_error(format!(
@@ -103,7 +100,7 @@ fn signatures(
             function,
         };
         let signature = match &generic {
-            Some(generic) => generic_calls::unknown_instance(generic, types),
+            Some(generic) => generic_calls::unknown_instance(generic, outer, types),
             None => signature::check(&declaration, 0, source, types),
         }
         .map_err(|e| source.locate(e, name.span))?;
@@ -147,6 +144,7 @@ fn signatures(
             shape: signature.shape,
             result: signature.result,
             generic,
+            outer: outer.clone(),
         });
     }
     Ok(overloads.into())
@@ -200,7 +198,12 @@ pub(super) fn declare_functions(
                 ident.span,
             ));
         };
-        let overloads = signatures(&declarations, implementation, (source, true), types)?;
+        let overloads = signatures(
+            &declarations,
+            implementation,
+            (source, true, &generics::Frame::new()),
+            types,
+        )?;
         types
             .overloads
             .functions
@@ -238,7 +241,13 @@ pub(super) fn declare_methods(
                 declarations[0].0.span,
             ));
         };
-        let overloads = signatures(&declarations, &implementation, (source, false), types)?;
+        let outer = types.classes.get(class).frame.clone();
+        let overloads = signatures(
+            &declarations,
+            &implementation,
+            (source, false, &outer),
+            types,
+        )?;
         types
             .overloads
             .methods
@@ -312,7 +321,12 @@ impl Lower<'_> {
             let overload = match &overload.generic {
                 Some(generic) => {
                     let found: Vec<Type> = values.iter().map(|value| value.ty).collect();
-                    match generic_calls::instantiate_overload(generic, &found, self.types)? {
+                    match generic_calls::instantiate_overload(
+                        generic,
+                        &overload.outer,
+                        &found,
+                        self.types,
+                    )? {
                         Some(instantiated) => {
                             instance = instantiated;
                             &instance

@@ -701,9 +701,10 @@ fn overload_instance(
 /// arity and the contextual types its declaration fixes.
 pub(super) fn unknown_instance(
     function: &generics::Function,
+    outer: &Frame,
     types: &mut ir::ValueTypes,
 ) -> Result<Signature> {
-    overload_signature(function, Frame::new(), types)
+    overload_signature(function, outer.clone(), types)
 }
 
 /// A generic overload signature instantiated for a call (v38): its type
@@ -711,8 +712,11 @@ pub(super) fn unknown_instance(
 /// for each candidate signature, unbound ones `unknown`. `None` when the
 /// arguments bind no consistent instantiation, so the candidate does not
 /// match.
+/// `outer` binds the type parameters of an enclosing generic class
+/// instance (a method overload).
 pub(super) fn instantiate_overload(
     function: &generics::Function,
+    outer: &Frame,
     arguments: &[Type],
     types: &mut ir::ValueTypes,
 ) -> Result<Option<overloads::Overload>> {
@@ -744,7 +748,7 @@ pub(super) fn instantiate_overload(
         .iter()
         .map(|p| inference.bound.get(p.name.sym.as_ref()).copied())
         .collect();
-    let frame = in_definition(function.module, &Frame::new(), types, |t| {
+    let frame = in_definition(function.module, outer, types, |t| {
         generics::bind(
             &function.params,
             &args,
@@ -757,6 +761,10 @@ pub(super) fn instantiate_overload(
     let Ok(frame) = frame else {
         return Ok(None);
     };
+    let mut frame = frame;
+    for (name, ty) in outer {
+        frame.entry(name.clone()).or_insert(*ty);
+    }
     Ok(overload_instance(function, frame, types)
         .ok()
         .map(|signature| overloads::Overload {
@@ -764,5 +772,6 @@ pub(super) fn instantiate_overload(
             shape: signature.shape,
             result: signature.result,
             generic: None,
+            outer: Frame::new(),
         }))
 }

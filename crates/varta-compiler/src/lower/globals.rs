@@ -81,13 +81,19 @@ impl Lower<'_> {
         self.flow_assigned(binding.slot, value.ty)?;
         let value = unions::widen(value, Some(storage), self.types)?;
         // V38: a write before the initialization throws after the right side
-        // is evaluated (PutValue on an uninitialized binding).
-        let Some((flag, name)) = self.types.module_flags.get(&index).cloned() else {
+        // is evaluated (PutValue on an uninitialized binding); a `var` or a
+        // static field is defined by it.
+        let Some(flag) = self.types.module_flags.get(&index).cloned() else {
             return Ok(S::InitModuleConstant(index, value));
         };
         let span = value.span;
         let saved = self.hidden(storage);
-        let check = self.module_flag_check(flag, &name, span)?;
+        let check = if flag.hoisted {
+            self.mark_initialized(index, span)
+                .ok_or_else(|| CompilerError::Internal("missing module flag".into()))?
+        } else {
+            self.module_flag_check(flag.flag, &flag.name, span)?
+        };
         Ok(S::Scope(
             vec![saved],
             vec![
@@ -101,9 +107,9 @@ impl Lower<'_> {
     /// `index` initialized, when code may read it earlier (v38
     /// `module_evaluation`).
     pub(super) fn mark_initialized(&self, index: u32, span: swc_common::Span) -> Option<S> {
-        let (flag, _) = self.types.module_flags.get(&index)?;
+        let flag = self.types.module_flags.get(&index)?;
         Some(S::InitModuleConstant(
-            *flag,
+            flag.flag,
             Expr {
                 span,
                 ty: Type::Boolean,
@@ -111,19 +117,23 @@ impl Lower<'_> {
             },
         ))
     }
+    /// `!flag`.
+    fn module_flag_unset(flag: u32, span: swc_common::Span) -> Expr {
+        Expr {
+            span,
+            ty: Type::Boolean,
+            kind: E::Not(Box::new(Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::ModuleConstant(flag),
+            })),
+        }
+    }
     /// `if (!flag) throw ReferenceError` for module binding `name`.
     fn module_flag_check(&mut self, flag: u32, name: &str, span: swc_common::Span) -> Result<S> {
         let error = self.reference_error(name, span)?;
         Ok(S::If(
-            Expr {
-                span,
-                ty: Type::Boolean,
-                kind: E::Not(Box::new(Expr {
-                    span,
-                    ty: Type::Boolean,
-                    kind: E::ModuleConstant(flag),
-                })),
-            },
+            Self::module_flag_unset(flag, span),
             vec![S::Throw(error)],
             vec![],
         ))
@@ -131,16 +141,48 @@ impl Lower<'_> {
     /// A read of the module binding in root slot `index`: when code may
     /// read it before its initialization (v38 `module_evaluation`), the
     /// flag is tested first and an uninitialized read throws
-    /// `ReferenceError`, as in JavaScript.
+    /// `ReferenceError`, as in JavaScript. An uninitialized `var` or static
+    /// field reads `undefined` in JavaScript: a checked read (owner
+    /// decision of 2026-11-07) that yields `undefined` when the declared
+    /// type admits it and otherwise throws `TypeError`.
     fn module_flag_read(&mut self, index: u32, value: Expr) -> Result<Expr> {
-        let Some((flag, name)) = self.types.module_flags.get(&index).cloned() else {
+        let Some(flag) = self.types.module_flags.get(&index).cloned() else {
             return Ok(value);
         };
         let span = value.span;
         let ty = value.ty;
-        let check = self.module_flag_check(flag, &name, span)?;
         let output = self.hidden(ty);
         let marker = self.hidden(Type::Number);
+        let body = if flag.hoisted {
+            let early = if mixed_records::admits_undefined(ty, self.types) {
+                let undefined = Expr {
+                    span,
+                    ty: Type::Undefined,
+                    kind: E::Integer(0),
+                };
+                S::Init(output, unions::widen(undefined, Some(ty), self.types)?)
+            } else {
+                let message = format!(
+                    "{} is read before its definition: undefined is not a value of its type {ty}",
+                    flag.name
+                );
+                S::Throw(self.array_error(
+                    varta_common::value::ErrorClass::TypeError,
+                    &message,
+                    span,
+                )?)
+            };
+            vec![S::If(
+                Self::module_flag_unset(flag.flag, span),
+                vec![early],
+                vec![S::Init(output, value)],
+            )]
+        } else {
+            vec![
+                self.module_flag_check(flag.flag, &flag.name, span)?,
+                S::Init(output, value),
+            ]
+        };
         Ok(Expr {
             span,
             ty,
@@ -148,7 +190,7 @@ impl Lower<'_> {
                 output,
                 marker,
                 roots: vec![],
-                body: vec![check, S::Init(output, value)],
+                body,
             },
         })
     }

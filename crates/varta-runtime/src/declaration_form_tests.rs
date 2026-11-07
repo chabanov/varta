@@ -117,6 +117,11 @@ const CASES: &[(&str, &str, &str)] = &[
         include_str!("declaration_form_cases/module_tdz.expected"),
     ),
     (
+        "early_reads",
+        include_str!("declaration_form_cases/early_reads.ts"),
+        include_str!("declaration_form_cases/early_reads.expected"),
+    ),
+    (
         "static_super",
         include_str!("declaration_form_cases/static_super.ts"),
         include_str!("declaration_form_cases/static_super.expected"),
@@ -269,11 +274,13 @@ fn module_evaluation_and_static_blocks_match_node() {
 /// A module binding read or written before its initialization by code
 /// that runs during module evaluation throws `ReferenceError` at run time;
 /// only a read while an initializer is evaluated, which tsc reports too, is
-/// refused (TS2448), and a `var` or static field read early (JavaScript
-/// reads `undefined`) stays refused.
+/// refused (TS2448). A `var` or static field read early reads `undefined`
+/// as in JavaScript, a checked read: a declared type that does not admit it
+/// throws `TypeError` there (owner decision of 2026-11-07).
 #[test]
 fn module_temporal_dead_zone_matches_node() {
     matches_node("module_tdz");
+    matches_node("early_reads");
     for (source, diagnostic) in [
         (
             "const a = b; const b = 1; export function main(): void { console.log(String(a)); }",
@@ -282,10 +289,6 @@ fn module_temporal_dead_zone_matches_node() {
         (
             "const a = (() => b)(); const b = 1; export function main(): void { console.log(String(a)); }",
             "binding used before initialization: b (TS2448)",
-        ),
-        (
-            "function f(): number { return v; } const a = f(); var v = 1; export function main(): void { console.log(String(a)); }",
-            "v is read before its definition by code this initializer runs (JavaScript reads undefined",
         ),
         (
             "export function main(): void { console.log(String(x)); const x = 1; }",
@@ -397,17 +400,13 @@ fn static_methods_inherited_across_modules_match_node() {
     );
 }
 
-/// Generic overload signatures infer their type arguments per candidate
-/// (constraints included) and check the result against the instantiated
-/// signature.
+/// Generic overload signatures of functions, methods and static methods
+/// (also in generic class instances) infer their type arguments per
+/// candidate (constraints included) and check the result against the
+/// instantiated signature.
 #[test]
 fn generic_overloads_match_node() {
     matches_node("generic_overloads");
-    refused(
-        V38,
-        "class C { m<T>(x: T): T; m(x: string): string; m(x: unknown): unknown { return x; } } export function main(): void { console.log('x'); }",
-        "generic method overload signature",
-    );
 }
 
 #[test]
@@ -665,10 +664,6 @@ fn unsupported_declaration_forms_are_refused_by_name() {
         (
             "class A { static n = 1; } class B extends A {} export function main(): void { B.n = 2; console.log(String(A.n)); }",
             "assignment to the inherited static field n through a subclass",
-        ),
-        (
-            "class C { static make(): C { return new C(); } static x = C.make(); constructor() { console.log(String(C.later)); } static later = 2; } export function main(): void { console.log('x'); }",
-            "later is read before its definition by code this initializer runs (JavaScript reads undefined",
         ),
         (
             "export function main(): void { const k = 2; const C = class { v = k; }; console.log(String(new C().v)); }",

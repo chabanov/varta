@@ -385,9 +385,10 @@ fn chunks<'d, 'a>(declared: &'d [Declared<'a>]) -> Vec<&'d [Declared<'a>]> {
 }
 
 /// Module bindings that code may read before their initialization (v38
-/// `module_evaluation`). JavaScript throws `ReferenceError` on such a read;
-/// these bindings are stored in root slots with an initialization flag that
-/// every read and write tests.
+/// `module_evaluation`). JavaScript throws `ReferenceError` on such a read
+/// (reads `undefined` for a `var` or a static field); these bindings are
+/// stored in root slots with an initialization flag that every read and
+/// write tests.
 #[derive(Default)]
 pub(super) struct Early {
     /// Bindings that code may reach before their initialization.
@@ -397,6 +398,10 @@ pub(super) struct Early {
     /// slot, so the binding's type is fixed before its initializer is
     /// lowered (by its annotation or its function syntax).
     captured: BTreeSet<String>,
+    /// The subset that JavaScript reads as `undefined` before its
+    /// definition, a `var` or a static field: an early read is a checked
+    /// read and an early write defines it (`ir::ModuleFlag::hoisted`).
+    hoisted: BTreeSet<String>,
 }
 
 /// Validate bindings and initializer forms of one module before lowering. A
@@ -471,20 +476,19 @@ fn check(
                 continue;
             }
             // V38 (`module_evaluation`): a later binding read while the
-            // initializer is evaluated is TypeScript's TS2448.
+            // initializer is evaluated is TypeScript's TS2448; a later `var`
+            // reads `undefined` (a checked read, below).
             if let Some(name) = module_evaluation::immediate(value)
                 .into_iter()
-                .find(|name| pending(name))
+                .find(|name| pending(name) && !hoisted.contains(name))
             {
                 let shown = crate::desugar::display_name(&name);
-                let message = if hoisted.contains(&name) {
-                    format!(
-                        "var {shown} read before its initialization (JavaScript reads undefined, which its type does not admit)"
-                    )
-                } else {
-                    format!("binding used before initialization: {shown} (TS2448)")
-                };
-                return Err(source.locate(invalid(message), value.span()));
+                return Err(source.locate(
+                    invalid(format!(
+                        "binding used before initialization: {shown} (TS2448)"
+                    )),
+                    value.span(),
+                ));
             }
             for name in module_evaluation::mentioned(value)
                 .into_iter()
@@ -495,28 +499,23 @@ fn check(
             }
             // Code the initializer runs may read a later binding: JavaScript
             // throws `ReferenceError`, which a flag test reproduces. A static
-            // field or a `var` reads `undefined` instead, which its type does
-            // not admit.
+            // field or a `var` reads `undefined` instead ([`Early::hoisted`]).
             if module_evaluation::effectful(value) {
-                for name in module_evaluation::reachable(module, value)
-                    .into_iter()
-                    .filter(|name| pending(name))
-                {
-                    if hoisted.contains(&name) || module_evaluation::static_field(&name, &classes) {
-                        return Err(source.locate(
-                            invalid(format!(
-                                "{} is read before its definition by code this initializer runs (JavaScript reads undefined, which its type does not admit)",
-                                crate::desugar::display_name(&name)
-                            )),
-                            value.span(),
-                        ));
-                    }
-                    early.flagged.insert(name);
-                }
+                early.flagged.extend(
+                    module_evaluation::reachable(module, value)
+                        .into_iter()
+                        .filter(|name| pending(name)),
+                );
             }
             ready.insert(binding.id.sym.to_string());
         }
     }
+    early.hoisted = early
+        .flagged
+        .iter()
+        .filter(|name| hoisted.contains(*name) || module_evaluation::static_field(name, &classes))
+        .cloned()
+        .collect();
     Ok(early)
 }
 
@@ -773,9 +772,14 @@ impl Lower<'_> {
                 }
                 let (index, flag) = (*stored, *stored + 1);
                 *stored += 2;
-                self.types
-                    .module_flags
-                    .insert(index, (flag, shown.to_owned()));
+                self.types.module_flags.insert(
+                    index,
+                    ir::ModuleFlag {
+                        flag,
+                        name: shown.to_owned(),
+                        hoisted: early.hoisted.contains(name),
+                    },
+                );
                 let assignable = var.kind != ast::VarDeclKind::Const;
                 registered.insert(
                     name.to_owned(),
@@ -945,7 +949,15 @@ impl Lower<'_> {
                         let flag = *stored;
                         *stored += 1;
                         let shown = crate::desugar::display_name(name.id.sym.as_ref()).to_owned();
-                        self.types.module_flags.insert(index, (flag, shown));
+                        let hoisted = early.hoisted.contains(name.id.sym.as_ref());
+                        self.types.module_flags.insert(
+                            index,
+                            ir::ModuleFlag {
+                                flag,
+                                name: shown,
+                                hoisted,
+                            },
+                        );
                         body.extend(self.mark_initialized(index, span));
                     }
                     // Later initializers (closures) reach the stored variable.
