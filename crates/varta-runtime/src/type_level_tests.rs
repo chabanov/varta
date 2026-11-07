@@ -261,6 +261,14 @@ fn overloads_generic_signatures_object_this_and_pattern_templates() {
 }
 
 #[test]
+fn intersection_infer_generic_this_asserts_this_and_rest_overloads() {
+    case(
+        include_str!("type_level_cases/admitted_forms.ts"),
+        &["1 x q", "4 3 2", "9", "not a square", "a-b-c 3  6 4"],
+    );
+}
+
+#[test]
 fn pattern_template_types_check_their_literals() {
     case(
         include_str!("type_level_cases/patterns.ts"),

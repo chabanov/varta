@@ -4112,7 +4112,9 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   `nested` (bound `MAX_TYPE_DEPTH`); recursive generic aliases go through
   `enter_recursive`/`push_instantiation`/`pop_instantiation` in
   `named::instantiate`, never by relaxing `NamedTypes::resolving` for the
-  same instantiation.
+  same instantiation. The same instantiation inside itself (and `this` in a
+  generic declaration, `named::instantiate_resolved`) resolves to its
+  recursive reservation, keyed by (declaration, type arguments).
 - `type_level::extends` is the one TypeScript assignability relation for
   conditional types, constraints (`generics::satisfies`), predicates,
   `satisfies` and `Exclude`/`Extract`. It decides types only; a value

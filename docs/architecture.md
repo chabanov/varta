@@ -6367,7 +6367,9 @@ finished body fills the reservation, so the interned type graph is cyclic but
 finite. Direct cycles without such a step stay rejected with `recursive type
 declaration` (`type A = B; type B = A`), a recursive alias as a direct union
 member is rejected (`type A = string | A`), and recursive generic declarations
-are rejected. V33 and earlier keep rejecting every self-reference.
+are rejected (v38 [`type_level`](#type-level-type_level) admits a generic
+declaration that refers to the same instantiation of itself, reserved per
+type argument list). V33 and earlier keep rejecting every self-reference.
 
 Recursive graphs are ordinary values: their runtime JSON depth (64) and visit
 (4096) bounds and the encoder's cycle check are unchanged, and the collector is
@@ -11954,17 +11956,33 @@ refused with an `unsupported …` diagnostic that names it (list below).
   through `B[]`) throws `TypeError` at the read; Node continues with the
   mistyped value.
 
+- **Step 3 admissions (2026-11-06).** `infer` inside an intersection pattern
+  (`T extends { a: infer A } & { b: infer B }`: the check type matches
+  every member, sharing the bindings; a name inferred twice joins its
+  candidates). `this` in a generic interface or object type alias is the
+  instantiation being resolved, and a generic declaration may refer to the
+  same instantiation of itself (`interface Link<T> { next: Link<T> | null
+  }`): the recursive reservation is kept per type argument list. An
+  `asserts this` or `asserts this is T` method narrows the receiver binding
+  of its call statement for the rest of the block (a subclass narrowing
+  reads through the descriptor test, `TypeError` when the method lied). An
+  overload set with a rest parameter merges into one rest parameter of the
+  union of every parameter type (`{ (...parts: string[]): string; (n:
+  number): string }` is `(...args: (string | number)[]) => string`); the
+  call selects the first overload whose parameters (rest elements
+  included) accept the arguments.
+
 Still refused, each by name: `unique symbol` (no Symbol values in this
-profile), `import("…")` types, callable objects with properties (a call
-signature together with other members: no closed layout holds a function
-value and fields), overloads with a `this` parameter, type parameters or a
-rest parameter, generic construct signatures and constructor types,
+profile; track D's Symbol values are not in this profile yet), `import("…")`
+types, callable objects with properties (a call signature together with
+other members: no closed layout holds a function value and fields),
+overloads with a `this` parameter or type parameters, generic construct
+signatures and constructor types (a monomorphized class has one layout per
+instantiation, so one constructor value cannot build every instantiation),
 intersections of object types whose shared property has no common type,
-mapped types over `number` or symbol key sets, `keyof never`, `this` in a
-generic declaration, `typeof` of a generic function or class and of a
-module initializer whose type would need lowering, `infer` inside an
-intersection pattern or a union with several inferring members, and an
-`asserts this` method.
+mapped types over `number` or symbol key sets, `keyof never`, `typeof` of a
+generic function or class and of a module initializer whose type would need
+lowering, and `infer` in a union with several inferring members.
 
 #### Declarations and classes (`declaration_forms`)
 

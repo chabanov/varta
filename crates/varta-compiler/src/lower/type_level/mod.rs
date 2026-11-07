@@ -108,8 +108,9 @@ pub(crate) struct TypeLevel {
     /// The visible local bindings' types while a statement that names one
     /// in a `typeof` query is lowered (by name; inner scopes shadow).
     locals: Option<BTreeMap<String, Type>>,
-    /// Methods with a `this is T` predicate, by (declaring class, name).
-    this_predicates: BTreeMap<(u32, String), Type>,
+    /// Methods with a `this is T` predicate or an `asserts this [is T]`
+    /// signature, by (declaring class, name).
+    this_predicates: BTreeMap<(u32, String), predicates::Predicate>,
     /// Overload sets of overloaded function types: each overload's function
     /// type, in declaration order.
     overloads: Vec<Vec<Type>>,
@@ -344,9 +345,13 @@ fn this_type(types: &mut ir::ValueTypes) -> Result<Type> {
             let name = name.clone();
             named::resolve(&name, types)
         }
-        Some((_, name, _)) => Err(unsupported(&format!(
-            "this type in the generic declaration {name} (each instantiation would refer to itself)"
-        ))),
+        // In a generic declaration, `this` is the instantiation being
+        // resolved (`Chain<number>` in `Chain<T>` with `T = number`).
+        Some((module, name, arguments)) => {
+            let key = (*module, name.clone());
+            let arguments = arguments.clone();
+            named::instantiate_resolved(&key, arguments, types)
+        }
         None => Err(type_error(
             "a this type is only available in a class, interface or object type member",
         )),
