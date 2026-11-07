@@ -98,6 +98,7 @@ const COMMON_CORE: &[&str] = &[
     "crates/varta-common/src/json/schema.rs",
     "crates/varta-common/src/limits.rs",
     "crates/varta-common/src/memory.rs",
+    "crates/varta-common/src/regexp.rs",
     "crates/varta-common/src/text.rs",
     "crates/varta-common/src/value.rs",
     "crates/varta-common/src/value/display.rs",

@@ -14,7 +14,7 @@ use varta_intrinsics::json::Sink;
 use varta_intrinsics::{
     format::{self, Mode},
     math::{self, Portable, Unary},
-    primitive, radix, string,
+    primitive, radix, regexp, string,
 };
 
 macro_rules! unary_math {
@@ -192,4 +192,31 @@ pub extern "C" fn string_to_upper_case16(ptr: i32, len: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn string_to_lower_case16(ptr: i32, len: i32) -> i32 {
     case(ptr, len, false)
+}
+
+/// The v38 backtracking RegExp matcher over a program and an input read in
+/// place: the capture slots as an owned string of 32-bit words (empty
+/// without a match). Matching runs here as guest code, metered as fuel; the
+/// backtracking stack lives in the per-call arena under the memory budget.
+#[unsafe(no_mangle)]
+pub extern "C" fn regexp_exec(
+    program_ptr: i32,
+    program_len: i32,
+    input_ptr: i32,
+    input_len: i32,
+    start: f64,
+    sticky: i32,
+) -> i32 {
+    entry(|| {
+        let program = checked(string::read(&Guest, program_ptr, program_len, STRING_BYTES));
+        let input = checked(string::read(&Guest, input_ptr, input_len, STRING_BYTES));
+        match checked(regexp::exec(&program, &input, start, sticky != 0)) {
+            Some(slots) => {
+                let bytes: alloc::vec::Vec<u8> =
+                    slots.iter().flat_map(|slot| slot.to_le_bytes()).collect();
+                owned(&bytes)
+            }
+            None => owned(&[]),
+        }
+    })
 }

@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with the K9 C expression and function forms (integrated with K9 A steps 1–2 and K9 B), K9 B declarations and classes, the K8 CSS engine's font-relative units, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, gated on the K9 C integration commit 1414396 whose sources equal merged `main` except the gate records: **4379 Rust tests passed, 0 failures, 25 ignored; 185 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-213007-y3wpjbwk/report.json` in that worktree. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **193 passed, 5 known unsupported out of 198** after the K9 A, B, C and D cases, module evaluation, enum and namespace objects, enum assignability, class index signatures and the K9 D1 console, SuppressedError and console method cases (2026-11-06; console cases record Node 24 console output), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **200 passed, 5 known unsupported out of 205** after the K9 A (steps 1–3), B, C, D, D1 and D3 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures and full RegExp (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -313,7 +313,8 @@ Not done, with the reason:
 - **Local-time `Date`**: the time zone is ambient host state; reading it
   needs a host policy (a grant or a fixed zone) decided by the owner.
 - **Wider RegExp** (backreferences, lookaround, `\p{…}`): the matcher is
-  linear-time by contract; these need a new matcher contract.
+  linear-time by contract; these need a new matcher contract (done in v38
+  by the [K9 D3 full RegExp](architecture.md#full-regexp-full_regexp)).
 - **Object wrappers and object-to-primitive coercion**: rare in typed
   library code; they need `valueOf`/`toString` dispatch on objects.
 
@@ -2837,7 +2838,7 @@ inferred from the current regression suite.
 | CORE-03 | Functions and control flow | Partial | Typed functions, closures, control flow, generators, async functions and async generators | Complete receiver/binding/call behavior, general iterables and remaining generator forms |
 | CORE-04 | Exceptions | Partial | Typed exceptions, Error subclasses, unknown catches and rooted propagation across suspension/finally | General thrown-value admission and complete error-family/propagation inventory |
 | CORE-05 | Standard collections and binary values | Partial | Map/Set, tuples, Uint8Array, encoding/base64 and v38 Web byte APIs | Full typed-array/ArrayBuffer/DataView contracts and ownership/interop inventory; general tagged collection values |
-| CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, the v38 complete Date in the UTC zone, ES2025 Array/Set/iterator/JSON library methods (K9 D) and ahead-of-time RegExp | General Math object/call semantics, host time zones, Intl, Symbol, weak references and remaining RegExp features |
+| CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, the v38 complete Date in the UTC zone, ES2025 Array/Set/iterator/JSON library methods (K9 D) and ahead-of-time RegExp with the full ES2025 pattern language (K9 D3) | General Math object/call semantics, host time zones, Intl, Symbol, weak references, run-time RegExp patterns and RegExp symbol protocols |
 | CORE-07 | Garbage collection and resource lifecycle | Partial; large-heap idle-work fix verified | Exact tracing, liveness frames, incremental collection/idle maintenance and bounded bitmap clearing before the root snapshot under v38 | Sustained retained-root/leak/cancellation validation, collector tuning and target peak-memory evidence remain open |
 | CORE-08 | Event loop and promise jobs | Partial; implemented checked scheduler | Bounded FIFO Promise jobs, adoption, microtask checkpoints, timer/network tasks and generation-checked tokens | Structural thenable support (currently rejected), remaining scheduling semantics and cross-host ordering beyond supported network replay |
 | CORE-09 | Async language and cancellation | Partial | Async/await, timers, abort listeners/timeout/any, async generators, for-await, cancellable fetch and focused v38 HTTP lifecycle checks including synchronous network waits | Top-level await, wider async iterable forms, broader host-call lifecycle and sustained owned shutdown acceptance |
@@ -3629,6 +3630,7 @@ The selectors are registered; the table records what each stream admits.
 | `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results. No ABI, value-layout or host change. Pending (owner decision): static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
 | `console_methods()` | K9 D1 console methods (2026-11-06): standard error and the rest of Node's console | Implemented ([contract](architecture.md#console-methods-console_methods), [record](#k9-d1-console-methods-and-standard-error--2026-11-06)): `log_stderr16` (host ABI 34), the console prelude, the linked `console_render` |
 | `node_console()` | K9 D1 console notation (2026-11-06): multi-argument `console.log`/`info`/`debug` printed as Node 24 prints them | Implemented ([contract](architecture.md#console-notation-node_console), [record](#k9-d1-console-notation--2026-11-06)): the linked `varta_intrinsics::inspect`; value18 record descriptors end with a display trailer (class name, engine layouts). No host import or value tag |
+| `full_regexp()` | K9 D3 full RegExp (2026-11-06): the ES2025 pattern language with a backtracking matcher bounded by fuel, match indices, the `v` flag | Implemented ([contract](architecture.md#full-regexp-full_regexp), [record](#k9--typescript-completeness-and-the-first-release-agreed-2026-11-06)): program format 2 and the linked `regexp_exec`; V37 keeps the linear-time subset. Pending: run-time patterns, `matchAll` iterators, match-array methods, symbol protocols |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module
 under v38, scratch copies only, no live API call): the unmodified pilot checks
@@ -7880,6 +7882,22 @@ gate):
   full RegExp with matching bounded by fuel, Proxy and Reflect where sound,
   and `Intl` through ICU4X with deterministic data.
 
+**Release definition (owner, 2026-11-06).** The release ships a full
+implementation: every gap found by the tracks is closed by the standard, and
+no deviation from Node/tsc stays documented unless the owner approves it
+(approved so far: a lying type predicate throws `TypeError` at the narrowed
+read). Follow-up tracks after the first merges: A3 (shared covariant arrays
+with checked reads, the remaining refused type forms), B2 (standard
+decorators on class values, run-time TDZ, index-signature JSON), C2
+(object-literal accessors, `TemplateStringsArray.raw`, dynamic `this`,
+top-level `await`, `SuppressedError` in `using`), D1 (Node console with a
+standard-error host operation, JSON reviver/replacer, `structuredClone`,
+`normalize`, `Promise.any`), D2 (Symbol values and keys, integrity levels,
+weak collections), D3 (full RegExp), D4 (local-time `Date`, `Intl`), then
+Proxy/Reflect. Release work after the language tracks settle: profile
+freeze, macOS and web distributions, Chrome acceptance reruns, security
+review and release notes.
+
 **K9 A record (2026-11-06, type level).** Admitted in v38 under the
 selector `type_level` ([contract](architecture.md#type-level-type_level),
 [rules](profile-rules.md#type-level-type_level)), all evaluated at compile
@@ -7912,6 +7930,43 @@ predicate should keep its `TypeError` (Node continues with the wrong type)
 and whether branded primitives (`string & { __brand: … }`) may be admitted
 as their primitive.
 
+**K9 D3 record (2026-11-06, full RegExp).** Owner decision (K9 D,
+2026-11-06): full RegExp with a backtracking matcher bounded by fuel.
+Admitted in v38 under the selector `full_regexp`
+([contract](architecture.md#full-regexp-full_regexp),
+[rules](profile-rules.md#full-regexp-full_regexp-v38)): the whole ECMAScript
+2025 pattern language (numbered and named backreferences, lookahead and
+lookbehind, pattern modifiers, duplicate named groups, Unicode property
+escapes from the ICU4X 2.4 data, the `d` and `v` flags with class set
+notation and the Unicode Emoji 17.0 properties of strings), match indices,
+`hasIndices`/`unicodeSets`, participating-group `groups` objects and
+`$<name>`, and AdvanceStringIndex by code point under `v`. Patterns compile
+ahead of time to program format 2 (`varta_common::regexp`), run by the
+linked intrinsic `regexp_exec` (`varta_intrinsics::regexp`, rebuilt
+`intrinsics.wasm`): matching is guest code, every step is fuel and the
+backtracking stack is arena memory, so a catastrophic pattern ends with the
+turn's typed fuel exhaustion (pinned for four classic ReDoS patterns on 65
+units, about half a second each under the production budget). V37 keeps the
+linear-time subset, format 1 and the emitted Pike VM byte for byte.
+Evidence: `varta-runtime` `full_regexp_tests` (six Node 24.20.0 programs,
+one a seeded 600-pattern differential corpus over backreferences,
+lookaround, quantifiers and flags; three further seeds of 800 patterns
+matched Node during development), adversarial fuel and per-unit fuel
+measurements, the compiler's early-error table with V8's texts, and four
+conformance cases in four new feature rows (175 → 179 passing of 180 → 184,
+5 known unsupported). Fuel goldens: v37 programs keep
+their figures; under v38 the matcher costs about 3 700 fuel per run, 33 per skipped input
+unit and 160 per unit of a nested quantifier on a matching input, and the
+v37 ReDoS corpus `regexp_cases/redos.ts` becomes a recorded v38 deviation
+(it exhausts the fuel, as intended), excluded from the v37/v38 comparisons.
+Not done (each a documented deviation): run-time patterns and
+`RegExp.escape` (would need the pattern compiler in the guest),
+`matchAll` iterators (an array), array methods of match arrays, `undefined`
+split captures, and the `Symbol.match`/`replace`/`search`/`split`/
+`matchAll` protocols (waiting for symbol values). Owner decisions open:
+whether to admit run-time patterns (a guest pattern compiler under its own
+budget) and whether match arrays become real arrays.
+
 **K9 A step 2 (2026-11-06).** Owner decisions: a lying predicate keeps its
 `TypeError` (an intentional deviation, like checked `as`); branded
 primitives are their primitive; `typeof` of locals is supported. Admitted
@@ -7927,6 +7982,28 @@ type parameters or rest parameters, generic construct signatures,
 `unique symbol` (track D's Symbol values). Evidence: five more Node-pinned
 `type_level_cases`, the deviation test, a second language-guide example and
 conformance 155 → 160 passing of 160 → 165 cases.
+
+**K9 A step 3 (2026-11-06).** Owner decision: a class array viewed as an
+ancestor array (`B[]` and `(B | C)[]` as `A[]`) is one shared array, as in
+JavaScript, and a read through a narrower name of an element it does not
+admit throws `TypeError` (replacing step 2's copy). `type_level::covariance`
+joins the converted array types into components with one element
+representation (instances, or union cells when a union admits `null` or
+`undefined`) and tests the narrower reads; both representations are existing
+canonical array layouts, so no value ABI change was needed. Pattern template
+literal types and `Uppercase<string>` (and the other intrinsic types over
+`string` and over patterns) are checked as in tsc: pattern members of string
+literal sets, matched by literals, template expressions and other patterns,
+never by `string`. Admitted: `infer` in intersection patterns, `this` in
+generic declarations together with generic declarations that refer to the
+same instantiation of themselves, `asserts this [is T]` methods, and
+overloads with rest parameters. Still refused: callable objects with
+properties, overloads with `this` or type parameters, generic construct
+signatures (each needs a design decision, recorded in the report), and
+`unique symbol` (track D's Symbol values are not in main yet). Evidence:
+three new Node-pinned `type_level_cases` (each rejected by v37), the shared
+array deviation test, the pattern rejection test and conformance 190 → 193
+passing of 195 → 198 cases (on top of K9 C).
 
 **Release readiness** additionally needs, after K9 and K8 merge: the release
 profile frozen (v38 becomes a released profile; later admissions go to a new

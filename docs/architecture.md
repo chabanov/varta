@@ -6367,7 +6367,9 @@ finished body fills the reservation, so the interned type graph is cyclic but
 finite. Direct cycles without such a step stay rejected with `recursive type
 declaration` (`type A = B; type B = A`), a recursive alias as a direct union
 member is rejected (`type A = string | A`), and recursive generic declarations
-are rejected. V33 and earlier keep rejecting every self-reference.
+are rejected (v38 [`type_level`](#type-level-type_level) admits a generic
+declaration that refers to the same instantiation of itself, reserved per
+type argument list). V33 and earlier keep rejecting every self-reference.
 
 Recursive graphs are ordinary values: their runtime JSON depth (64) and visit
 (4096) bounds and the encoder's cycle check are unchanged, and the collector is
@@ -8559,7 +8561,9 @@ and the clock.
 
 #### RegExp (`regexp()`)
 
-Selector `regexp()`. V37 admits regular expression literals, `new RegExp`
+V38 replaces this subset with the [full RegExp](#full-regexp-full_regexp)
+language and a backtracking matcher; everything below stays the v37
+contract. Selector `regexp()`. V37 admits regular expression literals, `new RegExp`
 with constant arguments, `RegExp.prototype.exec`/`test`, `lastIndex`, match
 arrays and the regex string methods `search`, `match`, `matchAll`, `replace`,
 `replaceAll` and `split` (with RegExp and string patterns). It adds no value
@@ -11839,6 +11843,109 @@ prelude loads only for programs that name one of its methods
   predicates, descriptor and prototype functions, and `Intl` fail with the
   missing value-model part in the diagnostic.
 
+#### Full RegExp (`full_regexp`)
+
+K9 D3 (2026-11-06), under the selector `LanguageProfile::full_regexp()`: the
+whole ECMAScript 2025 pattern language (§22.2) replaces the v37
+[linear-time subset](#regexp-regexp) in v38. Patterns are still compiled
+only ahead of time (literals and `new RegExp` with constant arguments, as in
+v37); V37 keeps its subset, its program format 1, its emitted Pike VM and
+its diagnostics and bytes unchanged.
+
+- **Admitted syntax.** Everything v37 admits, plus numbered and named
+  backreferences (`\1`, `\k<name>`, forward references match empty),
+  lookahead and lookbehind (`(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)`; Annex B
+  quantified lookahead without `u`), pattern modifiers `(?ims-ims:…)`
+  (ES2025), duplicate named groups in different alternatives (ES2025
+  MightBothParticipate), `\u` escapes in group names, Unicode property
+  escapes `\p{…}`/`\P{…}` (`General_Category`/`gc` values and groups,
+  `Script`/`sc`, `Script_Extensions`/`scx`, the binary properties of
+  ECMA-262's table, `Any`, `ASCII`, `Assigned`), the `d` (`hasIndices`) and
+  `v` (`unicodeSets`) flags, and under `v` the class set notation: nested
+  classes, `&&`, `--`, `\q{…|…}` and the emoji properties of strings
+  (`Basic_Emoji`, `Emoji_Keycap_Sequence`, `RGI_Emoji_Modifier_Sequence`,
+  `RGI_Emoji_Flag_Sequence`, `RGI_Emoji_Tag_Sequence`,
+  `RGI_Emoji_ZWJ_Sequence`, `RGI_Emoji`). Early errors are compile-time
+  `invalid` diagnostics with V8's text (`Duplicate capture group name`,
+  `Invalid named capture referenced`, `Repeated flag in flag group`,
+  `Invalid property name`, `Invalid set operation in character class`,
+  `Negated character class may contain strings`, …); `u` with `v` is
+  `Invalid flags supplied to RegExp constructor 'uv'`. Flags print in
+  `dgimsuvy` order.
+- **Property data.** Code point properties come from the ICU4X 2.4 compiled
+  data (`icu_properties`, already locked; strict name matching as the
+  specification requires), resolved at compile time into class ranges; the
+  properties of strings come from the Unicode Emoji 17.0 data
+  (`regexp/emoji_sequences.txt`, from `emoji-sequences.txt` and
+  `emoji-zwj-sequences.txt`). Node 24.20.0 ships ICU 78.3 with Unicode 17.0,
+  and every case pinned against it agrees.
+- **Programs (format 2).** The compiler (`regexp::backtrack`) emits a
+  backtracking program, a static string of UTF-16 code units shared with the
+  matcher through `varta_common::regexp`: a header (format version 2,
+  `UNICODE`/`ANCHORED`/`PREFILTER` flags, capture and register counts, the
+  code offset and an ASCII first-unit prefilter), variable-length
+  instructions (`MATCH`, `CHAR`, `CHAR32`, `ANY`, `CLASS`, `JUMP`, `SPLIT`,
+  `SAVE`, `RESET`, `ASSERT`, `BACKREF`, `LOOK`, `LOOK_END`, `REPEAT_INIT`,
+  `REPEAT`, `ENTER`, `REPEAT_END`, `STAR`) whose consuming instructions and
+  backreferences carry a backward bit inside lookbehind, and sorted class
+  range tables. Offsets are single code units, so a program has at most
+  65 535 units (`RegExp program larger than 65535 code units` beyond);
+  counted repetitions use counters and are not expanded (`a{100000}` is
+  small). Case-insensitive characters and classes are widened at compile
+  time as in v37 (under `v` with `i`, operands are folded with simple case
+  folding before set operations and complemented among the folded
+  characters, MaybeSimpleCaseFolding); only case-insensitive
+  backreferences compare by Canonicalize at run time.
+- **Matcher.** `regexp_exec` is a linked intrinsic (`HostOperation::RegExpExec`,
+  pure, capability-free, linked in every v38 module and imported by no
+  profile, see the [linked intrinsics table](embedding.md)): the backtracking interpreter
+  `varta_intrinsics::regexp`, one implementation compiled into the guest.
+  It follows §22.2.2 as a continuation machine: `SPLIT` and quantifiers push
+  choice points, every capture and register write is undone when matching
+  backtracks past it, `REPEAT` counts iterations (RepeatMatcher: the
+  minimum without choice, then greedy or lazy priority, captures cleared per
+  iteration, an optional iteration that consumes nothing fails), `STAR`
+  runs a quantified single character without captures without
+  per-iteration state, lookarounds are atomic (a positive one keeps its
+  captures and drops its choice points, a negative one undoes its body) and
+  lookbehind bodies read backward with their captures recorded end first.
+  Under `u` or `v` the matcher reads code points, a start inside a surrogate
+  pair backs up to the pair, and the search advances by code point.
+- **Work is fuel.** Matching may take time exponential in the input, as in
+  every backtracking engine. Because the matcher is guest code, every step
+  is metered as ordinary fuel and its backtracking stack is arena memory
+  under the memory budget: a catastrophic pattern (`/^(a+)+$/` on 64 `a`s
+  and `!`) ends with the turn's typed `BudgetExhausted` fuel error, the same
+  on every run, instead of hanging, and an exhausted memory budget is the
+  typed memory failure. Browser hosts run the same Wasm, so the official
+  metered browser bundle charges matching like any guest code. Measured under the
+  production budgets (`full_regexp_tests`): about 3 700 fuel of fixed work
+  per run including the RegExp object (v37: about 3 000), about 33 fuel per
+  skipped input unit for a search led by a literal or a class (the prefilter
+  skips units without a run), and about 160 fuel per unit for `/^(a+)+$/`
+  on a matching input (v37: about 1 450). Production budgets are unchanged.
+- **Prelude.** V38 compiles `prelude/regexp_v38.ts` in place of the v37
+  prelude (`Prelude::lifted`): `hasIndices` and `unicodeSets` reflect their
+  flags; `exec`, `match` without `g`, `matchAll` and replacer match arrays
+  carry `indices` (a `RegExpIndicesArray` of `[start, end]` pairs or
+  `undefined`, with `groups`, when the RegExp has `d`, otherwise
+  `undefined`); a groups object holds one key per name in first-group order
+  whose value is the group that took part; `$<name>` substitutes the
+  participating group of a shared name; AdvanceStringIndex is by code point
+  under `u` or `v`. A replacer's groups parameter is the (defined) groups
+  object. Match arrays and indices arrays are read like v37 match arrays
+  (index, destructuring, `for…of`).
+- **Deviations.** Patterns are compiled ahead of time only (a run-time
+  pattern, `new RegExp(regexp)`, `RegExp(…)` without `new`, `RegExp.escape`
+  and Annex B `compile` stay compile-time errors: a run-time pattern would
+  need the pattern compiler in the guest); `matchAll` returns an array;
+  match arrays have no array methods; `split` throws for a capture that did
+  not take part (its result is `string[]`); `Symbol.match`/`matchAll`/
+  `replace`/`search`/`split` protocols wait for symbol values; legacy static
+  properties are not modelled. Behaviour is pinned against Node 24.20.0
+  (`varta-runtime` `full_regexp_cases`, including a 600-pattern
+  differential corpus) and conformance cases `regexp-*`.
+
 #### Type level (`type_level`)
 
 K9 track A (2026-11-06), under the selector `LanguageProfile::type_level()`:
@@ -12010,10 +12117,30 @@ refused with an `unsupported …` diagnostic that names it (list below).
     types map them); an array's and tuple's `number`, positions and
     `Array.prototype` string keys; a primitive's prototype string keys
     (`number` for strings). Symbol-keyed members have no key type here.
-  - *Pattern template literal types* (`` `on${string}` ``) and intrinsic
-    string types over `string` are `string` outside an `extends` clause (a
-    lenient deviation: TypeScript would also check each literal assigned to
-    them against the pattern).
+  - *Pattern template literal types* (`` `on${string}` ``, `` `${number}px` ``,
+    `` `id-${bigint}` ``) and the intrinsic string types over `string`
+    (`Uppercase<string>`, and over a pattern: `` Uppercase<`on${string}`> ``
+    is `` `ON${Uppercase<string>}` ``) are checked as in tsc (step 3,
+    2026-11-06). A pattern is a member of a string literal set
+    (`LiteralValue::Pattern`), physically a string like every literal type.
+    A string literal is assignable to it when it matches (TypeScript's
+    inference from a literal to a template: a placeholder followed by text
+    takes the text up to that text's first occurrence, the last one the
+    rest; `${number}` takes a non-empty text whose ECMAScript `ToNumber` is
+    finite, `${bigint}` a bigint literal's text, `${Uppercase<string>}` a
+    text the mapping leaves unchanged); a pattern is assignable to another
+    when every string it describes matches the other; `string` is
+    assignable to none. A template literal expression where a string
+    literal type is expected takes the template type of its parts
+    (`` `on${name}` `` with `name: string` is `` `on${string}` ``). A union
+    drops the string literals its patterns match, and `` `${string}` `` is
+    `string`. `Record` and mapped types over a pattern key type are string
+    index signatures (their keys are not checked against the pattern), and
+    `Omit` drops the keys a pattern matches. Refused by name: a checked
+    assertion (`x as T`, `JSON.parse(text) as T`) to a type with a pattern,
+    which has no run-time test, `Pick` with pattern keys, and an intrinsic
+    type over a pattern with a `number`, `bigint` or other mapped
+    placeholder.
   - *`infer`* inside a declared generic type's arguments (`Box<infer U>`: the
     declaration body with its parameters as inference positions), in a union
     pattern with one inferring member (`infer U | undefined`) and over
@@ -12028,30 +12155,69 @@ refused with an `unsupported …` diagnostic that names it (list below).
     receiver of `x.isT()`.
   - *Class subtyping in containers*: a subclass instance is accepted wherever
     an ancestor is expected in arrays (`push`, literals, element writes),
-    tuples, records, `Map`/`Set` values and unions. An array of a class
-    converts to an array of an ancestor class (`B[]` to `A[]`) by a shallow
-    copy (an array literal is retyped), and an array of a union of classes
-    to an array of their common ancestor by a new array of the unboxed
-    elements.
+    tuples, records, `Map`/`Set` values and unions.
+- **Shared class arrays (step 3, owner decision of 2026-11-06).** An array
+  whose elements are class instances, or a union of classes with `null` or
+  `undefined`, converts to an array type whose element type admits every
+  one of them (`B[]` and `(B | C)[]` to `A[]`, `(B | null)[]` to `(A |
+  null)[]`) without a copy, as in JavaScript: both names hold one array, so
+  every write through one is seen through the other. The compiler joins the
+  array types that such conversions connect into components
+  (`type_level::covariance`) and gives every array type of a component one
+  element representation, so no element is converted: instance handles
+  (the arrays of unions of classes hold the instances, boxing on read and
+  unboxing on write) or, when a union of the component admits `null` or
+  `undefined`, union cells (the arrays of one class box on write and unbox
+  on read). Both are existing canonical array layouts (element kind Record
+  or ReferenceUnion), so no value layout, value ABI or host import changes.
+  TypeScript's array covariance is unsound: through the wider name an
+  `A` (or `null`) may be stored that a narrower name does not admit. Every
+  element read (`xs[i]`, `at`, `pop`, iteration, callbacks, destructuring,
+  library methods) through an array type of a component whose element type
+  does not admit every value stored through the component's other types
+  tests the element (the class descriptor against the admitted classes and
+  their subclasses; `null`/`undefined` against the element union) and
+  throws `TypeError` (`array element is not a value of the array's element
+  type`) on a mismatch, consistent with the checked predicate reads.
+  Programs without such conversions keep their code. A collection whose
+  key vector is an array type with a changed representation is refused by
+  name.
 - **Intentional deviations from Node.** (1) A type predicate that lies
   (narrows to a member the value does not hold) throws `TypeError` at the
   narrowed read (`value does not have the type its type predicate
   asserted`), consistent with the checked `as` assertions; Node continues
-  with the mistyped value. (2) A `B[]` converted to `A[]` is a copy: a write
-  through one name is not seen through the other, where Node aliases one
-  array (a shared alias could store an `A` into the `B[]`).
+  with the mistyped value. (2) An element of a shared class array that the
+  read's element type does not admit (an `A` stored through `A[]` and read
+  through `B[]`) throws `TypeError` at the read; Node continues with the
+  mistyped value.
+
+- **Step 3 admissions (2026-11-06).** `infer` inside an intersection pattern
+  (`T extends { a: infer A } & { b: infer B }`: the check type matches
+  every member, sharing the bindings; a name inferred twice joins its
+  candidates). `this` in a generic interface or object type alias is the
+  instantiation being resolved, and a generic declaration may refer to the
+  same instantiation of itself (`interface Link<T> { next: Link<T> | null
+  }`): the recursive reservation is kept per type argument list. An
+  `asserts this` or `asserts this is T` method narrows the receiver binding
+  of its call statement for the rest of the block (a subclass narrowing
+  reads through the descriptor test, `TypeError` when the method lied). An
+  overload set with a rest parameter merges into one rest parameter of the
+  union of every parameter type (`{ (...parts: string[]): string; (n:
+  number): string }` is `(...args: (string | number)[]) => string`); the
+  call selects the first overload whose parameters (rest elements
+  included) accept the arguments.
 
 Still refused, each by name: `unique symbol` (no Symbol values in this
-profile), `import("…")` types, callable objects with properties (a call
-signature together with other members: no closed layout holds a function
-value and fields), overloads with a `this` parameter, type parameters or a
-rest parameter, generic construct signatures and constructor types,
+profile; track D's Symbol values are not in this profile yet), `import("…")`
+types, callable objects with properties (a call signature together with
+other members: no closed layout holds a function value and fields),
+overloads with a `this` parameter or type parameters, generic construct
+signatures and constructor types (a monomorphized class has one layout per
+instantiation, so one constructor value cannot build every instantiation),
 intersections of object types whose shared property has no common type,
-mapped types over `number` or symbol key sets, `keyof never`, `this` in a
-generic declaration, `typeof` of a generic function or class and of a
-module initializer whose type would need lowering, `infer` inside an
-intersection pattern or a union with several inferring members, and an
-`asserts this` method.
+mapped types over `number` or symbol key sets, `keyof never`, `typeof` of a
+generic function or class and of a module initializer whose type would need
+lowering, and `infer` in a union with several inferring members.
 
 #### Declarations and classes (`declaration_forms`)
 

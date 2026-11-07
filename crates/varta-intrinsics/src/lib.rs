@@ -24,6 +24,7 @@ pub mod number;
 pub mod parse;
 pub mod primitive;
 pub mod radix;
+pub mod regexp;
 pub mod string;
 pub mod value;
 

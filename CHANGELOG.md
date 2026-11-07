@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
+  pattern language compiled ahead of time to backtracking programs (format
+  2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as
+  guest code: numbered and named backreferences, lookahead and lookbehind,
+  pattern modifiers `(?ims-ims:…)`, duplicate named groups, `\p{…}`/`\P{…}`
+  (ICU4X 2.4 data), the `d` flag with match indices and the `v` flag with
+  `&&`, `--`, nested classes, `\q{…}` and the Unicode Emoji 17.0
+  properties of strings; early errors keep V8's text. Matching work is fuel,
+  so a catastrophic pattern ends with the turn's typed fuel exhaustion.
+  V37 keeps the linear-time subset unchanged. Conformance: 179 passed, 5
+  known unsupported of 184 (four new feature rows and cases).
+- V38 K9 type level, step 3 (owner decision): a class array viewed as an
+  ancestor array (`B[]` or `(B | C)[]` as `A[]`) is one shared array, as in
+  JavaScript; an element read through a narrower name that does not admit
+  the element throws `TypeError` (replacing the copy of step 2). Pattern
+  template literal types (`` `on${string}` ``, `` `${number}px` ``) and
+  `Uppercase<string>` are checked like tsc: literals and template
+  expressions must match, `string` is not assignable. Admitted: `infer` in
+  intersection patterns, `this` in generic declarations and generic
+  declarations referring to themselves, `asserts this` methods and overloads
+  with rest parameters. Conformance: 193 passed, 5 known unsupported of 198.
 - V38 K9 type level, step 2 (owner decisions): branded primitives
   (`string & { __brand: … }` is the primitive), `typeof` of local bindings,
   overloaded call/construct signatures and function intersections (calls

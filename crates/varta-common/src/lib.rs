@@ -74,6 +74,9 @@ pub mod permission;
 /// Development fuel profiling (`varta dev --profile-fuel`).
 #[cfg(feature = "std")]
 pub mod profile;
+/// The v38 RegExp program format shared by the compiler and the linked
+/// backtracking matcher.
+pub mod regexp;
 #[cfg(feature = "std")]
 pub mod scheduler;
 pub mod text;

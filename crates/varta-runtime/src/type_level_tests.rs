@@ -260,12 +260,90 @@ fn overloads_generic_signatures_object_this_and_pattern_templates() {
     );
 }
 
+#[test]
+fn intersection_infer_generic_this_asserts_this_and_rest_overloads() {
+    case(
+        include_str!("type_level_cases/admitted_forms.ts"),
+        &["1 x q", "4 3 2", "9", "not a square", "a-b-c 3  6 4"],
+    );
+}
+
+#[test]
+fn pattern_template_types_check_their_literals() {
+    case(
+        include_str!("type_level_cases/patterns.ts"),
+        &[
+            "Click Key on3 12.5 id-42 HELLO",
+            "Hello world ONCLICK none,#fff 7",
+            "true yes no yes yes",
+            "1 2 #000 color #abc empty",
+            r#"1,2.5,1000 {"title":"t"}"#,
+        ],
+    );
+    // Each is an error in tsc 5.x: the literal (or `string`, or another
+    // pattern) is not assignable to the pattern.
+    for (declaration, wanted) in [
+        ("const h: `on${string}` = \"click\";", "`on${string}`"),
+        ("const h: `on${string}` = String(1);", "`on${string}`"),
+        ("const p: `${number}px` = \"abcpx\";", "`${number}px`"),
+        ("const i: `id-${bigint}` = \"id-1.5\";", "`id-${bigint}`"),
+        (
+            "const l: Uppercase<string> = \"Hello\";",
+            "Uppercase<string>",
+        ),
+        (
+            "const t: Capitalize<string> = \"hello\";",
+            "Capitalize<string>",
+        ),
+        (
+            "const e: Uppercase<`on${string}`> = \"ONclick\";",
+            "`ON${Uppercase<string>}`",
+        ),
+        (
+            "const s = String(1); const h: `on${string}` = `x${s}`;",
+            "`on${string}`",
+        ),
+        (
+            "const a: `on${string}` = \"onA\"; const n: `on${number}` = a;",
+            "`on${number}`",
+        ),
+    ] {
+        let source = format!("export function main(): void {{\n  {declaration}\n}}");
+        let error = rejected(&source, V38);
+        assert!(
+            error.contains(&format!("is not assignable to literal type {wanted}")),
+            "{source}\n{error}"
+        );
+    }
+}
+
+#[test]
+fn class_arrays_viewed_as_ancestor_arrays_are_one_array() {
+    case(
+        include_str!("type_level_cases/shared_arrays.ts"),
+        &[
+            "2 2 BB 2 true",
+            "BCBC BCBC 4",
+            "BBCC BB",
+            "C C 3",
+            "true true 1 true",
+            r#"CBCB CBCBC [{"x":1,"z":3},{"x":1,"y":2},{"x":1,"z":3},{"x":1,"y":2}]"#,
+            "BBCC 2,2,3,3",
+            "4,3,4,- 4 true",
+            "4",
+            "3",
+            "4",
+        ],
+    );
+}
+
 /// Intentional deviations from Node (recorded in the type-level contract):
 /// a lying type predicate throws `TypeError` at the narrowed read, where
-/// Node continues with the mistyped value; and a `B[]` converted to `A[]`
-/// is a copy, so a push through the wider alias is not seen by the other.
+/// Node continues with the mistyped value; and an element of a shared class
+/// array read through a name whose element type does not admit it (an `A`
+/// stored through `A[]` and read through `B[]`) throws `TypeError`.
 #[test]
-fn checked_predicates_and_copied_array_views_deviate_from_node() {
+fn checked_predicates_and_shared_array_reads_deviate_from_node() {
     let lying = r#"class Animal { name: string = "tom"; }
 class Dog extends Animal { tag: string = "dog"; }
 function lies(animal: Animal): animal is Dog { return animal.name.length > 0; }
@@ -281,14 +359,32 @@ export function main(): void {
 }"#;
     // Node prints `undefined`.
     assert_eq!(run(lying), logs(&["TypeError"]));
-    let alias = r#"class A { n: number = 1; }
-class B extends A {}
+    let shared = r#"class A { n: number = 1; }
+class B extends A { tag: string = "b"; }
+class C extends A { }
+function addA(list: A[]): void { list.push(new A()); }
+function report(read: () => string): void {
+  try {
+    console.log(read());
+  } catch (error) {
+    console.log(error instanceof TypeError ? "TypeError" : "other");
+  }
+}
 export function main(): void {
   const bs: B[] = [new B()];
-  const all: A[] = bs;
-  all.push(new A());
-  console.log(`${bs.length} ${all.length}`);
+  addA(bs);
+  report(() => `${bs.length} ${bs[0].tag}`);
+  report(() => String(bs[1].tag));
+  const mixed = [new B(), new C()];
+  addA(mixed);
+  report(() => String(mixed[2] instanceof B));
+  const loose: (A | undefined)[] = mixed;
+  loose.push(undefined);
+  report(() => String(mixed[3] instanceof C));
 }"#;
-    // Node prints `2 2`.
-    assert_eq!(run(alias), logs(&["1 2"]));
+    // Node prints `2 b`, `undefined`, `false`, `false`.
+    assert_eq!(
+        run(shared),
+        logs(&["2 b", "TypeError", "TypeError", "TypeError"])
+    );
 }

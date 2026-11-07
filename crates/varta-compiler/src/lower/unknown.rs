@@ -643,6 +643,13 @@ impl Lower<'_> {
             | Type::BigInt
             | Type::Error
             | Type::NativeError(_) => member(target),
+            // A pattern template literal type (v38) has no run-time test here.
+            Type::Literal(_, set) if self.types.literals.has_pattern(set) => {
+                return Err(unsupported(&format!(
+                    "type assertion to {name}: a pattern template literal type has no run-time \
+                     check; assert string and match the pattern explicitly"
+                )));
+            }
             Type::Literal(base, set) => {
                 let base = base.erased();
                 let mut values = boolean(span, false);

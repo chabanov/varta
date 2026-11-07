@@ -53,13 +53,19 @@ const CASE_DIRECTORIES: [&str; 20] = [
 /// done }` (CreateIterResultObject order), so `JSON.stringify` and
 /// `Object.keys` of a result differ from v37's `done`-first order
 /// (`expression_form_cases/generators.ts`).
-pub(crate) const V38_DEVIATIONS: [&str; 6] = [
+/// Under `full_regexp()` RegExps backtrack as in ECMAScript engines, with
+/// every step metered as fuel: `regexp_cases/redos.ts` shows that the v37
+/// linear-time matcher answers patterns that backtrack exponentially, so
+/// under v38 it ends with the turn's fuel exhaustion by design
+/// (`full_regexp_tests` pins that).
+pub(crate) const V38_DEVIATIONS: [&str; 7] = [
     "expression_form_cases/generators.ts",
     "unknown_cases/flow.ts",
     "v35_cases/unknown_json.ts",
     "net_cases/streams.ts",
     "v37_integration_cases/sse_lines.ts",
     "value15_cases/dictionary_json.ts",
+    "regexp_cases/redos.ts",
 ];
 
 /// Whether `path` is one of [`V38_DEVIATIONS`].

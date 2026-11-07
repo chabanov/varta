@@ -7,7 +7,9 @@
 //! operations (`ir::RegExpIntrinsic`).
 use super::*;
 use crate::ir::RegExpIntrinsic;
-use crate::modules::engine::{self, EXEC_ARRAY_CLASS, MATCH_ARRAY_CLASS, REGEXP_CLASS};
+use crate::modules::engine::{
+    self, EXEC_ARRAY_CLASS, INDICES_ARRAY_CLASS, MATCH_ARRAY_CLASS, REGEXP_CLASS,
+};
 
 const INTRINSICS: [(&str, RegExpIntrinsic); 3] = [
     ("varta.regexp.exec", RegExpIntrinsic::Exec),
@@ -24,6 +26,9 @@ const MULTILINE: u32 = 4;
 const DOT_ALL: u32 = 8;
 const UNICODE: u32 = 16;
 const STICKY: u32 = 32;
+/// V38 (`full_regexp`): the `d` and `v` flags.
+const HAS_INDICES: u32 = 64;
+const UNICODE_SETS: u32 = 128;
 /// The split limit when none is given (2^32 - 1).
 const NO_LIMIT: f64 = u32::MAX as f64;
 /// Prelude fields of a match array: element 0 and every element.
@@ -106,10 +111,16 @@ impl Lower<'_> {
             }
             args.push(value);
         }
+        // V38: the match runs the linked backtracking matcher.
+        let kind = if *op == RegExpIntrinsic::Exec && self.types.profile.full_regexp() {
+            E::Host(varta_common::HostOperation::RegExpExec, args)
+        } else {
+            E::RegExp(*op, args)
+        };
         Ok(Some(Expr {
             span: call.span,
             ty,
-            kind: E::RegExp(*op, args),
+            kind,
         }))
     }
 
@@ -119,13 +130,14 @@ impl Lower<'_> {
             .prelude_class(name)
             .ok_or_else(|| CompilerError::Internal(format!("missing {name} prelude class")))
     }
-    /// Whether `ty` is a match array (`RegExpExecArray`, `RegExpMatchArray`).
+    /// Whether `ty` is a match array (`RegExpExecArray`, `RegExpMatchArray`,
+    /// and under v38 the `RegExpIndicesArray` of a `d` match).
     pub(super) fn match_array(&self, ty: Type) -> bool {
         let Type::Class(class) = ty else {
             return false;
         };
         self.types.profile.regexp()
-            && [EXEC_ARRAY_CLASS, MATCH_ARRAY_CLASS]
+            && [EXEC_ARRAY_CLASS, MATCH_ARRAY_CLASS, INDICES_ARRAY_CLASS]
                 .iter()
                 .any(|name| self.types.classes.prelude_class(name) == Some(class))
     }
@@ -233,6 +245,8 @@ impl Lower<'_> {
             (flags.dot_all, DOT_ALL),
             (flags.unicode, UNICODE),
             (flags.sticky, STICKY),
+            (flags.has_indices, HAS_INDICES),
+            (flags.unicode_sets, UNICODE_SETS),
         ]
         .into_iter()
         .filter_map(|(set, bit)| set.then_some(bit))
@@ -266,10 +280,22 @@ impl Lower<'_> {
         ];
         self.regexp_static("compiled", args, span)
     }
+    /// A pattern error as this profile reports it.
+    fn regexp_error(&self, error: crate::regexp::RegExpError) -> CompilerError {
+        if self.types.profile.full_regexp() {
+            error.into_full_compiler()
+        } else {
+            error.into_compiler()
+        }
+    }
     /// `/pattern/flags`: a new RegExp per evaluation.
     pub(super) fn regexp_literal(&mut self, regex: &ast::Regex) -> Result<Expr> {
-        let compiled = crate::regexp::literal(regex.exp.as_ref(), regex.flags.as_ref())
-            .map_err(|e| self.source.locate(e.into_compiler(), regex.span))?;
+        let compiled = crate::regexp::literal(
+            regex.exp.as_ref(),
+            regex.flags.as_ref(),
+            self.types.profile.full_regexp(),
+        )
+        .map_err(|e| self.source.locate(self.regexp_error(e), regex.span))?;
         self.compiled_regexp(compiled, regex.span)
     }
     /// Whether `class` is the prelude `RegExp` and this is a program module.
@@ -295,16 +321,18 @@ impl Lower<'_> {
         let (Some(pattern), Some(flags)) = (constant(0), constant(1)) else {
             return Err(self.source.locate(unsupported(NON_CONSTANT), new.span));
         };
-        let compiled = crate::regexp::constructed(&pattern, &flags)
-            .map_err(|e| self.source.locate(e.into_compiler(), new.span))?;
+        let compiled =
+            crate::regexp::constructed(&pattern, &flags, self.types.profile.full_regexp())
+                .map_err(|e| self.source.locate(self.regexp_error(e), new.span))?;
         self.compiled_regexp(compiled, new.span)
     }
     /// The RegExp argument of `search`, `match` or `matchAll`: a RegExp
     /// value, or a string literal compiled like `new RegExp(text, flags)`.
     fn regexp_argument(&mut self, argument: &ast::Expr, flags: &str) -> Result<Expr> {
         if let Some(text) = constant_text(argument) {
-            let compiled = crate::regexp::constructed(&text, flags)
-                .map_err(|e| self.source.locate(e.into_compiler(), argument.span()))?;
+            let compiled =
+                crate::regexp::constructed(&text, flags, self.types.profile.full_regexp())
+                    .map_err(|e| self.source.locate(self.regexp_error(e), argument.span()))?;
             return self.compiled_regexp(compiled, argument.span());
         }
         let value = self.expr(argument)?;
@@ -491,7 +519,8 @@ impl Lower<'_> {
     ) -> Result<Expr> {
         let span = callback.span();
         let context = self.static_parameter("replaceWith", 2)?;
-        let source = |position: usize| replacer_source(position, groups, span);
+        let full = self.types.profile.full_regexp();
+        let source = |position: usize| replacer_source(position, groups, full, span);
         let too_many = || {
             self.source.locate(
                 unsupported(
@@ -659,6 +688,7 @@ fn ident(name: &str, span: swc_common::Span) -> ast::Ident {
 fn replacer_source(
     position: usize,
     groups: Option<(usize, bool)>,
+    full: bool,
     span: swc_common::Span,
 ) -> Option<(ast::Expr, bool)> {
     let matched = || Box::new(ast::Expr::Ident(ident(MATCH_PARAMETER, span)));
@@ -694,6 +724,14 @@ fn replacer_source(
         p if p <= count => Some((element(p), true)),
         p if p == count + 1 => Some((field("index"), false)),
         p if p == count + 2 => Some((field("input"), false)),
+        // V38: a pattern with named groups always passes its groups object.
+        p if p == count + 3 && named && full => Some((
+            ast::Expr::TsNonNull(ast::TsNonNullExpr {
+                span,
+                expr: Box::new(field("groups")),
+            }),
+            false,
+        )),
         p if p == count + 3 && named => Some((field("groups"), false)),
         _ => None,
     }
