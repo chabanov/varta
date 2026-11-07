@@ -793,13 +793,6 @@ impl Lower<'_> {
                 if let Some(value) = self.environment_read(member)? {
                     return Ok(value);
                 }
-                // V38 (`symbol_values`): well-known symbols and
-                // `symbol.description`.
-                if self.types.profile.symbol_values()
-                    && let Some(value) = self.symbol_member(member)?
-                {
-                    return Ok(value);
-                }
                 return self.member_read(member);
             }
             ast::Expr::Tpl(template) if self.types.profile.template_literals() => {
