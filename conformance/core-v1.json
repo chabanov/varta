@@ -3371,6 +3371,27 @@
       }
     },
     {
+      "id": "date-local-time",
+      "feature": "date",
+      "path": "cases/date-local-time.ts",
+      "sha256": "a7504b0029fb9902add0171a5d78646ecb256b12ea6f1e58ad7e0c03b4f206f4",
+      "stdout": [
+        "varta log: Sun Mar 31 2024 04:30:00 GMT+0300 (за східноєвропейським літнім часом)",
+        "varta log: 1729989000000 -180",
+        "varta log: 14 14:00:00 GMT+0200 (за східноєвропейським стандартним часом)",
+        "varta log: 14 -180",
+        "varta log: -10800000",
+        "varta log: Thu Jan 01 1970"
+      ],
+      "hostInputs": {
+        "timeZone": "Europe/Kyiv",
+        "locale": "uk-UA"
+      },
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "string-well-formed",
       "feature": "string-builtins",
       "path": "cases/string-well-formed.ts",

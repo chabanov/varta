@@ -1,0 +1,20 @@
+[package]
+name = "varta-intl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Engine: the `no_std` + `alloc` time zone and locale layer of v38 `Date`
+# and `Intl` (K9 D4). The v38 guest intrinsic library
+# (`varta-intrinsics-wasm`) links it into guest Wasm, so every host resolves
+# offsets, transitions and locale data identically from the data versions
+# pinned here; hosts only supply the IANA zone id and the BCP 47 locale.
+[dependencies]
+# The IANA Time Zone Database as TZif (RFC 8536), `no_std`, data only.
+jiff-tzdb.workspace = true
+# ICU4X with its compiled CLDR data: zone names, metazones, locales.
+icu_locale_core.workspace = true
+icu_provider.workspace = true
+icu_time.workspace = true
+icu_datetime.workspace = true
+writeable.workspace = true

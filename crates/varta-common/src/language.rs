@@ -843,6 +843,16 @@ impl LanguageProfile {
     pub fn standard_library(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 D4 local time: `Date` local time in the host's time
+    /// zone and the host's default locale, both recorded host inputs
+    /// (`intl_time_zone`, `intl_locale`, capability-free), with offsets,
+    /// transitions and zone names computed by the linked `date_zone_offset`
+    /// and `date_zone_name` from the bundled tzdata and CLDR data, so every
+    /// host gives the same output for the same inputs.
+    #[must_use]
+    pub fn local_time(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, K9 B module evaluation: a module initializer may run
     /// program code (calls, `new`), as ECMAScript evaluates a module body once
     /// per instance in source order, so static field initializers and static

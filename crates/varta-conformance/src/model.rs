@@ -43,6 +43,10 @@ pub struct Case {
     /// the case without any grant.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<String>,
+    /// The recorded time zone and locale the case runs with (v38 local
+    /// time); omitted, the runtime's defaults (UTC, `en-US`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_inputs: Option<varta_common::host_inputs::HostInputs>,
     pub baseline: Baseline,
 }
 /// Capabilities a case may be granted: the v36 `time.timer` grant only arms
@@ -79,6 +83,8 @@ pub(crate) struct Request {
     pub source: String,
     #[serde(default)]
     pub grants: Vec<String>,
+    #[serde(default)]
+    pub host_inputs: Option<varta_common::host_inputs::HostInputs>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(

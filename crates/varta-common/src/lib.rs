@@ -41,6 +41,9 @@ pub mod files;
 pub mod fuel;
 #[cfg(feature = "std")]
 mod host;
+/// Recorded host inputs of v38 local time: the zone and locale (K9 D4).
+#[cfg(feature = "std")]
+pub mod host_inputs;
 #[cfg(feature = "std")]
 pub mod http;
 #[cfg(feature = "std")]

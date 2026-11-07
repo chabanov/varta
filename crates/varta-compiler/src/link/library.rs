@@ -8,8 +8,12 @@
 //! reachable from the exports a program imports, and [`Placement`] moves
 //! those segments into the program's intrinsic region of memory 0 by
 //! rewriting every memory address the code and data hold (tool-conventions
-//! `Linking.md`), never by assuming the library's own addresses. The library
-//! is parsed once per process.
+//! `Linking.md`), never by assuming the library's own addresses. Functions
+//! the library calls indirectly (its trait-object vtables, `core::fmt`) keep
+//! their table slots the same way: each reached address-taken function gets
+//! a slot appended to the guest's table, and every table index the code and
+//! data hold (`R_WASM_TABLE_INDEX_*`) is rewritten to it. The library is
+//! parsed once per process.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 use varta_common::abi;
@@ -40,6 +44,18 @@ const LINKING_VERSION: u32 = 2;
 const SUBSECTION_SEGMENT_INFO: u8 = 5;
 const SUBSECTION_SYMBOL_TABLE: u8 = 8;
 
+/// Table-index relocation types (a function's table slot as an
+/// `i32.const` operand or an i32 in data) the placement rewrites.
+const R_TABLE_INDEX_SLEB: u8 = 1;
+const R_TABLE_INDEX_I32: u8 = 2;
+/// A table index relative to `__table_base`, as position-independent code
+/// (the `wasm32-wasip2` standard library, `core::fmt`) forms a function
+/// pointer: `global.get __table_base` plus this constant. The linked table
+/// base is 0, so the constant is rewritten to the absolute placed slot.
+const R_TABLE_INDEX_REL_SLEB: u8 = 12;
+/// wasm-ld's absolute symbol for the table base of position-independent
+/// code.
+const TABLE_BASE: &str = "__table_base";
 /// Memory-address relocation types the placement rewrites.
 const R_MEMORY_ADDR_LEB: u8 = 3;
 const R_MEMORY_ADDR_SLEB: u8 = 4;
@@ -81,6 +97,9 @@ enum Target {
     /// A linker-synthesized absolute address (`__heap_base`, ...), which
     /// has no meaning once the library is placed: not linkable.
     Absolute,
+    /// The table slot of an address-taken library function (absolute
+    /// function index).
+    Function(u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +116,9 @@ struct Relocation {
     encoding: Encoding,
     at: usize,
     target: Target,
+    /// The base the library's encoded value is relative to (its table base
+    /// for a relative table index, otherwise 0); placed values are absolute.
+    base: i64,
 }
 
 #[derive(Debug)]
@@ -106,7 +128,10 @@ pub(super) struct Function {
     calls: BTreeSet<u32>,
     globals: BTreeSet<u32>,
     relocations: Vec<Relocation>,
-    /// A table, indirect call, passive segment or unsupported relocation.
+    /// An indirect call through table 0, whose slots the linked table holds.
+    indirect: bool,
+    /// Table manipulation, a reference, a passive segment or an unsupported
+    /// relocation.
     unlinkable: bool,
 }
 #[derive(Debug)]
@@ -115,6 +140,9 @@ pub(super) struct Global {
     /// An immutable i32 global initialized to 0: the zero memory and table
     /// bases of position-independent code, linked unchanged.
     pub zero_base: bool,
+    /// The initial value of the library's `__table_base`, linked as 0
+    /// (relative table indices are rewritten to absolute slots).
+    pub table_base: Option<i64>,
 }
 #[derive(Debug)]
 pub(super) struct Segment {
@@ -139,6 +167,8 @@ pub(super) struct Library {
     pub segments: Vec<Segment>,
     /// The global the library's code uses as its shadow-stack pointer.
     pub stack_pointer: u32,
+    /// Address-taken function -> its slot in the library's own table.
+    slots: BTreeMap<u32, u32>,
 }
 
 /// What one program links: library function, global and segment indices.
@@ -148,6 +178,12 @@ pub(super) struct Closure {
     pub functions: BTreeSet<u32>,
     pub globals: BTreeSet<u32>,
     pub segments: BTreeSet<u32>,
+    /// Address-taken functions whose table slots reached code or data hold,
+    /// ascending; they get slots of the guest's table.
+    pub table: BTreeSet<u32>,
+    /// Whether a reached function calls indirectly (the module needs a
+    /// table even when no slot is taken).
+    pub indirect: bool,
 }
 
 /// A closure placed in an intrinsic region starting at `base`: the shadow
@@ -163,6 +199,9 @@ pub(super) struct Placement {
     pub arena: usize,
     /// Bytes of the region the stack, data and reserved arena use.
     pub bytes: usize,
+    /// Address-taken library function -> its slot in the guest's table,
+    /// assigned by the merge once the guest's table size is known.
+    pub slots: BTreeMap<u32, u32>,
 }
 /// Alignment of the reserved arena's start: the largest a Rust allocation on
 /// wasm32 requests from the bump arena in practice; the arena aligns each
@@ -213,9 +252,15 @@ struct Metadata {
     alignments: Vec<u32>,
     /// (section index, absolute file offset, type, symbol, addend).
     memory: Vec<(u32, usize, u8, u32, i64)>,
+    /// Function symbol index -> function index.
+    function_symbols: BTreeMap<u32, u32>,
+    /// Global index -> the value of an immutable `i32.const` global.
+    global_values: BTreeMap<u32, i64>,
     seen: bool,
     /// Value of the absolute `__memory_base` symbol.
     memory_base: Option<u64>,
+    /// Value of the absolute `__table_base` symbol.
+    table_base: Option<u64>,
 }
 
 impl Library {
@@ -229,6 +274,7 @@ impl Library {
         let mut exports = BTreeMap::new();
         let mut segments = Vec::new();
         let mut segment_ranges = Vec::new();
+        let mut slots = BTreeMap::new();
         let mut metadata = Metadata::default();
         let mut section = 0_u32;
         for payload in Parser::new(0).parse_all(bytes) {
@@ -264,22 +310,33 @@ impl Library {
                     }
                 }
                 Payload::TableSection(reader) => {
-                    // Rust reserves a one-slot table for null function pointers;
-                    // element segments (real targets) are rejected below.
+                    // One table: slot 0 stays null (Rust's null function
+                    // pointer), the element segment fills the rest.
+                    if reader.count() > 1 {
+                        return Err(invalid("more than one table is not linkable"));
+                    }
                     for table in reader {
                         table.map_err(invalid)?;
                     }
                 }
-                Payload::ElementSection(reader) if reader.count() > 0 => {
-                    return Err(invalid("function tables are not linkable"));
+                Payload::ElementSection(reader) => {
+                    for element in reader {
+                        read_element(element.map_err(invalid)?, &mut slots)?;
+                    }
                 }
                 Payload::MemorySection(reader) => memories += reader.count(),
                 Payload::GlobalSection(reader) => {
                     for global in reader {
                         let global = global.map_err(invalid)?;
+                        if !global.ty.mutable
+                            && let Ok(value) = constant_address(&global.init_expr)
+                        {
+                            metadata.global_values.insert(globals.len() as u32, value);
+                        }
                         globals.push(Global {
                             ty: global.ty,
                             zero_base: zero_base(&global),
+                            table_base: None,
                         });
                     }
                 }
@@ -373,6 +430,24 @@ impl Library {
             .find(|(_, name)| **name == STACK_POINTER)
             .map(|(index, _)| *index)
             .ok_or_else(|| invalid("no stack pointer symbol"))?;
+        // wasm-ld names the table base only as an absolute data symbol; the
+        // global position-independent code reads it from is the one
+        // immutable i32 global holding that value.
+        if let Some(base) = metadata.table_base {
+            let base = i64::try_from(base).map_err(invalid)?;
+            let holders: Vec<u32> = metadata
+                .global_values
+                .iter()
+                .filter(|&(_, &value)| value == base)
+                .map(|(&index, _)| index)
+                .collect();
+            let [index] = holders[..] else {
+                return Err(invalid("the table base global is ambiguous"));
+            };
+            if let Some(global) = globals.get_mut(index as usize) {
+                global.table_base = Some(base);
+            }
+        }
         let mut library = Self {
             types,
             imports,
@@ -381,6 +456,7 @@ impl Library {
             exports,
             segments,
             stack_pointer,
+            slots,
         };
         library.attach(&metadata, &segment_ranges)?;
         Ok(library)
@@ -395,17 +471,47 @@ impl Library {
         for &(section, at, kind, symbol, addend) in &metadata.memory {
             let encoding = match kind {
                 R_MEMORY_ADDR_LEB => Some(Encoding::Leb),
-                R_MEMORY_ADDR_SLEB | R_MEMORY_ADDR_REL_SLEB => Some(Encoding::Sleb),
-                R_MEMORY_ADDR_I32 => Some(Encoding::I32),
+                R_MEMORY_ADDR_SLEB
+                | R_MEMORY_ADDR_REL_SLEB
+                | R_TABLE_INDEX_SLEB
+                | R_TABLE_INDEX_REL_SLEB => Some(Encoding::Sleb),
+                R_MEMORY_ADDR_I32 | R_TABLE_INDEX_I32 => Some(Encoding::I32),
                 _ => None,
             };
-            let target = match metadata.data_symbols.get(&symbol) {
-                Some(&(Some(segment), offset)) => Target::Data {
-                    segment,
-                    offset: i64::try_from(offset).map_err(invalid)? + addend,
-                },
-                Some(&(None, _)) => Target::Absolute,
-                None => return Err(invalid(format!("relocation of unknown symbol {symbol}"))),
+            let base = if kind == R_TABLE_INDEX_REL_SLEB {
+                self.globals
+                    .iter()
+                    .find_map(|global| global.table_base)
+                    .ok_or_else(|| invalid("a relative table index without a table base"))?
+            } else {
+                0
+            };
+            let target = if matches!(
+                kind,
+                R_TABLE_INDEX_SLEB | R_TABLE_INDEX_I32 | R_TABLE_INDEX_REL_SLEB
+            ) {
+                let function = metadata
+                    .function_symbols
+                    .get(&symbol)
+                    .copied()
+                    .ok_or_else(|| invalid(format!("table index of unknown symbol {symbol}")))?;
+                if addend != 0 || !self.slots.contains_key(&function) {
+                    return Err(invalid(format!(
+                        "table index of function {function} without a slot"
+                    )));
+                }
+                Target::Function(function)
+            } else {
+                match metadata.data_symbols.get(&symbol) {
+                    Some(&(Some(segment), offset)) => Target::Data {
+                        segment,
+                        offset: i64::try_from(offset).map_err(invalid)? + addend,
+                    },
+                    Some(&(None, _)) => Target::Absolute,
+                    None => {
+                        return Err(invalid(format!("relocation of unknown symbol {symbol}")));
+                    }
+                }
             };
             if Some(section) == metadata.code_section {
                 let at = metadata.code_start + at;
@@ -419,6 +525,7 @@ impl Library {
                         encoding,
                         at: at - function.body.range().start,
                         target,
+                        base,
                     }),
                     None => function.unlinkable = true,
                 }
@@ -434,6 +541,7 @@ impl Library {
                         encoding,
                         at: at - segment_ranges[index].start,
                         target,
+                        base,
                     }),
                     None => segment.unlinkable = true,
                 }
@@ -459,51 +567,64 @@ impl Library {
             .get((index as usize).checked_sub(self.imports.len())?)
     }
 
-    /// Every function, global and data segment reachable from `roots`. The
-    /// only global linked code may use is its stack pointer, and no reached
-    /// function or segment may address a linker-synthesized absolute symbol.
+    /// Every function, global and data segment reachable from `roots`, and
+    /// the address-taken functions among them (taken in reached code or in
+    /// reached data, such as a vtable). The only global linked code may use
+    /// is its stack pointer, and no reached function or segment may address
+    /// a linker-synthesized absolute symbol.
     pub(super) fn closure(&self, roots: &[u32]) -> Result<Closure, String> {
         let mut closure = Closure::default();
         let mut pending = roots.to_vec();
         let mut segments = Vec::new();
-        while let Some(index) = pending.pop() {
-            if !closure.functions.insert(index) {
-                continue;
-            }
-            let Some(function) = self.defined(index) else {
-                if (index as usize) >= self.imports.len() {
-                    return Err(invalid(format!("unknown function {index}")));
+        while !pending.is_empty() || !segments.is_empty() {
+            while let Some(index) = pending.pop() {
+                if !closure.functions.insert(index) {
+                    continue;
                 }
-                continue;
-            };
-            if function.unlinkable {
-                return Err(invalid(format!(
-                    "function {index} uses a table, an indirect call or an unsupported relocation"
-                )));
+                let Some(function) = self.defined(index) else {
+                    if (index as usize) >= self.imports.len() {
+                        return Err(invalid(format!("unknown function {index}")));
+                    }
+                    continue;
+                };
+                if function.unlinkable {
+                    return Err(invalid(format!(
+                        "function {index} manipulates a table or uses an unsupported relocation"
+                    )));
+                }
+                closure.indirect |= function.indirect;
+                pending.extend(function.calls.iter().copied());
+                pending.extend(taken(&function.relocations));
+                closure.table.extend(taken(&function.relocations));
+                closure.globals.extend(function.globals.iter().copied());
+                segments.extend(targets(&function.relocations)?);
             }
-            pending.extend(function.calls.iter().copied());
-            closure.globals.extend(function.globals.iter().copied());
-            segments.extend(targets(&function.relocations)?);
+            while let Some(segment) = segments.pop() {
+                if !closure.segments.insert(segment) {
+                    continue;
+                }
+                let segment = self
+                    .segments
+                    .get(segment as usize)
+                    .ok_or_else(|| invalid(format!("unknown data segment {segment}")))?;
+                if segment.unlinkable {
+                    return Err(invalid("a data segment holds an unsupported relocation"));
+                }
+                segments.extend(targets(&segment.relocations)?);
+                pending.extend(taken(&segment.relocations));
+                closure.table.extend(taken(&segment.relocations));
+            }
         }
-        if closure.globals.iter().any(|&g| {
-            g != self.stack_pointer && !self.globals.get(g as usize).is_some_and(|g| g.zero_base)
+        if let Some(global) = closure.globals.iter().find(|&&g| {
+            g != self.stack_pointer
+                && !self
+                    .globals
+                    .get(g as usize)
+                    .is_some_and(|g| g.zero_base || g.table_base.is_some())
         }) {
-            return Err(invalid(
-                "linked code may use no global but its stack pointer and zero bases",
-            ));
-        }
-        while let Some(segment) = segments.pop() {
-            if !closure.segments.insert(segment) {
-                continue;
-            }
-            let segment = self
-                .segments
-                .get(segment as usize)
-                .ok_or_else(|| invalid(format!("unknown data segment {segment}")))?;
-            if segment.unlinkable {
-                return Err(invalid("a data segment holds an unsupported relocation"));
-            }
-            segments.extend(targets(&segment.relocations)?);
+            return Err(invalid(format!(
+                "linked code may use no global but its stack pointer and zero bases (global {global})"
+            )));
         }
         Ok(closure)
     }
@@ -535,6 +656,7 @@ impl Library {
             addresses,
             arena: base + arena,
             bytes: arena + abi::INTRINSIC_ARENA_BYTES,
+            slots: BTreeMap::new(),
         })
     }
 
@@ -575,16 +697,26 @@ impl Library {
         placement: &Placement,
     ) -> Result<(), String> {
         for relocation in relocations {
-            let Target::Data { segment, offset } = relocation.target else {
-                return Err(invalid("an absolute address is not linkable"));
+            let (original, placed) = match relocation.target {
+                Target::Data { segment, offset } => (
+                    self.segments[segment as usize].address + offset,
+                    placement
+                        .addresses
+                        .get(&segment)
+                        .and_then(|&address| i64::try_from(address).ok())
+                        .ok_or_else(|| invalid("relocation into an unplaced segment"))?
+                        + offset,
+                ),
+                Target::Function(function) => (
+                    i64::from(self.slots[&function]) - relocation.base,
+                    placement
+                        .slots
+                        .get(&function)
+                        .map(|&slot| i64::from(slot))
+                        .ok_or_else(|| invalid("table index of an unplaced function"))?,
+                ),
+                Target::Absolute => return Err(invalid("an absolute address is not linkable")),
             };
-            let original = self.segments[segment as usize].address + offset;
-            let placed = placement
-                .addresses
-                .get(&segment)
-                .and_then(|&address| i64::try_from(address).ok())
-                .ok_or_else(|| invalid("relocation into an unplaced segment"))?
-                + offset;
             let width = match relocation.encoding {
                 Encoding::Leb | Encoding::Sleb => PADDED_LEB_BYTES,
                 Encoding::I32 => I32_BYTES,
@@ -611,11 +743,53 @@ impl Library {
 fn targets(relocations: &[Relocation]) -> Result<Vec<u32>, String> {
     relocations
         .iter()
-        .map(|relocation| match relocation.target {
-            Target::Data { segment, .. } => Ok(segment),
-            Target::Absolute => Err(invalid("an absolute address is not linkable")),
+        .filter_map(|relocation| match relocation.target {
+            Target::Data { segment, .. } => Some(Ok(segment)),
+            Target::Function(_) => None,
+            Target::Absolute => Some(Err(invalid("an absolute address is not linkable"))),
         })
         .collect()
+}
+
+/// The address-taken functions a list of relocations names.
+fn taken(relocations: &[Relocation]) -> impl Iterator<Item = u32> + '_ {
+    relocations
+        .iter()
+        .filter_map(|relocation| match relocation.target {
+            Target::Function(function) => Some(function),
+            _ => None,
+        })
+}
+
+/// The slots of one active element segment of table 0 (`i32.const` offset,
+/// function indices).
+fn read_element(
+    element: wasmparser::Element<'static>,
+    slots: &mut BTreeMap<u32, u32>,
+) -> Result<(), String> {
+    let wasmparser::ElementKind::Active {
+        table_index,
+        offset_expr,
+    } = element.kind
+    else {
+        return Err(invalid("only active element segments are linkable"));
+    };
+    if table_index.unwrap_or(0) != 0 {
+        return Err(invalid("only table 0 is linkable"));
+    }
+    let wasmparser::ElementItems::Functions(functions) = element.items else {
+        return Err(invalid("only function element segments are linkable"));
+    };
+    let offset = u32::try_from(constant_address(&offset_expr)?).map_err(invalid)?;
+    for (index, function) in functions.into_iter().enumerate() {
+        let slot = offset
+            .checked_add(u32::try_from(index).map_err(invalid)?)
+            .ok_or_else(|| invalid("table slot overflow"))?;
+        if slots.insert(function.map_err(invalid)?, slot).is_some() {
+            return Err(invalid("a function holds two table slots"));
+        }
+    }
+    Ok(())
 }
 
 /// The value of a padded LEB/SLEB or little-endian i32 field.
@@ -708,6 +882,7 @@ fn scan(ty: u32, body: FunctionBody<'static>) -> Result<Function, String> {
     let mut calls = BTreeSet::new();
     let mut globals = BTreeSet::new();
     let mut unlinkable = false;
+    let mut indirect = false;
     let mut reader = body.get_operators_reader().map_err(invalid)?;
     while !reader.eof() {
         match reader.read().map_err(invalid)? {
@@ -717,6 +892,7 @@ fn scan(ty: u32, body: FunctionBody<'static>) -> Result<Function, String> {
             Operator::GlobalGet { global_index } | Operator::GlobalSet { global_index } => {
                 globals.insert(global_index);
             }
+            Operator::CallIndirect { table_index: 0, .. } => indirect = true,
             Operator::CallIndirect { .. }
             | Operator::ReturnCallIndirect { .. }
             | Operator::RefFunc { .. }
@@ -739,6 +915,7 @@ fn scan(ty: u32, body: FunctionBody<'static>) -> Result<Function, String> {
         calls,
         globals,
         relocations: Vec::new(),
+        indirect,
         unlinkable,
     })
 }
@@ -785,6 +962,9 @@ fn read_symbols(table: &mut BinaryReader<'static>, metadata: &mut Metadata) -> R
         match kind {
             SYMBOL_FUNCTION | SYMBOL_GLOBAL | SYMBOL_TAG | SYMBOL_TABLE => {
                 let item = table.read_var_u32().map_err(invalid)?;
+                if kind == SYMBOL_FUNCTION {
+                    metadata.function_symbols.insert(index, item);
+                }
                 if defined || flags & SYMBOL_EXPLICIT_NAME != 0 {
                     let name = string(table)?;
                     if kind == SYMBOL_GLOBAL {
@@ -801,6 +981,9 @@ fn read_symbols(table: &mut BinaryReader<'static>, metadata: &mut Metadata) -> R
                     let absolute = flags & SYMBOL_ABSOLUTE != 0;
                     if absolute && name == MEMORY_BASE {
                         metadata.memory_base = Some(offset);
+                    }
+                    if absolute && name == TABLE_BASE {
+                        metadata.table_base = Some(offset);
                     }
                     let segment = (!absolute).then_some(segment);
                     metadata.data_symbols.insert(index, (segment, offset));
@@ -832,7 +1015,13 @@ fn read_relocations(data: &[u8], offset: usize, metadata: &mut Metadata) -> Resu
         };
         if matches!(
             kind,
-            R_MEMORY_ADDR_LEB | R_MEMORY_ADDR_SLEB | R_MEMORY_ADDR_REL_SLEB | R_MEMORY_ADDR_I32
+            R_MEMORY_ADDR_LEB
+                | R_MEMORY_ADDR_SLEB
+                | R_MEMORY_ADDR_REL_SLEB
+                | R_MEMORY_ADDR_I32
+                | R_TABLE_INDEX_SLEB
+                | R_TABLE_INDEX_I32
+                | R_TABLE_INDEX_REL_SLEB
         ) || UNSUPPORTED_MEMORY_RELOCATIONS.contains(&kind)
         {
             metadata.memory.push((section, at, kind, symbol, addend));

@@ -404,7 +404,7 @@ profile may import.
 | `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no / no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | — | 80 |
 | `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no / no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | — | 84 |
 | `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no / no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | — | 93 |
-| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no / v2 | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | `simd128` | 52 |
+| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no / v2 | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | `simd128` | 54 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -475,7 +475,7 @@ permissions and the view protocol: effects only
 <!-- generated:embedding-linked-intrinsics:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
 | Profile | Linked, never imported | Linked stack |
 | --- | --- | --- |
-| `checked-f64-utf16-v38` | `value_format_v12`, `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`, `value_is_error_class_v7`, `json_parse_v19`, `primitive_to_string_v6`, `primitive_to_number_v6`, `bigint_from_value_v5`, `json_stringify_owned`, `primitive_compare`, `primitive_equal`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
+| `checked-f64-utf16-v38` | `value_format_v12`, `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`, `value_is_error_class_v7`, `json_parse_v19`, `primitive_to_string_v6`, `primitive_to_number_v6`, `bigint_from_value_v5`, `json_stringify_owned`, `primitive_compare`, `primitive_equal`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `date_zone_offset`, `date_zone_name`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
 <!-- generated:embedding-linked-intrinsics:end -->
 
 - **One memory.** A linked module has exactly one memory, so every engine
@@ -1830,12 +1830,16 @@ import the operation, as contiguous runs in registry order.
 | `string_to_upper_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
 | `timer_start_v2` | (f64, f64, i32) → (f64) | 33 | `time.timer` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 | `bigint_from_value_v5` | (i64) → (i32, i32) | 34 | none | yes | — | — |
+| `date_zone_name` | (i32, i32, i32, i32, f64) → (i32) | 34 | none | yes | yes | — |
+| `date_zone_offset` | (i32, i32, f64, f64) → (f64) | 34 | none | — | — | — |
 | `env_snapshot` | (i32, i32) → (i32) | 34 | `env.get` | yes | yes | `checked-f64-utf16-v38` |
 | `event_source_close` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `event_source_open` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `event_take` | (f64) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `event_text` | (f64) → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` |
 | `event_watch` | (f64, f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
+| `intl_locale` | () → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` |
+| `intl_time_zone` | () → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` |
 | `json_parse_v19` | (i32, i32, i32, i32) → (i64) | 34 | none | yes | — | — |
 | `json_stringify_owned` | (i32, i32, i32) → (i64, i32) | 34 | none | — | — | — |
 | `kv_close` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |

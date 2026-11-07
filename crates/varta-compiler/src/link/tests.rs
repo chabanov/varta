@@ -175,6 +175,7 @@ fn source_fingerprint() -> String {
     let mut files = Vec::new();
     for crate_dir in [
         "crates/varta-bigint",
+        "crates/varta-intl",
         "crates/varta-intrinsics",
         "crates/varta-intrinsics-wasm",
     ] {
@@ -476,5 +477,69 @@ fn linked_closure_sizes() {
             closure.functions.len(),
             closure.segments.len()
         );
+    }
+}
+
+/// Linked code that calls indirectly (the zone names of `Date.toString`, through
+/// `core::fmt` vtables) gets its address-taken functions appended to the
+/// module's one table after the guest's slots, through one active element
+/// segment; every table index in its code and data is the appended slot, and
+/// the module validates and instantiates. A program without such code keeps
+/// no table.
+#[test]
+fn indirect_calls_of_linked_code_get_appended_table_slots() {
+    let source = "export function main(): void { console.log(new Date(0).toString()); }";
+    let bytes = compile(source, V38);
+    let mut tables = Vec::new();
+    let mut segments = Vec::new();
+    let mut indirect = 0;
+    for payload in Parser::new(0).parse_all(&bytes) {
+        match payload.unwrap() {
+            Payload::TableSection(reader) => {
+                tables.extend(reader.into_iter().map(|table| table.unwrap().ty));
+            }
+            Payload::ElementSection(reader) => {
+                for element in reader {
+                    let element = element.unwrap();
+                    let wasmparser::ElementItems::Functions(functions) = element.items else {
+                        panic!("expression elements");
+                    };
+                    segments.push(functions.into_iter().count());
+                }
+            }
+            Payload::CodeSectionEntry(body) => {
+                let mut reader = body.get_operators_reader().unwrap();
+                while !reader.eof() {
+                    if let wasmparser::Operator::CallIndirect { table_index, .. } =
+                        reader.read().unwrap()
+                    {
+                        assert_eq!(table_index, 0);
+                        indirect += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(indirect > 0);
+    let [table] = tables[..] else {
+        panic!("{tables:?}");
+    };
+    let slots: usize = segments.iter().sum();
+    assert!(
+        slots > 0 && table.initial >= slots as u64,
+        "{table:?} {segments:?}"
+    );
+    assert!(table.initial <= abi::MAX_TABLE_ELEMENTS as u64);
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    let utc = compile(
+        "export function main(): void { console.log(`${Date.UTC(2024, 0)}`); }",
+        V38,
+    );
+    for payload in Parser::new(0).parse_all(&utc) {
+        assert!(!matches!(
+            payload.unwrap(),
+            Payload::TableSection(_) | Payload::ElementSection(_)
+        ));
     }
 }

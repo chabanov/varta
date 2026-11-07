@@ -17,8 +17,10 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+pub use varta_common::host_inputs::HostInputs;
 pub use varta_common::permission::DecisionFile;
 pub use varta_common::profile::{FuelProfile, FunctionFuel};
+pub use varta_runtime::system_host_inputs;
 use varta_runtime::{ApplicationOptions, RunOptions, VartaRuntime};
 pub use varta_runtime::{
     FileRoots, HttpReport, HttpRequestOutcome, HttpRequestReport, NetworkLog, NetworkLogError,
@@ -315,8 +317,16 @@ fn tailwind_stylesheet(
     Ok(())
 }
 
+/// Run a packaged application with the system's zone and locale.
 pub fn run(artifact: &Artifact) -> Result<RunOutput> {
-    Ok(VartaRuntime::new().run_wasm_bytes(&artifact.wasm, &artifact.grants()?)?)
+    let options = RunOptions {
+        requested: artifact.grants()?,
+        host_inputs: system_host_inputs(),
+        ..RunOptions::default()
+    };
+    Ok(VartaRuntime::new()
+        .run_with(&artifact.wasm, options)
+        .into_result()?)
 }
 
 /// Stream runtime events while preserving the same validated artifact/policy
@@ -327,7 +337,11 @@ pub fn run_observed(
     observer: RuntimeObserver,
 ) -> Result<RunOutput> {
     artifact.grants()?;
-    let mut options = options(&artifact.manifest, host, &RunSettings::default())?;
+    let settings = RunSettings {
+        host_inputs: system_host_inputs(),
+        ..RunSettings::default()
+    };
+    let mut options = options(&artifact.manifest, host, &settings)?;
     options.observer = Some(observer);
     Ok(VartaRuntime::new()
         .run_with(&artifact.wasm, options)
@@ -351,6 +365,9 @@ pub struct RunSettings {
     /// transfers, recorded ones, or a recorded log replayed instead.
     /// Recording and replay run application instances only.
     pub network: NetworkMode,
+    /// The zone and locale of v38 local time, recorded host inputs (UTC
+    /// and `en-US` by default; the CLI passes the system's or its flags).
+    pub host_inputs: HostInputs,
 }
 
 /// Read a bounded headless decision file.
@@ -381,6 +398,7 @@ fn options(
 ) -> Result<RunOptions> {
     let host_manifest = host.map(HostPolicy::manifest);
     let mut options = RunOptions::from_manifests(manifest, host_manifest)?;
+    options.host_inputs = settings.host_inputs.clone();
     let host_maps = host_manifest.is_some_and(|host| host.fs_roots.is_some());
     if let (Some(roots), false) = (&settings.file_roots, host_maps) {
         options.file_roots = roots.clone();
