@@ -29,6 +29,10 @@ struct ThisUse<'a> {
     /// V38 (`expression_forms`): `new.target === C` comparisons are admitted
     /// wherever `new.target.name` is.
     compare_target: bool,
+    /// V38 (`integrity_levels`): `Object.freeze(this)` and the other integrity
+    /// members of the unshadowed global `Object` read and set only the
+    /// instance's header bits, never a field, so `this` may be their argument.
+    integrity: bool,
     violation: Violation,
 }
 impl ThisUse<'_> {
@@ -129,6 +133,9 @@ impl Visit for ThisUse<'_> {
         self.fail("super property access in a constructor", node.span);
     }
     fn visit_call_expr(&mut self, node: &ast::CallExpr) {
+        if self.integrity && self.allow_this && !self.closure && integrity_of_this(node) {
+            return;
+        }
         if matches!(node.callee, ast::Callee::Super(_)) {
             self.fail(
                 "super(...) must be a top-level statement of a derived constructor",
@@ -168,6 +175,40 @@ impl Visit for Identifiers {
     }
 }
 
+/// Whether `call` is `Object.<integrity member>(this)`.
+fn integrity_of_this(call: &ast::CallExpr) -> bool {
+    let ast::Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let [argument] = call.args.as_slice() else {
+        return false;
+    };
+    argument.spread.is_none()
+        && matches!(stmt::unparen(&argument.expr), ast::Expr::This(_))
+        && expr::callee_name(callee).is_some_and(|name| crate::lower::integrity::is_member(&name))
+}
+
+/// Whether the constructor binds `Object` itself (a parameter or local).
+fn binds_object(constructor: &ast::Constructor) -> bool {
+    #[derive(Default)]
+    struct Bound(bool);
+    impl Visit for Bound {
+        fn visit_binding_ident(&mut self, node: &ast::BindingIdent) {
+            self.0 |= node.id.sym == "Object";
+        }
+        fn visit_fn_decl(&mut self, node: &ast::FnDecl) {
+            self.0 |= node.ident.sym == "Object";
+            node.visit_children_with(self);
+        }
+        fn visit_class_decl(&mut self, node: &ast::ClassDecl) {
+            self.0 |= node.ident.sym == "Object";
+        }
+    }
+    let mut bound = Bound::default();
+    constructor.visit_with(&mut bound);
+    bound.0
+}
+
 fn super_statement(statement: &ast::Stmt) -> Option<&ast::CallExpr> {
     let ast::Stmt::Expr(expression) = statement else {
         return None;
@@ -198,6 +239,8 @@ struct Discipline<'a> {
     compare_target: bool,
     /// V37 (`language_core`): constructor closures may capture `this.field`.
     closures: bool,
+    /// V38 (`integrity_levels`): see [`ThisUse::integrity`].
+    integrity: bool,
 }
 impl Discipline<'_> {
     fn check(&self, node: &dyn Checked, allow_this: bool) -> Result<()> {
@@ -229,6 +272,7 @@ impl Discipline<'_> {
             complete: self.closures && allow_this,
             new_target,
             compare_target: new_target && self.compare_target,
+            integrity: self.integrity,
             violation: None,
         };
         node.accept(&mut visitor);
@@ -285,7 +329,12 @@ pub(super) fn this_assign(name: &str, value: Box<ast::Expr>) -> ast::Stmt {
 /// Validate the constructor of `class` and build its initializer declaration:
 /// own field initializers run first in a base class and right after the
 /// `super(...)` statement in a derived class.
-pub(super) fn declaration(id: u32, types: &ir::ValueTypes) -> Result<ast::FnDecl> {
+/// `object_global`: the class's module binds no `Object` of its own.
+pub(super) fn declaration(
+    id: u32,
+    types: &ir::ValueTypes,
+    object_global: bool,
+) -> Result<ast::FnDecl> {
     let class = types.classes.get(id);
     let source = &class.source;
     let constructor = class
@@ -312,6 +361,9 @@ pub(super) fn declaration(id: u32, types: &ir::ValueTypes) -> Result<ast::FnDecl
         new_target: types.profile.error_subclasses(),
         compare_target: types.profile.expression_forms(),
         closures: types.profile.language_core(),
+        integrity: types.profile.integrity_levels()
+            && object_global
+            && constructor.is_none_or(|constructor| !binds_object(constructor)),
     };
     // Field initializers never see `this` or constructor-scoped bindings.
     let mut scoped = BTreeSet::new();
@@ -380,6 +432,19 @@ pub(super) fn declaration(id: u32, types: &ir::ValueTypes) -> Result<ast::FnDecl
     if !derived {
         discipline.assigned.extend(initialized.iter().cloned());
     }
+    // V38 (`integrity_levels`): right after `super(...)` a derived class
+    // defines its own fields (§7.3.33 DefineField), which fails on an
+    // instance the base constructor made non-extensible.
+    let defined = (derived && crate::lower::integrity::enabled(types))
+        .then(|| {
+            class.fields.iter().find(|field| {
+                (field.owner == id || field.redeclared == Some(id))
+                    && !is_private_name(&field.name)
+                    && !class.forms.abstracts.contains(&field.name)
+            })
+        })
+        .flatten()
+        .map(|field| crate::lower::integrity::define_statement(&field.name, class.span));
     let mut body = Vec::new();
     let mut called_super = false;
     let injected: Vec<_> = class
@@ -398,6 +463,7 @@ pub(super) fn declaration(id: u32, types: &ir::ValueTypes) -> Result<ast::FnDecl
                 discipline.assigned.extend(inherited.iter().cloned());
                 discipline.assigned.extend(initialized.iter().cloned());
                 body.push(statement);
+                body.extend(defined.iter().cloned());
                 body.extend(injected.iter().cloned());
                 continue;
             }

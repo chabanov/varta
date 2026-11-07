@@ -18,6 +18,7 @@ mod fuel_profile;
 mod function_catalog;
 mod functions;
 mod http;
+mod integrity;
 mod labels;
 mod math;
 mod math_f16;
@@ -1623,8 +1624,9 @@ impl Emitter<'_> {
                     shape,
                     slots,
                     values,
+                    symbols,
                 } => {
-                    self.record_enumerate(*source, *target, *shape, *slots, values)?;
+                    self.record_enumerate((*source, *target, *shape), *slots, values, *symbols)?;
                     self.end_temporaries();
                 }
                 S::RecordRest {

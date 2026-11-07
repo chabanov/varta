@@ -17,6 +17,9 @@ pub(crate) struct Symbols {
     /// Whether any value or annotation has the `symbol` type, so erasure
     /// needs the symbol record class.
     pub used: bool,
+    /// The stored module constant of each `unique symbol` member key
+    /// (`modules::symbol_keys::key`).
+    pub constants: BTreeMap<String, u32>,
 }
 
 /// The `symbol` type, noting that the program uses it.
@@ -501,5 +504,187 @@ impl Lower<'_> {
         let storage = self.symbol_storage(value)?;
         self.symbol_prelude("symbolDescription", vec![storage], span)
             .map(Some)
+    }
+}
+
+impl Lower<'_> {
+    /// The symbol of the symbol-keyed member `key`
+    /// (`modules::symbol_keys`): its `unique symbol` constant or well-known
+    /// symbol, read at run time.
+    pub(super) fn key_symbol(&mut self, key: &str, span: swc_common::Span) -> Result<Expr> {
+        let missing = || CompilerError::Internal(format!("symbol of member key {key}"));
+        if let Some(name) = crate::modules::symbol_keys::well_known_name(key) {
+            let index = well_known(name).ok_or_else(missing)?;
+            let record = self.symbol_prelude(
+                "wellKnownSymbol",
+                vec![Expr {
+                    span,
+                    ty: Type::Float64,
+                    kind: E::Float64(index as f64),
+                }],
+                span,
+            )?;
+            return Ok(self.as_symbol(record));
+        }
+        let constant = *self.types.symbols.constants.get(key).ok_or_else(missing)?;
+        Ok(Expr {
+            span,
+            ty: use_type(self.types),
+            kind: E::ModuleConstant(constant),
+        })
+    }
+    /// `Object.getOwnPropertySymbols(value)` (§20.1.2.11): the symbols of
+    /// the present symbol-keyed members of a record, in insertion order; no
+    /// other object or primitive has symbol-keyed own properties here.
+    pub(super) fn object_own_symbols(&mut self, call: &ast::CallExpr) -> Result<Expr> {
+        let span = call.span;
+        let name = "Object.getOwnPropertySymbols";
+        let [argument] = call.args.as_slice() else {
+            return Err(self
+                .source
+                .locate(invalid(format!("{name} expects one argument")), span));
+        };
+        if argument.spread.is_some() || call.type_args.is_some() {
+            return Err(self.source.locate(
+                unsupported(&format!("{name} with spread or type arguments")),
+                span,
+            ));
+        }
+        let value = self.expr(&argument.expr)?;
+        self.own_symbols(value, span)
+    }
+    /// The `symbol[]` of [`Self::object_own_symbols`] for a lowered value.
+    pub(super) fn own_symbols(&mut self, value: Expr, span: swc_common::Span) -> Result<Expr> {
+        let name = "Object.getOwnPropertySymbols";
+        let symbol = use_type(self.types);
+        let result = arrays::intern(symbol, self.types)?;
+        let empty = Expr {
+            span,
+            ty: result,
+            kind: E::Array(Vec::new()),
+        };
+        let keyed = |shape: u32, types: &ir::ValueTypes| -> Vec<(usize, String)> {
+            types.records[shape as usize]
+                .fields
+                .iter()
+                .enumerate()
+                .filter(|(_, field)| crate::modules::symbol_keys::is_symbol_key(&field.name))
+                .map(|(slot, field)| (slot, field.name.clone()))
+                .collect()
+        };
+        let shape = match value.ty {
+            Type::Undefined | Type::Null => {
+                let error = self.array_error(
+                    varta_common::value::ErrorClass::TypeError,
+                    "Cannot convert undefined or null to object",
+                    span,
+                )?;
+                let output = self.hidden(result);
+                let marker = self.hidden(Type::Number);
+                return Ok(Expr {
+                    span,
+                    ty: result,
+                    kind: E::ValueBlock {
+                        output,
+                        marker,
+                        roots: vec![output],
+                        body: vec![S::Expr(value), S::Throw(error), S::Init(output, empty)],
+                    },
+                });
+            }
+            Type::Record(shape) if !keyed(shape, self.types).is_empty() => shape,
+            Type::Class(class)
+                if !keyed(self.types.classes.shape(class), self.types).is_empty() =>
+            {
+                return Err(self.source.locate(
+                    unsupported(&format!(
+                        "{name} of a class instance with symbol-keyed fields"
+                    )),
+                    value.span,
+                ));
+            }
+            Type::Unknown | Type::ReferenceUnion(_) | Type::Object(_) => {
+                return Err(self.source.locate(
+                    unsupported(&format!(
+                        "{name} of a value of type {} (narrow it to an object type)",
+                        value.ty
+                    )),
+                    value.span,
+                ));
+            }
+            _ => {
+                return Ok(Expr {
+                    span,
+                    ty: result,
+                    kind: E::Sequence(Box::new(value), Box::new(empty)),
+                });
+            }
+        };
+        if self.types.records[shape as usize].class.is_none() {
+            // A view of an object with other members would list the view's.
+            self.types.subtyping.note_key_copy(
+                shape,
+                subtyping::KeyCopy::Enumeration,
+                self.source,
+                span,
+            );
+        }
+        let record = Type::Record(shape);
+        let (source, mut roots, mut body) = self.enumeration_source(value, record, span)?;
+        let count = self.types.records[shape as usize].fields.len();
+        let keys = keyed(shape, self.types);
+        // Each symbol once, in a rooted local; every other slot a placeholder.
+        let mut entries: Vec<Expr> = (0..count)
+            .map(|_| Expr {
+                span,
+                ty: symbol,
+                kind: E::Zero,
+            })
+            .collect();
+        for (slot, key) in keys {
+            let value = self.key_symbol(&key, span)?;
+            let cache = self.hidden(symbol);
+            roots.push(cache);
+            body.push(S::Init(cache, value));
+            entries[slot] = Expr {
+                span,
+                ty: symbol,
+                kind: E::Local(cache),
+            };
+        }
+        let output = self.hidden(result);
+        let marker = self.hidden(Type::Number);
+        roots.push(output);
+        body.push(S::Init(
+            output,
+            Expr {
+                span,
+                ty: result,
+                kind: E::Array(entries.iter().cloned().map(Some).collect()),
+            },
+        ));
+        body.push(S::RecordEnumerate {
+            source,
+            target: output,
+            shape,
+            slots: [
+                self.hidden(Type::Number),
+                self.hidden(Type::Number),
+                self.hidden(Type::Number),
+                self.hidden(Type::Number),
+            ],
+            values: entries,
+            symbols: true,
+        });
+        Ok(Expr {
+            span,
+            ty: result,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots,
+                body,
+            },
+        })
     }
 }

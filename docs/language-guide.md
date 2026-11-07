@@ -6060,6 +6060,53 @@ export function main(): void {
 }
 ```
 
+`Object.keys`, `for...in` and the other string-key forms skip
+symbol-keyed members, spreads and `Object.assign` copy them, and
+`Object.getOwnPropertySymbols` lists them.
+
+#### Integrity levels (opt-in v38)
+
+`Object.freeze`, `Object.seal`, `Object.preventExtensions` and their
+predicates work on records, class instances, arrays, dictionaries and
+`Map`/`Set` (whose entries stay writable, as in JavaScript). A write,
+addition or deletion the level forbids throws the `TypeError` Node throws:
+
+```ts
+interface Settings {
+  theme: string;
+  zoom?: number;
+}
+
+class Point {
+  readonly x: number;
+  constructor(x: number) {
+    this.x = x;
+    Object.freeze(this);
+  }
+}
+
+export function main(): void {
+  const settings: Settings = Object.freeze({ theme: 'dark' });
+  try {
+    settings.theme = 'light';
+  } catch (error) {
+    console.log(String(error)); // TypeError: Cannot assign to read only property 'theme' of object '#<Object>'
+  }
+  const list = Object.seal([1, 2, 3]);
+  list[0] = 10;
+  try {
+    list.pop();
+  } catch (error) {
+    console.log(String(error)); // TypeError: Cannot delete property '2' of [object Array]
+  }
+  console.log(`${Object.isFrozen(settings)} ${Object.isSealed(list)} ${list.join()}`); // true true 10,2,3
+  console.log(String(Object.isFrozen(new Point(1)))); // true
+}
+```
+
+Functions, generators and `Uint8Array` values cannot be frozen yet, and
+`Object.isFrozen`/`isSealed` need a value narrowed from `unknown`.
+
 #### Standard library (opt-in v38)
 
 The ECMAScript 2025 library methods typed code uses most: `sort` and
@@ -6102,8 +6149,9 @@ Local time is the host's time zone (below); with the default inputs of a
 library run it is UTC, so this `Date` prints what Node prints with `TZ=UTC`. Sorting
 without a comparator needs primitive elements, `flat` needs a literal
 depth, and `JSON.stringify` takes property lists but no replacer
-function. `Symbol()`, `WeakMap`/`WeakSet`/`WeakRef`, `Proxy`, `Reflect`,
-`structuredClone`, `Object.freeze` and `Intl` are refused with the reason.
+function. `WeakMap`/`WeakSet`/`WeakRef`, `Proxy`, `Reflect`,
+`structuredClone` and `Intl` are refused with the reason (`Symbol()` values
+and `Object.freeze` have sections of their own).
 
 #### Console output like Node (opt-in v38)
 

@@ -333,6 +333,10 @@ impl Emitter<'_> {
                     }
                     // The low word of every managed handle is its payload address.
                     ir::Intrinsic::Identity => self.code.extend([I::I32WrapI64, I::F64ConvertI32U]),
+                    ir::Intrinsic::Integrity(op) => {
+                        let cell = args.first().is_some_and(|arg| arg.ty.is_cell());
+                        self.integrity(*op, cell)?;
+                    }
                 }
             }
             E::StringRepeat {

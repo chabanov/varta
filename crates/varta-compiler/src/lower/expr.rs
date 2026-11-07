@@ -360,7 +360,7 @@ impl Lower<'_> {
                 if let Some(value) = self.method_typeof(unary)? {
                     return Ok(value);
                 }
-                let value = self.expr(&unary.arg)?;
+                let value = self.unary_operand(unary)?;
                 if self.types.profile.bigint_values()
                     && matches!(
                         unary.op,
@@ -1183,6 +1183,9 @@ impl Lower<'_> {
             return self.error_to_string(call, member);
         }
         let name = callee_name(callee).ok_or_else(|| unsupported("callee"))?;
+        if name == integrity::DEFINE {
+            return self.integrity_define(call);
+        }
         if let Some(value) = self.web_text(call, &name)? {
             return Ok(value);
         }
@@ -1259,117 +1262,7 @@ impl Lower<'_> {
             return self.global_parse_json(call);
         }
         if name == "JSON.stringify" {
-            // V38 (`standard_library`): replacer lists and indentation.
-            if self.types.profile.standard_library() && matches!(call.args.len(), 2 | 3) {
-                return self.json_stringify_options(call);
-            }
-            if call.args.len() != 1 {
-                return Err(invalid("JSON.stringify expects one value"));
-            }
-            let value = self.expr(&call.args[0].expr)?;
-            // `JSON.stringify(x)` with `x: never` (v38) is unreachable.
-            if value.ty == Type::Never && self.types.profile.structural_subtyping() {
-                return Ok(Expr {
-                    span: call.span,
-                    ty: Type::String,
-                    kind: E::Sequence(
-                        Box::new(value),
-                        Box::new(Expr {
-                            span: call.span,
-                            ty: Type::String,
-                            kind: E::Zero,
-                        }),
-                    ),
-                });
-            }
-            if collections::reaches_hidden(value.ty, self.types) {
-                return Err(self
-                    .source
-                    .locate(collections::opaque("JSON.stringify"), value.span));
-            }
-            let value = self.physical_array(value)?;
-            // V38 (`object_accessors`): accessors are read by their getters.
-            let value = self.json_materialized(value)?;
-            if value.ty.profile_kind(self.types.profile).is_none()
-                || value.ty == Type::BigInt && !self.types.profile.bigint_values()
-            {
-                return Err(unsupported("JSON.stringify value type"));
-            }
-            // V37 (`json_stringify_v17`) skips private state, so prelude,
-            // Error and #private instances serialize their own properties.
-            let hidden = self.types.profile.class_generics();
-            if hidden && classes::reaches_json_form(value.ty, self.types) {
-                return Err(self.source.locate(
-                    unsupported("JSON.stringify of a URL or a RegExp match array; their JSON forms (toJSON, array) are not modelled"),
-                    value.span,
-                ));
-            }
-            if !hidden && classes::reaches_prelude(value.ty, self.types) {
-                return Err(self.source.locate(
-                    unsupported("JSON.stringify of an engine Web type instance (Headers, AbortController, AbortSignal, DOMException); its state is private"),
-                    value.span,
-                ));
-            }
-            if !hidden && classes::reaches_instance(value.ty, self.types) {
-                return Err(self.source.locate(
-                    unsupported("JSON.stringify of an Error subclass instance; own-property enumerability is not modelled"),
-                    value.span,
-                ));
-            }
-            if !hidden && classes::reaches_private(value.ty, self.types) {
-                return Err(self.source.locate(
-                    unsupported("JSON.stringify of a class instance with #private fields; private names are not properties"),
-                    value.span,
-                ));
-            }
-            if function_fields::reaches_callable_to_json(value.ty, self.types) {
-                return Err(self.source.locate(
-                    unsupported("JSON.stringify of a value with a function-valued toJSON field; the host cannot call guest code"),
-                    value.span,
-                ));
-            }
-            // A function (v36) and a symbol (v38) serialize like `undefined`.
-            let function = |ty: &Type| matches!(ty, Type::Function(_) | Type::Symbol);
-            let ty = if value.ty == Type::Unknown
-                || value.ty.is_union()
-                    && unions::members(value.ty, self.types)
-                        .iter()
-                        .any(|ty| *ty == Type::Undefined || function(ty))
-            {
-                unions::intern(vec![Type::String, Type::Undefined], self.types)?
-            } else if value.ty == Type::Undefined || function(&value.ty) {
-                Type::Undefined
-            } else {
-                Type::String
-            };
-            let status = self
-                .types
-                .profile
-                .bigint_values()
-                .then(|| self.hidden(Type::Number));
-            let result = Expr {
-                span: call.span,
-                ty,
-                kind: E::Json(Box::new(value), status),
-            };
-            let result = if let Some(status) = status {
-                self.bigint_checked_result(result, status)?
-            } else {
-                result
-            };
-            // V38 types the result `string`, as TypeScript does; a value
-            // without a JSON form (`undefined`, a function) throws instead.
-            if self.types.profile.structural_subtyping() && result.ty.is_union() {
-                let span = call.span;
-                return self.assert_value(
-                    result,
-                    Type::String,
-                    "string",
-                    "JSON.stringify produced undefined: the value has no JSON form",
-                    span,
-                );
-            }
-            return Ok(result);
+            return self.json_stringify(call, true);
         }
         if let Some(signature) = self.functions.get(&name).cloned() {
             if signature.index == self.entry {
@@ -1585,5 +1478,151 @@ pub(super) fn callee_name(expr: &ast::Expr) -> Option<String> {
             Some(format!("{}.{}", callee_name(&member.obj)?, name.sym))
         }
         _ => None,
+    }
+}
+
+impl Lower<'_> {
+    /// `JSON.stringify(value)`. V38 types the result `string`, as
+    /// TypeScript's lib does; a value without a JSON form (`undefined`, a
+    /// function, a symbol) held by `unknown` or a union makes that `string`
+    /// a checked read that throws `TypeError` (`checked`). A discarded
+    /// result is never read, so it never throws (`!checked`: the expression
+    /// statement and `void` forms).
+    /// The operand of a unary operator: `void`'s is discarded. Kept out of
+    /// the expression match so its frame does not grow.
+    #[inline(never)]
+    pub(super) fn unary_operand(&mut self, unary: &ast::UnaryExpr) -> Result<Expr> {
+        if unary.op == ast::UnaryOp::Void {
+            self.discarded(&unary.arg)
+        } else {
+            self.expr(&unary.arg)
+        }
+    }
+    /// An expression whose value is discarded: a v38 `JSON.stringify` call
+    /// keeps its `undefined` result unchecked.
+    pub(super) fn discarded(&mut self, expression: &ast::Expr) -> Result<Expr> {
+        if self.types.profile.structural_subtyping()
+            && let ast::Expr::Call(call) = stmt::unparen(expression)
+            && let ast::Callee::Expr(callee) = &call.callee
+            && callee_name(callee).is_some_and(|name| name == "JSON.stringify")
+            && self.binding("JSON").is_err()
+            && !self.functions.contains_key("JSON")
+        {
+            return self.json_stringify(call, false);
+        }
+        self.expr(expression)
+    }
+    pub(super) fn json_stringify(&mut self, call: &ast::CallExpr, checked: bool) -> Result<Expr> {
+        // V38 (`standard_library`): replacer lists and indentation.
+        if self.types.profile.standard_library() && matches!(call.args.len(), 2 | 3) {
+            return self.json_stringify_options(call, checked);
+        }
+        if call.args.len() != 1 {
+            return Err(invalid("JSON.stringify expects one value"));
+        }
+        let value = self.expr(&call.args[0].expr)?;
+        // `JSON.stringify(x)` with `x: never` (v38) is unreachable.
+        if value.ty == Type::Never && self.types.profile.structural_subtyping() {
+            return Ok(Expr {
+                span: call.span,
+                ty: Type::String,
+                kind: E::Sequence(
+                    Box::new(value),
+                    Box::new(Expr {
+                        span: call.span,
+                        ty: Type::String,
+                        kind: E::Zero,
+                    }),
+                ),
+            });
+        }
+        if collections::reaches_hidden(value.ty, self.types) {
+            return Err(self
+                .source
+                .locate(collections::opaque("JSON.stringify"), value.span));
+        }
+        let value = self.physical_array(value)?;
+        // V38 (`object_accessors`): accessors are read by their getters.
+        let value = self.json_materialized(value)?;
+        if value.ty.profile_kind(self.types.profile).is_none()
+            || value.ty == Type::BigInt && !self.types.profile.bigint_values()
+        {
+            return Err(unsupported("JSON.stringify value type"));
+        }
+        // V37 (`json_stringify_v17`) skips private state, so prelude,
+        // Error and #private instances serialize their own properties.
+        let hidden = self.types.profile.class_generics();
+        if hidden && classes::reaches_json_form(value.ty, self.types) {
+            return Err(self.source.locate(
+                unsupported("JSON.stringify of a URL or a RegExp match array; their JSON forms (toJSON, array) are not modelled"),
+                value.span,
+            ));
+        }
+        if !hidden && classes::reaches_prelude(value.ty, self.types) {
+            return Err(self.source.locate(
+                unsupported("JSON.stringify of an engine Web type instance (Headers, AbortController, AbortSignal, DOMException); its state is private"),
+                value.span,
+            ));
+        }
+        if !hidden && classes::reaches_instance(value.ty, self.types) {
+            return Err(self.source.locate(
+                unsupported("JSON.stringify of an Error subclass instance; own-property enumerability is not modelled"),
+                value.span,
+            ));
+        }
+        if !hidden && classes::reaches_private(value.ty, self.types) {
+            return Err(self.source.locate(
+                unsupported("JSON.stringify of a class instance with #private fields; private names are not properties"),
+                value.span,
+            ));
+        }
+        if function_fields::reaches_callable_to_json(value.ty, self.types) {
+            return Err(self.source.locate(
+                unsupported("JSON.stringify of a value with a function-valued toJSON field; the host cannot call guest code"),
+                value.span,
+            ));
+        }
+        // A function (v36) and a symbol (v38) serialize like `undefined`.
+        let function = |ty: &Type| matches!(ty, Type::Function(_) | Type::Symbol);
+        let ty = if value.ty == Type::Unknown
+            || value.ty.is_union()
+                && unions::members(value.ty, self.types)
+                    .iter()
+                    .any(|ty| *ty == Type::Undefined || function(ty))
+        {
+            unions::intern(vec![Type::String, Type::Undefined], self.types)?
+        } else if value.ty == Type::Undefined || function(&value.ty) {
+            Type::Undefined
+        } else {
+            Type::String
+        };
+        let status = self
+            .types
+            .profile
+            .bigint_values()
+            .then(|| self.hidden(Type::Number));
+        let result = Expr {
+            span: call.span,
+            ty,
+            kind: E::Json(Box::new(value), status),
+        };
+        let result = if let Some(status) = status {
+            self.bigint_checked_result(result, status)?
+        } else {
+            result
+        };
+        // V38 types the result `string`, as TypeScript does; a value
+        // without a JSON form (`undefined`, a function) throws instead.
+        if checked && self.types.profile.structural_subtyping() && result.ty.is_union() {
+            let span = call.span;
+            return self.assert_value(
+                result,
+                Type::String,
+                "string",
+                "JSON.stringify produced undefined: the value has no JSON form",
+                span,
+            );
+        }
+        Ok(result)
     }
 }

@@ -31,6 +31,13 @@ impl Constant {
     pub(super) fn id(&self) -> usize {
         self.id
     }
+    /// The permanent root slot of a stored constant.
+    pub(super) fn stored(&self) -> Option<u32> {
+        match self.value {
+            Value::Stored(index) => Some(index),
+            Value::Integer(_) | Value::Float64(_) => None,
+        }
+    }
 }
 #[derive(Clone, Copy)]
 enum Value {

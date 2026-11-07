@@ -59,7 +59,7 @@ impl ErrorObject {
         if size < abi::STRING_HEADER_BYTES + ERROR_BYTES
             || !size.is_multiple_of(HEAP_ALIGNMENT)
             || header.checked_add(size).is_none_or(|end| end > data.size())
-            || word(header + HEAP_FLAGS_OFFSET)
+            || word(header + HEAP_FLAGS_OFFSET).map(|flags| flags & !integrity_flags(version))
                 != Some(HEAP_ALLOCATED_FLAG | HEAP_ERROR_FLAG as u32)
             || word(header + HEAP_LINK_OFFSET) != Some(1)
             || word(ptr + 4) != Some(1)

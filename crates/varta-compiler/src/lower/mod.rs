@@ -452,6 +452,7 @@ pub(crate) mod generics;
 mod globals;
 mod guest_logical;
 mod http;
+mod integrity;
 mod interfaces;
 mod iterable_patterns;
 mod iteration;
