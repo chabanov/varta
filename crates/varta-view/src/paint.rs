@@ -1222,6 +1222,7 @@ fn border_colors(
         .element(id)
         .ok_or(PaintError::Unsupported(id))?
         .border_color_inline
+        .values
     {
         set(&mut values, *property, Some(raw), &[side]);
     }

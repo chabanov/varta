@@ -108,8 +108,8 @@ fn node(tree: &Tree, id: u32, environment: &Environment, children: Vec<Value>) -
                     ),
                 );
             }
-            if !element.data.is_empty() {
-                out.insert("data".into(), json!(element.data));
+            if !element.data.values.is_empty() {
+                out.insert("data".into(), json!(element.data.values));
             }
             if !element.class.is_empty() {
                 out.insert("class".into(), json!(element.class));

@@ -61,12 +61,24 @@ pub(crate) struct OutlineStyle {
     pub values: BTreeMap<CssProperty, (CssProperty, String)>,
 }
 
+/// Last inline writer for each border color, including shorthand resets.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct BorderColorStyle {
+    pub values: BTreeMap<u8, (CssProperty, String)>,
+}
+
+/// An element's custom data attributes (`set_data`), by name.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct DataAttributes {
+    pub values: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Element {
     pub tag: Tag,
     pub attributes: BTreeMap<Attribute, String>,
     /// Custom data attributes (`set_data`), by name.
-    pub data: BTreeMap<String, String>,
+    pub data: Box<DataAttributes>,
     pub class: String,
     pub style: BTreeMap<CssProperty, String>,
     /// CSSOM-like last writer for each geometry longhand, kept separately so
@@ -74,8 +86,7 @@ pub(crate) struct Element {
     pub layout_inline: BTreeMap<CssProperty, (CssProperty, String, usize)>,
     /// Last inline writer for each border side and component (width/style).
     pub border_inline: BTreeMap<(u8, bool), (CssProperty, String)>,
-    /// Last inline writer for each border color, including shorthand resets.
-    pub border_color_inline: BTreeMap<u8, (CssProperty, String)>,
+    pub border_color_inline: Box<BorderColorStyle>,
     pub outline_inline: Box<OutlineStyle>,
     pub listeners: Vec<Listener>,
     /// The live value of `input`, `textarea` and `select` (`set_value`).
@@ -94,12 +105,12 @@ impl Element {
         Self {
             tag,
             attributes: BTreeMap::new(),
-            data: BTreeMap::new(),
+            data: Box::default(),
             class: String::new(),
             style: BTreeMap::new(),
             layout_inline: BTreeMap::new(),
             border_inline: BTreeMap::new(),
-            border_color_inline: BTreeMap::new(),
+            border_color_inline: Box::default(),
             outline_inline: Box::default(),
             listeners: Vec::new(),
             value: String::new(),
@@ -380,7 +391,7 @@ impl Tree {
                     for text in element.attributes.values().chain(element.style.values()) {
                         charge(text.len())?;
                     }
-                    for (name, text) in &element.data {
+                    for (name, text) in &element.data.values {
                         charge(name.len() + text.len())?;
                     }
                     if element.editor.value_reserved {
@@ -1115,6 +1126,7 @@ impl Apply<'_, '_, '_> {
                 for side in border_color_sides(*property) {
                     element
                         .border_color_inline
+                        .values
                         .insert(*side, (*property, stored.clone()));
                 }
                 for component in outline_components(*property) {
@@ -1140,7 +1152,7 @@ impl Apply<'_, '_, '_> {
                     element.border_inline.remove(&component);
                 }
                 for side in border_color_sides(*property) {
-                    element.border_color_inline.remove(side);
+                    element.border_color_inline.values.remove(side);
                 }
                 for component in outline_components(*property) {
                     element.outline_inline.values.remove(component);
@@ -1180,12 +1192,12 @@ impl Apply<'_, '_, '_> {
                 }
                 let (name, value) = (name.to_owned(), operation.text().to_owned());
                 let element = self.element(node)?;
-                if !element.data.contains_key(&name)
-                    && element.data.len() >= varta_common::view::DRAFT_MAX_DATA_ATTRIBUTES
+                if !element.data.values.contains_key(&name)
+                    && element.data.values.len() >= varta_common::view::DRAFT_MAX_DATA_ATTRIBUTES
                 {
                     return Err(self.fail(Violation::TooManyDataAttributes));
                 }
-                element.data.insert(name, value);
+                element.data.values.insert(name, value);
                 Ok(())
             }
             Opcode::RemoveData => {
@@ -1194,7 +1206,7 @@ impl Apply<'_, '_, '_> {
                     return Err(self.fail(Violation::InvalidDataName));
                 }
                 let name = name.to_owned();
-                self.element(node)?.data.remove(&name);
+                self.element(node)?.data.values.remove(&name);
                 Ok(())
             }
             Opcode::SetTitle => {
@@ -1933,7 +1945,11 @@ impl varta_style::Document for Tree {
     }
     fn attribute(&self, id: u32, name: &str) -> Option<&str> {
         if name.starts_with(varta_common::view::DATA_ATTRIBUTE_PREFIX) {
-            return Tree::element(self, id)?.data.get(name).map(String::as_str);
+            return Tree::element(self, id)?
+                .data
+                .values
+                .get(name)
+                .map(String::as_str);
         }
         let attribute = Attribute::ALL
             .iter()
