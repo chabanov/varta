@@ -791,34 +791,53 @@ fn text_import_forms_and_attributes_fail_clearly() {
 }
 
 #[test]
-fn stylesheet_text_imports_are_checked_with_locations_inside_the_resource() {
-    let sheet = ":root { --gap: 8px }\n.é-card > #1x { padding: 4px }\n.row { colour: #fff }\n";
+fn stylesheet_text_imports_follow_css_error_handling() {
+    use varta_common::view::{CssProperty, stylesheet};
+
+    let sheet = ":root { --gap: 8px }\n.é-card > #1x { padding: 4px }\n.row { colour: #fff; color: #000 }\n";
     let main = "import css from './console.css' with { type: 'text' };\n\
                 export function main(): void { View.stylesheet(1, css); }";
-    let error = compile_text(main, &[("console.css", sheet)]).err().unwrap();
-    let diagnostic = error.diagnostic().unwrap();
-    assert_eq!(diagnostic.file, "console.css");
-    assert_eq!(diagnostic.code, varta_common::DiagnosticCode::TypeError);
-    // `.é-card > #1x` is not an id selector (no identifier): line 2,
-    // column 11 (the `#`), byte offset 32 (the `é` is two bytes but one
-    // column).
-    assert_eq!(diagnostic.range.start.line, 2, "{diagnostic:?}");
-    assert_eq!(diagnostic.range.start.column, 11);
-    assert_eq!(diagnostic.range.start.byte_offset, 32);
-    assert!(
-        diagnostic.message.contains("selector"),
-        "{}",
-        diagnostic.message
+    compile_text(main, &[("console.css", sheet)]).unwrap();
+    // CSS error handling drops the invalid selector's entire rule and
+    // the unknown declaration, keeping the valid declaration after it.
+    let rules = stylesheet::parse(sheet).unwrap();
+    assert_eq!(rules.len(), 2);
+    assert_eq!(
+        rules[1].declarations,
+        [(
+            stylesheet::Name::Property(CssProperty::Color),
+            "#000".into()
+        )]
     );
-    let fixed = sheet.replace(".é-card > #1x", ".é-card");
-    let error = compile_text(main, &[("console.css", &fixed)])
-        .err()
-        .unwrap();
-    let diagnostic = error.diagnostic().unwrap();
-    assert_eq!(diagnostic.range.start.line, 3);
-    assert_eq!(diagnostic.range.start.column, 8);
-    assert_eq!(diagnostic.range.start.byte_offset, 54);
-    assert!(diagnostic.message.contains("invalid declaration"));
+}
+
+#[test]
+fn stylesheet_text_imports_are_checked_with_locations_inside_the_resource() {
+    let sheet = ":root { --gap: 8px }\n.é-card { background-color: url(x) }\n";
+    let main = "import css from './console.css' with { type: 'text' };\n\
+                export function main(): void { View.stylesheet(1, css); }";
+    for (source, column, byte_offset, message) in [
+        (sheet, 29, 50, "forbidden CSS construct"),
+        (
+            ":root { --gap: 8px }\n.é-card { tab-size: 4 }\n",
+            11,
+            32,
+            "a property the specifications define that the view does not implement yet",
+        ),
+    ] {
+        let error = compile_text(main, &[("console.css", source)])
+            .err()
+            .unwrap();
+        let diagnostic = error.diagnostic().unwrap();
+        assert_eq!(diagnostic.file, "console.css");
+        assert_eq!(diagnostic.code, varta_common::DiagnosticCode::TypeError);
+        // `é` occupies two UTF-8 bytes but one source column. Diagnostics
+        // point to the forbidden token or unimplemented property in CSS.
+        assert_eq!(diagnostic.range.start.line, 2, "{diagnostic:?}");
+        assert_eq!(diagnostic.range.start.column, column);
+        assert_eq!(diagnostic.range.start.byte_offset, byte_offset);
+        assert!(diagnostic.message.contains(message), "{diagnostic:?}");
+    }
     // Not a direct argument, or a shadowing name: the host validates it.
     for unchecked in [
         "import css from './console.css' with { type: 'text' };\n\
