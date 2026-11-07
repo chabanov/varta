@@ -102,6 +102,13 @@ impl Lower<'_> {
                 // `x[Symbol.asyncIterator]` name the well-known methods.
                 expression if self.types.profile.iteration_protocol() => {
                     classes::well_known_symbol(expression, true)
+                        .or_else(|| {
+                            self.types
+                                .profile
+                                .expression_forms()
+                                .then(|| classes::dispose_symbol(expression))
+                                .flatten()
+                        })
                         .map(str::to_owned)
                         .ok_or_else(|| unsupported("computed class member access"))
                 }

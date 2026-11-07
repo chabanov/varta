@@ -63,6 +63,25 @@ impl Lower<'_> {
             self.optional_index(expression);
         }
         let result = match expression {
+            // V38 K9 C forms (`expression_forms`), claimed syntactically.
+            _ if self.types.profile.expression_forms() && expression_forms::handles(expression) => {
+                self.expression_form(expression)
+            }
+            // `new C(...t)` with static spreads expanded (`spread_arguments`);
+            // other spreads keep their constructor's diagnostics.
+            ast::Expr::New(new)
+                if self.types.profile.expression_forms()
+                    && let Some(args) = new
+                        .args
+                        .as_deref()
+                        .and_then(|args| self.expanded_arguments(args)) =>
+            {
+                let expanded = ast::Expr::New(ast::NewExpr {
+                    args: Some(args),
+                    ..new.clone()
+                });
+                self.expr_contextual(&expanded, expected, hints)
+            }
             ast::Expr::Arrow(arrow) => self.arrow(arrow, expected),
             ast::Expr::Fn(function) => self.function_expression(function, expected),
             ast::Expr::Call(call) => {
@@ -804,6 +823,13 @@ impl Lower<'_> {
         #[cfg(any(test, feature = "suspension-test-hook"))]
         if let Some(point) = self.suspension_hook(call)? {
             return Ok(point);
+        }
+        // V38 (`expression_forms`): static spreads expand into arguments.
+        if self.types.profile.expression_forms()
+            && call.args.iter().any(|arg| arg.spread.is_some())
+            && let Some(rewritten) = self.spread_rewrite(call)
+        {
+            return self.call(&rewritten, expected, hints);
         }
         if let ast::Callee::Expr(callee) = &call.callee
             && callee_name(callee).as_deref() == Some("varta.json.parse")

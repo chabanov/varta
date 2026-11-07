@@ -3980,6 +3980,44 @@ Contract: [architecture.md](architecture.md#iteration-protocol-iteration_protoco
   `v38_iteration_protocol_runs_in_dev_and_artifacts` and the conformance
   feature `iteration-protocol`.
 
+### Expression forms (`expression_forms`)
+
+Contract: [architecture.md](architecture.md#expression-forms-expression_forms).
+
+- Gate every admission on `expression_forms()`; v37 keeps its diagnostic for
+  each form (`expression_forms_stay_refused_by_v37`). Syntactic forms are
+  claimed before the ordinary dispatch by `expression_forms::handles`
+  (comma, `new.target` comparisons, tagged templates, constructor spreads);
+  keep that test pure syntax and add new arms there, not to `expr_inner`.
+- `await` splitting: under the selector `Normalizer` splits every
+  `ValueBlock`/`Assignment` (`Namer::splits_all`); a new IR form with
+  operands that may suspend must get its own arm in `normalize::expr`
+  (gated when earlier profiles reached the catch-all), never a widened
+  catch-all. Case tests and `do...while` conditions stay refused.
+- Rewrites at the AST level (`using_declarations`, `iterator_objects`,
+  `spread_arguments`, `tagged_templates`, `thenables`) must keep single,
+  in-order evaluation: they only re-read bindings (`binding_path`, tuple
+  bindings), never an expression with effects. Hidden bindings start with
+  `#`, which no source identifier can.
+- Object-literal methods that use `this` go through `object_methods`:
+  the shape is noted with `Views::note_bound`, and `spread_views` refuses
+  any key copy or enumeration of it or of a view of it. A new key-copying
+  form must note its shape (see `sdk_paths`), or it would copy bound
+  methods. Getters/setters stay refused until records have accessors.
+- Computed keys resolve only through `constant_key`: literals and
+  `ValueTypes::constant_keys` (filled for `const` bindings and module
+  constants with literal initializers). Never infer a key from a value
+  that can change.
+- Thenables: only statically known `then` shapes (`Lower::thenable`) are
+  resolved; unions and `unknown` keep `reject_thenable` and the runtime
+  `TypeError`. The resolution must stay one job late
+  (`Promise.resolve().then(...)` inside the executor).
+- Tests: `varta-runtime` `expression_form_tests` (the
+  `expression_form_cases/*.expected` files are Node 24.20.0 output, run
+  again in collector stress builds; refusals and v37 denials), the CLI smoke
+  `v38_expression_forms_run_in_dev_and_artifacts` and the conformance
+  features listed in the architecture contract.
+
 ### Declarations and classes (`declaration_forms`)
 
 Contract: [architecture.md](architecture.md#declarations-and-classes-declaration_forms).
@@ -4049,6 +4087,7 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   tsc 5.9.3 emit; the collector stress builds must print the same, and the
   multi-module test pins imported enums, namespaces and statics), the
   conformance feature `declarations-and-classes`.
+
 ### Standard library (`standard_library`)
 
 Contract: [architecture.md](architecture.md#standard-library-standard_library).

@@ -52,6 +52,27 @@
   change; v37 keeps rejecting every form. Conformance (with K9 D): 155
   passed, 5 known unsupported of 160 (new origin `typescript_handbook`, nine
   feature rows).
+- V38 expressions and functions (K9 C, `expression_forms`): `await` in
+  every operand position of an async function (call and `new` arguments,
+  operators, templates, conditions, object and array literals, assignments,
+  optional chains); the comma operator; `new.target === C` in constructors;
+  tagged templates and `String.raw`; spreads of tuples and array literals
+  into fixed parameters and `new`; `o.m()` for functions
+  with an explicit `this` parameter; class-field arrows typed from their
+  parameters and body; object-literal methods that use `this` (copies of
+  such objects are refused); constant computed keys; tuple parameter
+  patterns (in arrows, functions, methods and callbacks, with tuple rest
+  elements), typed array rest and destructuring of strings, collections,
+  iterable instances and generators (closed with `return()`); hand-written
+  `{ next() }` iterators behind `[Symbol.iterator]()`; `using` and `await
+  using` with `[Symbol.dispose]()`/`[Symbol.asyncDispose]()` and `implements
+  Disposable`/`AsyncDisposable`; structural thenables in `await` and
+  `Promise.resolve` with Node's job order. Generator results are created as
+  `{ value, done }`. Still refused: top-level `await`, object-literal
+  getters/setters, `TemplateStringsArray.raw`, `SuppressedError`. No host
+  ABI or value layout change; v37 keeps rejecting every form. Conformance:
+  eleven new feature rows and fifteen cases (with K9 A, B and D: 190
+  passed, 5 known unsupported of 195).
 - K8 T2 standards items and K8 T3: the browser host runs the Rust CSS engine
   as `view-engine.wasm` (built by `scripts/build-view-engine.py`) and applies
   its computed values, so browser and native hosts accept, refuse and

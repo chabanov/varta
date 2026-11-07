@@ -808,6 +808,109 @@
       "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-aggregate-error-objects"
     },
     {
+      "id": "expression-operators",
+      "title": "Comma, void, delete, in, instanceof, optional chains, logical and exponent assignment, labelled blocks, switch fallthrough and new.target comparisons",
+      "core": [
+        "CORE-01",
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-comma-operator"
+    },
+    {
+      "id": "await-operands",
+      "title": "Await in every operand position of an async function",
+      "core": [
+        "CORE-03",
+        "CORE-09"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-await"
+    },
+    {
+      "id": "tagged-templates",
+      "title": "Tagged templates with cooked strings and String.raw",
+      "core": [
+        "CORE-01"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-tagged-templates"
+    },
+    {
+      "id": "spread-arguments",
+      "title": "Spread arguments into fixed parameters, constructors and Math.max/min",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-argument-lists"
+    },
+    {
+      "id": "function-receivers",
+      "title": "Explicit this parameters and contextually typed class-field arrows",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#expression-forms-expression_forms"
+    },
+    {
+      "id": "object-literal-methods",
+      "title": "Object-literal methods that use this",
+      "core": [
+        "CORE-02",
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-method-definitions"
+    },
+    {
+      "id": "computed-property-keys",
+      "title": "Constant computed keys of object literals",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-object-initializer"
+    },
+    {
+      "id": "destructuring-patterns",
+      "title": "Destructuring of parameters, nested patterns, defaults, rest, assignment patterns and iterables",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-destructuring-assignment"
+    },
+    {
+      "id": "iterator-objects",
+      "title": "Hand-written iterator objects behind [Symbol.iterator]()",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-iterator-interface"
+    },
+    {
+      "id": "using-declarations",
+      "title": "using and await using declarations with Symbol.dispose and Symbol.asyncDispose",
+      "core": [
+        "CORE-03",
+        "CORE-04"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#expression-forms-expression_forms"
+    },
+    {
+      "id": "promise-thenables",
+      "title": "Structural thenables resolved by await and Promise.resolve",
+      "core": [
+        "CORE-08"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-promise-resolve-functions"
+    },
+    {
       "id": "ts-conditional-types",
       "title": "Conditional types, distribution, infer and recursive aliases",
       "core": [
@@ -3316,6 +3419,357 @@
       "stdout": [
         "varta log: 9 -5",
         "varta log: -Infinity Infinity"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "await-positions",
+      "feature": "await-operands",
+      "path": "cases/await-positions.ts",
+      "sha256": "69f47db47e98cb39db01484b4baa2ddacd2873af3b43eb5b235d118979f56cdb",
+      "stdout": [
+        "varta log: 4",
+        "varta log: 6",
+        "varta log: 22",
+        "varta log: 8 2",
+        "varta log: 9,2,3",
+        "varta log: undefined",
+        "varta log: undefined",
+        "varta log: t1-2",
+        "varta log: p+q+r",
+        "varta log: true",
+        "varta log: 1",
+        "varta log: yes",
+        "varta log: 4",
+        "varta log: two 3",
+        "varta log: caught nope 1",
+        "varta log: a b c new arg x y fa fb set compound idx val t1 t2 p qr or test body test body test c yes after disc case catch"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "await-arguments",
+      "feature": "await-operands",
+      "path": "cases/await-arguments.ts",
+      "sha256": "66137ed8de24172a647b79a0c0e1dd726964d0734da1680980739830f94ea892",
+      "stdout": [
+        "varta log: 3",
+        "varta log: 10",
+        "varta log: t 5 6",
+        "varta log: cond",
+        "varta log: 24",
+        "varta log: 11",
+        "varta log: 3"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "await-operands",
+      "feature": "await-operands",
+      "path": "cases/await-operands.ts",
+      "sha256": "2f518ba171cb09d4405bc0c24ddb7842031cf83c8b6ba94566415b91a3ca9244",
+      "stdout": [
+        "varta log: 1,2",
+        "varta log: 4",
+        "varta log: true",
+        "varta log: 5",
+        "varta log: ABC",
+        "varta log: -6"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "expression-operators",
+      "feature": "expression-operators",
+      "path": "cases/expression-operators.ts",
+      "sha256": "1fd170e90298956ff841fee05cbc73811d63e023da30d432eefcf325393e69e8",
+      "stdout": [
+        "varta log: not Derived",
+        "varta log: direct derived call",
+        "varta log: 2 2",
+        "varta log: 0 10",
+        "varta log: 3 7",
+        "varta log: undefined 2 undefined",
+        "varta log: true false true",
+        "varta log: undefined 3",
+        "varta log: 2",
+        "varta log: undefined",
+        "varta log: 5 7 9 1024",
+        "varta log: 4 x 36",
+        "varta log: true false true true false",
+        "varta log: 12",
+        "varta log: small 1",
+        "varta log: fall 1",
+        "varta log: small 2",
+        "varta log: fall 2",
+        "varta log: fall 3",
+        "varta log: big 4"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "tagged-templates",
+      "feature": "tagged-templates",
+      "path": "cases/tagged-templates.ts",
+      "sha256": "1c0a683585fb87d846839786c59150d77d72ccb690ce9f889af15d28e964d51d",
+      "stdout": [
+        "varta log: a|b|c:1,2:3",
+        "varta log: ::1",
+        "varta log: ||:1,2:3",
+        "varta log: hello WORLD and YOU!",
+        "varta log: 1",
+        "varta log: x\\ny3z\\u0041",
+        "varta log: C:\\path\\${\"file\"}.txt",
+        "varta log: 0"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "spread-arguments",
+      "feature": "spread-arguments",
+      "path": "cases/spread-arguments.ts",
+      "sha256": "350a7fca62eba57aa28773ebd78e0b83fc9f2dd4c4da10b29754821603d41938",
+      "stdout": [
+        "varta log: 6",
+        "varta log: 15",
+        "varta log: 37",
+        "varta log: 6 2 -Infinity",
+        "varta log: 17",
+        "varta log: k=3"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "function-receivers",
+      "feature": "function-receivers",
+      "path": "cases/function-receivers.ts",
+      "sha256": "7c88f28dbb04ff43f3153f51f91bae2a639abee99a7766746b378459cc20dc61",
+      "stdout": [
+        "varta log: 6",
+        "varta log: 10",
+        "varta log: 2 6 x4 y8 C2",
+        "varta log: 10",
+        "varta log: 7 2 10"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "object-literal-methods",
+      "feature": "object-literal-methods",
+      "path": "cases/object-literal-methods.ts",
+      "sha256": "d34ef9db93e4560b487bf09292996c98883da5dff6f35cadf43a7e9359cf0817",
+      "stdout": [
+        "varta log: 4 10",
+        "varta log: 14",
+        "varta log: 2",
+        "varta log: 4",
+        "varta log: x!x?"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "computed-property-keys",
+      "feature": "computed-property-keys",
+      "path": "cases/computed-property-keys.ts",
+      "sha256": "15b427df9d2e516975cd6667000831eb7549c063b8646ca3f20b146516b81b98",
+      "stdout": [
+        "varta log: 26",
+        "varta log: 2",
+        "varta log: 3,7,a,alpha,lit,tpl",
+        "varta log: {\"3\":4,\"7\":8,\"a\":1,\"alpha\":2,\"lit\":5,\"tpl\":6}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "destructuring-patterns",
+      "feature": "destructuring-patterns",
+      "path": "cases/destructuring-patterns.ts",
+      "sha256": "af9a87ea9b7640392f3ff8f1dbfd24eefe6a559b60095d2ebdace6e4a5b23975",
+      "stdout": [
+        "varta log: 1 10 q 1 2/3",
+        "varta log: 6",
+        "varta log: 1 {\"b\":2,\"c\":3}",
+        "varta log: 2 1",
+        "varta log: x1",
+        "varta log: y2",
+        "varta log: 1",
+        "varta log: 5",
+        "varta log: 1 9 4,5",
+        "varta log: 15",
+        "varta log: 2,12",
+        "varta log: z1",
+        "varta log: 3",
+        "varta log: 1 2,3",
+        "varta log: 5 7",
+        "varta log: 9"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "iterator-objects",
+      "feature": "iterator-objects",
+      "path": "cases/iterator-objects.ts",
+      "sha256": "0901099ff2efdfd15fa550a1adaec518040c60a5fa4031d489b0c5d28a4615f5",
+      "stdout": [
+        "varta log: 1,2,3,4",
+        "varta log: 10,20,30,40",
+        "varta log: 10",
+        "varta log: 1 2 3|4",
+        "varta log: naturals closed at 2",
+        "varta log: 0 1",
+        "varta log: hl",
+        "varta log: k1j2",
+        "varta log: only",
+        "varta log: xyz",
+        "varta log: naturals closed at 2",
+        "varta log: 0 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "using-declarations",
+      "feature": "using-declarations",
+      "path": "cases/using-declarations.ts",
+      "sha256": "5e3baa54a1c281f83f81580f018b370d4d80977db2a98ec8ed21ecd5b0b020c8",
+      "stdout": [
+        "varta log: open early",
+        "varta log: close early",
+        "varta log: returned",
+        "varta log: open early",
+        "varta log: open late",
+        "varta log: close late",
+        "varta log: close early",
+        "varta log: end",
+        "varta log: open loop1",
+        "varta log: close loop1",
+        "varta log: open loop2",
+        "varta log: body 2",
+        "varta log: close loop2",
+        "varta log: open inner",
+        "varta log: work",
+        "varta log: close inner",
+        "varta log: async closed",
+        "varta log: open a",
+        "varta log: open b",
+        "varta log: close b",
+        "varta log: close a",
+        "varta log: caught boom"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "promise-thenables",
+      "feature": "promise-thenables",
+      "path": "cases/promise-thenables.ts",
+      "sha256": "63823438bb4c00eb4788298b49b41d52819650c817751d68dc9e38248c190263",
+      "stdout": [
+        "varta log: before",
+        "varta log: t 1",
+        "varta log: ok then",
+        "varta log: t 2",
+        "varta log: got 7",
+        "varta log: t 3",
+        "varta log: caught refused",
+        "varta log: then called 3",
+        "varta log: lazy3",
+        "varta log: resolve returned",
+        "varta log: then called 4",
+        "varta log: lazy4"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "generator-control",
+      "feature": "generators",
+      "path": "cases/generator-control.ts",
+      "sha256": "a5554d0aa0b5d5ab2059404b75a09f02a8d6d59807db9a0406d0339e620b0f09",
+      "stdout": [
+        "varta log: {\"value\":1,\"done\":false}",
+        "varta log: got 5",
+        "varta log: {\"value\":2,\"done\":false}",
+        "varta log: cleanup",
+        "varta log: {\"value\":\"early\",\"done\":true}",
+        "varta log: {\"done\":true}",
+        "varta log: cleanup",
+        "varta log: thrown bad",
+        "varta log: 0",
+        "varta log: caught x",
+        "varta log: 1",
+        "varta log: 2",
+        "varta log: {\"done\":true}",
+        "varta log: value,done"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "callback-patterns",
+      "feature": "destructuring-patterns",
+      "path": "cases/callback-patterns.ts",
+      "sha256": "d21e5b8dd9fc1af4b2c606c2d6000fbadd2204613480b97752af19f154654a8c",
+      "stdout": [
+        "varta log: a10,b20",
+        "varta log: 1",
+        "varta log: 3",
+        "varta log: 0:a=1",
+        "varta log: 1:b=2",
+        "varta log: x3 y4",
+        "varta log: xxx|yyyy",
+        "varta log: p=1&q=2",
+        "varta log: pen2,cup0",
+        "varta log: office+1 none+0",
+        "varta log: 9 pen:2,cup:0",
+        "varta log: 3 30",
+        "varta log: 21",
+        "varta log: 6",
+        "varta log: 11",
+        "varta log: x3,y4",
+        "varta log: x3",
+        "varta log: y4",
+        "varta log: aabb",
+        "varta log: a0,b1,c2",
+        "varta log: 0a1b2c",
+        "varta log: abc",
+        "varta log: 3",
+        "varta log: truetrue",
+        "varta log: b2a1c3",
+        "varta log: ac",
+        "varta log: odd:13 even:24",
+        "varta log: b20,a10,c30",
+        "varta log: 3",
+        "varta log: 1{\"b\":{\"c\":2}}",
+        "varta log: 1 [\"t\",true] 2",
+        "varta log: [true]",
+        "varta log: 0"
       ],
       "baseline": {
         "status": "supported"
