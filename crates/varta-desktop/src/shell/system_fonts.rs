@@ -218,8 +218,9 @@ impl FontSet {
         let (faces, ui_families) = read_faces(mapping()?)?;
         Ok(Self::from_system_faces(
             faces,
-            SystemFallback::new(cascade(ui_families)),
+            SystemFallback::new(cascade(ui_families.clone())),
             ENLARGED_ASCENT_FAMILIES,
+            ui_families,
         ))
     }
 }
@@ -335,8 +336,12 @@ mod fontconfig_tests {
         assert_eq!(sorted, ["monospace", "sans-serif", "serif", "system-ui"]);
         assert_eq!(aliases.first(), Some(&"serif"));
         let (faces, _) = read_faces(mapping).unwrap();
-        let fonts =
-            FontSet::from_system_faces(faces, SystemFallback::new(cascade(Vec::new())), &[]);
+        let fonts = FontSet::from_system_faces(
+            faces,
+            SystemFallback::new(cascade(Vec::new())),
+            &[],
+            Vec::new(),
+        );
         let mut measurer = fonts.measurer().unwrap();
         for alias in ["serif", "system-ui", "sans-serif", "monospace"] {
             let width = measurer

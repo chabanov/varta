@@ -162,10 +162,11 @@ export function main(): void {
 
 /// The full `@import "tailwindcss"` stylesheet (layers, `@property`,
 /// theme variables, Preflight, escaped class selectors) is generated and
-/// stored, but the engine's selector subset rejects it. Since T2 S1–S3 and
-/// `!important` landed, its first violation is the theme layer's
-/// `:root, :host` selector list: `:host` is a selector of T2 stage S5. This
-/// asserts that precise violation (it moves as T2 stages land); afterwards
+/// stored, but the engine's selector subset rejects it. Since the first
+/// part of T2 S5 (complex selectors, `:root, :host`) landed, its first
+/// violation is Preflight's pseudo-elements (`::after`, `::before`,
+/// `::backdrop`, `::file-selector-button`), the rest of S5. This asserts
+/// that precise violation (it moves as T2 stages land); afterwards
 /// `full_tailwind_application_applies_after_t2` takes over.
 #[test]
 fn full_tailwind_output_waits_for_t2_sheet_structure() {
@@ -192,10 +193,11 @@ export function main(): void {
         "{diagnostic}"
     );
     assert_eq!(
-        diagnostic["snippet"]["text"], "  :root, :host {",
+        diagnostic["snippet"]["text"],
+        "  *, ::after, ::before, ::backdrop, ::file-selector-button {",
         "{diagnostic}"
     );
-    assert_eq!(diagnostic["range"]["start"]["column"], 10, "{diagnostic}");
+    assert_eq!(diagnostic["range"]["start"]["column"], 6, "{diagnostic}");
 }
 
 /// Static Tailwind class tokens such as `w-1/2` follow the HTML class
@@ -218,11 +220,12 @@ export function main(): void {
 
 /// The end-to-end goal of K8: ordinary TSX with Tailwind classes, no
 /// hand-written CSS. T2 stages S1 (class tokens), S2 (`@property`), S3
-/// (`calc`, `oklch`, `color-mix`) and `!important` have landed; it still
-/// needs S5 (Preflight's and the theme's selectors) at least; run with
-/// `--ignored` once it lands.
+/// (`calc`, `oklch`, `color-mix`), `!important` and the first part of S5
+/// (complex selectors) have landed; it still needs Preflight's
+/// pseudo-elements and attribute selectors (the rest of S5) at least; run
+/// with `--ignored` once they land.
 #[test]
-#[ignore = "waits for T2 stage S5 (selectors) of the stylesheet engine"]
+#[ignore = "waits for the rest of T2 stage S5 (pseudo-elements, attributes) of the stylesheet engine"]
 fn full_tailwind_application_applies_after_t2() {
     let project = Project::new(
         r#"import css from "./app.css" with { type: "text" };

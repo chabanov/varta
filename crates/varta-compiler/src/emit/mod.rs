@@ -105,6 +105,9 @@ struct Emitter<'a> {
     reserved_roots: usize,
     /// Address of the first permanent module-constant root slot.
     constant_roots: u32,
+    /// V38 (`expression_forms`): the root slot that passes the receiver of
+    /// a function-value call to an object-literal method (`object_methods`).
+    receiver_register: Option<i32>,
     cell_slots: BTreeMap<u32, u32>,
     cell_types: BTreeMap<u32, Type>,
     binding_types: &'a BTreeMap<Type, u32>,
@@ -1147,6 +1150,9 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             direct_json_targets: &program.types.direct_json_targets,
             reserved_roots,
             constant_roots,
+            receiver_register: program.types.receivers.register().map(|index| {
+                (constant_roots + index * varta_common::abi::STRING_ROOT_SLOT_BYTES as u32) as i32
+            }),
             cell_slots,
             cell_types: function
                 .cells

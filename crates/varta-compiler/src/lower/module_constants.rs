@@ -47,6 +47,9 @@ pub(super) struct Linked {
     /// Initializer functions in dependency order; `main` calls them first.
     pub initializers: Vec<usize>,
     pub stored: u32,
+    /// V38: the initializers of each module and whether it awaits
+    /// (`top_level_await`).
+    pub modules: BTreeMap<PathBuf, super::top_level_await::ModuleEvaluation>,
     /// Constant declarations linked so far, the source of [`Constant::id`].
     declared: usize,
 }
@@ -126,7 +129,20 @@ pub(super) fn link_module(
         (&declared, &unit.ast),
         types.profile,
     )?;
-    for chunk in chunks(&declared) {
+    // V38 (`expression_forms`): a module that awaits is one async
+    // initializer; the entry module's calls `main` at its end.
+    let asynchronous = types.profile.expression_forms()
+        && types.profile.module_evaluation()
+        && super::top_level_await::awaits(&unit.ast);
+    let main =
+        (asynchronous && functions.get("main").is_some_and(|f| f.index == entry)).then_some(entry);
+    linked.modules.entry(path.clone()).or_default().asynchronous = asynchronous;
+    let chunks = if asynchronous {
+        vec![&declared[..]]
+    } else {
+        chunks(&declared)
+    };
+    for chunk in chunks {
         let index = *next;
         // Function initializers (v37) lift their bodies, and collection
         // constructors (v37) instantiate prelude functions, while the chunk
@@ -135,7 +151,8 @@ pub(super) fn link_module(
         // instantiate generic functions and classes the same way.
         let reserved = types.profile.language_core() && lifts(chunk)
             || types.profile.collections() && constructs_collection(chunk)
-            || types.profile.module_evaluation() && chunk_effectful(chunk);
+            || types.profile.module_evaluation() && chunk_effectful(chunk)
+            || asynchronous;
         if reserved {
             if index >= types.function_limit() {
                 return Err(source.locate(
@@ -186,34 +203,67 @@ pub(super) fn link_module(
             asynchronous: None,
             core: Default::default(),
         };
-        let (body, locals) =
+        let promise = if asynchronous {
+            let promise = promises::intern(Type::Void, lower.types)?;
+            let Type::Promise(id) = promise else {
+                return Err(CompilerError::Internal("missing module promise".into()));
+            };
+            lower.asynchronous = Some(id);
+            Some(lower.hidden(promise))
+        } else {
+            None
+        };
+        let (mut body, locals) =
             lower.initializers(chunk, &scope, (&mut linked.stored, &mut linked.declared))?;
         let stored = body
             .iter()
             .any(|statement| matches!(statement, S::InitModuleConstant(..)));
-        let span = chunk[0].span;
-        let function = ir::Function {
-            shape: ir::ParameterShape::fixed(0),
-            self_slot: None,
-            receiver: None,
-            cells: lower.cells,
-            captures: vec![],
-            environment: false,
-            generator: None,
-            source: source.clone(),
-            span,
-            params: vec![],
-            result: Type::Void,
-            locals: (0..lower.next)
-                .map(|slot| {
-                    lower
-                        .local_types
-                        .get(&slot)
-                        .copied()
-                        .unwrap_or(Type::Number)
-                })
-                .collect(),
-            body,
+        let span = chunk.first().map_or(unit.ast.span, |var| var.span);
+        if let Some(main) = main {
+            body.push(S::Expr(Expr {
+                span,
+                ty: Type::Void,
+                kind: E::Call(main, vec![]),
+            }));
+        }
+        let function = if let Some(promise) = promise {
+            let split = promises::AsyncSplit {
+                incoming: vec![],
+                shape: ir::ParameterShape::fixed(0),
+                receiver: None,
+                self_slot: None,
+                captures: vec![],
+                environment: false,
+                promise,
+                entry: false,
+                span,
+                source,
+            };
+            lower.split_async(split, body)?
+        } else {
+            ir::Function {
+                shape: ir::ParameterShape::fixed(0),
+                self_slot: None,
+                receiver: None,
+                cells: lower.cells,
+                captures: vec![],
+                environment: false,
+                generator: None,
+                source: source.clone(),
+                span,
+                params: vec![],
+                result: Type::Void,
+                locals: (0..lower.next)
+                    .map(|slot| {
+                        lower
+                            .local_types
+                            .get(&slot)
+                            .copied()
+                            .unwrap_or(Type::Number)
+                    })
+                    .collect(),
+                body,
+            }
         };
         if stored || reserved {
             if !reserved {
@@ -227,6 +277,9 @@ pub(super) fn link_module(
             }
             generated.insert(index, function);
             linked.initializers.push(index);
+            if let Some(evaluation) = linked.modules.get_mut(path) {
+                evaluation.initializers.push(index);
+            }
         }
         scope.extend(locals);
     }
@@ -407,9 +460,10 @@ fn initializer_form(
     names: &BTreeSet<String>,
     profile: varta_common::language::LanguageProfile,
 ) -> Result<()> {
-    // V38 (`module_evaluation`): any expression but a top-level `await`.
+    // V38 (`module_evaluation`): any expression; a top-level `await` under
+    // `expression_forms` (`top_level_await`).
     if profile.module_evaluation() {
-        if module_evaluation::awaits(expr) {
+        if module_evaluation::awaits(expr) && !profile.expression_forms() {
             return Err(super::promises::rejected(
                 "await outside an async function (top-level await is not supported)",
             ));

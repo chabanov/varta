@@ -160,7 +160,11 @@ pub(crate) fn same_sources(a: &Tree, b: &Tree) -> bool {
         && a.nodes.len() == b.nodes.len()
         && a.nodes.iter().all(|(id, node)| {
             b.nodes.get(id).is_some_and(|other| {
-                if node.parent != other.parent || !Arc::ptr_eq(&node.identity, &other.identity) {
+                // Structural selectors read the sibling order.
+                if node.parent != other.parent
+                    || node.children != other.children
+                    || !Arc::ptr_eq(&node.identity, &other.identity)
+                {
                     return false;
                 }
                 match (a.element(*id), b.element(*id)) {

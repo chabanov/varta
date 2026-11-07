@@ -147,6 +147,16 @@ impl Lower<'_> {
         }
         match stmt::unparen(expression) {
             ast::Expr::This(_) => self.binding("this").ok()?.ty,
+            // V38 (`expression_forms`): `x!` with a single non-nullish
+            // member (an object-literal method's `this`).
+            ast::Expr::TsNonNull(value) if self.types.profile.expression_forms() => {
+                let base = self.peek_type(&value.expr, depth + 1)?;
+                let mut present = unions::members(base, self.types)
+                    .into_iter()
+                    .filter(|ty| !matches!(ty, Type::Null | Type::Undefined));
+                let base = present.next()?;
+                present.next().is_none().then_some(base)
+            }
             ast::Expr::Ident(id) => {
                 let binding = self.binding(id.sym.as_ref()).ok()?;
                 self.refinements.get(&binding.slot).copied().or(binding.ty)
@@ -258,6 +268,14 @@ impl Lower<'_> {
         call: &ast::CallExpr,
         callee: &ast::Expr,
     ) -> Result<Expr> {
+        // V38 (`expression_forms`): pass the object to methods that use
+        // `this` (`object_methods`).
+        if let ast::Expr::Member(member) = stmt::unparen(callee)
+            && self.receiver_call(member)
+            && let Some(value) = self.method_call(call, member)?
+        {
+            return Ok(value);
+        }
         let value = self.expr(callee)?;
         if !matches!(value.ty, Type::Function(_)) {
             return Err(self.source.locate(

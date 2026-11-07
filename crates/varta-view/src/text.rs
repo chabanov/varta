@@ -74,6 +74,15 @@ impl Drop for ViewShapingGuard {
     }
 }
 
+/// Where the style engine takes a face's metrics from.
+#[derive(Clone, Copy)]
+enum FaceMetrics {
+    /// The face's own tables.
+    Tables,
+    /// The host's font system ([`TextMeasurer::set_host_fonts`]).
+    Host,
+}
+
 /// A font and explicit CSS aliases supplied by the embedding host.
 pub struct TextFont {
     pub data: Vec<u8>,
@@ -92,6 +101,8 @@ pub struct TextMeasurer {
     fonts: FontContext,
     layout: LayoutContext<u32>,
     entries: Vec<FontEntry>,
+    /// The style engine's view of the faces ([`Self::font_set`]).
+    font_set: Arc<varta_style::fonts::FontSet>,
     /// Generic aliases name packaged families ([`Self::new_with_packaged_fonts`]).
     packaged: bool,
     /// The host's platform fallback ([`Self::set_fallback`]).
@@ -124,6 +135,9 @@ pub(crate) struct TextOptions {
     pub line_height: Option<LineHeight>,
     pub weight: f32,
     pub italic: bool,
+    /// The used `letter-spacing` in CSS pixels (CSS Text 3 §8.2), added
+    /// after every typographic character unit.
+    pub letter_spacing: f32,
     pub white_space: WhiteSpaceMode,
     pub break_anywhere: bool,
     pub source: TextSource,
@@ -372,6 +386,21 @@ impl TextMeasurer {
             }
         }
         (!resolved.is_empty()).then_some(resolved)
+    }
+
+    /// The style engine's view of these faces: the first available fonts of
+    /// the font-relative units (CSS Values 4 §6.1.1). A view takes it with
+    /// `View::set_fonts`.
+    #[must_use]
+    pub fn font_set(&self) -> Arc<varta_style::fonts::FontSet> {
+        Arc::clone(&self.font_set)
+    }
+
+    /// Let the host measure the faces of a system-font set and the CSS
+    /// generic families and default font no face names (natively from the
+    /// platform's font system, as its browser does).
+    pub fn set_host_fonts(&mut self, host: Option<Arc<dyn varta_style::fonts::HostFonts>>) {
+        Arc::make_mut(&mut self.font_set).set_host(host);
     }
 
     /// Whether the generic `monospace` keeps the browser's fixed-font size
@@ -629,7 +658,7 @@ impl TextMeasurer {
     /// Load a bounded collection of explicit fonts. Alias collisions are rejected.
     /// The first family is the default when CSS does not specify a family list.
     pub fn new_with_fonts(fonts: Vec<TextFont>) -> Result<Self, TextMeasureError> {
-        Self::load(fonts, MAX_FONT_FACE_BYTES)
+        Self::load(fonts, MAX_FONT_FACE_BYTES, FaceMetrics::Tables)
     }
 
     /// Load font files a native host read from its own system fonts, as
@@ -638,7 +667,7 @@ impl TextMeasurer {
     /// platform's variable UI font is larger). Nothing is looked up here: the
     /// host names every file, family and generic alias.
     pub fn new_with_system_fonts(fonts: Vec<TextFont>) -> Result<Self, TextMeasureError> {
-        Self::load(fonts, MAX_SYSTEM_FONT_FILE_BYTES)
+        Self::load(fonts, MAX_SYSTEM_FONT_FILE_BYTES, FaceMetrics::Host)
     }
 
     /// The family names a system font file registers, in file order and
@@ -673,10 +702,18 @@ impl TextMeasurer {
         Ok(families)
     }
 
-    fn load(fonts: Vec<TextFont>, face_limit: usize) -> Result<Self, TextMeasureError> {
+    fn load(
+        fonts: Vec<TextFont>,
+        face_limit: usize,
+        metrics: FaceMetrics,
+    ) -> Result<Self, TextMeasureError> {
         if fonts.is_empty() || fonts.len() > MAX_FONT_FACES {
             return Err(TextMeasureError::Font);
         }
+        // The style engine's view of the same faces: the first available
+        // font of the font-relative units. The first family is the default.
+        let mut font_set =
+            varta_style::fonts::FontSet::new(fonts.first().map(|font| font.family.clone()), None);
         let mut collection = Collection::new(CollectionOptions {
             shared: false,
             system_fonts: false,
@@ -742,6 +779,18 @@ impl TextMeasurer {
                     return Err(TextMeasureError::Font);
                 }
             }
+            let engine_aliases = font
+                .aliases
+                .iter()
+                .filter_map(|alias| varta_style::fonts::family_list(alias)?.pop())
+                .collect::<Vec<_>>();
+            match metrics {
+                FaceMetrics::Tables => font_set
+                    .add_file(&font.family, &engine_aliases, &font.data)
+                    .map(drop),
+                FaceMetrics::Host => font_set.add_host_family(&font.family, &engine_aliases),
+            }
+            .map_err(|_| TextMeasureError::Font)?;
             let blob = Blob::new(Arc::new(font.data));
             blob_families.insert(blob.id(), font.family.clone());
             let registered = collection.register_fonts(blob, None);
@@ -777,6 +826,7 @@ impl TextMeasurer {
                 layout
             },
             entries,
+            font_set: Arc::new(font_set),
             packaged: false,
             fallback: None,
             blob_families,
@@ -809,6 +859,7 @@ impl TextMeasurer {
                 line_height: None,
                 weight: 400.0,
                 italic: false,
+                letter_spacing: 0.0,
                 white_space: WhiteSpaceMode::Normal,
                 break_anywhere: false,
                 source: TextSource::General,
@@ -837,6 +888,7 @@ impl TextMeasurer {
                 line_height: None,
                 weight: 400.0,
                 italic: false,
+                letter_spacing: 0.0,
                 white_space: WhiteSpaceMode::Normal,
                 break_anywhere: false,
                 source: TextSource::General,
@@ -1186,6 +1238,7 @@ impl TextMeasurer {
         } else {
             FontStyle::Normal
         }));
+        builder.push_default(StyleProperty::LetterSpacing(options.letter_spacing));
         if !options.white_space.wraps() {
             builder.push_default(StyleProperty::TextWrapMode(TextWrapMode::NoWrap));
         }
@@ -1230,6 +1283,10 @@ impl TextMeasurer {
             );
             builder.push(
                 StyleProperty::LineHeight(style.line_height.unwrap_or_default()),
+                range.clone(),
+            );
+            builder.push(
+                StyleProperty::LetterSpacing(style.letter_spacing),
                 range.clone(),
             );
             builder.push(
@@ -1808,6 +1865,7 @@ mod tests {
                 line_height: None,
                 weight: 400.0,
                 italic: false,
+                letter_spacing: 0.0,
                 white_space: WhiteSpaceMode::NoWrap,
                 break_anywhere: false,
                 source: TextSource::General,
@@ -2065,6 +2123,7 @@ mod tests {
                         line_height: None,
                         weight: 400.0,
                         italic: false,
+                        letter_spacing: 0.0,
                         white_space: WhiteSpaceMode::NoWrap,
                         break_anywhere: false,
                         source: TextSource::General,

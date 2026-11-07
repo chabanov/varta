@@ -72,7 +72,8 @@ pub(super) fn effectful(value: &ast::Expr) -> bool {
 }
 
 /// Whether an initializer awaits outside a function value (top-level
-/// `await`, which module evaluation does not admit).
+/// `await`, admitted only under `expression_forms`; see
+/// `top_level_await`).
 pub(super) fn awaits(value: &ast::Expr) -> bool {
     struct Awaits(bool);
     impl Visit for Awaits {

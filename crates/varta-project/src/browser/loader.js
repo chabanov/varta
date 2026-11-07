@@ -113,7 +113,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
     const controller = new AbortController();
     let worker, blobUrl, settled = false, guestStarted = false, renderer, headless, ready=false,consenting=false, inFlight, eventId=0, lastBatch=0,lastCheckpoint=0;
     const assetUrls = new Map();
-    const fontFaces=[];
+    const fontFaces=[],fontData=[];
     let broker;
     let controlId=0;
     let storageWrites=Promise.resolve();
@@ -196,7 +196,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
       controller.abort();
       queue.clear();timing?.close();renderer?.freeze();
       for(const url of assetUrls.values())URL.revokeObjectURL(url);assetUrls.clear();
-      for(const face of fontFaces)document.fonts.delete(face);fontFaces.length=0;
+      for(const face of fontFaces)document.fonts.delete(face);fontFaces.length=0;fontData.length=0;
       for(const remove of permissionListeners)remove();permissionListeners.length=0;
       worker?.terminate();
       for(const control of controls.values())control.reject(error??new Error('browser application ended'));controls.clear();
@@ -256,7 +256,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
         const resource=descriptor.resources[index];
         if(resource.font){
           const face=new FontFace(fonts.family(resource.key),resourceBytes[index],viewFonts.faceDescriptors(resource));await face.load();
-          if(settled)return;fontFaces.push(face);
+          if(settled)return;fontFaces.push(face);fontData.push({family:resource.key,bytes:new Uint8Array(resourceBytes[index]),generics:resource.generics??[]});
         }else{
           const blob=new Blob([resourceBytes[index]],{type:resource.mediaType});
           const bitmap=await createImageBitmap(blob);bitmap.close();
@@ -272,11 +272,11 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
         const ui=viewPolicy.createViewPolicy(packageManifest,permissions,broker.granted);
         if(container){
           for(const face of fontFaces)document.fonts.add(face);
-          renderer=viewDom.createViewDom({container,viewEngine,assets:assetUrls,fonts,interactive:mode==="application",onEvent:enqueue,onError:finish,linkRequested:ui.linkRequested,onTitle:(title)=>{document.title=title;},onVisualInput:timing===undefined?undefined:kind=>timing.visual(kind,performance.now()),
+          renderer=viewDom.createViewDom({container,viewEngine,assets:assetUrls,fonts,fontFaces:fontData,interactive:mode==="application",onEvent:enqueue,onError:finish,linkRequested:ui.linkRequested,onTitle:(title)=>{document.title=title;},onVisualInput:timing===undefined?undefined:kind=>timing.visual(kind,performance.now()),
             copyText:async(text)=>{if(!broker.operation(descriptor.view.capabilities.clipboard,'',!consenting&&!navigation&&ui.clipboardAllowed())||settled)return descriptor.view.statuses.not_allowed;try{await navigator.clipboard.writeText(text);return descriptor.view.statuses.ok;}catch{return descriptor.view.statuses.refused_by_platform;}},
             openUrl:(url)=>navigate(url,ui)
           });
-        }else{if(mode==="application")throw new Error("mount requires an attached container");headless=viewModel.createViewModel({viewEngine,linkRequested:ui.linkRequested,assetRequested:(name)=>assetUrls.has(name)});}
+        }else{if(mode==="application")throw new Error("mount requires an attached container");headless=viewModel.createViewModel({viewEngine,linkRequested:ui.linkRequested,assetRequested:(name)=>assetUrls.has(name)});if(headless.engine){for(const face of fontData)headless.engine.face(face.family,face.bytes,face.generics);headless.engine.defaultFamily(fonts.defaultName);}}
       }
       blobUrl = URL.createObjectURL(new Blob([script], { type: "text/javascript" }));
       activeWorkerUrls.add(blobUrl);

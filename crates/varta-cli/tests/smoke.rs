@@ -17277,13 +17277,16 @@ fn v38_expression_forms_run_in_dev_and_artifacts() {
     let source = "import {Range} from './range.ts';\
          class Lock implements Disposable{[Symbol.dispose]():void{console.log('released');}}\
          async function value(n:number):Promise<number>{return n;}\
+         const base=await value(5);\
+         function first(s:TemplateStringsArray):string{return s.raw[0];}\
          function max3(a:number,b:number,c:number):number{return Math.max(a,b,c);}\
          export async function main():Promise<void>{\
          const o={n:2,dbl():number{return this.n*2;}};const key='total';\
          const sums={[key]:(await value(1))+(await value(2))};\
          const [a,b,...more]=new Range(4);const args:[number,number,number]=[3,9,4];\
+         const c={...o,n:base};\
          {using lock=new Lock();\
-         console.log(`${o.dbl()} ${sums.total} ${a}${b}${more.join('')} ${max3(...args)} ${String.raw`\\d${(1,2)}`}`);}}";
+         console.log(`${o.dbl()} ${sums.total} ${a}${b}${more.join('')} ${max3(...args)} ${String.raw`\\d${(1,2)}`} ${c.dbl()} ${first`\\t`}`);}}";
     let range = "export class Range implements Iterable<number>{last:number;constructor(last:number){this.last=last;}\
          [Symbol.iterator]():Iterator<number>{let n=0;const last=this.last;\
          return {next():IteratorResult<number>{return n<last?{value:n++,done:false}:{value:undefined,done:true};}};}}";
@@ -17291,7 +17294,7 @@ fn v38_expression_forms_run_in_dev_and_artifacts() {
     fs::write(project.0.join("src/range.ts"), range).unwrap();
     project.language_profile("checked-f64-utf16-v38");
     // Node 24 prints the same lines.
-    let expected = ["varta log: 4 3 0123 9 \\d2", "varta log: released"];
+    let expected = ["varta log: 4 3 0123 9 \\d2 10 \\t", "varta log: released"];
     let logs = |output: &std::process::Output| {
         String::from_utf8_lossy(&output.stdout)
             .lines()

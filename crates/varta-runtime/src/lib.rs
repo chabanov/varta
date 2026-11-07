@@ -222,6 +222,8 @@ mod standard_library_tests;
 #[cfg(test)]
 mod timer_tests;
 #[cfg(test)]
+mod top_level_await_tests;
+#[cfg(test)]
 mod truth_guard_tests;
 #[cfg(test)]
 mod turn_budget_tests;

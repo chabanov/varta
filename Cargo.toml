@@ -61,6 +61,12 @@ image = { version = "=0.25.10", default-features = false, features = ["png", "jp
 moxcms = { version = "=0.8.1", default-features = false }
 # Font outlines for the CPU text renderer; already used transitively by Parley.
 skrifa = "=0.44.0"
+# The font tables the shared style engine reads its first available font's
+# metrics from (CSS Values 4 §6.1.1); already locked as skrifa's own table
+# reader. Its `no_std` build (the engine's wasm32 module has no `std`) needs
+# its `libm` feature, which adds the one package `core_maths` (MIT, a float
+# extension trait over the already locked `libm`).
+read-fonts = { version = "=0.41.0", default-features = false, features = ["libm"] }
 # Unicode grapheme boundaries for safe native text editing.
 unicode-segmentation = "=1.13.3"
 # Unicode emoji properties (TR51) for emoji presentation; already compiled in
