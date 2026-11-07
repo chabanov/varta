@@ -189,6 +189,22 @@ self.onmessage = async ({ data }) => {
     // charge. The clock is an audited `time.now` operation (exact package
     // request and the ceiling's own `true`, decided before the clock is read);
     // a denial is recoverable: logged, and NaN, which no clock reading gives.
+    // V38 local time: the recorded zone and locale, read once from the
+    // browser's own resolution and passed on as text only (offsets, rules
+    // and names are computed in the guest). A value outside the native
+    // syntax becomes the native default, as the native host does.
+    const localTime=registry.effects.localTime;
+    const resolved=Intl.DateTimeFormat().resolvedOptions();
+    const hostInput=(value,pattern,fallback)=>typeof value==='string'&&value.length>0&&value.length<=localTime.maxBytes&&pattern.test(value)?value:fallback;
+    const hostZone=hostInput(resolved.timeZone,/^[A-Za-z0-9/_+-]+$/,localTime.defaultTimeZone);
+    const hostLocale=hostInput(resolved.locale,/^[A-Za-z0-9-]+$/,localTime.defaultLocale);
+    const localResult=(text)=>{
+      const E=registry.environment;
+      if(instance.exports[E.resultStatus])instance.exports[E.resultStatus].value=E.statuses.ok;
+      return writeResult(text);
+    };
+    implementations[localTime.timeZone]=()=>localResult(hostZone);
+    implementations[localTime.locale]=()=>localResult(hostLocale);
     const {clock,random,exit}=registry.effects;
     implementations[clock.operation]=()=>{
       if(!broker.operation(clock.capability,'',broker.coveredGrant(clock.capability))){emit(clock.denialText);return NaN;}

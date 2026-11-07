@@ -73,6 +73,13 @@ export const registry = freeze({
       },
       "turnPlaceholder": "{turn}"
     },
+    "localTime": {
+      "defaultLocale": "en-US",
+      "defaultTimeZone": "UTC",
+      "locale": "intl_locale",
+      "maxBytes": 256,
+      "timeZone": "intl_time_zone"
+    },
     "random": {
       "operation": "number_random",
       "sampleBits": 53,
@@ -926,6 +933,51 @@ export const registry = freeze({
       "timerBookkeeping": false
     },
     {
+      "admittedUnder": [],
+      "capability": null,
+      "instanceBookkeeping": false,
+      "kvBookkeeping": false,
+      "minHostAbi": 34,
+      "name": "date_zone_name",
+      "networkBookkeeping": false,
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "f64"
+      ],
+      "resultGlobals": true,
+      "results": [
+        "i32"
+      ],
+      "scheduler": false,
+      "stringResult": true,
+      "timerBookkeeping": false
+    },
+    {
+      "admittedUnder": [],
+      "capability": null,
+      "instanceBookkeeping": false,
+      "kvBookkeeping": false,
+      "minHostAbi": 34,
+      "name": "date_zone_offset",
+      "networkBookkeeping": false,
+      "params": [
+        "i32",
+        "i32",
+        "f64",
+        "f64"
+      ],
+      "resultGlobals": false,
+      "results": [
+        "f64"
+      ],
+      "scheduler": false,
+      "stringResult": false,
+      "timerBookkeeping": false
+    },
+    {
       "admittedUnder": [
         "checked-i32-utf8-v1",
         "checked-f64-utf8-v1",
@@ -1530,6 +1582,44 @@ export const registry = freeze({
       "results": [],
       "scheduler": false,
       "stringResult": false,
+      "timerBookkeeping": false
+    },
+    {
+      "admittedUnder": [
+        "checked-f64-utf16-v38"
+      ],
+      "capability": null,
+      "instanceBookkeeping": false,
+      "kvBookkeeping": false,
+      "minHostAbi": 34,
+      "name": "intl_locale",
+      "networkBookkeeping": false,
+      "params": [],
+      "resultGlobals": true,
+      "results": [
+        "i32"
+      ],
+      "scheduler": false,
+      "stringResult": true,
+      "timerBookkeeping": false
+    },
+    {
+      "admittedUnder": [
+        "checked-f64-utf16-v38"
+      ],
+      "capability": null,
+      "instanceBookkeeping": false,
+      "kvBookkeeping": false,
+      "minHostAbi": 34,
+      "name": "intl_time_zone",
+      "networkBookkeeping": false,
+      "params": [],
+      "resultGlobals": true,
+      "results": [
+        "i32"
+      ],
+      "scheduler": false,
+      "stringResult": true,
       "timerBookkeeping": false
     },
     {
@@ -9591,7 +9681,7 @@ export const registry = freeze({
           18
         ]
       },
-      "admittedImports": 52,
+      "admittedImports": 54,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v9",

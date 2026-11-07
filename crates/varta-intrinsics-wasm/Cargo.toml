@@ -17,3 +17,9 @@ varta-intrinsics = { path = "../varta-intrinsics" }
 varta-bigint = { path = "../varta-bigint" }
 # The value-layout core (result buffer, page size, v38 data limits).
 varta-common = { path = "../varta-common", default-features = false }
+
+# Local time and locale data (v38 `local_time`): bundled tzdata and ICU4X
+# CLDR data, built only into the wasm32 library (the crate is empty on
+# native targets, so native builds never compile the data).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+varta-intl = { path = "../varta-intl" }

@@ -99,6 +99,9 @@ const EFFECTS: &[H] = &[
     H::MathRandom,
     H::EnvSnapshot,
     H::ExitFloat,
+    // V38 local time: the recorded zone and locale (`worker.js`).
+    H::IntlTimeZone,
+    H::IntlLocale,
     // V38 KV storage: OPFS container and the shared value layer
     // (`kv-store.mjs`, `kv-codec.wasm`).
     H::KvOpen,

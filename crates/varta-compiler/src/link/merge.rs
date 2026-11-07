@@ -17,7 +17,11 @@
 //! follow the guest's in the module's intrinsic region
 //! ([`super::library::Placement`]), its stack pointer starts at the top of
 //! the region's stack, and every write of the stack pointer goes through
-//! the check, which traps below the region.
+//! the check, which traps below the region. The module keeps one table: the
+//! library's address-taken functions get slots appended after the guest's
+//! (`T` guest slots, `T..T+A` for `A` taken functions, in ascending library
+//! order) through one more active element segment, and the library's
+//! indirect calls use table 0.
 use super::library::{Closure, LINK_MODULE, Library, Placement};
 use std::collections::BTreeMap;
 use varta_common::{HostOperation, HostScalar, abi};
@@ -32,6 +36,8 @@ use wasmparser::{
 
 /// Guest memory 0: the only memory of a linked module.
 const GUEST_MEMORY: u32 = 0;
+/// Guest table 0: the only table of a linked module.
+const GUEST_TABLE: u32 = 0;
 /// The parameters of `memory_read`/`memory_write`, passed through as the
 /// destination, source and length operands of `memory.copy`.
 const COPY_PARAMS: u32 = 3;
@@ -481,7 +487,11 @@ impl Reencode for LibraryIndices {
         }
     }
     fn table_index(&mut self, table: u32) -> Result<u32, ReencodeError<String>> {
-        Err(missing("table", table))
+        if table == 0 {
+            Ok(GUEST_TABLE)
+        } else {
+            Err(missing("table", table))
+        }
     }
     fn data_index(&mut self, data: u32) -> Result<u32, ReencodeError<String>> {
         Err(missing("passive data segment", data))
@@ -754,6 +764,21 @@ struct Plan<'a> {
     appended_types: Vec<FuncType>,
     guest_indices: GuestIndices,
     library_indices: LibraryIndices,
+    /// Slots of the guest's table before the library's.
+    table_base: u32,
+}
+
+/// The current minimum size of the guest's one table (0 without one).
+fn guest_table_size(sections: &Sections<'_>) -> Result<u32, String> {
+    let Some(reader) = sections.tables.clone() else {
+        return Ok(0);
+    };
+    let mut size = 0;
+    for table in reader {
+        let table = table.map_err(|e| e.to_string())?;
+        size = u32::try_from(table.ty.initial).map_err(|e| e.to_string())?;
+    }
+    Ok(size)
 }
 
 /// The closure `roots` reach, placed at the intrinsic region of `region`
@@ -782,11 +807,19 @@ impl<'a> Plan<'a> {
     ) -> Result<Self, String> {
         let sections = Sections::read(bytes)?;
         let roots = roots(guest, library, linked)?;
-        let (closure, placement) = placed(
+        let (closure, mut placement) = placed(
             library,
             &roots.values().copied().collect::<Vec<_>>(),
             guest.region,
         )?;
+        let table_base = guest_table_size(&sections)?;
+        for (offset, &function) in closure.table.iter().enumerate() {
+            let slot = u32::try_from(offset)
+                .ok()
+                .and_then(|offset| table_base.checked_add(offset))
+                .ok_or("intrinsic library: table slot overflow")?;
+            placement.slots.insert(function, slot);
+        }
         let library_imports = library.imports.len() as u32;
         let (accessors, defined): (Vec<u32>, Vec<u32>) = closure
             .functions
@@ -883,6 +916,7 @@ impl<'a> Plan<'a> {
                 globals,
                 stack,
             },
+            table_base,
         };
         plan.plan_types()?;
         Ok(plan)
@@ -949,12 +983,18 @@ impl<'a> Plan<'a> {
             let body = &self.body(index)?;
             let mut reader = body.get_operators_reader().map_err(|e| e.to_string())?;
             while !reader.eof() {
-                if let Operator::Block { blockty }
-                | Operator::Loop { blockty }
-                | Operator::If { blockty } = reader.read().map_err(|e| e.to_string())?
-                    && let BlockType::FuncType(ty) = blockty
-                {
-                    self.merged_type(ty)?;
+                match reader.read().map_err(|e| e.to_string())? {
+                    Operator::Block { blockty }
+                    | Operator::Loop { blockty }
+                    | Operator::If { blockty } => {
+                        if let BlockType::FuncType(ty) = blockty {
+                            self.merged_type(ty)?;
+                        }
+                    }
+                    Operator::CallIndirect { type_index, .. } => {
+                        self.merged_type(type_index)?;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1025,13 +1065,7 @@ impl<'a> Plan<'a> {
                 }
                 module.section(&section);
             }
-            Kind::Table => {
-                if let Some(reader) = self.sections.tables.clone() {
-                    let mut section = encoder::TableSection::new();
-                    reencode(self.guest_indices.parse_table_section(&mut section, reader))?;
-                    module.section(&section);
-                }
-            }
+            Kind::Table => self.table(module)?,
             Kind::Memory => {
                 let mut section = encoder::MemorySection::new();
                 if let Some(reader) = self.sections.memories.clone() {
@@ -1057,12 +1091,28 @@ impl<'a> Plan<'a> {
                 }
             }
             Kind::Element => {
+                let mut section = encoder::ElementSection::new();
                 if let Some(reader) = self.sections.elements.clone() {
-                    let mut section = encoder::ElementSection::new();
                     reencode(
                         self.guest_indices
                             .parse_element_section(&mut section, reader),
                     )?;
+                }
+                if !self.closure.table.is_empty() {
+                    let functions = self
+                        .closure
+                        .table
+                        .iter()
+                        .map(|function| self.library_indices.functions[function])
+                        .collect::<Vec<_>>();
+                    let offset = i32::try_from(self.table_base).map_err(|e| e.to_string())?;
+                    section.active(
+                        Some(GUEST_TABLE),
+                        &encoder::ConstExpr::i32_const(offset),
+                        encoder::Elements::Functions(functions.into()),
+                    );
+                }
+                if !section.is_empty() {
                     module.section(&section);
                 }
             }
@@ -1076,6 +1126,44 @@ impl<'a> Plan<'a> {
             Kind::Code => self.code(module)?,
             Kind::Data => self.data(module)?,
         }
+        Ok(())
+    }
+
+    /// The guest's table grown by the library's slots, or a table of the
+    /// library's slots when the guest has none and linked code calls
+    /// indirectly.
+    fn table(&mut self, module: &mut encoder::Module) -> Result<(), String> {
+        let added = u64::try_from(self.closure.table.len()).map_err(|e| e.to_string())?;
+        let mut section = encoder::TableSection::new();
+        match self.sections.tables.clone() {
+            Some(reader) => {
+                for table in reader {
+                    let table = table.map_err(|e| e.to_string())?;
+                    if !matches!(table.init, wasmparser::TableInit::RefNull) {
+                        return Err(
+                            "intrinsic library: initialized guest tables are not linkable".into(),
+                        );
+                    }
+                    let ty = reencode(self.guest_indices.table_type(table.ty))?;
+                    section.table(encoder::TableType {
+                        minimum: ty.minimum + added,
+                        maximum: ty.maximum.map(|maximum| maximum + added),
+                        ..ty
+                    });
+                }
+            }
+            None if self.closure.indirect || added > 0 => {
+                section.table(encoder::TableType {
+                    element_type: encoder::RefType::FUNCREF,
+                    table64: false,
+                    minimum: added,
+                    maximum: Some(added),
+                    shared: false,
+                });
+            }
+            None => return Ok(()),
+        }
+        module.section(&section);
         Ok(())
     }
 
@@ -1094,8 +1182,9 @@ impl<'a> Plan<'a> {
                 .get(index as usize)
                 .ok_or("intrinsic library: missing global")?;
             let ty = reencode(Identity.global_type(global.ty))?;
-            if global.zero_base {
-                // Relocated relative addresses are absolute: the base stays 0.
+            if global.zero_base || global.table_base.is_some() {
+                // Relocated relative addresses and table indices are
+                // absolute: the base is 0.
                 section.global(ty, &encoder::ConstExpr::i32_const(0));
                 continue;
             }
