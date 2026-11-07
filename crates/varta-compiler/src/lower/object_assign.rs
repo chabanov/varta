@@ -75,6 +75,15 @@ impl Lower<'_> {
             return Err(invalid("Object.assign has no type arguments"));
         }
         let span = call.span;
+        // V38 (`expression_forms`): into a fresh object literal of data
+        // members, Object.assign of closed objects defines what a spread
+        // literal defines (CopyDataProperties: each source's own keys in its
+        // own-key order, getters run when reached), so a source of a view of
+        // other layouts copies the actual object's properties
+        // (`layout_spreads`).
+        if let Some(spread) = self.assign_as_spread(call) {
+            return self.record(&spread, None);
+        }
         let mut roots = Vec::new();
         let mut body = Vec::new();
         let mut arguments = Vec::new();
@@ -320,6 +329,61 @@ impl Lower<'_> {
             values.push((name, unions::widen(value, Some(expected), self.types)?));
         }
         self.optional_record(span, id, values)
+    }
+    /// `Object.assign({ …members }, a, b)` as `{ …members, ...a, ...b }` when
+    /// the target is an object literal without accessors and every source a
+    /// closed object (or nullish).
+    fn assign_as_spread(&self, call: &ast::CallExpr) -> Option<ast::ObjectLit> {
+        if !self.types.profile.expression_forms() || call.args.len() < 2 {
+            return None;
+        }
+        let ast::Expr::Object(target) = stmt::unparen(&call.args[0].expr) else {
+            return None;
+        };
+        if call.args[0].spread.is_some()
+            || target.props.iter().any(|prop| {
+                matches!(prop, ast::PropOrSpread::Prop(prop)
+                    if matches!(&**prop, ast::Prop::Getter(_) | ast::Prop::Setter(_)))
+            })
+        {
+            return None;
+        }
+        for arg in &call.args[1..] {
+            // A type assertion keeps the object (its spread copies it by
+            // layout); the asserted value decides whether it is closed.
+            let mut source = &*arg.expr;
+            loop {
+                source = match source {
+                    ast::Expr::Paren(inner) => &inner.expr,
+                    ast::Expr::TsAs(inner) => &inner.expr,
+                    ast::Expr::TsSatisfies(inner) => &inner.expr,
+                    ast::Expr::TsNonNull(inner) => &inner.expr,
+                    _ => break,
+                };
+            }
+            let ty = self.peek_type(source, 0)?;
+            let closed = unions::members(ty, self.types)
+                .into_iter()
+                .all(|member| match member {
+                    Type::Record(id) => self.types.records[id as usize].class.is_none(),
+                    Type::Null | Type::Undefined => true,
+                    _ => false,
+                });
+            if arg.spread.is_some() || !closed {
+                return None;
+            }
+        }
+        let mut props = target.props.clone();
+        for arg in &call.args[1..] {
+            props.push(ast::PropOrSpread::Spread(ast::SpreadElement {
+                dot3_token: arg.expr.span(),
+                expr: arg.expr.clone(),
+            }));
+        }
+        Some(ast::ObjectLit {
+            span: target.span,
+            props,
+        })
     }
     fn assign_source(
         &mut self,

@@ -64,6 +64,7 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("layout_classes"),
     case!("layout_dictionaries"),
     case!("method_spreads"),
+    case!("assign_literals"),
     case!("accessor_optional_spreads"),
     case!("computed_keys"),
     case!("destructuring"),
@@ -206,6 +207,8 @@ fn layout_spreads_and_rests_match_node() {
     // Into a dictionary of `unknown` through the object's JSON-object read,
     // which knows every record layout a boxed type may hold.
     matches_node("layout_dictionaries");
+    // `Object.assign` into a fresh object literal is the spread literal.
+    matches_node("assign_literals");
 }
 
 /// Methods that use `this` see receivers of other layouts: a spread copy,

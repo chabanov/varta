@@ -138,6 +138,7 @@ impl Lower<'_> {
             && self.types.records[shape as usize].class.is_none()
             && !self.types.layouts.exact
             && !matches!(kind, Kind::Keys)
+            && !self.types.profile.expression_forms()
         {
             self.types.subtyping.note_key_copy(
                 shape,
@@ -145,6 +146,11 @@ impl Lower<'_> {
                 self.source,
                 span,
             );
+        }
+        // V38: values of another layout's undeclared keys are checked
+        // (`subtyping::checked_value`).
+        if self.types.profile.expression_forms() && matches!(kind, Kind::Values) {
+            subtyping::note_values(shape, self.types).map_err(|e| self.source.locate(e, span))?;
         }
         let fields = self.types.records[shape as usize].fields.clone();
         // V38 (`symbol_values`): a symbol-keyed member is no string key, and

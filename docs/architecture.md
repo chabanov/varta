@@ -10396,8 +10396,11 @@ such members.
   JSON-object read, whose branches cover every record layout the boxed
   types may hold. Refused by name for now: layout spreads into dictionaries
   of other value types and into literals with accessors, and
-  `Object.values`/`entries` and `Object.assign` sources of a view of other
-  layouts.
+  `Object.assign` onto an existing object (pending overflow own
+  properties). `Object.values`/`entries` of a view list the actual object's
+  own values with checked reads (intentional deviation (4) of the type
+  level), and `Object.assign` into a fresh object literal is that spread
+  literal.
 - `obj.m?.()` on a class method is the ordinary call.
 - V38 boolean discriminants: `if (result.ok)`, its negation, logical guards
   and ternaries narrow the owning record/class union like an explicit comparison
@@ -11887,6 +11890,80 @@ Node 24 is the reference for every output below.
   annotations. Iterator helpers and `Array.from` with a map function or an
   array-like are admitted by the [standard library](#standard-library-standard_library).
 
+##### Overflow own properties (design; value layout 18 addition, implementation pending)
+
+Owner decision (2026-11-07, delegated): one shared mechanism gives any
+object own properties its closed layout does not declare, as JavaScript
+creates them (`Object.assign` onto an existing object, properties on
+functions, a static `this` write creating a subclass's own property,
+computed writes of new keys, Proxy/Reflect). It is an addition to the
+unreleased value layout 18 under the CLAUDE.md §11 rules: earlier layouts
+and profiles keep their bytes. It shares K9 A4's representation for
+closures, so every host reader handles one shape.
+
+- **Storage.** A record of an *expandable* layout (structural records,
+  class instances, objects with accessors) ends with a `properties: i64`
+  word after its order trailer; other layouts keep their bytes, so memory
+  and fuel accounting, fuel goldens and data limits of programs without
+  such sites do not change (owner review, 2026-11-07). The compiler sees
+  the whole program and marks a record descriptor expandable from every
+  site that can add an own property to an existing object of that layout
+  (`Object.assign` targets, computed writes of keys the type does not
+  declare, B3's static own properties, the coming
+  `Reflect.defineProperty`/Proxy), propagated conservatively through view
+  and source edges. A non-expandable object that would have to gain a key
+  at run time is a compiler bug to report, never a reason to widen every
+  record. The word is zero until the
+  first overflow property is created, then holds the handle of an ordinary
+  dictionary storage record of type `Record<string, unknown>` (value layout
+  18 hashed dictionary: keys in creation order, values as `unknown` cells).
+  Closures carry the same word as their `properties` slot (K9 A4,
+  `PROPERTIES_MASK`). Symbol keys use the symbol-key encoding of
+  `symbol_values` (`modules::symbol_keys`), so the dictionary stays
+  string-keyed. The exact placement of the word for records is settled
+  through main after K9 A4 lands.
+- **Own-key order** (OrdinaryOwnPropertyKeys). Integer-index keys ascend
+  across declared and overflow keys; the other string keys follow creation
+  order. Declared keys created before the storage exists come first, in
+  the order trailer's order. While the storage exists, the first presence
+  of a declared slot (an optional field set, a deleted field re-created)
+  also moves a reserved marker key `#slot <n>` to the end of the storage
+  (deleted and inserted again). Readers then list the declared keys
+  without a marker in trailer order, followed by the storage entries in
+  order, with markers expanded to their declared keys. A marker of an
+  absent slot is skipped. Deleting an overflow key deletes the entry.
+  Symbol keys are listed after the string keys, by the symbol rules.
+- **Collector and barriers.** The collector traces a nonzero
+  `properties` word of every value18 record (and closure) as a reference,
+  marking the storage record. A write that first allocates or replaces the
+  storage goes through the incremental write barrier, as
+  `SetFunctionProperties` does. Storage records are ordinary dictionaries,
+  so their hashing, compaction and limits apply unchanged.
+- **Typed code.** Member access through the declared type reads the
+  declared slots only and never sees overflow keys. Overflow keys are
+  reached through the dynamic paths: own-key enumerations (`Object.keys`,
+  `values`, `entries`, `for...in`), spreads, rests and layout copies,
+  `JSON.stringify`, JSON-object reads of `unknown`, `"k" in o`,
+  `Object.hasOwn` with a run-time key, computed reads, writes and deletes,
+  `Object.assign`. A read of such a key through a wider type (a view whose
+  type declares the key, over an object that holds it only in the storage)
+  follows the checked-read rule: a value of the declared type is returned,
+  a missing key reads `undefined` where the type admits it, and anything
+  else throws `TypeError` at the read.
+- **Host readers.** The JSON serializers (linked and host), the KV stager
+  (`varta-kv-codec`, both hosts), the console notation, `structuredClone`
+  and view props read the word. They validate a nonzero word as a
+  dictionary storage record of `Record<string, unknown>` and merge its
+  entries into the object's own keys by the order rule above, skipping
+  markers. A malformed word is a layout failure, like any malformed cell.
+- **Object.assign onto an existing target** (first user). Every own
+  enumerable property of each source (CopyDataProperties order, getters run
+  when reached) is set on the target. A declared key is written to its slot
+  (a setter of an object with accessors is called; a getter-only property
+  throws as in JavaScript), and any other key is written to the target's
+  storage (created on first use). A source that is a view of other layouts
+  is read through its layout copy (`layout_spreads`).
+
 #### Standard library (`standard_library`)
 
 Additions to v38 (K9 D, 2026-11-06) that complete the ECMAScript 2025
@@ -12442,7 +12519,13 @@ refused with an `unsupported …` diagnostic that names it (list below).
   with a value outside the declared type throws `TypeError` (`property … of
   this object does not have the type the method's this type declares`) at
   that read or write ([expression forms](#expression-forms-expression_forms)).
-  Owner confirmation pending (rule of 2026-11-07, as (1) and (2)).
+  Owner confirmation pending (rule of 2026-11-07, as (1) and (2)). (4)
+  `Object.values` and `Object.entries` of a view list every own value of
+  the actual object, typed as the union of the declared property types
+  (tsc's `any` has no Varta form); a value outside that union throws
+  `TypeError` (`own property value is not of the object type's declared
+  property types`) when the enumeration reads it; Node returns it
+  (coordinator decision 2026-11-07, owner confirmation pending).
 
 - **Step 3 admissions (2026-11-06).** `infer` inside an intersection pattern
   (`T extends { a: infer A } & { b: infer B }`: the check type matches

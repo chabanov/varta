@@ -719,6 +719,49 @@ pub(crate) fn note_receiver(source: Type, target: u32, types: &mut ir::ValueType
     note_loose(source, target, types)
 }
 
+/// The key of the `TypeError` of a values enumeration of record `shape`
+/// that meets a value outside the declared property types.
+const VALUES_ERROR: &str = "#values";
+
+/// Prepare the checked values enumeration of record `shape` (v38): the
+/// `TypeError` its view rewrite throws for an undeclared value of another
+/// type.
+pub(crate) fn note_values(shape: u32, types: &mut ir::ValueTypes) -> Result<()> {
+    if types
+        .subtyping
+        .loose_errors
+        .borrow()
+        .contains_key(&(shape, VALUES_ERROR.to_owned()))
+    {
+        return Ok(());
+    }
+    let message = unions::intern(vec![Type::String, Type::Undefined], types)?;
+    let thrown = super::exceptions::exception_union(types)?;
+    let span = swc_common::DUMMY_SP;
+    let text = Expr {
+        span,
+        ty: Type::String,
+        kind: E::String(types.profile.string_bytes(
+            "own property value is not of the object type's declared property types",
+        )),
+    };
+    let error = Expr {
+        span,
+        ty: Type::from_error_class(varta_common::value::ErrorClass::TypeError),
+        kind: E::NewError(
+            varta_common::value::ErrorClass::TypeError,
+            Box::new(unions::widen(text, Some(message), types)?),
+        ),
+    };
+    let error = unions::widen(error, Some(thrown), types)?;
+    types
+        .subtyping
+        .loose_errors
+        .borrow_mut()
+        .insert((shape, VALUES_ERROR.to_owned()), error);
+    Ok(())
+}
+
 /// Note `source` as a checked view source of `target`.
 pub(crate) fn note_loose(source: Type, target: u32, types: &mut ir::ValueTypes) -> Result<()> {
     let names: Vec<String> = types.records[target as usize]
@@ -1405,15 +1448,16 @@ impl Rewriter<'_> {
                     // accessors included) enumerates its own slots in its
                     // own insertion order (OrdinaryOwnPropertyKeys).
                     for accessor in self.record_sources(view) {
-                        let fields = &self.types.records[view as usize].fields;
-                        // A key the view does not declare is its own name
-                        // (a values enumeration of a wider layout is refused
-                        // by `spread_views`).
+                        let fields = self.types.records[view as usize].fields.clone();
+                        // A key the view does not declare is its own name; its
+                        // value is checked against the declared property
+                        // types (checked reads at TypeScript unsoundness).
                         let keys = values
                             .first()
                             .is_some_and(|value| matches!(value.kind, E::String(_)));
                         let mut mapped = Vec::new();
-                        for field in &self.types.records[accessor as usize].fields {
+                        let own_fields = self.types.records[accessor as usize].fields.clone();
+                        for (from, field) in own_fields.iter().enumerate() {
                             let value = match fields.iter().position(|own| own.name == field.name) {
                                 Some(slot) => values[slot].clone(),
                                 // A reserved accessor field is no property
@@ -1426,11 +1470,14 @@ impl Rewriter<'_> {
                                     ty: Type::String,
                                     kind: E::String(self.types.profile.string_bytes(&field.name)),
                                 },
-                                None => {
-                                    return Err(CompilerError::Internal(
-                                        "values enumeration of a wider layout".into(),
-                                    ));
-                                }
+                                None => self.checked_value(
+                                    view,
+                                    accessor,
+                                    source,
+                                    from as u32,
+                                    field.ty,
+                                    target,
+                                )?,
                             };
                             mapped.push(value);
                         }
@@ -1605,6 +1652,90 @@ impl Rewriter<'_> {
         }
         body.push(S::Set(target, local(span, fresh, array)));
         Ok(S::Block(body))
+    }
+    /// The value of field `from` of an object of layout `layout` (in local
+    /// `source`, typed as view `view`) that the view does not declare, as an
+    /// element of the array in local `target`: a value of the element type
+    /// is the element; any other throws `TypeError` (checked reads at
+    /// TypeScript unsoundness: tsc types such values `any`).
+    fn checked_value(
+        &mut self,
+        view: u32,
+        layout: u32,
+        source: u32,
+        from: u32,
+        actual: Type,
+        target: u32,
+    ) -> Result<Expr> {
+        let span = self.span;
+        let types = self.types;
+        let Type::Array(array) = self.locals[target as usize] else {
+            return Err(CompilerError::Internal("values enumeration target".into()));
+        };
+        let element = types.arrays[array as usize];
+        let read = Expr {
+            span,
+            ty: actual,
+            kind: E::Field(
+                Box::new(Expr {
+                    span,
+                    ty: Type::Record(layout),
+                    kind: E::Reinterpret(Box::new(local(span, source, Type::Record(view)))),
+                }),
+                from,
+            ),
+        };
+        let fits = |expected: Type, actual: Type| {
+            expected == actual || assignable(expected, actual, types)
+        };
+        if fits(element, actual) {
+            return convert(read, element, types);
+        }
+        let error = types
+            .subtyping
+            .loose_errors
+            .borrow()
+            .get(&(view, VALUES_ERROR.to_owned()))
+            .cloned()
+            .ok_or_else(|| CompilerError::Internal("values enumeration error".into()))?;
+        let held = self.locals.len() as u32;
+        self.locals.push(actual);
+        let output = self.locals.len() as u32;
+        self.locals.push(element);
+        let marker = self.locals.len() as u32;
+        self.locals.push(Type::Number);
+        let mut body = vec![S::Init(held, read)];
+        let mut tested = vec![S::Throw(error)];
+        for member in unions::members(actual, types).into_iter().rev() {
+            if !fits(element, member) {
+                continue;
+            }
+            let value = Expr {
+                span,
+                ty: member,
+                kind: E::UnboxUnion(Box::new(local(span, held, actual))),
+            };
+            tested = vec![S::If(
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::IsUnionMember(Box::new(local(span, held, actual)), member),
+                },
+                vec![S::Init(output, convert(value, element, types)?)],
+                tested,
+            )];
+        }
+        body.extend(tested);
+        Ok(Expr {
+            span,
+            ty: element,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![held, output],
+                body,
+            },
+        })
     }
     fn boxed(&mut self, values: &mut [&mut Box<Expr>]) -> Result<()> {
         for value in values {

@@ -234,11 +234,42 @@ fn sdk_path_enumerations_of_wider_views_are_refused() {
     };
     let diagnostic = "own-key enumeration (Object.keys, values, entries, an Object.assign \
                       source or for...in) of a Narrow that may hold a wider Wide (a view)";
-    for body in [
-        "return JSON.stringify(Object.values(n));",
-        "return JSON.stringify(Object.entries(n));",
-        "return JSON.stringify(Object.assign({}, n));",
-    ] {
+    // Into a fresh literal, `Object.assign` copies by layout as a spread.
+    matches_node(
+        &program("return JSON.stringify(Object.assign({}, n));"),
+        r#"{"b":1,"a":2,"c":"x"}"#,
+    );
+    // Values of the object's own layout, checked against the declared
+    // property types (here all numbers, as Node prints them).
+    let numeric = |body: &str| {
+        format!(
+            "interface Wide {{ b: number; a: number; c: number }}
+             interface Narrow {{ a: number; b: number }}
+             function show(n: Narrow): string {{ {body} }}
+             export function main(): void {{
+               const w: Wide = {{ b: 1, a: 2, c: 3 }};
+               console.log(show(w));
+             }}"
+        )
+    };
+    matches_node(
+        &numeric("return JSON.stringify(Object.values(n));"),
+        "[1,2,3]",
+    );
+    matches_node(
+        &numeric("return JSON.stringify(Object.entries(n));"),
+        r#"[["b",1],["a",2],["c",3]]"#,
+    );
+    // A value outside the declared property types (tsc types it `any`)
+    // throws `TypeError` where it is read (checked reads at TypeScript
+    // unsoundness); Node returns it.
+    assert_eq!(
+        logs(&program(
+            "try { return JSON.stringify(Object.values(n)); } catch (e) { return e instanceof TypeError ? e.message : 'other'; }"
+        )),
+        ["own property value is not of the object type's declared property types"]
+    );
+    for body in ["const t = { a: 0, b: 0 }; Object.assign(t, n); return JSON.stringify(t);"] {
         refused(V38, &program(body), diagnostic);
     }
     // Own keys enumerate the object's own layout (`layout_spreads`), as Node
@@ -248,15 +279,14 @@ fn sdk_path_enumerations_of_wider_views_are_refused() {
         &program("let s = ''; for (const k in n) s += k; return s;"),
         "bac",
     );
-    refused(
-        V38,
+    matches_node(
         "interface Wide { b: number; a: number; c: string }
          interface Narrow { a: number; b: number }
          export function main(): void {
            const w: Wide = { b: 1, a: 2, c: 'x' };
            console.log(JSON.stringify(Object.assign({}, w as Narrow)));
          }",
-        diagnostic,
+        r#"{"b":1,"a":2,"c":"x"}"#,
     );
     // A view of a narrower field type with the same fields in the same
     // order: Node prints the same keys.
