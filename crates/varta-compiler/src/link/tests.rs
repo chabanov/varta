@@ -96,6 +96,7 @@ const COMMON_CORE: &[&str] = &[
     "crates/varta-common/src/json/scan.rs",
     "crates/varta-common/src/json/schema.rs",
     "crates/varta-common/src/limits.rs",
+    "crates/varta-common/src/intl_data.rs",
     "crates/varta-common/src/memory.rs",
     "crates/varta-common/src/regexp.rs",
     "crates/varta-common/src/text.rs",
@@ -197,6 +198,143 @@ fn source_fingerprint() -> String {
         }
     }
     format!("{value:016x}")
+}
+
+/// FNV-1a 64 over `path NUL content NUL` of the locale data generator's
+/// sources: the algorithm of `scripts/build-intl-data.py`.
+fn intl_fingerprint() -> String {
+    fn walk(dir: &std::path::Path, root: &std::path::Path, files: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name != "target") {
+                    walk(&path, root, files);
+                }
+            } else if path.file_name().is_some_and(|name| name != ".DS_Store") {
+                files.push(
+                    path.strip_prefix(root)
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .replace('\\', "/"),
+                );
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = root.canonicalize().unwrap();
+    let mut files = Vec::new();
+    walk(&root.join("scripts/intl-data"), &root, &mut files);
+    files.push("scripts/build-intl-data.py".into());
+    files.push("crates/varta-common/src/intl_data.rs".into());
+    files.sort();
+    let mut value: u64 = 0xcbf2_9ce4_8422_2325;
+    for name in files {
+        let content = std::fs::read(root.join(&name)).unwrap();
+        for chunk in [name.as_bytes(), b"\0", &content, b"\0"] {
+            for &byte in chunk {
+                value = (value ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+    }
+    format!("{value:016x}")
+}
+
+#[test]
+fn intl_data_matches_its_generator() {
+    let metadata = include_str!("intl/intl.json");
+    let recorded = metadata
+        .split("\"sourceFingerprint\": \"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap();
+    assert_eq!(
+        recorded,
+        intl_fingerprint(),
+        "the locale data is stale: run scripts/build-intl-data.py"
+    );
+}
+
+/// The passive segments and `varta.intl` manifest of a module.
+fn locale_data(module: &[u8]) -> (usize, Option<varta_common::intl_data::Manifest>) {
+    let mut passive = 0;
+    let mut manifest = None;
+    for payload in wasmparser::Parser::new(0).parse_all(module) {
+        match payload.unwrap() {
+            wasmparser::Payload::DataSection(reader) => {
+                for segment in reader {
+                    if matches!(segment.unwrap().kind, wasmparser::DataKind::Passive) {
+                        passive += 1;
+                    }
+                }
+            }
+            wasmparser::Payload::CustomSection(section)
+                if section.name() == varta_common::intl_data::SECTION =>
+            {
+                manifest = Some(varta_common::intl_data::Manifest::decode(section.data()).unwrap());
+            }
+            _ => {}
+        }
+    }
+    (passive, manifest)
+}
+
+#[test]
+fn zone_names_link_their_locale_data_as_passive_segments() {
+    use crate::{Settings, compile_typescript_with_settings};
+    let compile = |source: &str, locales: &[&str]| {
+        compile_typescript_with_settings(
+            source,
+            V38,
+            &Settings {
+                locales: locales.iter().map(|&tag| tag.to_owned()).collect(),
+            },
+        )
+        .unwrap()
+    };
+    let named = "export function main(): void { console.log(new Date(0).toString()); }";
+    let offset = "export function main(): void { console.log(`${new Date(0).getHours()}`); }";
+    let all = compile(named, &[]);
+    let (passive, manifest) = locale_data(&all);
+    let manifest = manifest.unwrap();
+    let markers = varta_common::intl_data::operation_markers("date_zone_name");
+    assert_eq!(passive, markers.len());
+    assert_eq!(manifest.segments.len(), markers.len());
+    assert_eq!(
+        (manifest.cldr.as_str(), manifest.icu4x.as_str()),
+        ("49.0.0", "2.4.0")
+    );
+    assert_eq!(manifest.tzdata, "2026e");
+    assert!(manifest.locales.is_empty());
+    // Offsets read no locale data.
+    assert_eq!(locale_data(&compile(offset, &[])), (0, None));
+    // A selection keeps its locales' chains and adds the available list.
+    let selected = compile(named, &["uk", "en-GB"]);
+    let (passive, manifest) = locale_data(&selected);
+    let manifest = manifest.unwrap();
+    assert_eq!(passive, markers.len() + 1);
+    assert_eq!(
+        manifest.segments[0],
+        varta_common::intl_data::AVAILABLE_LOCALES_HASH
+    );
+    assert_eq!(manifest.locales, ["uk", "en-GB"]);
+    assert!(
+        selected.len() * 4 < all.len(),
+        "{} vs {}",
+        selected.len(),
+        all.len()
+    );
+    // Deterministic.
+    assert_eq!(compile(named, &["uk", "en-GB"]), selected);
+    wasmtime::Module::new(&wasmtime::Engine::default(), &selected).unwrap();
+    // Invalid selections are rejected.
+    for tags in [&["en-u-ca-buddhist"][..], &["not a tag"], &["und"]] {
+        assert!(
+            crate::canonical_locales(&tags.iter().map(|&t| t.to_owned()).collect::<Vec<_>>())
+                .is_err(),
+            "{tags:?}"
+        );
+    }
 }
 
 #[test]
@@ -360,7 +498,7 @@ fn v38_modules_import_no_linked_intrinsic_and_instantiate() {
         "{:?}",
         linked_imports(&v37)
     );
-    assert_eq!(super::link(v37.clone(), V37, None, None).unwrap(), v37);
+    assert_eq!(super::link(v37.clone(), V37, None, None, &[]).unwrap(), v37);
     assert_eq!(super::tests::region(&v37), abi::StaticRegion::SINGLE_PAGE);
 }
 

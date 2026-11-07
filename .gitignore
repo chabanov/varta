@@ -1,4 +1,6 @@
 /target/
+# The locale data generator's own build (`scripts/build-intl-data.py`).
+/scripts/intl-data/target/
 /dist/
 *.wasm
 *.cwasm

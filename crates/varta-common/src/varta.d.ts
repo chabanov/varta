@@ -214,9 +214,11 @@ declare module "*.md" {
 // ()->i32 result length and intl_locale ()->i32 result length return the
 // host's IANA time zone identifier and default BCP 47 locale (UTF-16 text in
 // the host result buffer), recorded host inputs read once per instance. The
-// linked date_zone_offset (i32 ptr, i32 len, f64 time, f64 local)->f64 and
-// date_zone_name (i32 ptr, i32 len, i32 ptr, i32 len, f64 time)->i32 (owned
-// string) compute offsets and zone names in guest code and are never imported.
+// linked date_zone_offset (i32 ptr, i32 len, f64 time, f64 mode)->f64 (the
+// offset at an instant, of a local time, or the daylight flag of the zone
+// name) and date_zone_name (i32 ptr, i32 len, i32 ptr, i32 len, f64
+// time)->i32 (owned string) compute offsets and zone names in guest code and
+// are never imported; zone names read the module's linked locale data.
 // checked-f64-utf16-v38 (batch, unreleased) data limits: JSON.stringify uses the
 // internal import json_stringify_owned (i32 kind, i32 low, i32 high)->(i64
 // handle, i32 error class), host ABI34 minimum, pure, no capability. The host

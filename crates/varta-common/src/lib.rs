@@ -46,6 +46,9 @@ mod host;
 pub mod host_inputs;
 #[cfg(feature = "std")]
 pub mod http;
+/// The v38 locale data format of `Intl` (K9 D4): blobs, segments and the
+/// module manifest shared by the generator, the linker and linked code.
+pub mod intl_data;
 #[cfg(feature = "std")]
 mod invocation;
 /// Checked JSON schemas and decoding; without `std` the schema model, its

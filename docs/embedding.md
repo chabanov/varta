@@ -266,12 +266,19 @@ Passing validation is not proof of provenance or authorization.
    intrinsic region in one `varta.intrinsics` section (a little-endian `u32`
    page count of at least 1, with the extension's pages at most
    `abi::MAX_STATIC_EXTENSION_PAGES`; any other profile, a duplicate, zero or
-   another length is rejected). Every data segment of a v38 module is active in
-   memory 0 at an `i32.const` offset and lies wholly in the first page, wholly
-   in the declared extension or, for the linked intrinsic library's own data,
-   wholly in the declared intrinsic region; a declared extension or intrinsic
-   region lies within the initial memory
-   ([memory layout](#memory-layout-and-encodings)).
+   another length is rejected). Every active data segment of a v38 module is
+   in memory 0 at an `i32.const` offset and lies wholly in the first page,
+   wholly in the declared extension or, for the linked intrinsic library's own
+   data, wholly in the declared intrinsic region; a declared extension or
+   intrinsic region lies within the initial memory
+   ([memory layout](#memory-layout-and-encodings)). A v38 module that links
+   locale data (K9 D4) also has passive data segments, exactly as many as its
+   one `varta.intl` section names
+   ([locale data](architecture.md#locale-data-intl_data)); a passive segment
+   without that section, a duplicate or malformed section, or a count that
+   differs is rejected. Passive segments change no memory at instantiation;
+   only the module's own `memory.init` copies from them, under its memory
+   maximum.
 4. **Memory maximum (third-party hosts).** The reference host caps growth with a
    store limiter. Hosts without one, including every JavaScript host, MUST parse
    the memory section and reject a memory whose maximum is absent or above the
@@ -501,7 +508,9 @@ permissions and the view protocol: effects only
   `resource_request` to the requested bytes before the trap, exactly as the
   guest allocator does, so a host reports it as the typed resource failure.
   Their data segments are part of the module and are charged like
-  any other data segment at instantiation.
+  any other data segment at instantiation. Locale data stays in passive
+  segments until linked code copies a part of it into its arena, so its
+  memory counts only once used, like any other arena memory.
 - **Determinism.** Every host computes the same bits, including the finite
   results of Math and `**` that are [approximated](#numeric-intrinsics) in
   earlier profiles: v38 uses the portable `libm` backend everywhere. Those

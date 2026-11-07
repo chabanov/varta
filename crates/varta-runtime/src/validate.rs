@@ -205,6 +205,10 @@ fn preflight(bytes: &[u8]) -> Result<Preflight, RuntimeError> {
     let mut intrinsic_section = None;
     let mut memory_initial = None;
     let mut data_segments = Vec::new();
+    // V38 locale data (`varta_common::intl_data`): passive segments and the
+    // manifest that names them.
+    let mut passive_segments = 0usize;
+    let mut intl_manifest = None;
     let mut start_function = false;
     for payload in Parser::new(0).parse_all(bytes) {
         match payload.map_err(|e| error(&e.to_string()))? {
@@ -332,8 +336,15 @@ fn preflight(bytes: &[u8]) -> Result<Preflight, RuntimeError> {
                 if language.profile.is_some_and(|p| p.program_limits()) =>
             {
                 for segment in reader {
-                    let (memory, offset, len) =
-                        active_segment(segment.map_err(|e| error(&e.to_string()))?)?;
+                    let segment = segment.map_err(|e| error(&e.to_string()))?;
+                    if matches!(segment.kind, wasmparser::DataKind::Passive) {
+                        if !linked {
+                            return Err(error("static data must be active in memory 0"));
+                        }
+                        passive_segments += 1;
+                        continue;
+                    }
+                    let (memory, offset, len) = active_segment(segment)?;
                     if memory != 0 {
                         return Err(error("static data must be active in memory 0"));
                     }
@@ -355,6 +366,17 @@ fn preflight(bytes: &[u8]) -> Result<Preflight, RuntimeError> {
                     return Err(error("unsupported or duplicate intrinsic region"));
                 }
                 intrinsic_section = Some(section.data());
+            }
+            Payload::CustomSection(section)
+                if section.name() == varta_common::intl_data::SECTION =>
+            {
+                if intl_manifest.is_some() || !linked {
+                    return Err(error("unsupported or duplicate locale data manifest"));
+                }
+                intl_manifest = Some(
+                    varta_common::intl_data::Manifest::decode(section.data())
+                        .map_err(|e| error(&e.to_string()))?,
+                );
             }
             Payload::TableSection(reader) => {
                 if reader.count() as usize > abi::MAX_TABLES {
@@ -464,6 +486,15 @@ fn preflight(bytes: &[u8]) -> Result<Preflight, RuntimeError> {
             .map_err(|e| error(&e.to_string()))?;
     }
     check_static_region(static_region, memory_initial, &data_segments)?;
+    if intl_manifest
+        .as_ref()
+        .map_or(0, |manifest| manifest.segments.len())
+        != passive_segments
+    {
+        return Err(error(
+            "passive data segments must be the locale data its manifest names",
+        ));
+    }
     crate::frames::admit(
         bytes,
         profile,

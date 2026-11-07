@@ -558,6 +558,96 @@ Collator, RelativeTimeFormat, ListFormat, DisplayNames, Segmenter, Locale,
 `getCanonicalLocales`, `supportedValuesOf`) and the `toLocale*` family,
 pending the data-selection decision; the full gate of this batch.
 
+### K9 D4 locale data — 2026-11-07
+
+Second batch of K9 D4: the data mechanism of option A with option B's
+project setting ([contract](architecture.md#locale-data-intl_data),
+[rules](profile-rules.md#local-time-local_time)). Coordinator decisions
+(owner's delegated authority, owner review pending): CLDR 49 (ICU4X 2.4)
+and tzdata 2026e accepted although Node 24.20 ships CLDR 48 and 2026c;
+`getTimezoneOffset` keeps the specification's fractional minutes; build
+option A's mechanism, implement option B's `"locales"` setting, keep the
+default at every locale until the owner chooses. The accepted differences
+are recorded in the [local time contract](architecture.md#local-time-local_time).
+
+Implemented:
+
+- `varta_common::intl_data` (`no_std`): the blob, segment and manifest
+  format, sorted-entry lookup with ICU4X's attribute prefix matching, and
+  `OPERATION_MARKERS` (the markers each linked operation reads).
+- The generator `scripts/intl-data` (standalone tool crate with its own
+  lockfile, run by `scripts/build-intl-data.py`): every payload of ICU4X
+  2.4.0's compiled data, through the data crates' baked macros with
+  iteration (ICU4X 2.4's iteration arm of singleton markers names a
+  nonexistent `BtreeSet`; singletons are exported from their one root
+  payload), as postcard 1, one blob per service, `intl.json` with versions,
+  per-marker sizes and the source fingerprint.
+- `varta_intl::data`: the ICU4X buffer provider over the module's passive
+  segments (binary search reading only the probed entries, ICU4X's fallback
+  per marker priority, payload copied into the call's arena), the
+  available-locales reader and the default-locale resolution. Zone names
+  now load through it; ICU4X's `compiled_data` features are gone from the
+  engine (`serde` instead; `icu_locale_fallback` keeps its few-kilobyte
+  compiled fallback data).
+- Linker: passive segments of the operation's markers, the data count
+  section, the `varta.intl` manifest and the synthesized `intl_data`
+  accessor (`memory.init` of a checked range). Runtime: passive segments
+  only with a matching manifest in a linked v38 module.
+- `"locales"` in `varta.config.json` (v38; canonical BCP 47 language tags
+  without extensions): segments keep the selected locales' fallback chains
+  per marker priority, plus the available-locales segment; the host locale
+  resolves through CLDR fallback to the best selected locale, else the
+  first. Compiler API: `Settings`, `compile_modules_with_settings`,
+  `compile_typescript_with_settings`, `canonical_locales`.
+- The date prelude memoizes the zone name per daylight flag per instance
+  (`date_zone_offset` mode 2 answers the flag).
+
+Dependencies: no new crate in the workspace lock (the `icu_*_data` crates of
+the date-time, time, calendar, decimal and plural data left it). The
+compiler now depends on `icu_locale_core`, `icu_locale_fallback` and
+`icu_provider` (already locked, same ICU4X 2.4 line) to compute the
+fallback chains of a locale selection. The generator's own lock adds the
+ICU4X `datagen` dependencies (`databake`, `erased-serde`, the `icu_*_data`
+crates of every service, `icu_experimental` 0.7.0) outside the workspace.
+
+Evidence: `varta-common` `intl_data::tests`; `varta-intl` `names::tests`
+through the provider restricted to the linked markers (all 2,349
+Node-pinned names unchanged, every listed marker read), `data::tests`
+(fallback, singletons, unlinked markers, default-locale resolution);
+compiler `zone_names_link_their_locale_data_as_passive_segments` and
+`intl_data_matches_its_generator`; runtime
+`selected_locales_resolve_the_default_locale_through_cldr_fallback`,
+`passive_segments_need_their_locale_data_manifest`,
+`zone_name_locale_data_costs` and the existing `local_time_tests`;
+`varta-project` `locale_selections_need_v38_and_language_tags`.
+
+Sizes (macOS arm64): the intrinsic library from 3.63 MB to 1.13 MB. One
+`toString` program: module 3.10 MB with every locale (2.85 MB with baked
+names before), 574 KB with `["en", "uk"]`; memory 2.23 MB instead of 5.77
+MB. Blobs for every service: 22.2 MB (zone 3.37 MB, datetime 3.22 MB,
+displaynames 5.06 MB, currency 3.74 MB, segmenter 3.54 MB, units 1.56 MB,
+collator 1.06 MB, relativetime 448 KB, others below 100 KB); the compiler
+embeds only the blobs linked operations read (zone and decimal today).
+Worst case per call (sum of the largest payloads a service's markers hold,
+ICU4X's working memory excluded): zone names 108 KB, collator 357 KB,
+segmenter 2.75 MB (CJK dictionary and LSTM models), every other service
+below 100 KB; all within the 8 MiB of an HTTP request instance. No budget
+changed.
+
+Cost needing the owner: the first zone name of each daylight flag costs
+0.77–1.4 million fuel (about 150,000 with baked data), spent validating the
+deserialized payloads (UTF-8 of the names); memoization makes repeated
+calls cheaper than before (100 calls: 9.1 million against about 15
+million). Later `Intl` formatters will pay the same per constructed
+formatter; a per-instance data cache (persistent across calls, against the
+"nothing survives a call" arena rule) would remove it and needs a decision.
+The key tables of the per-attribute markers (display names, currencies) are
+larger than ICU4X's zero-tries; a compact key table can come with those
+services.
+
+Not done: the `Intl` services and the `toLocale*` family (next batches);
+choosing the default locale selection (owner).
+
 ### Native CSS `scale()` — native backlog batch, 2026-11-06
 
 `transform` lists that scale are admitted
@@ -3724,7 +3814,7 @@ The selectors are registered; the table records what each stream admits.
 | `file_roots()` | Virtual file roots (wave 2): `fs.*` paths and grants are virtual paths `/<root>/...`; the configuration names roots inside the project, the host policy maps them for packaged runs | Implemented ([contract](architecture.md#virtual-file-roots-file_roots)): `fs.roots` in the configuration pinned no-follow at load, manifest `fsRoots` names (host ABI 34), host-policy `fsRoots` mapping pinned at startup, canonical virtual paths with whole-component matching against request and ceiling, no-follow reads below the root descriptor; run, application, view, HTTP request stores and tool invocation. V1–v37 keep host paths |
 | `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Iterable<T>` value annotations (`Array.from` with a map function: `standard_library()`) |
 | `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
-| `local_time()` | K9 D4 local time (2026-11-06): `Date` in the host's time zone, zone and locale as recorded host inputs | Implemented ([contract](architecture.md#local-time-local_time), [record](#k9-d4-local-time--2026-11-06)): `intl_time_zone`/`intl_locale` (host ABI 34, no capability), linked `date_zone_offset`/`date_zone_name` over `varta-intl` (tzdata 2026e, ICU4X 2.4 / CLDR 49), linked indirect calls. Pending owner decisions: CLDR 49 vs Node's 48, Intl data selection; pending work: Intl and `toLocale*` |
+| `local_time()` | K9 D4 local time (2026-11-06): `Date` in the host's time zone, zone and locale as recorded host inputs | Implemented ([contract](architecture.md#local-time-local_time), [record](#k9-d4-local-time--2026-11-06)): `intl_time_zone`/`intl_locale` (host ABI 34, no capability), linked `date_zone_offset`/`date_zone_name` over `varta-intl` (tzdata 2026e, ICU4X 2.4 / CLDR 49), linked indirect calls. locale data as passive segments with the `"locales"` selection ([record](#k9-d4-locale-data--2026-11-07)). Pending owner decisions: the default locale selection, a per-instance data cache; pending work: Intl and `toLocale*` |
 | `expression_forms()` | K9 C — expressions and functions (2026-11-06): `await` anywhere, comma, `new.target` comparisons, tagged templates, spreads into fixed parameters, `this` parameters and field arrows, object-literal methods with `this`, computed keys, destructuring everywhere, hand-written iterators, `using`, structural thenables | Implemented in part ([contract](architecture.md#expression-forms-expression_forms), [record](#k9-c--expressions-and-functions-2026-11-06)): no ABI, value-layout, scheduler or host change. Pending: `SuppressedError` for double throws in `using`, `await` in `switch` case tests |
 | `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results. No ABI, value-layout or host change. Pending (owner decision): static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
 | `full_regexp()` | K9 D3 full RegExp (2026-11-06): the ES2025 pattern language with a backtracking matcher bounded by fuel, match indices, the `v` flag | Implemented ([contract](architecture.md#full-regexp-full_regexp), [record](#k9--typescript-completeness-and-the-first-release-agreed-2026-11-06)): program format 2 and the linked `regexp_exec`; V37 keeps the linear-time subset. Pending: run-time patterns, `matchAll` iterators, match-array methods, symbol protocols |

@@ -28,8 +28,8 @@ use icu_datetime::NoCalendarFormatter;
 use icu_datetime::fieldsets::zone::{LocalizedOffsetLong, SpecificLong};
 use icu_locale_core::Locale;
 use icu_provider::prelude::*;
-use icu_time::provider::{Baked, TimezonePeriodsV1};
-use icu_time::zone::{IanaParserBorrowed, UtcOffset, ZoneNameTimestamp};
+use icu_time::provider::TimezonePeriodsV1;
+use icu_time::zone::{IanaParser, UtcOffset, ZoneNameTimestamp};
 use writeable::Writeable;
 
 const MS_PER_DAY: i64 = 86_400_000;
@@ -69,10 +69,29 @@ pub fn equivalent_time(time: i64) -> i64 {
     days_from_civil(equivalent_year(year), month, day) * MS_PER_DAY + within
 }
 
+/// The locale data markers [`long_name`] loads (the linker links their
+/// segments with `date_zone_name`).
+pub const MARKERS: &[DataMarkerInfo] = &[
+    icu_time::provider::iana::TimezoneIdentifiersIanaCoreV1::INFO,
+    TimezonePeriodsV1::INFO,
+    icu_datetime::provider::time_zones::TimezoneNamesEssentialsV1::INFO,
+    icu_datetime::provider::time_zones::TimezoneNamesLocationsOverrideV1::INFO,
+    icu_datetime::provider::time_zones::TimezoneNamesLocationsRootV1::INFO,
+    icu_datetime::provider::time_zones::TimezoneNamesSpecificLongV1::INFO,
+    icu_datetime::provider::time_zones::TimezoneNamesStandardLongV1::INFO,
+    icu_decimal::provider::DecimalSymbolsV1::INFO,
+    icu_decimal::provider::DecimalDigitsV1::INFO,
+];
+
 /// The long time zone name `Date.prototype.toString` shows for `zone` at
-/// the instant `time` in `locale`.
+/// the instant `time` in `locale`, from the locale data of `provider`.
 #[must_use]
-pub fn long_name(locale: &Locale, zone: &Zone, time: i64) -> String {
+pub fn long_name<P: BufferProvider + ?Sized>(
+    provider: &P,
+    locale: &Locale,
+    zone: &Zone,
+    time: i64,
+) -> String {
     let daylight = zone.daylight(equivalent_time(time));
     let (standard, current_daylight) = zone.current_offsets();
     // ICU's fallback: the localized GMT format of the current standard
@@ -82,12 +101,17 @@ pub fn long_name(locale: &Locale, zone: &Zone, time: i64) -> String {
         Some(offset) if daylight => offset,
         _ => standard,
     };
-    let id = IanaParserBorrowed::new().parse(zone.name());
+    let deserializing = provider.as_deserializing();
+    let Ok(parser) = IanaParser::try_new_unstable(&deserializing) else {
+        return gmt(provider, locale, fallback);
+    };
+    let id = parser.as_borrowed().parse(zone.name());
     let now = ZoneNameTimestamp::from_epoch_seconds(REFERENCE_SECONDS);
-    let periods: Option<DataResponse<TimezonePeriodsV1>> = Baked.load(Default::default()).ok();
+    let periods: Option<DataResponse<TimezonePeriodsV1>> =
+        deserializing.load(Default::default()).ok();
     let offsets = periods.and_then(|periods| periods.payload.get().get(id, now).map(|(o, _)| o));
     let Some(offsets) = offsets else {
-        return gmt(locale, fallback);
+        return gmt(provider, locale, fallback);
     };
     // The metazone's offset of the variant, which makes the formatter pick
     // that variant's name.
@@ -97,20 +121,24 @@ pub fn long_name(locale: &Locale, zone: &Zone, time: i64) -> String {
         Some(offsets.standard)
     };
     let Some(offset) = offset else {
-        return gmt(locale, fallback);
+        return gmt(provider, locale, fallback);
     };
     let info = id.with_offset(Some(offset)).with_zone_name_timestamp(now);
-    match NoCalendarFormatter::try_new(locale.into(), SpecificLong) {
+    match NoCalendarFormatter::try_new_with_buffer_provider(provider, locale.into(), SpecificLong) {
         Ok(formatter) => formatter.format(&info).write_to_string().into_owned(),
-        Err(_) => gmt(locale, fallback),
+        Err(_) => gmt(provider, locale, fallback),
     }
 }
 
 /// The localized GMT format (`GMT-05:00`) of an offset in milliseconds.
-fn gmt(locale: &Locale, offset: i64) -> String {
+fn gmt<P: BufferProvider + ?Sized>(provider: &P, locale: &Locale, offset: i64) -> String {
     let seconds = i32::try_from(offset / MS_PER_SECOND).unwrap_or(0);
     let offset = UtcOffset::try_from_seconds(seconds).unwrap_or(UtcOffset::zero());
-    match NoCalendarFormatter::try_new(locale.into(), LocalizedOffsetLong) {
+    match NoCalendarFormatter::try_new_with_buffer_provider(
+        provider,
+        locale.into(),
+        LocalizedOffsetLong,
+    ) {
         Ok(formatter) => formatter.format(&offset).write_to_string().into_owned(),
         Err(_) => String::new(),
     }
