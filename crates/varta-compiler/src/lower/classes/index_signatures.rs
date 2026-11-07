@@ -4,12 +4,12 @@
 //! private name no source can spell) that the constructor creates empty; a
 //! read, write, compound assignment or update of a member the class does not
 //! declare (a name or a computed string key) is a dictionary operation on
-//! it. JSON serialization of such an instance is refused (its private
-//! field; JavaScript would list the extra properties after the fields).
+//! it. Serialization lists the dictionary's entries as own properties in
+//! own-key order ([`varta_common::value::INDEX_SIGNATURE_KEY`]).
 use super::*;
 
 /// The hidden dictionary field of a class with a string index signature.
-pub(in crate::lower) const INDEX_FIELD: &str = "#index signature";
+pub(in crate::lower) const INDEX_FIELD: &str = varta_common::value::INDEX_SIGNATURE_KEY;
 
 /// `[key: string]: T` as the private field `INDEX_FIELD: { [key: string]: T } = {}`.
 pub(super) fn field(

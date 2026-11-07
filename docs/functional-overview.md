@@ -278,8 +278,8 @@ codegen-v2 fuel comparison. Its recorded HEAD is `6dfb06e` with the GC changes
 present; `10ff9ae` commits that verified code. See
 [current verification evidence](verification.md#current-verification-evidence--2026-11-06).
 
-The checked-v38 ECMAScript 2025 inventory has 205 passing and four reviewed
-unsupported cases out of 209 after the K9 A (steps 1–3), B, C, D, D2, D3 and D4 cases of 2026-11-06;
+The checked-v38 ECMAScript 2025 inventory has 213 passing and four reviewed
+unsupported cases out of 217 after the K9 A (steps 1–3), B, C, D, D2, D3 and D4 cases of 2026-11-06;
 eight feature rows have no executable case.
 The baseline matches. This is a bounded compatibility inventory rather than
 Test262, full language compatibility or a global completion percentage; see

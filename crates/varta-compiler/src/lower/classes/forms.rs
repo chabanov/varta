@@ -54,11 +54,11 @@ fn key_name(key: &ast::PropName) -> Option<String> {
     }
 }
 
-/// The diagnostic of a decorator: it runs code when its class is defined.
+/// The diagnostic of a decorator (TC39 standard decorators are pending).
 fn decorator(source: &Source, span: Span) -> CompilerError {
     source.locate(
         unsupported(
-            "decorator (a decorator runs code when its class is defined, which needs the module initialization design)",
+            "decorator (standard decorators are not implemented yet: they need this in field initializers, method values and rest parameters of tuple type first)",
         ),
         span,
     )
@@ -546,7 +546,7 @@ impl Lower<'_> {
         self.overloaded_result(value, result)
     }
     /// `new C(...)` of an abstract class is a compile error (TS2511).
-    pub(super) fn reject_abstract_new(&self, class: u32, span: Span) -> Result<()> {
+    pub(in crate::lower) fn reject_abstract_new(&self, class: u32, span: Span) -> Result<()> {
         if self.types.classes.get(class).forms.is_abstract {
             return Err(self.source.locate(
                 type_error(format!(

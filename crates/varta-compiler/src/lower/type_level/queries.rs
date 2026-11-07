@@ -172,6 +172,11 @@ fn named_value(name: &str, types: &mut ir::ValueTypes) -> Result<Type> {
         return Ok(*ty);
     }
     if let Some(class) = named::class(types, name) {
+        // V38 (`declaration_forms`): the class object of a declared class.
+        let info = types.classes.get(class);
+        if types.profile.declaration_forms() && !info.is_template() && !info.prelude {
+            return Ok(Type::ClassValue(class));
+        }
         return constructors::class_constructor(class, types);
     }
     let mut key = (named::current(types), name.to_owned());

@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with K9 D2 Symbol values and symbol-keyed properties, K9 D4 local-time `Date` with host zone and locale inputs, and the stack-frame fix, on top of the K9 C expression forms with object-literal accessors and top-level `await`, K9 D3 full RegExp, K9 A steps 1–3, K9 B declarations and classes, the K8 CSS engine's font-metric units, logical properties and selectors, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-07, the commit that records it: **4447 Rust tests passed, 0 failures, 25 ignored; 186 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261107-025634-207xufk2/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **211 passed, 4 known unsupported out of 215** after the K9 A (steps 1–4), B, C, D, D2, D3 and D4 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures and full RegExp (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **220 passed, 4 known unsupported out of 224** after the K9 A (steps 1–4), B, C, D, D2, D3 and D4 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures and full RegExp (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -110,26 +110,145 @@ typeof E`), tsc 5 enum assignability (`number` to numeric enums, nominal
 string enums, `E[k]` kept `string | undefined` by owner decision), and
 class index signatures (a hidden dictionary field, TS2411 checks).
 
+Owner decisions of 2026-11-06 (third increment, each by the
+specification): the temporal dead zone of module bindings is checked at
+run time. Only a read while an initializer is evaluated stays a compile
+error, as in tsc (TS2448; TS2454 for a deferred `let` read before
+assignment); a binding that code may reach early is stored with an
+initialization flag, and a read or write before its initializer throws
+`ReferenceError` with Node's message (`module_tdz` case, conformance
+`module-tdz`). An early static-field or `var` read stays refused
+(JavaScript reads `undefined`, which the declared type does not admit).
+`JSON.stringify` of class instances with index signatures lists the extra
+keys in own-key order, in both serializers (the linked library rebuilt);
+before, the extra keys were silently dropped although the contract said
+the call was refused (`index_json` case, conformance `class-index-json`).
+The linked serializer's check for that field raises the v38 `json` fuel
+golden (`fuel_determinism_tests`) from 33439 to 34007 units (+1.7%); no
+budget changes. With the symbol check of K9 D2 (+119 units) the merged
+golden is 34126.
+
+- **Tool entries and module evaluation: blocked.** Tool entries cannot
+  exist in any profile with module values: every binary64 profile (v13
+  onward, so v38) refuses `varta.tool` declarations before linking (`tool/
+  HTTP contracts in binary64 profile; adapters are not implemented`), and
+  module constants start at v32. The refusal `module constants with
+  tool/HTTP entry points` is therefore unreachable for tools. Running
+  module evaluation per tool invocation needs a binary64 Tool Contract
+  first (number parameters as binary64, a new contract version per §11):
+  an owner decision before implementation.
+- **Open from this increment:** `instanceof ReferenceError` (the thrown
+  value is an Error-root instance named `ReferenceError`; a native
+  `ReferenceError` class belongs to the library track); a module-level
+  class reached before its declaration still constructs (JavaScript throws;
+  the class binding has no flag until classes are values).
+
+Class values (owner decision of 2026-11-06, on the proposed design): a
+class named as a value and a `typeof C` value are a class object, an `i32`
+class id dispatched over the closed set of subclasses for `new`, static
+calls and `name` (`lower::class_values`, [contract](architecture.md#declarations-and-classes-declaration_forms));
+no host, value-layout or ABI change. On top of them, every `this`-using
+static method gets a receiver version taking the class as `this`, so a
+subclass declared in another module (before: a silent run with the
+declaring class as `this`) or never named through, and a class value,
+call it with their own class. Generic overload signatures of functions are
+instantiated per call (per-candidate inference with defaults and
+constraints). Cases `class_values`, `static_receivers`,
+`generic_overloads`, the multi-module receiver test; conformance
+`class-values` and `generic-overloads`.
+
 Still open, with the reason:
 
-- **Standard decorators.** A decorator receives the class (a class value)
-  or a member's function value with a context object
-  (`ClassMethodDecoratorContext` and its family, `addInitializer`,
-  `metadata`) and may replace it. Classes are not values yet, and a
-  replaced method must dispatch through a per-class function slot whose
-  initial value reaches the class's private members from module code.
-  Proposed design: class values as a compile-time-known class identity
-  (an `i32` descriptor) with `new`, static calls and `name` dispatched over
-  the closed set of subclasses; decorated methods as private originals plus
-  a module-variable function slot initialized by the decorator call during
-  module evaluation, with access checks admitting code lexically inside the
-  class; the context objects as a typed prelude. No legacy
-  `experimentalDecorators`.
-- **Generic overload signatures**: selecting one needs speculative type
-  argument inference per candidate signature.
-- **A `this`-using static method inherited across modules**: the copy into
-  the subclass needs the declaring module's private names; with class
-  values it becomes a dispatch over the receiver class.
+- **Standard decorators.** Class values exist now; the decorator design
+  (per-class function slots filled by the decorator call during module
+  evaluation, context objects as a typed prelude) still needs, measured
+  on the TC39 2023 semantics through tsc 5.9's emit: (1) `this` in field
+  initializers, which field decorators' initializer functions and
+  instance `addInitializer` callbacks receive (Varta refuses `this`
+  there); (2) private-member access from generated code lexically inside
+  the class (a static block is lowered as module code and fails TS2341
+  checks); (3) method values (`obj.m` without a call) for
+  `context.access.get`; (4) rest parameters of tuple type and their
+  inference (`function logged<This, Args extends unknown[], Return>(target:
+  (this: This, ...args: Args) => Return, …)`), the idiomatic decorator
+  signature; (5) `Symbol.metadata` needs symbol values (track D2). The
+  application order is pinned from Node: decorator expressions in source
+  order; static method-likes, instance method-likes, static fields,
+  instance fields, then the class; static method initializers before the
+  static fields, field initializers right after their field, the class's
+  last; instance method initializers at construction before the fields.
+- **Class values, remaining:** class values in unions, arrays, records and
+  `unknown` (a class-value tag added to the unreleased value layout 18,
+  decided 2026-11-07, not built yet), a generic class as a value,
+  `instanceof` a class value. Writes of static fields through a class
+  value or a subclass: done in the fifth increment (below).
+
+Fourth increment (coordinator decisions of 2026-11-07 under the owner's
+delegated authority; each by the specification):
+
+- **Early `var` and static-field reads are checked reads.** JavaScript reads
+  `undefined` before the definition of a module `var` or a static field;
+  under the approved category of checked reads at TypeScript's
+  unsoundness, such a read yields `undefined` when the declared type
+  admits it and otherwise throws `TypeError` at that read (Node continues
+  with `undefined`), and a write before the definition defines the
+  binding (`ir::ModuleFlag::hoisted`). Both former refusals are gone
+  (`early_reads` case).
+- **`ReferenceError` is a real class.** The errors prelude declares
+  `ReferenceError` and `EvalError` as `Error` subclasses of typed guest
+  code (like `URIError`); a temporal-dead-zone access in a v38 module
+  throws its `ReferenceError`, so `instanceof ReferenceError` holds
+  (`module_tdz` case). No value-layout change: the native error families
+  stay Error, TypeError, RangeError and SyntaxError.
+- **The temporal dead zone of classes.** A module-level class is a
+  binding initialized after its static elements: a generated module
+  constant after them (`desugar::class_binding`) is flagged by the
+  module-evaluation analysis when code may reach the class earlier, and
+  every reference to the class outside its body then tests it
+  (`lower::class_bindings`; static elements are inside the body). Code
+  that reaches the class early throws `ReferenceError`, as in Node
+  (`class_tdz` case); a direct early reference is TS2449. Every module
+  with a class now goes through `desugar::namespaces::lower`.
+- **Static fields through class values.** `v.x` of a static field with a
+  declared or literal type calls a generated static getter through the
+  static-method dispatch (`class_values` case); writes stay refused.
+- **Generic method overloads.** Generic overload signatures of methods and
+  static methods, also in generic class instances, are instantiated per
+  call like those of functions (`generic_overloads` case; conformance
+  `generic-method-overloads`). Overload signatures of a generic class's
+  static methods were never resolved before (the call silently took the
+  implementation's result type); the template declares them now.
+
+Fifth increment (coordinator decisions of 2026-11-07 under the owner's
+delegated authority; each by the specification):
+
+- **`x instanceof C` evaluates `x` first.** For a class code may reach
+  before its definition, the left operand is evaluated into a hidden
+  binding before the class's flag test (`lower::class_bindings`), as
+  ECMA-262 §13.10.1 evaluates the left operand before the right
+  (`class_tdz` case).
+- **Static fields per class.** Assigning an inherited static field through
+  a subclass, through `this` in static code called through it, or through
+  a class value creates the subclass's own property; the declaring class
+  keeps its value (OrdinarySet). Each (subclass, inherited field) pair
+  gets an own flag, a value and a creation serial in root slots behind the
+  stored module constants (`lower::static_store`); reads walk the class
+  chain to the declaring class's module variable, written there through
+  the declaring class. Across modules, through generic
+  classes (`extends Base<T>` now inherits `Base`'s static methods and
+  fields, which it silently did not before), local and expression
+  classes; `static accessor` fields stay the declaring class's, as tsc
+  emits them. The refusals "assignment to the inherited static field …
+  through a subclass" and "static method … writes a static field through
+  this" are gone, and a static field typed by its initializer is reached
+  through class values too (before: refused). `Object.keys(C)` and `for…in` of class values list declared fields
+  in definition order (integer keys first), then created properties in
+  creation order, `for…in` up the chain (`static_store` case, the
+  multi-module test, conformance `static-own-properties`). Open: an own
+  property created while its class is still being defined (by the class's
+  own static block) is listed after the class's later declared fields
+  (JavaScript lists it at its creation); exactness needs serials for
+  declared fields too.
 
 Earlier state, superseded by the increment above where it says so:
 
@@ -3726,7 +3845,7 @@ The selectors are registered; the table records what each stream admits.
 | `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
 | `local_time()` | K9 D4 local time (2026-11-06): `Date` in the host's time zone, zone and locale as recorded host inputs | Implemented ([contract](architecture.md#local-time-local_time), [record](#k9-d4-local-time--2026-11-06)): `intl_time_zone`/`intl_locale` (host ABI 34, no capability), linked `date_zone_offset`/`date_zone_name` over `varta-intl` (tzdata 2026e, ICU4X 2.4 / CLDR 49), linked indirect calls. Pending owner decisions: CLDR 49 vs Node's 48, Intl data selection; pending work: Intl and `toLocale*` |
 | `expression_forms()` | K9 C — expressions and functions (2026-11-06): `await` anywhere, comma, `new.target` comparisons, tagged templates, spreads into fixed parameters, `this` parameters and field arrows, object-literal methods with `this`, computed keys, destructuring everywhere, hand-written iterators, `using`, structural thenables | Implemented in part ([contract](architecture.md#expression-forms-expression_forms), [record](#k9-c--expressions-and-functions-2026-11-06)): no ABI, value-layout, scheduler or host change. Pending: `SuppressedError` for double throws in `using`, `await` in `switch` case tests |
-| `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results. No ABI, value-layout or host change. Pending (owner decision): static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
+| `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results; class values (`typeof C`, dispatch over subclasses), static receivers and generic function overloads (2026-11-06); checked early `var`/static-field reads, `ReferenceError` instances, static fields through class values and generic method overloads (2026-11-07). No ABI, value-layout or host change. Pending: standard decorators (prerequisites in the [record](#k9-b--declarations-and-classes--2026-11-06)) |
 | `full_regexp()` | K9 D3 full RegExp (2026-11-06): the ES2025 pattern language with a backtracking matcher bounded by fuel, match indices, the `v` flag | Implemented ([contract](architecture.md#full-regexp-full_regexp), [record](#k9--typescript-completeness-and-the-first-release-agreed-2026-11-06)): program format 2 and the linked `regexp_exec`; V37 keeps the linear-time subset. Pending: run-time patterns, `matchAll` iterators, match-array methods, symbol protocols |
 | `symbol_values()` | K9 D2 Symbol values (2026-11-06): value18 tag 16, registry, well-known symbols | Implemented ([contract](architecture.md#symbol-values-symbol_values), [record](#k9-d2-value-layout-and-collector--2026-11-06)); symbol-keyed members and protocols |
 

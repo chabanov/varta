@@ -44,7 +44,16 @@ impl Lower<'_> {
             ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) => {
                 let base = self.write_member_base(member)?;
                 let base = self.class_index(member, base)?;
-                self.reject_accessor_logical(member, &base)?;
+                let base = match self.accessor_logical(
+                    member,
+                    base,
+                    &assign.right,
+                    assign.op,
+                    assign.span,
+                )? {
+                    Ok(value) => return Ok(value),
+                    Err(base) => base,
+                };
                 if self.types.profile.mixed_index_records()
                     && matches!(base.ty, Type::Dictionary(_))
                 {

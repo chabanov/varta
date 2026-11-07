@@ -4131,14 +4131,35 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   dictionary field `INDEX_FIELD` (a private name no source spells); every
   member access path calls `Lower::class_index` before choosing record,
   class or dictionary lowering, and a new member-access path must too.
+  Its descriptor key is `value::INDEX_SIGNATURE_KEY`; both serializers
+  (`varta_intrinsics::json` `index_members`, the host's
+  `json::presence`) splice its entries into the instance in own-key order
+  and must stay identical (`linked_stringify_tests` compares them on every
+  case program).
 - Module evaluation (`module_evaluation`, `lower::module_evaluation`): an
-  initializer may run code. Keep the compile-time temporal-dead-zone check
-  (`reachable` over-approximates: names reach whole declarations, classes
-  their instance members, `C.m` a static method) in `module_constants::
-  check`, reserve the initializer index for effectful chunks, and never let
-  `prune::unread_constants` drop an initializer that calls code. Top-level
-  `await` is the K9 C stream's (`top_level_await`, under
-  `expression_forms`).
+  initializer may run code. `module_constants::check` refuses only a read
+  of a `let`, `const` or class binding while an initializer is evaluated
+  (`module_evaluation::immediate`, TS2448); it returns the `Early`
+  bindings (mentioned by function values of earlier initializers, or
+  `reachable` from effectful ones: names reach whole declarations, classes
+  their instance members, `C.m` a static method), with `Early::hoisted`
+  for the `var`s and static fields among them. Those are stored in root
+  slots, never folded, with an `ir::ModuleFlag` in
+  `ValueTypes::module_flags`; `globals::global_read` and `global_store`
+  test it, the initializer sets it (`mark_initialized`). A hoisted flag
+  makes an early read a checked read (`undefined` or `TypeError`, never a
+  `ReferenceError`) and an early write a definition; keep that difference
+  in both paths. `module_constants::has_early_bindings` must agree with
+  `check`, since `lower::reference_errors` loads the errors prelude whose
+  `ReferenceError` the flag test throws (`tdz::reference_error`; v37
+  keeps the Error-root instance). A class name stands for its binding
+  constant (`desugar::class_binding`) in `check` and
+  `has_early_bindings` alike; `lower::class_bindings` tests a flagged one
+  at references outside the class body, and a static element is lowered
+  with `Classes::static_owner` set so its own class takes no test. Reserve the initializer
+  index for effectful chunks, and never let `prune::unread_constants` drop
+  an initializer that calls code. Top-level `await` is the K9 C stream's
+  (`top_level_await`, under `expression_forms`).
 - Class forms are a pre-layout rewrite (`classes::forms`, after
   `private_names` and `parameter_properties`): setters become methods named
   `forms::setter_key` (no string key can spell it), abstract members get an
@@ -4150,7 +4171,44 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   `arguments::accepts`, literal arguments retyped against literal
   parameters, arguments bound to the hidden implementation and the result
   checked with `assert_value`. Keyed by implementation function index for
-  functions and by (declaring class, key, static) for methods.
+  functions and by (declaring class, key, static) for methods. A generic
+  function overload keeps its declaration (`Overload::generic`) and is
+  instantiated per call by `generic_calls::instantiate_overload`
+  (inference, then `generics::bind` for defaults and constraints); it gives
+  no argument context, and its candidates see literal argument types.
+- Class values (`lower::class_values`): `Type::ClassValue(C)` is a
+  lowering-only type erased to `Number` in `literal_erasure`; give it no
+  value tag, keep it out of `unions::intern`, aggregates and `unknown`, and
+  compare or store its id retyped as `Number`. Every dispatch (`new`,
+  static call, `name`) iterates `family` (all non-template, non-prelude
+  descendants) and ends in `S::Trap`. Assignability is
+  `class_values::assignable` (descent plus constructor compatibility),
+  reached through `classes::upcast`. `typeof C` resolves to the class value
+  (`type_level::queries`); `type_level::utilities` and generic inference
+  convert it to the constructor type.
+- Static receivers (`desugar::statics::receiver_version`): each
+  `this`-using static method also becomes `[this]m` (key
+  `desugar::receiver_key`) with a `typeof C` first parameter, or an
+  `[unshared]m` marker when its `super` reaches no module-level parent.
+  `Lower::receiver_method` routes a static call of a subclass without its
+  own copy to the receiver version (or refuses through the marker); static
+  calls and class-value dispatch must both ask it.
+- Static fields per class (`lower::static_store`): `desugar::statics`
+  rewrites only `C.x` of a field `C` declares; an inherited field stays a
+  member access and every read and write of it goes through the class
+  value path (`static_field`, hooked into the accessor functions of
+  `classes::accessors`, so simple, compound, update and logical
+  assignments share it). Never write a subclass's property into the
+  declaring class's module variable, and never read a subclass's slot
+  without its flag. Store slots are placeholders (`BASE`) renumbered by
+  `static_store::finish` after every body; allocate them only through
+  `static_store`. The declaring class's field is its module variable,
+  recorded by `note_static_variable` when module constants are linked and
+  accessed only through `module_slot_read`/`module_slot_store` (which keep
+  the early-read checks); declarations and flags come only from the
+  `[statics]` marker (`classes::static_declarations`), and an
+  auto-accessor is always the declaring class's. `extends Base<T>` takes
+  its statics from the template (`Classes::static_class`).
 - Tests: `varta-runtime` `declaration_form_tests` (the
   `declaration_form_cases/*.expected` files are Node 24.20.0 output of the
   tsc 5.9.3 emit; the collector stress builds must print the same, and the

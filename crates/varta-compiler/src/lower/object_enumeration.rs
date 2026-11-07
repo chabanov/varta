@@ -115,6 +115,19 @@ impl Lower<'_> {
         if let [Type::Array(id)] = present.as_slice() {
             return self.array_enumeration(value, *id, kind, span);
         }
+        // V38 (`declaration_forms`): a class object's own static fields.
+        if let [Type::ClassValue(_)] = present.as_slice()
+            && matches!(value.ty, Type::ClassValue(_))
+        {
+            return match kind {
+                Kind::Keys => self.class_value_keys(value, false, span),
+                // tsc types it `any[]` (`typeof C` has no index signature).
+                Kind::Values => Err(self.source.locate(
+                    type_error("Object.values of a class object is typed any[] (untyped code)"),
+                    span,
+                )),
+            };
+        }
         if let [Type::Dictionary(_)] = present.as_slice()
             && matches!(value.ty, Type::Dictionary(_))
         {

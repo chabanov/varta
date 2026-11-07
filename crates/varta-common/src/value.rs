@@ -278,6 +278,36 @@ pub const OPTIONAL_FIELD_FLAG: u32 = 1 << 31;
 /// reads a thrown instance's `#name`/`#message` when it has no own
 /// `name`/`message`.
 pub const PRIVATE_KEY_PREFIX: char = '#';
+/// The private descriptor key of the hidden dictionary of a class instance
+/// with a string index signature (v38 `declaration_forms`). Its entries are
+/// the instance's own properties beyond the declared fields: serialization
+/// lists them with the fields in own-key order (canonical array indices
+/// ascending, then the fields in insertion order, then the other entries in
+/// insertion order), never the dictionary itself.
+pub const INDEX_SIGNATURE_KEY: &str = "#index signature";
+/// Digits of the largest canonical array index, [`MAX_ARRAY_INDEX`].
+pub const MAX_ARRAY_INDEX_DIGITS: usize = 10;
+/// The canonical array index a key of UTF-16 `units` names: `0` or a
+/// decimal without leading zeros up to [`MAX_ARRAY_INDEX`].
+#[must_use]
+pub fn array_index_units(units: impl IntoIterator<Item = u16>) -> Option<u32> {
+    let mut value: u64 = 0;
+    let mut digits = 0;
+    for unit in units {
+        let digit = u8::try_from(unit)
+            .ok()
+            .filter(u8::is_ascii_digit)
+            .map(|digit| u64::from(digit - b'0'))?;
+        if digits == MAX_ARRAY_INDEX_DIGITS || digits == 1 && value == 0 {
+            return None;
+        }
+        value = value * 10 + digit;
+        digits += 1;
+    }
+    u32::try_from(value)
+        .ok()
+        .filter(|_| digits > 0 && value <= MAX_ARRAY_INDEX)
+}
 #[must_use]
 pub fn field_mask(count: usize) -> u32 {
     if count >= MAX_RECORD_FIELDS {

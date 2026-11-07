@@ -42,7 +42,7 @@ impl Lower<'_> {
     pub(super) fn require_assigned(&self, name: &str, binding: &Binding) -> Result<()> {
         if binding.identity.0 == self.index && self.core.unassigned.contains(&binding.slot) {
             return Err(invalid(format!(
-                "binding used before being assigned: {name}"
+                "binding used before being assigned: {name} (TS2454)"
             )));
         }
         Ok(())

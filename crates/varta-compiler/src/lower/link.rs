@@ -47,7 +47,10 @@ fn lower_with(
             .order
             .iter()
             .map(|path| &graph.units[path])
-            .find(|unit| tdz::module_has_early_captures(&unit.ast))
+            .find(|unit| {
+                tdz::module_has_early_captures(&unit.ast)
+                    || module_constants::has_early_bindings(&unit.ast, profile)
+            })
     {
         classes::error_family_root(
             varta_common::value::ErrorClass::Error,
@@ -227,6 +230,12 @@ fn lower_with(
     // Tagged template objects (v38) are built before any module code runs.
     object_accessors::finish(&mut types, &functions, &mut generated, &mut next)?;
     object_methods::finish(
+        &mut types,
+        &mut functions,
+        &mut generated,
+        &mut constants.stored,
+    );
+    static_store::finish(
         &mut types,
         &mut functions,
         &mut generated,

@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- V38 K9 B, fifth increment (coordinator decisions under the owner's
+  delegated authority): static fields are stored per class, as JavaScript
+  defines them on class objects. Assigning an inherited static field
+  through a subclass, through `this` in static code or through a class
+  value creates the subclass's own property; the declaring class keeps its
+  value (before: refused). Works across modules and for subclasses of
+  generic classes, which now inherit the generic class's static members
+  (before: silently missing). `Object.keys(C)` and `for…in` of class
+  values list static fields. `x instanceof C` evaluates `x` before testing
+  whether `C` is initialized.
+- V38 K9 B, fourth increment (coordinator decisions under the owner's
+  delegated authority): a module `var` or static field read before its
+  definition reads `undefined` as in JavaScript, a checked read that
+  throws `TypeError` when the declared type does not admit it (before:
+  refused at compile time); a write before the definition defines it. A
+  temporal-dead-zone access throws an instance of the new `ReferenceError`
+  class (an `Error` subclass of typed guest code, with `EvalError`), so
+  `instanceof ReferenceError` holds. Code that reaches a module-level
+  class before the class (with its static elements) is defined throws
+  `ReferenceError`, as in JavaScript (before: it constructed silently).
+  Static fields are read through class
+  values (`v.x`), and generic overload signatures of methods are
+  instantiated per call. The expression lowering keeps a smaller native
+  stack frame per nesting level.
 - K8 T2 S5 (second part), selectors: id and attribute selectors with every
   matcher and the `i`/`s` flags, `:has()` with bounded relative selectors,
   and the location, input and tree pseudo-classes (`:any-link`, `:empty`,
@@ -117,6 +141,23 @@
   host reads of such objects are refused. No host ABI or value layout
   change (the accepted value ABI bump was not needed); v37 keeps rejecting
   every form.
+- V38 K9 B, third increment (owner decisions): the temporal dead zone of
+  module bindings is checked at run time, as in JavaScript. Code that runs
+  during module evaluation and reads or writes a later binding throws
+  `ReferenceError` (`Cannot access 'X' before initialization`); only a read
+  while an initializer itself is evaluated stays a compile error, as in tsc
+  (TS2448), and function values may now reference later bindings. An early
+  static-field or `var` read stays refused (JavaScript reads `undefined`).
+  `JSON.stringify` of class instances with index signatures includes the
+  extra keys in own-key order (previously they were silently dropped), in
+  the linked library and the host serializer alike. Tool entries cannot
+  run module evaluation yet: binary64 profiles have no tool adapter (owner
+  decision pending). Classes are values: `typeof C` holds `C` or a
+  subclass, and `new`, static calls and `name` dispatch over the
+  subclasses; `this`-using static methods inherited across modules run with
+  the calling subclass as `this` (before, silently with the declaring
+  class); generic overload signatures of functions infer their type
+  arguments per call.
 - V38 K9 D2 symbol values (selector `symbol_values`): `Symbol()` values
   with the additive value18 tag `ValueKind::Symbol` (16), `Symbol.for`/
   `Symbol.keyFor`, the well-known symbols as values, `description`,

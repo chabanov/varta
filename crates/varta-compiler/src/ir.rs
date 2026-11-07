@@ -79,6 +79,12 @@ pub(crate) enum Type {
     /// `ValueTypes::tuples[id].array` of the union of its element types.
     /// Erased to that array before emission; see `lower::tuples`.
     Tuple(u32),
+    /// A class object (v38 `declaration_forms`, `typeof C`): the identity of
+    /// the class `C` or of one of its subclasses, the class id. Physically an
+    /// `i32` (erased to `Number` before emission); `new`, static calls and
+    /// `name` dispatch over the closed set of subclasses. It never enters a
+    /// union, an aggregate or `unknown`; see `lower::class_values`.
+    ClassValue(u32),
 }
 
 /// The engine collection families of v37 (`Type::Collection`).
@@ -377,12 +383,34 @@ pub(crate) struct ValueTypes {
     /// The receiver register of object-literal methods that use `this`
     /// (v38 `expression_forms`); see `lower::object_methods`.
     pub receivers: crate::lower::object_methods::Receivers,
+    /// V38 (`module_evaluation`): module bindings that code may read before
+    /// their initialization, by root slot.
+    pub module_flags: std::collections::BTreeMap<u32, ModuleFlag>,
+    /// V38 (`declaration_forms`): the own static properties subclasses
+    /// create by writing inherited static fields; see `lower::static_store`.
+    pub static_stores: crate::lower::static_store::Stores,
     /// V38 (`symbol_values`, K9 D2): the class id of the symbol prelude's
     /// record class (`SymbolValue`) that every `symbol` value erases to
     /// (`literal_erasure`), so emission tags it with the value18 symbol tag
     /// ([`varta_common::value::ValueKind::Symbol`]) wherever a tag is written
     /// ([`tag_of`]). Set only after erasure.
     pub symbol: Option<u32>,
+}
+/// The initialization flag of a module binding that code may reach before
+/// its initialization (v38 `module_evaluation`).
+#[derive(Clone, Debug)]
+pub struct ModuleFlag {
+    /// The root slot of the flag (`0` or `1`).
+    pub flag: u32,
+    /// The binding's source name (diagnostic text).
+    pub name: String,
+    /// A `var` or a static field: JavaScript reads `undefined` before its
+    /// definition and a write defines it, so an early read is a checked
+    /// read (a `TypeError` when the declared type does not admit
+    /// `undefined`) and an early write sets the flag. Otherwise the binding
+    /// is in its temporal dead zone and every early access throws
+    /// `ReferenceError`.
+    pub hoisted: bool,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1), or under value
@@ -1387,6 +1415,7 @@ impl std::fmt::Display for Type {
             Self::Record(_) => "object",
             Self::Dictionary(_) => "dictionary object",
             Self::Class(_) => "class instance",
+            Self::ClassValue(_) => "class",
             Self::Generator(_) => "generator",
             Self::Promise(_) => "promise",
             Self::Collection(kind, _) => kind.name(),

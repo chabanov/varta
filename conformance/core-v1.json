@@ -4525,7 +4525,7 @@
       "baseline": {
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
-        "reason": "Decorators run code when the class is defined and receive the class as a value; pending the module-initialization design."
+        "reason": "Standard decorators are pending: they need this in field initializers, method values and rest parameters of tuple type first."
       }
     },
     {
@@ -4584,6 +4584,130 @@
         "varta log: 17 7 1",
         "varta log: true",
         "varta log: 100 1 5"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-index-json",
+      "feature": "class-index-signatures",
+      "path": "cases/class-index-json.ts",
+      "sha256": "efe04a57f8e7bd26003d15ab8d261a4f39038e01731924b38ee8a8147ff0f1f9",
+      "stdout": [
+        "varta log: {\"2\":3,\"10\":2,\"count\":1,\"size\":2,\"z\":1,\"a\":4}",
+        "varta log: [{\"count\":0,\"size\":2,\"bonus\":5,\"top\":9},{\"inner\":{\"2\":3,\"10\":2,\"count\":1,\"size\":2,\"z\":1,\"a\":4}}]",
+        "varta log: {\"top\":9,\"count\":0}",
+        "varta log: {\"0\":\"first\",\"title\":\"notes\",\"body\":\"text\"}",
+        "varta log: {\"count\":0,\"size\":2}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-values",
+      "feature": "static-class-members",
+      "path": "cases/class-values.ts",
+      "sha256": "2d5851254cb0f73922c19cb8c12a4478ea5a2678cc2722414d38a7d1d6324a7e",
+      "stdout": [
+        "varta log: Square square 1 | Circle shape 2",
+        "varta log: Circle true true",
+        "varta log: 16 function",
+        "varta log: 12 shape"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-value-static-fields",
+      "feature": "static-class-members",
+      "path": "cases/class-value-static-fields.ts",
+      "sha256": "ed08b8b5d406cb60e9a47b909ee991ba2e97a54c4b7c5cc1b01c8deb1adeef87",
+      "stdout": [
+        "varta log: Base 1 shared | Derived 2 shared"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "static-own-properties",
+      "feature": "static-class-members",
+      "path": "cases/static-own-properties.ts",
+      "sha256": "93a3f7e188e2ce5a25258e9595afe3788dfc54e45cdbe4b595f61fe4b6654ba1",
+      "stdout": [
+        "varta log: 1 2 1",
+        "varta log: 1 2 2",
+        "varta log: counter! counter!! counter!!",
+        "varta log: label,count | label,count"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "generic-overloads",
+      "feature": "overloads",
+      "path": "cases/generic-overloads.ts",
+      "sha256": "c344c1265447d418ac8d2d22927a58763c3b5d1d34d3c2ea3fdeb5fa48a79e17",
+      "stdout": [
+        "varta log: 3 h x",
+        "varta log: 2ONE true",
+        "varta log: a n2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "generic-method-overloads",
+      "feature": "overloads",
+      "path": "cases/generic-method-overloads.ts",
+      "sha256": "7f821f31547f03ac314a8c7e377bbfda59b6ecae651cda1edcc7b66f3e29d409",
+      "stdout": [
+        "varta log: 7X ss"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "module-tdz",
+      "feature": "temporal-dead-zone",
+      "path": "cases/module-tdz.ts",
+      "sha256": "c509b48d5f94e143541d243d4e274f1a2eb46022b90683d61f848adc8a25b614",
+      "stdout": [
+        "varta log: ReferenceError: Cannot access 'LIMITS' before initialization | 2",
+        "varta log: hi there",
+        "varta log: Cannot access 'STEP' before initialization | 2 | 2",
+        "varta log: Cannot access 'total' before initialization | reset 0",
+        "varta log: 120"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "reference-error-class",
+      "feature": "temporal-dead-zone",
+      "path": "cases/reference-error-class.ts",
+      "sha256": "2be4d90da7a78d8e32e67696676989cfb2e94b70f0b5331e9b5ad5ea80dafe46",
+      "stdout": [
+        "varta log: ReferenceError true 3 undefined 4"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-tdz",
+      "feature": "temporal-dead-zone",
+      "path": "cases/class-tdz.ts",
+      "sha256": "6a27eed12a79af6c731a678a64870b5d57e83bde45f064852416011f842ac240",
+      "stdout": [
+        "varta log: Cannot access 'Gadget' before initialization | gadget gadget"
       ],
       "baseline": {
         "status": "supported"

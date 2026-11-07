@@ -1612,6 +1612,11 @@ impl Emitter<'_> {
                 S::InitModuleConstant(index, value) => {
                     self.code.push(I::I32Const(self.constant_root(*index)));
                     self.expr(value)?;
+                    // An initialization flag (v38 `module_evaluation`): the
+                    // collector skips a root below the heap base, as 0 or 1.
+                    if value.ty == Type::Boolean {
+                        self.code.push(I::I64ExtendI32U);
+                    }
                     self.code.push(I::I64Store(strings::ROOT));
                     self.end_temporaries();
                 }

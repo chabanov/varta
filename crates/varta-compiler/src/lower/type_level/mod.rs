@@ -37,6 +37,7 @@ mod utilities;
 pub(super) use callables::{
     callable_context, function_operands, properties_of as callable_properties, same_call,
 };
+pub(super) use constructors::class_constructor;
 pub(super) use containers::covariant_array;
 pub(super) use covariance::resolve as resolve_covariance;
 pub(super) use generic_constructors::fill as fill_constructors;
