@@ -4051,9 +4051,13 @@ Contract: [architecture.md](architecture.md#console-notation-node_console).
 - Private state is read only by name (`STATE`, `#time`, the promise
   fields); `inspect` never resolves other private slots (they may hold
   values no reader validates as a property).
+- `SuppressedError` lives in its own prelude (`SUPPRESSED`), so programs
+  that use only `AggregateError` keep their bytes; keep its fields typed
+  `unknown` and its constructor without options, as the spec defines it.
 - Tests: `varta-runtime` `console_tests` (`console_cases/*.ts` with Node
   24.20.0 `--stack-trace-limit=0` expected files), the `inspect` unit tests,
-  the `display` trailer test, the conformance feature `console-notation`.
+  the `display` trailer test, the conformance features `console-notation`
+  and `suppressed-error`.
 
 ### Bytes held by unknown (`byte_values`)
 

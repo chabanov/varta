@@ -11913,6 +11913,20 @@ and their one-argument rule.
   (`[Plain [Error]: m]`), then its own enumerable fields, `[cause]` and
   `AggregateError`'s `[errors]`. A cause that is `undefined` is not shown
   (an instance does not record whether its options had one).
+- **`SuppressedError`** (owner decision 2026-11-06; ECMA-262 2026
+  §20.5.8, explicit resource management). The engine prelude
+  `<varta>/builtins/suppressed.ts` (`modules::engine::SUPPRESSED`, admitted
+  by `node_console()`) declares `class SuppressedError extends Error` with
+  the constructor `(error: unknown, suppressed: unknown, message?: string)`:
+  `name` is `"SuppressedError"`, `error` and `suppressed` hold the given
+  values as `unknown`, an `undefined` message leaves no own message and
+  there is no options argument. It is an Error class like `AggregateError`
+  (prototype chain to `Error`, `instanceof`, catch narrowing, the exception
+  channel); its fields are not own enumerable properties to `JSON.stringify`
+  or the console notation, which prints `[SuppressedError: message]` as
+  Node 24 does. `typeof SuppressedError` is `"function"`; v37 does not know
+  the name. Track K9 C throws it from `using`/`await using` when a disposal
+  throws after the body threw.
 - **Record display trailers (value layout 18).** Every value18 record
   descriptor ends, after its entries and a wide record's edge bitmap, with
   a display trailer: a kind word (`value::RecordDisplay`: 0 object, 1

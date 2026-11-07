@@ -33,6 +33,7 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("values"),
     case!("structures"),
     case!("named_errors"),
+    case!("suppressed_error"),
     // The `docs/language-guide.md` example, verbatim.
     case!("guide"),
 ];
@@ -101,6 +102,18 @@ fn structures_match_node() {
 #[test]
 fn named_errors_match_node() {
     matches_node("named_errors");
+}
+
+/// `SuppressedError` (ES2026 explicit resource management, owner decision
+/// 2026-11-06): its fields, `instanceof`, catch narrowing and notation.
+#[test]
+fn suppressed_errors_match_node() {
+    matches_node("suppressed_error");
+    refused(
+        V37,
+        "export function main(): void { console.log(new SuppressedError(1, 2).message); }",
+        "SuppressedError",
+    );
 }
 
 #[test]

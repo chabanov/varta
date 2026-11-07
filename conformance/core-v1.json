@@ -903,6 +903,15 @@
       ],
       "origin": "varta_contract",
       "reference": "docs/architecture.md#console-notation-node_console"
+    },
+    {
+      "id": "suppressed-error",
+      "title": "SuppressedError (ES2026 explicit resource management)",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#console-notation-node_console"
     }
   ],
   "cases": [
@@ -3381,6 +3390,21 @@
         "varta log: [TypeError: bad] [Error: failed] { [cause]: 'disk' }",
         "varta log: [\n    0,  11, 22, 33, 44,\n   55,  66, 77, 88, 99,\n  110, 121\n]",
         "varta log: <ref *1> {\n  name: 'first',\n  next: { name: 'second', next: [Circular *1] }\n}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "suppressed-error",
+      "feature": "suppressed-error",
+      "path": "cases/suppressed-error.ts",
+      "sha256": "dc90851e1c5a233f3c7d2342653d180260faab275dce973c24625af5bb09d894",
+      "stdout": [
+        "varta log: SuppressedError: both failed",
+        "varta log: true true",
+        "varta log: true",
+        "varta log: {} true function"
       ],
       "baseline": {
         "status": "supported"

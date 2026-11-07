@@ -13,6 +13,9 @@
   Errors print `[Error: message]`. Value layout 18 record descriptors end
   with a display trailer naming class instances. Earlier profiles keep
   their output.
+- V38 `SuppressedError` (ES2026 explicit resource management): an Error
+  class with `error`, `suppressed` and `message`, `instanceof` and catch
+  narrowing, printed as Node prints it.
 - V38 K9 type level (selector `type_level`): conditional types with
   distribution, `infer` (constrained, tuple, function, object and template
   patterns) and recursive generic aliases; mapped types with `as` remapping

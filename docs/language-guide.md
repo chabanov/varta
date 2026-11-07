@@ -5962,7 +5962,10 @@ export function main(): void {
 
 Varta records no stack frames, so an Error prints as Node prints it with
 `--stack-trace-limit=0`, and functions print as `[Function (anonymous)]`
-because function values carry no name. Earlier profiles keep one argument
+because function values carry no name. `SuppressedError` (ES2026) is
+available as well: `new SuppressedError(error, suppressed, "message")` is an
+`Error` whose `error` and `suppressed` fields are `unknown`, narrowed by
+`instanceof` in a `catch`. Earlier profiles keep one argument
 per `console.log` (and print booleans as `1`/`0`).
 
 #### Web bytes (opt-in v38)
