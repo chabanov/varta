@@ -412,6 +412,29 @@ impl Lower<'_> {
     /// The `ReferenceError` Error-class instance a TDZ access throws, widened
     /// to the exception channel.
     pub(super) fn reference_error(&mut self, name: &str, span: swc_common::Span) -> Result<Expr> {
+        // V38 (`declaration_forms`): an instance of the errors prelude's
+        // `ReferenceError` class, so `instanceof ReferenceError` holds.
+        if self.types.profile.declaration_forms()
+            && let Some(signature) = self
+                .functions
+                .get(crate::modules::engine::REFERENCE_ERROR)
+                .cloned()
+        {
+            let error = Expr {
+                span,
+                ty: signature.result,
+                kind: E::Call(
+                    signature.index,
+                    vec![Expr {
+                        span,
+                        ty: Type::String,
+                        kind: E::String(self.types.profile.string_bytes(&message(name))),
+                    }],
+                ),
+            };
+            let thrown = self.exception_type()?;
+            return unions::widen(error, Some(thrown), self.types);
+        }
         let root = self
             .types
             .classes

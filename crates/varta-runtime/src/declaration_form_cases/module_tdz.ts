@@ -6,7 +6,7 @@ function measure(): string {
   try {
     return String(limits().length);
   } catch (e) {
-    return e instanceof Error ? e.name + ': ' + e.message : 'other';
+    return e instanceof ReferenceError ? e.name + ': ' + e.message : 'other';
   }
 }
 const early = measure();
@@ -30,10 +30,25 @@ const resetEarly = tryReset();
 let total = 5;
 const resetLate = tryReset();
 const fact = (n: number): number => n < 2 ? 1 : n * fact(n - 1);
+function local(): string {
+  const read = (): number => value;
+  let text = '';
+  try {
+    text = String(read());
+  } catch (e) {
+    text = e instanceof ReferenceError && e instanceof Error ? 'local ' + e.message : 'other';
+  }
+  const value = 1;
+  return text + ' ' + String(read());
+}
 export function main(): void {
   console.log(early + ' | ' + late);
   console.log(greet('there'));
   console.log(before + ' | ' + after + ' | ' + String(counter));
   console.log(resetEarly + ' | ' + resetLate + ' ' + String(total));
   console.log(String(fact(5)));
+  console.log(local());
+  const made = new ReferenceError('made');
+  const other = new EvalError('e');
+  console.log(made.name + ' ' + made.message + ' ' + String(other instanceof ReferenceError) + ' ' + other.name + ' ' + typeof ReferenceError);
 }

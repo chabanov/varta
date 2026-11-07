@@ -17,6 +17,18 @@ const MAX_ANALYSIS_DEPTH: usize = 64;
 fn invalid(message: impl Into<String>) -> CompilerError {
     CompilerError::Invalid(message.into())
 }
+/// Whether a v38 module may access a binding in its temporal dead zone (a
+/// closure's early capture or a module binding reached early), which
+/// throws the `ReferenceError` of the errors prelude
+/// (`modules::engine::ERRORS`).
+pub(crate) fn reference_errors(
+    module: &ast::Module,
+    profile: varta_common::language::LanguageProfile,
+) -> bool {
+    profile.declaration_forms()
+        && (tdz::module_has_early_captures(module)
+            || module_constants::has_early_bindings(module, profile))
+}
 fn type_error(message: impl Into<String>) -> CompilerError {
     CompilerError::Type(message.into())
 }

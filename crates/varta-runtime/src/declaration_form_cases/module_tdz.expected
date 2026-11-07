@@ -3,3 +3,5 @@ hi there
 Cannot access 'STEP' before initialization | 2 | 2
 Cannot access 'total' before initialization | reset 0
 120
+local Cannot access 'value' before initialization 1
+ReferenceError made false EvalError function

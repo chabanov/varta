@@ -42,6 +42,10 @@ pub(crate) struct Prelude {
     /// The module text under v38 (`data_limits`), when its per-value
     /// ceilings differ there; earlier profiles keep `source` or `extended`.
     pub lifted: Option<fn() -> &'static str>,
+    /// V38: whether a module needs the prelude whatever it names; its
+    /// triggers are then bound (the `ReferenceError` of a temporal dead
+    /// zone, `lower::reference_errors`).
+    pub required: Option<fn(&ast::Module, LanguageProfile) -> bool>,
 }
 /// A profile selector and the prelude source it selects.
 pub(crate) type Extension = (fn(LanguageProfile) -> bool, &'static str);
@@ -104,6 +108,7 @@ pub(crate) const HEADERS: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
 /// `AbortController`, `AbortSignal` and the `DOMException` abort reasons;
 /// v36 (`function_fields`) adds abort listeners in its own source.
@@ -124,6 +129,7 @@ pub(crate) const ABORT: Prelude = Prelude {
     )),
     loads: &[],
     lifted: None,
+    required: None,
 };
 /// `AbortSignal.timeout` (v36 `timers`): an `AbortController` aborted by an
 /// unreferenced timer; it imports the abort prelude implicitly.
@@ -141,6 +147,7 @@ pub(crate) const ABORT_TIMEOUT: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
 /// String and array methods of the v37 `collections` stream, called by
 /// `lower::engine` for receivers of the matching type.
@@ -165,6 +172,7 @@ pub(crate) const TEXT: Prelude = Prelude {
     extended: None,
     loads: TEXT_METHODS,
     lifted: Some(text_v38),
+    required: None,
 };
 /// The member property names that load [`TEXT`].
 pub(crate) const TEXT_METHODS: &[&str] = &[
@@ -189,6 +197,7 @@ pub(crate) const COLLECTIONS: Prelude = Prelude {
     extended: None,
     loads: &["Map", "Set", "ReadonlyMap", "ReadonlySet"],
     lifted: Some(collections_v38),
+    required: None,
 };
 /// `Uint8Array` operations, `TextEncoder`/`TextDecoder`, base64 and the
 /// `crypto` random functions (v37 `collections`).
@@ -218,6 +227,7 @@ pub(crate) const BINARY: Prelude = Prelude {
     extended: None,
     loads: &["Uint8Array"],
     lifted: Some(binary_v38),
+    required: None,
 };
 /// `btoa` and `atob` (v37 `collections`), separate from [`BINARY`] because
 /// their `InvalidCharacterError` is a `DOMException` of the abort prelude.
@@ -231,6 +241,7 @@ pub(crate) const BASE64: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
 /// The `Date` subset (v37 `collections`): UTC time values, ISO-8601 and
 /// IMF-fixdate parsing, and the `time.now`-gated clock; v38
@@ -257,6 +268,7 @@ pub(crate) const DATE: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: Some(date_v38),
+    required: None,
 };
 pub(crate) const DATE_CLASS: &str = "Date";
 /// The v38 date prelude (`standard_library`): the v37 parser and calendar
@@ -293,6 +305,7 @@ pub(crate) const STANDARD: Prelude = Prelude {
     extended: None,
     loads: STANDARD_LOADS,
     lifted: None,
+    required: None,
 };
 /// `AggregateError` (v38 `standard_library`), an `Error` subclass of
 /// typed guest code outside the opaque builtins, like `URIError`.
@@ -306,6 +319,7 @@ pub(crate) const AGGREGATE: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
 /// The reference keys that load [`STANDARD`]: its method names and the
 /// static members `Array.from`, `Object.groupBy` and `Object.fromEntries`.
@@ -378,6 +392,7 @@ pub(crate) const REGEXP: Prelude = Prelude {
         ".split",
     ],
     lifted: Some(regexp_v38),
+    required: None,
 };
 /// The v38 RegExp prelude (`full_regexp`): match indices, `hasIndices` and
 /// `unicodeSets`, duplicate named groups and the linked backtracking matcher.
@@ -415,6 +430,7 @@ pub(crate) const FETCH: Prelude = Prelude {
     )),
     loads: &[],
     lifted: None,
+    required: None,
 };
 /// `ArrayBuffer`, `Blob` and `FormData` (v38 `web_bytes`) in guest code with
 /// no host import; `new Uint8Array(buffer)` views a buffer through
@@ -439,6 +455,7 @@ pub(crate) const BLOB: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
 pub(crate) const ARRAY_BUFFER_CLASS: &str = "ArrayBuffer";
 pub(crate) const BLOB_CLASS: &str = "Blob";
@@ -458,6 +475,7 @@ pub(crate) const GLOBAL: Prelude = Prelude {
     extended: None,
     loads: &[GLOBAL_THIS],
     lifted: None,
+    required: None,
 };
 /// The identifier of the global object and the prelude function it lowers to.
 pub(crate) const GLOBAL_THIS: &str = "globalThis";
@@ -481,7 +499,33 @@ pub(crate) const URL: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
+/// `ReferenceError` and `EvalError` (v38 `declaration_forms`), `Error`
+/// subclasses of typed guest code like `URIError`; a temporal-dead-zone
+/// access throws a `ReferenceError` through [`REFERENCE_ERROR`].
+pub(crate) const ERRORS: Prelude = Prelude {
+    path: "<varta>/builtins/errors.ts",
+    source: include_str!("../prelude/errors.ts"),
+    exports: &[
+        ("ReferenceError", Namespace::Class),
+        ("EvalError", Namespace::Class),
+    ],
+    members: &[],
+    triggers: &[Trigger {
+        names: &[],
+        function: "referenceError",
+        local: REFERENCE_ERROR,
+    }],
+    admitted: LanguageProfile::declaration_forms,
+    extended: None,
+    loads: &[],
+    lifted: None,
+    required: Some(crate::lower::reference_errors),
+};
+/// The dotted name the lowering calls to create the `ReferenceError` of a
+/// temporal-dead-zone access.
+pub(crate) const REFERENCE_ERROR: &str = "varta.reference.error";
 /// `encodeURIComponent` and `encodeURI` (v38 `structural_subtyping`), in
 /// guest code with no host import, and the `URIError` they throw.
 pub(crate) const URI: Prelude = Prelude {
@@ -498,6 +542,7 @@ pub(crate) const URI: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
 /// The recoverable denial of v37 timer starts (`permissionDenied`, a
 /// `NotAllowedError` `DOMException`); it imports the abort prelude.
@@ -515,6 +560,7 @@ pub(crate) const PERMISSION: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
 /// The dotted name the timer lowering calls for a denied timer start.
 pub(crate) const PERMISSION_DENIED: &str = "varta.permission.denied";
@@ -545,6 +591,7 @@ pub(crate) const PERMISSIONS: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
 /// Host event sources (v38 `turn_budgets`): `varta.events.listen` and
 /// `varta.events.close`, bound under their dotted names.
@@ -569,6 +616,7 @@ pub(crate) const EVENTS: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
 /// Deno KV compatible storage (v38 `kv`): `varta.kv.open`, bound under its
 /// dotted name, the `Kv`, `AtomicOperation`, `KvListIterator` and `KvU64`
@@ -602,6 +650,7 @@ pub(crate) const KV: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
 /// The KV prelude's `KvU64` class, stored as Deno's `v_encoding` 2.
 pub(crate) const KV_U64_CLASS: &str = "KvU64";
@@ -779,6 +828,7 @@ pub(crate) const VIEW: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
 pub(crate) const VIEW_PATH: &str = "<varta>/view/view.ts";
 /// The object of the `View.*` members.
@@ -786,7 +836,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 21] = [
+pub(crate) const PRELUDES: [&Prelude; 22] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -807,6 +857,7 @@ pub(crate) const PRELUDES: [&Prelude; 21] = [
     &EVENTS,
     &KV,
     &URI,
+    &ERRORS,
     &VIEW,
 ];
 /// The `fetch` prelude's stream class and its engine-internal members, which
@@ -1079,16 +1130,21 @@ pub(super) fn implicit_imports(
                         })
                     }),
             );
+            let required = prelude
+                .required
+                .is_some_and(|required| required(module, profile))
+                .then(|| module.span);
             bindings.extend(prelude.triggers.iter().filter_map(|trigger| {
                 trigger
                     .names
                     .iter()
                     .filter(|name| !bound.contains(**name))
-                    .find_map(|name| references.found.get(*name))
+                    .find_map(|name| references.found.get(*name).copied())
+                    .or(required)
                     .map(|span| ImportBinding {
                         imported: trigger.function.into(),
                         local: trigger.local.into(),
-                        span: *span,
+                        span,
                         type_only: false,
                     })
             }));
