@@ -349,6 +349,9 @@ fn stress_builds_match_normal_builds_over_the_case_corpus() {
         .flat_map(|dir| std::fs::read_dir(dir.path()).unwrap().flatten())
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|e| e == "ts"))
+        // A v38 deviation that exhausts the fuel by design (the v37 ReDoS
+        // corpus) stops at a different instruction in each build.
+        .filter(|path| !crate::frozen_profile_tests::deviates_under_v38(path))
         .collect();
     files.sort();
     let mut compared = 0;

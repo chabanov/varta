@@ -9,6 +9,8 @@ struct Tree {
     nodes: BTreeMap<u32, Node>,
     /// Tags other than `div`.
     tags: BTreeMap<u32, varta_common::view::Tag>,
+    /// The focused element.
+    focus: Option<u32>,
 }
 impl Tree {
     fn chain(classes: &[&str]) -> Self {
@@ -49,8 +51,8 @@ impl Document for Tree {
     fn top_level(&self) -> Vec<u32> {
         vec![ROOT_NODE]
     }
-    fn focused(&self, _: u32) -> bool {
-        false
+    fn focused(&self, id: u32) -> bool {
+        self.focus == Some(id)
     }
     fn hovered(&self, _: u32) -> bool {
         false
@@ -304,5 +306,183 @@ fn registered_lengths_compute_to_absolute_lengths_before_inheritance() {
     assert_eq!(
         out[&CssProperty::MarginBottom],
         Computed::Value("40px".into())
+    );
+}
+
+/// CSS Values 4 §6.1.1 with the first available font: a packaged face read
+/// from its tables, the user-agent weight rows choosing its bold face, the
+/// parent's font in `font-size`, `normal` line heights from the font's
+/// rounded metrics, and the root's font for the root forms.
+#[test]
+fn font_relative_units_take_the_first_available_font() {
+    let mut styles = Styles::default();
+    styles.set_fonts(alloc::sync::Arc::new(fonts::tests::set()));
+    styles
+        .set(
+            1,
+            ".p { font-family: \"Varta Metrics\" } .a { width: 2ex; height: 1lh; margin-left: 1ch; padding-left: 1cap; padding-top: 1ic; font-size: 2ex } .b { width: 1rex; height: 1rlh; line-height: 2ex; margin-top: 1lh }",
+            &mut 0,
+        )
+        .unwrap();
+    let mut tree = Tree::chain(&["", "p", "a"]);
+    let environment = environment(800.0);
+    let leaf = ROOT_NODE + 2;
+    let px = |computed: &BTreeMap<CssProperty, Computed>, property| match computed.get(&property) {
+        Some(Computed::Value(value)) => value.strip_suffix("px").unwrap().parse::<f64>().unwrap(),
+        other => panic!("{property:?}: {other:?}"),
+    };
+    let close = |a: f64, b: f64| assert!((a - b).abs() < 1e-9, "{a} != {b}");
+    let values = styles.computed(&tree, leaf, &environment, |_, _| true);
+    // `font-size: 2ex` of the parent's 16px face (x-height 520 units) is
+    // 16.64px; the element's own units follow from that size.
+    close(px(&values, CssProperty::FontSize), 16.64);
+    close(px(&values, CssProperty::Width), 17.3056);
+    // `normal`: 830, 170 and 90 units at 16.64px round to 14 + 3 + 1.
+    close(px(&values, CssProperty::Height), 18.0);
+    close(px(&values, CssProperty::MarginLeft), 9.2352);
+    // `strong` is `bolder`: the bold face (x-height 540 units).
+    tree.tags.insert(leaf, varta_common::view::Tag::Strong);
+    let bold = styles.computed(&tree, leaf, &environment, |_, _| true);
+    close(px(&bold, CssProperty::FontSize), 16.64);
+    close(px(&bold, CssProperty::Width), 17.9712);
+    // The root forms take the default family's face at the root size (the
+    // set's default is "Varta Metrics"); `line-height: 2ex` is the
+    // element's own x-height, and `lh` is then that length.
+    let mut tree = Tree::chain(&["", "p", "b"]);
+    tree.tags.clear();
+    let values = styles.computed(&tree, leaf, &environment, |_, _| true);
+    close(px(&values, CssProperty::Width), 8.32);
+    close(px(&values, CssProperty::Height), 17.0);
+    close(px(&values, CssProperty::LineHeight), 16.64);
+    close(px(&values, CssProperty::MarginTop), 16.64);
+    // Without any font: the fallbacks, and `normal` `lh` unresolved.
+    let mut bare = styles.clone();
+    bare.set_fonts(alloc::sync::Arc::new(fonts::FontSet::default()));
+    let values = bare.computed(&Tree::chain(&["", "p", "a"]), leaf, &environment, |_, _| {
+        true
+    });
+    close(px(&values, CssProperty::FontSize), 16.0);
+    assert_eq!(values.get(&CssProperty::Height), None);
+    assert_eq!(values.get(&CssProperty::PaddingLeft), None);
+    close(px(&values, CssProperty::Width), 16.0);
+}
+
+/// A root with children `classes` (ids from `ROOT_NODE + 1`), and the last
+/// child with one child of class `inner` (id `ROOT_NODE + 100`).
+fn siblings(classes: &[&str], inner: &str) -> Tree {
+    let mut tree = Tree::chain(&[""]);
+    let mut last = ROOT_NODE;
+    for (index, class) in classes.iter().enumerate() {
+        let id = ROOT_NODE + 1 + index as u32;
+        tree.nodes.insert(
+            id,
+            (
+                Some(ROOT_NODE),
+                Vec::new(),
+                (*class).into(),
+                BTreeMap::new(),
+            ),
+        );
+        tree.nodes.get_mut(&ROOT_NODE).unwrap().1.push(id);
+        last = id;
+    }
+    let child = ROOT_NODE + 100;
+    tree.nodes.insert(
+        child,
+        (Some(last), Vec::new(), inner.into(), BTreeMap::new()),
+    );
+    tree.nodes.get_mut(&last).unwrap().1.push(child);
+    tree
+}
+
+fn colour_of(sheet: &str, tree: &Tree, id: u32) -> Option<Computed> {
+    let mut styles = Styles::default();
+    styles.set(1, sheet, &mut 0).unwrap();
+    styles
+        .computed(tree, id, &environment(800.0), |property, value| {
+            css::property_value(property, value)
+        })
+        .remove(&CssProperty::Color)
+}
+
+/// Selectors 4 §16 combinators, §14 structural and §4 logical
+/// pseudo-classes, `:root, :host` and specificity, as Tailwind emits them.
+#[test]
+fn complex_selectors_match_by_the_tree() {
+    let tree = siblings(&["a", "b item", "c item"], "d");
+    let (a, b, c, d) = (ROOT_NODE + 1, ROOT_NODE + 2, ROOT_NODE + 3, ROOT_NODE + 100);
+    let theme = ":root, :host { --c: #111 } .item { color: var(--c) }";
+    assert_eq!(colour_of(theme, &tree, b), value("#111"));
+    // Tailwind's `space-y-*` and `divide-*`: zero specificity, so a later
+    // single class wins.
+    let space = ":where(.list > :not(:last-child)) { color: #222 } .a { color: #333 }";
+    let mut list = siblings(&["a", "b", "c"], "d");
+    list.nodes.get_mut(&ROOT_NODE).unwrap().2 = "list".into();
+    assert_eq!(colour_of(space, &list, a), value("#333"));
+    assert_eq!(colour_of(space, &list, b), value("#222"));
+    assert_eq!(colour_of(space, &list, c), None);
+    // Structural pseudo-classes count element siblings; `of S` is outside
+    // the subset.
+    assert!(
+        Styles::default()
+            .set(1, ":nth-child(2 of .x) { color: #f00 }", &mut 0)
+            .is_err()
+    );
+    let structural = ".item:first-child { color: #000 } :nth-child(odd) { color: #111 } .item:last-child { color: #444 } :only-child { color: #555 }";
+    assert_eq!(colour_of(structural, &tree, a), value("#111"));
+    assert_eq!(colour_of(structural, &tree, b), None);
+    assert_eq!(colour_of(structural, &tree, c), value("#444"));
+    assert_eq!(colour_of(structural, &tree, d), value("#555"));
+    // Combinators: descendant, child, next and subsequent sibling.
+    let combinators = ".a ~ .c { color: #010 } .a + .b { color: #020 } :root > .c .d { color: #030 } .a .d { color: #040 }";
+    assert_eq!(colour_of(combinators, &tree, c), value("#010"));
+    assert_eq!(colour_of(combinators, &tree, b), value("#020"));
+    assert_eq!(colour_of(combinators, &tree, d), value("#030"));
+    // `:is()` takes its most specific argument, `:where()` nothing, and
+    // `:not()` negates; `.group:hover` needs a hovered ancestor.
+    let logical = ":is(.c, .zz.yy.xx) { color: #100 } .c { color: #200 } :where(.c.item) { color: #300 } div:not(.a):not(.b) .d { color: #400 } :is(:where(.group):hover .d) { color: #500 }";
+    assert_eq!(colour_of(logical, &tree, c), value("#100"));
+    assert_eq!(colour_of(logical, &tree, d), value("#400"));
+    // Type selectors match the element's tag; `:enabled` form controls.
+    let mut typed = siblings(&["a"], "d");
+    typed
+        .tags
+        .insert(ROOT_NODE + 100, varta_common::view::Tag::Button);
+    assert_eq!(
+        // Equal specificity: the later rule wins; `span.d` does not match.
+        colour_of(
+            "button.d { color: #600 } div .d { color: #700 } span.d { color: #900 }",
+            &typed,
+            d
+        ),
+        value("#700")
+    );
+    assert_eq!(
+        colour_of(":enabled { color: #800 }", &typed, d),
+        value("#800")
+    );
+    assert_eq!(colour_of(":enabled { color: #800 }", &typed, a), None);
+    // `:focus` and `:focus-within` (Selectors 4 §9.2, §9.4).
+    typed.focus = Some(d);
+    let focus =
+        ".a:focus-within { color: #a00 } .d:focus { color: #b00 } :root:focus { color: #c00 }";
+    assert_eq!(colour_of(focus, &typed, a), value("#a00"));
+    assert_eq!(colour_of(focus, &typed, d), value("#b00"));
+    assert_eq!(colour_of(focus, &typed, ROOT_NODE), None);
+}
+
+/// Selectors that search the tree charge that search before values are
+/// computed (`selectors::selector_work`).
+#[test]
+fn searching_selectors_charge_their_search() {
+    let tree = siblings(&["a", "b", "c"], "d");
+    let work = |sheet: &str| {
+        let mut styles = Styles::default();
+        styles.set(1, sheet, &mut 0).unwrap();
+        styles.potential_cascade_work(&tree, usize::MAX).unwrap()
+    };
+    assert!(
+        work(":is(.d) { color: #fff } * .d { color: #fff }")
+            > work(".d { color: #fff } .d { color: #fff }")
     );
 }

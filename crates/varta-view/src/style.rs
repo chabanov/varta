@@ -264,10 +264,9 @@ impl<'a> Variables<'a> {
 /// recorded native observation names the defaults it was taken with.
 pub const NATIVE_UA_VERSION: u32 = 2;
 
-/// Font weight of `h1`–`h3` in the browser user-agent stylesheet (`bold`).
-pub(crate) const UA_BOLD_WEIGHT: f32 = 700.0;
-/// The `normal` font weight, which the control font resets to.
-pub(crate) const NORMAL_FONT_WEIGHT: f32 = 400.0;
+/// The `normal` font weight.
+#[cfg(test)]
+pub(crate) const NORMAL_FONT_WEIGHT: f32 = varta_style::fonts::NORMAL_WEIGHT as f32;
 /// Inline-start padding of `ul`/`ol` (`padding-inline-start: 40px`).
 pub(crate) const UA_LIST_PADDING_PX: f32 = 40.0;
 /// The host's medium font size and whether the generic `monospace` keeps
@@ -280,16 +279,6 @@ pub(crate) struct FontBase {
     /// The host's medium size in CSS pixels.
     pub px: f32,
     pub fixed_monospace: bool,
-}
-
-/// How a row changes the inherited font weight when the author sets none.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum UaWeight {
-    Inherit,
-    /// CSS `bolder` relative to the inherited weight (`strong`).
-    Bolder,
-    /// An absolute weight (`bold` for headings).
-    Absolute(f32),
 }
 
 /// The list container kind of `ul`/`ol`; it selects the item marker style.
@@ -308,9 +297,6 @@ pub(crate) struct UaDefaults {
     pub block: bool,
     /// `display: list-item`: the box generates an outside list marker.
     pub list_item: bool,
-    pub weight: UaWeight,
-    /// `font-style: italic`.
-    pub italic: bool,
     /// `white-space: pre`.
     pub preformatted: bool,
     /// Top and bottom margins in em of the element's own font size.
@@ -336,8 +322,6 @@ impl UaDefaults {
             tag,
             block: false,
             list_item: false,
-            weight: UaWeight::Inherit,
-            italic: false,
             preformatted: false,
             margin_block_em: 0.0,
             nested_list_margin_zero: false,
@@ -350,7 +334,6 @@ impl UaDefaults {
     const fn heading(tag: varta_common::view::Tag, margin: f32) -> Self {
         Self {
             block: true,
-            weight: UaWeight::Absolute(UA_BOLD_WEIGHT),
             margin_block_em: margin,
             ..Self::new(tag)
         }
@@ -406,14 +389,8 @@ pub(crate) const NATIVE_UA_DEFAULTS: &[UaDefaults] = {
             margin_block_em: 1.0,
             ..UaDefaults::new(Tag::Pre)
         },
-        UaDefaults {
-            weight: UaWeight::Bolder,
-            ..UaDefaults::new(Tag::Strong)
-        },
-        UaDefaults {
-            italic: true,
-            ..UaDefaults::new(Tag::Em)
-        },
+        UaDefaults::new(Tag::Strong),
+        UaDefaults::new(Tag::Em),
         UaDefaults {
             ..UaDefaults::new(Tag::Code)
         },
@@ -628,9 +605,10 @@ mod ua_tests {
         tags.dedup();
         assert_eq!(tags.len(), NATIVE_UA_DEFAULTS.len());
         let h1 = ua_defaults(Tag::H1).unwrap();
+        assert_eq!(h1.margin_block_em, 0.67);
         assert_eq!(
-            (h1.weight, h1.margin_block_em),
-            (UaWeight::Absolute(700.0), 0.67)
+            varta_style::font::ua_font(Tag::H1).unwrap().weight,
+            varta_style::font::UaWeight::Absolute(700.0)
         );
         let h3 = ua_defaults(Tag::H3).unwrap();
         assert_eq!(h3.margin_block_em, 1.0);

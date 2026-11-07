@@ -38,7 +38,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "comments": {
@@ -83,6 +85,211 @@
       0,
       0,
       0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-default-font": {
+    "computed": {
+      "height": "31.68px",
+      "margin-left": "8px",
+      "padding-left": "32px",
+      "padding-top": "18px",
+      "width": "14.4px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-font-size-parent": {
+    "computed": {
+      "font-size": "21.200000000000003px",
+      "height": "26px",
+      "width": "21.200000000000003px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-generic-alias": {
+    "computed": {
+      "font-family": "monospace",
+      "font-size": "13px",
+      "height": "14px",
+      "width": "7.215px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-inline-style": {
+    "computed": {
+      "font-family": "sans-serif",
+      "height": "29.52px",
+      "width": "24.96px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-italic-system": {
+    "computed": {
+      "font-family": "system-ui",
+      "font-style": "italic",
+      "font-weight": "bold",
+      "height": "19px",
+      "width": "42.49728px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-layout-math": {
+    "computed": {
+      "font-family": "\"Varta Metrics\"",
+      "margin-left": "calc(10% + 15.52px)",
+      "width": "max(0px, calc(50% - 17.76px))"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-line-height-own": {
+    "computed": {
+      "font-family": "sans-serif",
+      "height": "24.96px",
+      "line-height": "24.96px",
+      "width": "17.92px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-matched-weight": {
+    "computed": {
+      "height": "18px",
+      "padding-left": "9.76px",
+      "width": "8.64px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-missing-family": {
+    "computed": {
+      "font-family": "Missing, sans-serif",
+      "height": "18px",
+      "padding-left": "11.52px",
+      "width": "83.2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-packaged-face": {
+    "computed": {
+      "border-width": "11.200000000000001px",
+      "font-family": "\"Varta Metrics\"",
+      "height": "17px",
+      "margin-left": "15.52px",
+      "padding-left": "8.88px",
+      "width": "16.64px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-registered-length": {
+    "computed": {
+      "font-family": "serif",
+      "height": "16px",
+      "width": "17.76px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-root-units": {
+    "computed": {
+      "font-family": "\"Varta Metrics\"",
+      "height": "10.56px",
+      "margin-top": "18px",
+      "width": "31.2px"
+    },
+    "statuses": [
       0,
       0,
       0,
@@ -538,6 +745,486 @@
       0
     ]
   },
+  "s4-flex-auto-none": {
+    "computed": {
+      "flex-basis": "auto",
+      "flex-grow": "0",
+      "flex-shrink": "0"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-flex-basis": {
+    "computed": {
+      "flex-basis": "10px",
+      "flex-grow": "2",
+      "flex-shrink": "0"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-flex-invalid": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s4-flex-one": {
+    "computed": {
+      "flex-basis": "0%",
+      "flex-grow": "1",
+      "flex-shrink": "1"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-inset": {
+    "computed": {
+      "bottom": "3px",
+      "left": "2px",
+      "position": "absolute",
+      "right": "2px",
+      "top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-inset-logical": {
+    "computed": {
+      "left": "5%",
+      "position": "absolute",
+      "right": "5%",
+      "top": "2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-letter-spacing": {
+    "computed": {
+      "letter-spacing": "-0.5px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-letter-spacing-inline": {
+    "computed": {
+      "color": "#000",
+      "letter-spacing": "0.1rem",
+      "translate": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-logical-order": {
+    "computed": {
+      "margin-left": "1px",
+      "margin-right": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-logical-padding": {
+    "computed": {
+      "padding-bottom": "3px",
+      "padding-left": "1px",
+      "padding-right": "2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-logical-var": {
+    "computed": {
+      "margin-bottom": "auto",
+      "margin-top": "0.25rem",
+      "padding-left": "8px",
+      "padding-right": "8px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-logical-var-invalid": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-logical-var-pair": {
+    "computed": {
+      "padding-left": "4px",
+      "padding-right": "6px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-origin-keywords": {
+    "computed": {
+      "transform-origin": "100% 0%"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-origin-mixed": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s4-scale-percent": {
+    "computed": {
+      "scale": "0.95 0.95"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-scale-zero": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s4-translate": {
+    "computed": {
+      "translate": "4px 50%"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-child": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-descendant": {
+    "computed": {
+      "color": "#333"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-group-hover": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-has-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s5-is-max": {
+    "computed": {
+      "color": "#222"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-longhand-over-shorthand": {
+    "computed": {
+      "gap": "1px 2px",
+      "margin": "2px",
+      "margin-left": "7px",
+      "row-gap": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-not": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-pseudo-element-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s5-root-host": {
+    "computed": {
+      "color": "#123"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-shorthand-over-longhand": {
+    "computed": {
+      "margin": "2px",
+      "margin-right": "2px",
+      "padding": "1px 2px",
+      "padding-left": "2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-structural": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-type": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-universal": {
+    "computed": {
+      "color": "#111",
+      "padding-top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-where-zero": {
+    "computed": {
+      "color": "#222"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
   "supports": {
     "computed": {
       "color": "#333"
@@ -579,7 +1266,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-10": {
@@ -789,7 +1478,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-112": {
@@ -801,7 +1492,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-113": {
@@ -825,7 +1518,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-115": {
@@ -837,7 +1532,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-116": {
@@ -1093,7 +1790,12 @@
     ]
   },
   "tailwind-app-133": {
-    "computed": {},
+    "computed": {
+      "bottom": "0px",
+      "left": "0px",
+      "right": "0px",
+      "top": "0px"
+    },
     "statuses": [
       0,
       0,
@@ -1101,7 +1803,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-134": {
@@ -1253,7 +1957,9 @@
     ]
   },
   "tailwind-app-143": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "0px"
+    },
     "statuses": [
       0,
       0,
@@ -1261,7 +1967,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-144": {
@@ -1313,7 +2021,10 @@
     ]
   },
   "tailwind-app-147": {
-    "computed": {},
+    "computed": {
+      "padding-left": "32px",
+      "padding-right": "32px"
+    },
     "statuses": [
       0,
       0,
@@ -1321,7 +2032,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-148": {
@@ -1675,7 +2388,10 @@
     ]
   },
   "tailwind-app-169": {
-    "computed": {},
+    "computed": {
+      "margin-left": "auto",
+      "margin-right": "auto"
+    },
     "statuses": [
       0,
       0,
@@ -1683,7 +2399,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-17": {
@@ -1715,7 +2433,9 @@
     ]
   },
   "tailwind-app-171": {
-    "computed": {},
+    "computed": {
+      "background-color": "#fff"
+    },
     "statuses": [
       0,
       0,
@@ -1723,7 +2443,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-172": {
@@ -1743,7 +2465,9 @@
     ]
   },
   "tailwind-app-173": {
-    "computed": {},
+    "computed": {
+      "transform-origin": "100% 0"
+    },
     "statuses": [
       0,
       0,
@@ -1751,7 +2475,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-174": {
@@ -1916,7 +2642,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-184": {
@@ -2052,7 +2780,10 @@
     ]
   },
   "tailwind-app-192": {
-    "computed": {},
+    "computed": {
+      "padding-left": "8px",
+      "padding-right": "8px"
+    },
     "statuses": [
       0,
       0,
@@ -2060,11 +2791,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-193": {
-    "computed": {},
+    "computed": {
+      "padding-left": "10px",
+      "padding-right": "10px"
+    },
     "statuses": [
       0,
       0,
@@ -2072,11 +2808,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-194": {
-    "computed": {},
+    "computed": {
+      "padding-left": "12px",
+      "padding-right": "12px"
+    },
     "statuses": [
       0,
       0,
@@ -2084,11 +2825,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-195": {
-    "computed": {},
+    "computed": {
+      "padding-left": "16px",
+      "padding-right": "16px"
+    },
     "statuses": [
       0,
       0,
@@ -2096,11 +2842,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-196": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "2px",
+      "padding-top": "2px"
+    },
     "statuses": [
       0,
       0,
@@ -2108,11 +2859,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-197": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "0.25rem",
+      "padding-top": "0.25rem"
+    },
     "statuses": [
       0,
       0,
@@ -2120,11 +2876,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-198": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "6px",
+      "padding-top": "6px"
+    },
     "statuses": [
       0,
       0,
@@ -2132,11 +2893,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-199": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "8px",
+      "padding-top": "8px"
+    },
     "statuses": [
       0,
       0,
@@ -2144,7 +2910,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-2": {
@@ -2172,7 +2940,10 @@
     ]
   },
   "tailwind-app-200": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "12px",
+      "padding-top": "12px"
+    },
     "statuses": [
       0,
       0,
@@ -2180,11 +2951,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-201": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "20px",
+      "padding-top": "20px"
+    },
     "statuses": [
       0,
       0,
@@ -2192,11 +2968,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-202": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "32px",
+      "padding-top": "32px"
+    },
     "statuses": [
       0,
       0,
@@ -2204,7 +2985,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-203": {
@@ -2522,7 +3305,9 @@
     ]
   },
   "tailwind-app-222": {
-    "computed": {},
+    "computed": {
+      "scale": "0.95 0.95"
+    },
     "statuses": [
       0,
       0,
@@ -2530,7 +3315,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-223": {
@@ -2948,7 +3735,10 @@
     ]
   },
   "tailwind-app-248": {
-    "computed": {},
+    "computed": {
+      "margin-left": "0px",
+      "margin-right": "0px"
+    },
     "statuses": [
       0,
       0,
@@ -2956,11 +3746,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-249": {
-    "computed": {},
+    "computed": {
+      "margin-bottom": "32px",
+      "margin-top": "32px"
+    },
     "statuses": [
       0,
       0,
@@ -2968,7 +3763,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-25": {
@@ -3020,7 +3817,10 @@
     ]
   },
   "tailwind-app-252": {
-    "computed": {},
+    "computed": {
+      "padding-left": "24px",
+      "padding-right": "24px"
+    },
     "statuses": [
       0,
       0,
@@ -3028,7 +3828,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-253": {
@@ -3172,7 +3974,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-261": {
@@ -3184,7 +3988,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-262": {
@@ -3738,7 +4544,9 @@
     ]
   },
   "tailwind-app-294": {
-    "computed": {},
+    "computed": {
+      "letter-spacing": "-0.4px"
+    },
     "statuses": [
       0,
       0,
@@ -3746,11 +4554,15 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-295": {
-    "computed": {},
+    "computed": {
+      "letter-spacing": "0.4px"
+    },
     "statuses": [
       0,
       0,
@@ -3758,7 +4570,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-296": {
@@ -3898,7 +4712,9 @@
     ]
   },
   "tailwind-app-302": {
-    "computed": {},
+    "computed": {
+      "translate": "0 8px"
+    },
     "statuses": [
       0,
       0,
@@ -3906,7 +4722,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-303": {
@@ -4372,7 +5190,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-51": {
@@ -4654,7 +5474,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-71": {
@@ -4666,7 +5488,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-72": {
@@ -4738,7 +5562,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-77": {
@@ -4758,7 +5584,9 @@
     ]
   },
   "tailwind-app-78": {
-    "computed": {},
+    "computed": {
+      "padding-top": "0px"
+    },
     "statuses": [
       0,
       0,
@@ -4766,7 +5594,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-79": {
@@ -4814,7 +5644,11 @@
     ]
   },
   "tailwind-app-81": {
-    "computed": {},
+    "computed": {
+      "flex-basis": "0%",
+      "flex-grow": "1",
+      "flex-shrink": "1"
+    },
     "statuses": [
       0,
       0,
@@ -4822,11 +5656,17 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-82": {
-    "computed": {},
+    "computed": {
+      "flex-basis": "auto",
+      "flex-grow": "1",
+      "flex-shrink": "1"
+    },
     "statuses": [
       0,
       0,
@@ -4834,7 +5674,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-83": {
@@ -4854,7 +5696,11 @@
     ]
   },
   "tailwind-app-84": {
-    "computed": {},
+    "computed": {
+      "flex-basis": "auto",
+      "flex-grow": "0",
+      "flex-shrink": "0"
+    },
     "statuses": [
       0,
       0,
@@ -4862,7 +5708,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-85": {
@@ -4928,7 +5776,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-9": {
@@ -4952,7 +5802,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-91": {
@@ -4964,7 +5816,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-92": {
@@ -4976,7 +5830,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-93": {
@@ -4988,7 +5844,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-94": {
@@ -5000,7 +5858,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-95": {
@@ -5024,7 +5884,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-97": {
@@ -5036,7 +5898,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-98": {

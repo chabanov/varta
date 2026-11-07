@@ -8,7 +8,9 @@
 //! against it, and reads the result as that overload's result type through
 //! a run-time member test. A value converts to the overloaded type when its
 //! own signature is the merged one (`(x: string | number) => string |
-//! number`, typically through `as`).
+//! number`, typically through `as`). When an overload has a rest parameter
+//! the merged signature is one rest parameter of every parameter type
+//! (`(...args: (string | number)[]) => string`).
 use super::*;
 
 /// The overloads of a function type: its set, or itself.
@@ -30,9 +32,9 @@ pub(super) fn overloaded(signatures: Vec<Type>, types: &mut ir::ValueTypes) -> R
             return Err(invalid("missing overload signature"));
         };
         let function = types.functions[id as usize].clone();
-        if function.receiver.is_some() || function.generic.is_some() || function.shape.rest {
+        if function.receiver.is_some() || function.generic.is_some() {
             return Err(unsupported(
-                "overload with a this parameter, type parameters or a rest parameter (its merged signature has no single layout)",
+                "overload with a this parameter or type parameters (its merged signature has no single layout)",
             ));
         }
         functions.push(function);
@@ -40,6 +42,47 @@ pub(super) fn overloaded(signatures: Vec<Type>, types: &mut ir::ValueTypes) -> R
     let construct = functions[0].construct;
     if functions.iter().any(|f| f.construct != construct) {
         return Err(unsupported("call and construct signatures in one type"));
+    }
+    let set = match types
+        .type_level
+        .overloads
+        .iter()
+        .position(|s| *s == signatures)
+    {
+        Some(set) => set,
+        None => {
+            types.type_level.overloads.push(signatures.clone());
+            types.type_level.overloads.len() - 1
+        }
+    } as u32;
+    let result = union_of(functions.iter().map(|f| f.result).collect(), types)?;
+    if functions.iter().any(|f| f.shape.rest) {
+        let mut members = Vec::new();
+        for function in &functions {
+            members.extend(function.params.iter().take(function.shape.fixed_count()));
+            if function.shape.rest
+                && let Some(Type::Array(id)) = function.params.last()
+            {
+                members.push(types.arrays[*id as usize]);
+            }
+        }
+        let element = union_of(members, types)?;
+        let rest = arrays::intern(element, types)?;
+        return intern_merged(
+            ir::FunctionType {
+                shape: ir::ParameterShape {
+                    optional: vec![false],
+                    rest: true,
+                },
+                receiver: None,
+                params: vec![rest],
+                result,
+                generic: None,
+                construct,
+                overloads: Some(set),
+            },
+            types,
+        );
     }
     let count = functions.iter().map(|f| f.params.len()).max().unwrap_or(0);
     let mut params = Vec::new();
@@ -63,19 +106,6 @@ pub(super) fn overloaded(signatures: Vec<Type>, types: &mut ir::ValueTypes) -> R
         params.push(ty);
         optional.push(absent);
     }
-    let result = union_of(functions.iter().map(|f| f.result).collect(), types)?;
-    let set = match types
-        .type_level
-        .overloads
-        .iter()
-        .position(|s| *s == signatures)
-    {
-        Some(set) => set,
-        None => {
-            types.type_level.overloads.push(signatures);
-            types.type_level.overloads.len() - 1
-        }
-    } as u32;
     let merged = ir::FunctionType {
         shape: ir::ParameterShape {
             optional,
@@ -88,6 +118,11 @@ pub(super) fn overloaded(signatures: Vec<Type>, types: &mut ir::ValueTypes) -> R
         construct,
         overloads: Some(set),
     };
+    intern_merged(merged, types)
+}
+
+/// The function type `merged`, interned.
+fn intern_merged(merged: ir::FunctionType, types: &mut ir::ValueTypes) -> Result<Type> {
     if let Some(index) = types.functions.iter().position(|f| *f == merged) {
         return Ok(Type::Function(index as u32));
     }
@@ -159,8 +194,14 @@ impl Lower<'_> {
             };
             let function = self.types.functions[id as usize].clone();
             let fits = arguments::count(call.args.len(), &function.shape).is_ok()
-                && actual.iter().zip(&function.params).all(|(given, wanted)| {
-                    given.is_none_or(|given| extends(given, *wanted, self.types))
+                && actual.iter().enumerate().all(|(index, given)| {
+                    let wanted =
+                        arguments::context(index, &function.params, &function.shape, self.types);
+                    match (given, wanted) {
+                        (Some(given), Some(wanted)) => extends(*given, wanted, self.types),
+                        (None, _) => true,
+                        (Some(_), None) => false,
+                    }
                 });
             fits.then_some(function)
         });
@@ -175,8 +216,9 @@ impl Lower<'_> {
         };
         let values = self.call_arguments(&call.args, &chosen.params, &chosen.shape)?;
         let mut widened = Vec::new();
-        for (value, wanted) in values.into_iter().zip(&merged.params) {
-            widened.push(unions::widen(value, Some(*wanted), self.types)?);
+        for (index, value) in values.into_iter().enumerate() {
+            let wanted = arguments::context(index, &merged.params, &merged.shape, self.types);
+            widened.push(unions::widen(value, wanted, self.types)?);
         }
         let args = self.bind_arguments(widened, &merged.params, &merged.shape, span)?;
         let result = self.invoke_bound_receiver(callee, None, args, span)?;

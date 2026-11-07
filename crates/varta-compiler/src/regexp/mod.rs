@@ -1,11 +1,17 @@
 //! Ahead-of-time RegExp compilation (v37 `regexp()`). Regular expression
 //! literals and `new RegExp` calls with constant arguments are parsed and
-//! compiled to matcher programs at compile time; the guest matcher
-//! (`emit::strings::regexp`) runs them in time linear in the input length.
+//! compiled to matcher programs at compile time. Under v37 the guest matcher
+//! (`emit::strings::regexp`) runs the linear-time subset in time linear in
+//! the input length (program format 1, `program`); v38 (`full_regexp`)
+//! admits the whole ECMAScript 2025 pattern language and compiles it to
+//! backtracking programs (format 2, `backtrack`) for the linked matcher.
+pub(crate) mod backtrack;
 pub(crate) mod case;
+pub(crate) mod classes;
 pub(crate) mod compile;
 pub(crate) mod parse;
 pub(crate) mod program;
+pub(crate) mod property;
 pub(crate) mod set;
 #[cfg(test)]
 mod tests;
@@ -31,6 +37,16 @@ impl RegExpError {
             },
         }
     }
+    /// The v38 compiler error: only program limits remain unsupported.
+    pub(crate) fn into_full_compiler(self) -> crate::CompilerError {
+        match self {
+            Self::Syntax(message) => crate::CompilerError::Invalid(message),
+            Self::Unsupported(kind) => crate::CompilerError::Unsupported {
+                kind,
+                detail: "beyond the checked-f64-utf16-v38 RegExp program limits".into(),
+            },
+        }
+    }
 }
 
 /// A compiled regular expression with its observable `source` and `flags`.
@@ -41,11 +57,16 @@ pub(crate) struct RegExp {
     pub compiled: Compiled,
 }
 
-/// Compile a pattern written as a literal (`source` is its text).
-pub(crate) fn literal(pattern: &str, flags: &str) -> Result<RegExp, RegExpError> {
-    let flags = Flags::parse(flags)?;
-    let parsed = parse::parse(pattern, flags)?;
-    let compiled = compile::compile(&parsed.node, parsed.groups, &parsed.names, flags)?;
+/// Compile a pattern written as a literal (`source` is its text); `full`
+/// selects the v38 language and backtracking program.
+pub(crate) fn literal(pattern: &str, flags: &str, full: bool) -> Result<RegExp, RegExpError> {
+    let flags = Flags::parse(flags, full)?;
+    let parsed = parse::parse(pattern, flags, full)?;
+    let compiled = if full {
+        backtrack::compile(&parsed.node, parsed.groups, &parsed.names, flags)?
+    } else {
+        compile::compile(&parsed.node, parsed.groups, &parsed.names, flags)?
+    };
     Ok(RegExp {
         source: pattern.to_owned(),
         flags,
@@ -55,8 +76,8 @@ pub(crate) fn literal(pattern: &str, flags: &str) -> Result<RegExp, RegExpError>
 
 /// Compile the pattern of `new RegExp(pattern, flags)`; `source` follows
 /// EscapeRegExpPattern as V8 does (`/` and line terminators escaped).
-pub(crate) fn constructed(pattern: &str, flags: &str) -> Result<RegExp, RegExpError> {
-    let mut regexp = literal(pattern, flags)?;
+pub(crate) fn constructed(pattern: &str, flags: &str, full: bool) -> Result<RegExp, RegExpError> {
+    let mut regexp = literal(pattern, flags, full)?;
     regexp.source = escape(pattern);
     Ok(regexp)
 }

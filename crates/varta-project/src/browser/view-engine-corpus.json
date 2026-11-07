@@ -3221,6 +3221,399 @@
     "t"
    ],
    "style": []
+  },
+  {
+   "name": "font-metrics-default-font",
+   "sheet": ".a { width: 2ex; height: 3cap; margin-left: 1ch; padding-left: 2ic; padding-top: 1lh }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-packaged-face",
+   "sheet": ".a { font-family: \"Varta Metrics\"; width: 2ex; height: 1lh; padding-left: 1ch; margin-left: 1ic; border-width: 1cap }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-matched-weight",
+   "sheet": ".p { font-family: \"Varta Metrics\", serif; font-weight: 600 } .a { width: 1ex; height: 1lh; padding-left: 1ch }",
+   "classes": [
+    "p",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-missing-family",
+   "sheet": ".a { font-family: Missing, sans-serif; width: 10ex; height: 1lh; padding-left: 1cap }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-generic-alias",
+   "sheet": ".a { font-family: monospace; font-size: 13px; width: 1ch; height: 1lh }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-font-size-parent",
+   "sheet": ".p { font-family: system-ui; font-size: 20px } .a { font-size: 2ex; width: 1em; height: 1lh }",
+   "classes": [
+    "p",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-line-height-own",
+   "sheet": ".p { font-family: serif } .a { font-family: sans-serif; line-height: 3ex; height: 1lh; width: 2ch }",
+   "classes": [
+    "p",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-root-units",
+   "sheet": ".a { font-family: \"Varta Metrics\"; width: calc(1rex + 1rch + 1ric); height: 1rcap; margin-top: 1rlh }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-registered-length",
+   "sheet": "@property --w { syntax: \"<length>\"; inherits: true; initial-value: 0px } .p { font-family: \"Varta Metrics\"; --w: 2ch } .a { font-family: serif; width: var(--w); height: 2ch }",
+   "classes": [
+    "p",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-layout-math",
+   "sheet": ".a { font-family: \"Varta Metrics\"; width: calc(50% - 2ch); margin-left: calc(10% + 1ic) }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-italic-system",
+   "sheet": ".a { font-family: system-ui; font-style: italic; font-weight: bold; width: 4ch; height: 1lh }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-inline-style",
+   "sheet": ".a { font-family: sans-serif }",
+   "classes": [
+    "a"
+   ],
+   "style": [
+    [
+     "width",
+     "3ex"
+    ],
+    [
+     "height",
+     "calc(1lh + 1cap)"
+    ]
+   ]
+  },
+  {
+   "name": "s4-logical-padding",
+   "sheet": ".a { padding-left: 9px; padding-inline: 1px 2px; padding-block-end: 3px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-logical-var",
+   "sheet": ":root { --s: 0.25rem } .a { padding-inline: calc(var(--s) * 2); margin-block: var(--s) auto }",
+   "classes": [
+    "",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-logical-var-pair",
+   "sheet": ":root { --pair: 4px 6px } .a { padding-inline: var(--pair) }",
+   "classes": [
+    "",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-logical-var-invalid",
+   "sheet": ":root { --three: 1px 2px 3px } .a { padding-left: 5px } .a { padding-inline: var(--three) }",
+   "classes": [
+    "",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-logical-order",
+   "sheet": ".a { margin-inline-start: 4px } .b { margin-left: 8px } .a.b { margin-inline: 1px }",
+   "classes": [
+    "a b"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-inset",
+   "sheet": ".a { position: absolute; inset: 1px 2px 3px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-inset-logical",
+   "sheet": ".a { position: absolute; inset-inline: 5%; inset-block-start: 2px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-flex-one",
+   "sheet": ".a { flex: 1 }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-flex-auto-none",
+   "sheet": ".a { flex: auto } .a.a { flex: none }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-flex-basis",
+   "sheet": ".a { flex: 2 0 10px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-flex-invalid",
+   "sheet": ".a { flex: 1 2 3 4 }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-translate",
+   "sheet": ".a { translate: 4px 50% }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-scale-percent",
+   "sheet": ".a { --tw-scale-x: 95%; scale: var(--tw-scale-x) var(--tw-scale-x) }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-scale-zero",
+   "sheet": ".a { scale: 0 }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-origin-keywords",
+   "sheet": ".a { transform-origin: top right }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-origin-mixed",
+   "sheet": ".a { transform-origin: calc(10% + 1px) top }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-letter-spacing",
+   "sheet": ".p { font-size: 20px } .a { letter-spacing: -0.025em }",
+   "classes": [
+    "p",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-letter-spacing-inline",
+   "sheet": ".a { color: #000 }",
+   "classes": [
+    "a"
+   ],
+   "style": [
+    [
+     "letter-spacing",
+     "0.1rem"
+    ],
+    [
+     "translate",
+     "1px"
+    ]
+   ]
+  },
+  {
+   "name": "s5-root-host",
+   "sheet": ":root, :host { --c: #123 } .t { color: var(--c) }",
+   "classes": [
+    "",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-child",
+   "sheet": ".a > .t { color: #111 } .t { color: #222 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-descendant",
+   "sheet": ".a .t { color: #111 } .b > .t { color: #333 }",
+   "classes": [
+    "a",
+    "b",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-where-zero",
+   "sheet": ":where(.a > .t) { color: #111 } .t { color: #222 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-is-max",
+   "sheet": ":is(.a .t, .x.y.z) { color: #111 } .a.a .t { color: #222 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-not",
+   "sheet": ".t:not(.x) { color: #111 } .t:not(.t) { color: #222 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-structural",
+   "sheet": ".t:first-child:last-child:only-child:nth-child(1):nth-last-of-type(1) { color: #111 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-type",
+   "sheet": "div.t { color: #111 } button.t { color: #222 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-universal",
+   "sheet": "* { color: #111 } .a * { padding-top: 1px }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-shorthand-over-longhand",
+   "sheet": ":where(.t) { margin-right: 6px } .t { margin: 2px } .t { padding-left: 3px } .t { padding: 1px 2px }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-longhand-over-shorthand",
+   "sheet": ".t { margin: 2px } .a .t { margin-left: 7px } .t { gap: 1px 2px } :where(.t) { row-gap: 5px }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-pseudo-element-refused",
+   "sheet": ".t::after { color: #111 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-has-refused",
+   "sheet": ".t:has(.x) { color: #111 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-group-hover",
+   "sheet": "@media (hover: hover) { :is(:where(.group):hover .t) { color: #111 } }",
+   "classes": [
+    "group",
+    "t"
+   ],
+   "style": []
   }
  ]
 }

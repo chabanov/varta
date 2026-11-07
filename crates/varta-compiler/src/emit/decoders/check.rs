@@ -144,6 +144,9 @@ fn literal_values(
                     .i(I::F64Const(f64::from_bits(*bits).into()))
                     .i(I::F64Eq);
             }
+            // Refused before emission (`literals::contains_pattern`); a
+            // pattern never matches here.
+            LiteralValue::Pattern(_) => continue,
             LiteralValue::String(bytes) => {
                 let name: Vec<u16> = bytes
                     .as_chunks::<{ size_of::<u16>() }>()
@@ -540,7 +543,7 @@ fn selectors(plan: &Plan, members: &[u32]) -> Option<Vec<Selector>> {
             other => values.iter().all(|value| {
                 use crate::lower::literals::LiteralValue;
                 let kind = match value {
-                    LiteralValue::String(_) => ValueKind::String,
+                    LiteralValue::String(_) | LiteralValue::Pattern(_) => ValueKind::String,
                     LiteralValue::Number(_) => ValueKind::Float64,
                     LiteralValue::Boolean(_) => ValueKind::Boolean,
                 };

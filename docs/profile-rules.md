@@ -3110,6 +3110,42 @@ Contract: [collections and binary text](architecture.md#collections-and-binary-t
   regenerate expectations only from Node. Adversarial inputs stay small enough
   for Node to answer, since Node backtracks exponentially on them.
 
+### Full RegExp (`full_regexp`, v38)
+
+See the [contract](architecture.md#full-regexp-full_regexp).
+
+- Gate the whole ES2025 grammar on `LanguageProfile::full_regexp()` (the
+  parser's `full` switch). Every v37 path (`regexp::compile`, format 1, the
+  emitted Pike VM, the `Unsupported` names) stays byte- and
+  diagnostic-identical; new grammar branches only under `full`.
+- The v38 program format is owned by `varta_common::regexp` and shared by
+  `regexp::backtrack` (compiler) and `varta_intrinsics::regexp` (linked
+  matcher). Any format change bumps `regexp::FORMAT_VERSION` there, changes
+  both sides together and rebuilds `intrinsics.wasm`
+  (`scripts/build-intrinsics.py`); `regexp.rs` is part of the fingerprinted
+  common core.
+- Matching stays guest code: `regexp_exec` is linked in every v38 module and
+  admitted as an import by no profile, so no host implements it and no host
+  can run a pattern outside fuel. Never add a native handler or a host regex
+  import; never add a step counter that ends matching differently from fuel.
+- Every capture or register write goes through the undo log (`set`);
+  lookaround markers live on the backtracking stack. A malformed program is
+  `IntrinsicError::RegExpProgram`, never a panic path that depends on
+  unchecked indexing of guest data.
+- Case-insensitive classes are widened at compile time; under `v` with `i`
+  fold operands before set operations and complement among folded code
+  points (`case::fold`, `case::universe`). Canonicalize has one
+  implementation (`varta_common::regexp::canonicalize`).
+- Property names match strictly through ICU4X (`regexp::property`); the
+  properties of strings come only from `regexp/emoji_sequences.txt`
+  (Unicode Emoji 17.0). Updating Unicode data is a recorded change pinned
+  against the Node version of the same Unicode version.
+- Early errors keep V8's message text; add each new one with its Node output
+  to `full_grammar_early_errors_keep_v8_text`.
+- Behaviour tests (`full_regexp_cases`) pin Node 24.20.0 output; the
+  differential corpus is regenerated only by its seeded generator and Node.
+  Adversarial tests assert the typed fuel exhaustion of the turn.
+
 ### Network requests (`net_request`)
 
 See the [contract](architecture.md#network-requests-net_request).
@@ -4195,7 +4231,9 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   `nested` (bound `MAX_TYPE_DEPTH`); recursive generic aliases go through
   `enter_recursive`/`push_instantiation`/`pop_instantiation` in
   `named::instantiate`, never by relaxing `NamedTypes::resolving` for the
-  same instantiation.
+  same instantiation. The same instantiation inside itself (and `this` in a
+  generic declaration, `named::instantiate_resolved`) resolves to its
+  recursive reservation, keyed by (declaration, type arguments).
 - `type_level::extends` is the one TypeScript assignability relation for
   conditional types, constraints (`generics::satisfies`), predicates,
   `satisfies` and `Exclude`/`Extract`. It decides types only; a value
@@ -4236,18 +4274,38 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   a declaration whose annotation queries a local resolves its annotation in
   `variables`, not `predeclare`. Named declarations being resolved never
   read the snapshot (`named::resolving_declaration`).
-- Class subtyping in containers (`type_level::containers`): a `B[]` to
-  `A[]` conversion is a shallow `ArraySlice` copy (an array literal is
-  retyped); a union-of-classes array to an ancestor array builds a new
-  array of unboxed elements (`class_union_array`, in `expr_lowered` before
-  `widen`). Never alias an array under a wider element type.
+- Class subtyping in containers (`type_level::containers`): a class or
+  class-union array converted to a wider class array is a `Reinterpret`
+  of the same array, recorded by `covariance::note`; never copy it.
+  `covariance::resolve` (after `subtyping::resolve`, before literal
+  erasure) joins the recorded pairs into components, sets the element
+  representation of every array type of a component (`Stored::Instances`
+  for union arrays beside class arrays, `Stored::Cells` for class arrays
+  beside a union admitting `null`/`undefined`; it rewrites
+  `ValueTypes::arrays` last) and rewrites every element access of those
+  types: reads (`Index`, `MaybeIndex`, `ArrayAt`, `ArrayPop`) box or unbox
+  and are tested when the read's element type does not admit every value
+  stored through the component; writes (`SetIndex`, array literals,
+  `ArrayPush` items, `ArrayFill`, `ArraySearch` needles) convert to the
+  stored representation. A new IR form that reads or writes array elements
+  must be handled there (the walkers are exhaustive).
+- Pattern template literal types are `LiteralValue::Pattern` members of
+  string literal sets (`type_level::patterns`, pieces interned in
+  `LiteralTypes::patterns`). Every membership test of a literal value in a
+  set goes through `type_level::value_in` (subset, `fits`, `refine`), never
+  `BTreeSet::contains` alone; `exhausted_by` never counts a pattern as
+  covered. A reader that needs a finite text (`string_units`,
+  `string_members`, `constants`) gets `None`/skips the pattern and must
+  refuse it by name or fall back to a string index signature; checked
+  assertions and JSON targets refuse patterns (`has_pattern`,
+  `contains_pattern`).
 - Predicate narrowing of a class instance to a subclass reads through
   `checked_downcast` (descriptor test, `TypeError`), of `unknown` to an
   object type through `assert_value`; `this is T` predicates are recorded per
   (declaring class, method) by `member_signature`.
 - Tests: `varta-runtime` `type_level_tests` with the Node 24 logs of
   `type_level_cases` (each also rejected by v37), the deviation test
-  `checked_predicates_and_copied_array_views_deviate_from_node`, the compiler's
+  `checked_predicates_and_shared_array_reads_deviate_from_node`, the compiler's
   `composed_class_names_follow_the_checker_types` scanner test, and the
   nine `typescript_handbook` conformance rows.
 

@@ -7,42 +7,16 @@
 //! `toUppercase` per code unit without `u`, and simple case folding with `u`
 //! (derived as the lowercase of the single-character uppercase mapping, with
 //! the Turkic dotted/dotless I kept apart as in CaseFolding.txt).
-use super::set::{MAX_UNIT, Set};
+use super::set::{MAX_CODE_POINT, MAX_UNIT, Set};
 use std::{collections::BTreeMap, sync::OnceLock};
 
 /// Every code point above this one is caseless in Unicode 16.
 const CASED_LIMIT: u32 = 0x1_FFFF;
-/// U+0130 and U+0131 have only Turkic (`T`) or full (`F`) foldings.
-const TURKIC: [u32; 2] = [0x0130, 0x0131];
-/// The first code unit outside ASCII.
-const NON_ASCII: u32 = 0x80;
 
-fn single(mut mapped: impl Iterator<Item = char>) -> Option<char> {
-    let first = mapped.next()?;
-    mapped.next().is_none().then_some(first)
-}
-
-/// Canonicalize(rer, ch).
+/// Canonicalize(rer, ch), shared with the v38 linked matcher's
+/// case-insensitive backreferences (`varta_common::regexp`).
 pub(crate) fn canonicalize(ch: u32, unicode: bool) -> u32 {
-    let Some(character) = char::from_u32(ch) else {
-        return ch;
-    };
-    if unicode {
-        if TURKIC.contains(&ch) {
-            return ch;
-        }
-        let upper = single(character.to_uppercase()).unwrap_or(character);
-        return single(upper.to_lowercase())
-            .or_else(|| single(character.to_lowercase()))
-            .map_or(ch, u32::from);
-    }
-    let Some(upper) = single(character.to_uppercase()).map(u32::from) else {
-        return ch;
-    };
-    if upper > MAX_UNIT || ch >= NON_ASCII && upper < NON_ASCII {
-        return ch;
-    }
-    upper
+    varta_common::regexp::canonicalize(ch, unicode)
 }
 
 /// Equivalence classes with more than one member.
@@ -80,4 +54,39 @@ pub(crate) fn close(set: &Set, unicode: bool) -> Set {
         }
     }
     closed
+}
+
+/// The code points whose simple case folding differs from themselves, with
+/// their folding (v38 `v` with `i`).
+fn folded() -> &'static [(u32, u32)] {
+    static FOLDED: OnceLock<Vec<(u32, u32)>> = OnceLock::new();
+    FOLDED.get_or_init(|| {
+        (0..=CASED_LIMIT)
+            .filter_map(|ch| {
+                let canonical = canonicalize(ch, true);
+                (canonical != ch).then_some((ch, canonical))
+            })
+            .collect()
+    })
+}
+
+/// MaybeSimpleCaseFolding of a set (v38 `v` with `i`): the simple case
+/// folding of every member.
+pub(crate) fn fold(set: &Set) -> Set {
+    let mut image = set.intersection(universe());
+    for &(ch, canonical) in folded() {
+        if set.contains(ch) {
+            image.add(canonical, canonical);
+        }
+    }
+    image
+}
+
+/// AllCharacters under `v` with `i`: the code points that are their own
+/// simple case folding.
+pub(crate) fn universe() -> &'static Set {
+    static UNIVERSE: OnceLock<Set> = OnceLock::new();
+    UNIVERSE.get_or_init(|| {
+        Set::from_ranges(folded().iter().map(|&(ch, _)| (ch, ch))).complement(MAX_CODE_POINT)
+    })
 }

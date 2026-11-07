@@ -332,6 +332,7 @@ fn lower_with(
         suspendable: BTreeMap::new(),
     };
     subtyping::resolve(&mut program)?;
+    type_level::resolve_covariance(&mut program)?;
     object_methods::receiver_shapes(&mut program);
     if profile.literal_types() {
         json::preserve_direct_types(&mut program.types);

@@ -161,6 +161,9 @@ impl Lower<'_> {
             ast::Expr::TsSatisfies(satisfies) if self.types.profile.type_level() => {
                 self.satisfies(satisfies, expected)
             }
+            ast::Expr::Tpl(template) if type_level::literal_context(expected, self.types) => {
+                self.contextual_template(template)
+            }
             ast::Expr::Ident(id) if let Some(context) = self.constructor_context(id, expected) => {
                 self.class_constructor_value(id, context)
             }
@@ -185,7 +188,6 @@ impl Lower<'_> {
                 }
             })
             .and_then(|value| self.void_function(value, expected))
-            .map(|value| self.class_union_array(value, expected))
             .and_then(|value| unions::widen(value, expected, self.types))
             .map_err(|e| self.source.locate(e, expression.span()))
     }

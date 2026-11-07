@@ -475,7 +475,7 @@ permissions and the view protocol: effects only
 <!-- generated:embedding-linked-intrinsics:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
 | Profile | Linked, never imported | Linked stack |
 | --- | --- | --- |
-| `checked-f64-utf16-v38` | `value_format_v12`, `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`, `value_is_error_class_v7`, `json_parse_v19`, `primitive_to_string_v6`, `primitive_to_number_v6`, `bigint_from_value_v5`, `json_stringify_owned`, `primitive_compare`, `primitive_equal`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
+| `checked-f64-utf16-v38` | `value_format_v12`, `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`, `value_is_error_class_v7`, `json_parse_v19`, `primitive_to_string_v6`, `primitive_to_number_v6`, `bigint_from_value_v5`, `json_stringify_owned`, `primitive_compare`, `primitive_equal`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `regexp_exec`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
 <!-- generated:embedding-linked-intrinsics:end -->
 
 - **One memory.** A linked module has exactly one memory, so every engine
@@ -1853,6 +1853,7 @@ import the operation, as contiguous runs in registry order.
 | `permission_request` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `primitive_to_number_v6` | (i64) → (f64) | 34 | none | — | — | — |
 | `primitive_to_string_v6` | (i64) → (i32) | 34 | none | yes | yes | — |
+| `regexp_exec` | (i32, i32, i32, i32, f64, i32) → (i32) | 34 | none | yes | yes | — |
 | `value_format_v12` | (i64) → (i32) | 34 | none | yes | yes | — |
 | `value_is_array_v11` | (i64) → (i32) | 34 | none | — | — | — |
 | `value_is_error_class_v7` | (i64, i32) → (i32) | 34 | none | — | — | — |
@@ -3014,7 +3015,7 @@ values:
 <!-- generated:view-stylesheet-tokens:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
 | Item | Values |
 | --- | --- |
-| Pseudo-classes | `:hover`, `:active`, `:focus-visible`, `:disabled`, `:checked` |
+| Pseudo-classes | `:hover`, `:active`, `:focus`, `:focus-within`, `:focus-visible`, `:disabled`, `:enabled`, `:checked`, `:root`, `:host`, `:first-child`, `:last-child`, `:only-child`, `:first-of-type`, `:last-of-type`, `:only-of-type`, `:nth-child()`, `:nth-last-child()`, `:nth-of-type()`, `:nth-last-of-type()`, `:is()`, `:where()`, `:not()` |
 | Media features | `prefers-color-scheme`, `min-width`, `max-width` |
 | Forbidden anywhere | `\`, `<`, `>`, `/*`, `@import`, `!important`, `url(`, `image-set(`, `expression(` |
 | Forbidden in `set_style` values | `;`, `{`, `}` |
@@ -3384,6 +3385,10 @@ not imply complete CSS rendering or typography acceptance.
 | 78 | `aspect-ratio` | `auto \|\| [<number> [/ <number>]?]` | positive ratio terms |
 | 79 | `vertical-align` | `baseline \| sub \| super \| text-top \| text-bottom \| middle \| top \| bottom \| <length-percentage>` | inline-level boxes |
 | 80 | `image-orientation` | `from-image \| none` | inherited |
+| 81 | `translate` | `none \| <length-percentage> <length-percentage>?` | — |
+| 82 | `scale` | `none \| <number> <number>?` | positive factors |
+| 83 | `transform-origin` | `<length-percentage> <length-percentage>` | — |
+| 84 | `letter-spacing` | `normal \| <length>` | inherited |
 <!-- generated:view-css-properties:end -->
 
 **Events.**

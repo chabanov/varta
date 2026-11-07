@@ -49,6 +49,7 @@ struct Mirror {
     nodes: BTreeMap<u32, Node>,
     styles: Styles,
     focus: u32,
+    focus_visible: u32,
     hovered: u32,
     active: u32,
 }
@@ -67,6 +68,7 @@ impl Default for Mirror {
             nodes,
             styles: Styles::default(),
             focus: 0,
+            focus_visible: 0,
             hovered: 0,
             active: 0,
         }
@@ -115,6 +117,9 @@ impl Document for Mirror {
     fn focused(&self, id: u32) -> bool {
         self.focus == id
     }
+    fn focus_visible(&self, id: u32) -> bool {
+        self.focus_visible == id
+    }
     fn hovered(&self, id: u32) -> bool {
         self.contains(self.hovered, id)
     }
@@ -150,6 +155,14 @@ impl Session {
     }
     fn tree(&mut self) -> Option<&mut Mirror> {
         self.working.as_mut().map(|(mirror, _)| mirror)
+    }
+    /// Set the view's font set (the first available fonts of the
+    /// font-relative units), committed and in an open transaction alike.
+    pub fn set_fonts(&mut self, fonts: alloc::sync::Arc<crate::fonts::FontSet>) {
+        if let Some((mirror, _)) = self.working.as_mut() {
+            mirror.styles.set_fonts(alloc::sync::Arc::clone(&fonts));
+        }
+        self.committed.styles.set_fonts(fonts);
     }
     /// Start a transaction over a copy of the committed tree.
     pub fn begin(&mut self) {
@@ -348,10 +361,17 @@ impl Session {
         self.environment = environment;
     }
     /// The recorded selector state of the committed tree (0 is none).
-    pub fn set_state(&mut self, focus: u32, hovered: u32, active: u32) {
-        self.committed.focus = focus;
+    pub fn set_state(&mut self, focus_visible: u32, hovered: u32, active: u32) {
+        self.committed.focus_visible = focus_visible;
         self.committed.hovered = hovered;
         self.committed.active = active;
+    }
+    /// The focused element (`:focus`, `:focus-within`), or 0.
+    pub fn set_focus(&mut self, focus: u32) {
+        self.committed.focus = focus;
+        if let Some((mirror, _)) = self.working.as_mut() {
+            mirror.focus = focus;
+        }
     }
     /// The committed computed values of element `id` (empty for a text
     /// node or an unknown id).

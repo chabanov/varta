@@ -26,6 +26,9 @@ pub(crate) enum LiteralValue {
     /// Binary64 bits with -0 normalized to +0; NaN is never a literal type.
     Number(u64),
     Boolean(bool),
+    /// A pattern template literal type of strings (v38 `type_level`), by
+    /// its id in `LiteralTypes::patterns`; only in string sets.
+    Pattern(u32),
 }
 impl LiteralValue {
     fn number(value: f64) -> Option<Self> {
@@ -38,12 +41,13 @@ impl LiteralValue {
     }
     fn base(&self) -> LiteralBase {
         match self {
-            Self::String(_) => LiteralBase::String,
+            Self::String(_) | Self::Pattern(_) => LiteralBase::String,
             Self::Number(_) => LiteralBase::Number,
             Self::Boolean(_) => LiteralBase::Boolean,
         }
     }
-    fn describe(&self, profile: varta_common::language::LanguageProfile) -> String {
+    fn describe(&self, types: &ir::ValueTypes) -> String {
+        let profile = types.profile;
         match self {
             Self::String(bytes) if profile.utf16() => {
                 let units: Vec<u16> = bytes
@@ -57,6 +61,7 @@ impl LiteralValue {
             Self::String(bytes) => format!("'{}'", String::from_utf8_lossy(bytes)),
             Self::Number(bits) => f64::from_bits(*bits).to_string(),
             Self::Boolean(value) => value.to_string(),
+            Self::Pattern(id) => type_level::describe_pattern(types.literals.pattern(*id)),
         }
     }
 }
@@ -96,6 +101,10 @@ pub(crate) struct LiteralTypes {
     members: usize,
     /// Union containing literal members -> the same union with erased members.
     erased_unions: BTreeMap<u32, Type>,
+    /// Pattern template literal types (v38 `type_level`) by
+    /// `LiteralValue::Pattern` id, and their ids.
+    patterns: Vec<type_level::Pattern>,
+    pattern_ids: BTreeMap<type_level::Pattern, u32>,
 }
 impl LiteralTypes {
     /// Literal constraints used only by compiler-generated JSON checkers;
@@ -105,6 +114,26 @@ impl LiteralTypes {
     }
     fn set(&self, id: u32) -> &Set {
         &self.sets[id as usize].1
+    }
+    /// The pieces of a pattern value.
+    pub(crate) fn pattern(&self, id: u32) -> &type_level::Pattern {
+        &self.patterns[id as usize]
+    }
+    /// The literal value of `pattern`, interned.
+    pub(super) fn pattern_value(&mut self, pattern: type_level::Pattern) -> LiteralValue {
+        if let Some(id) = self.pattern_ids.get(&pattern) {
+            return LiteralValue::Pattern(*id);
+        }
+        let id = self.patterns.len() as u32;
+        self.patterns.push(pattern.clone());
+        self.pattern_ids.insert(pattern, id);
+        LiteralValue::Pattern(id)
+    }
+    /// Whether a literal set has a pattern member.
+    pub(super) fn has_pattern(&self, id: u32) -> bool {
+        self.set(id)
+            .iter()
+            .any(|value| matches!(value, LiteralValue::Pattern(_)))
     }
     fn kind(&self, id: u32) -> LiteralKind {
         self.kinds.get(id as usize).copied().unwrap_or_default()
@@ -375,6 +404,9 @@ fn intern_kind(
     if values.is_empty() {
         return Err(invalid("empty literal type"));
     }
+    // A string matched by a pattern member of the same set is subsumed by it
+    // (TypeScript's union reduction of template literal types).
+    let values = type_level::reduce_patterns(values, types);
     if base == LiteralBase::Boolean && values.len() == 2 {
         return Ok(Type::Boolean);
     }
@@ -461,11 +493,13 @@ pub(super) fn copy_erased_union(from: u32, to: u32, types: &mut ir::ValueTypes) 
     }
 }
 fn subset(inner: u32, outer: u32, types: &ir::ValueTypes) -> bool {
+    let outer_set = types.literals.set(outer);
     inner == outer
         || types
             .literals
             .set(inner)
-            .is_subset(types.literals.set(outer))
+            .iter()
+            .all(|value| type_level::value_in(value, outer_set, types))
 }
 
 /// The literal value of a constant expression, if it is one.
@@ -505,9 +539,8 @@ fn fits(value: &Expr, base: LiteralBase, target: u32, types: &ir::ValueTypes) ->
             constant(value).is_none_or(|v| types.literals.set(target).contains(&v))
         }
         ty if ty == base.erased() && matches!(kind, LiteralKind::Nominal(_)) => false,
-        ty if ty == base.erased() => {
-            constant(value).is_some_and(|v| types.literals.set(target).contains(&v))
-        }
+        ty if ty == base.erased() => constant(value)
+            .is_some_and(|v| type_level::value_in(&v, types.literals.set(target), types)),
         _ => false,
     }
 }
@@ -605,7 +638,7 @@ pub(super) fn describe(id: u32, types: &ir::ValueTypes) -> String {
     let mut text: Vec<_> = set
         .iter()
         .take(DESCRIBED_MEMBERS)
-        .map(|v| v.describe(types.profile))
+        .map(|v| v.describe(types))
         .collect();
     if set.len() > DESCRIBED_MEMBERS {
         text.push(format!("… ({} members)", set.len()));
@@ -614,7 +647,7 @@ pub(super) fn describe(id: u32, types: &ir::ValueTypes) -> String {
 }
 fn describe_value(value: &Expr, types: &ir::ValueTypes) -> String {
     match (constant(value), value.ty) {
-        (Some(v), _) => format!("value {}", v.describe(types.profile)),
+        (Some(v), _) => format!("value {}", v.describe(types)),
         (None, Type::Literal(_, id)) => format!("value of type {}", describe(id, types)),
         (None, ty) => format!("value of type {ty}"),
     }
@@ -669,7 +702,9 @@ pub(super) fn refine(
     for member in &members {
         match *member {
             m if positive && m == base.erased() => refined.push(single),
-            Type::Literal(b, set) if b == base && types.literals.set(set).contains(&value) => {
+            Type::Literal(b, set)
+                if b == base && type_level::value_in(&value, types.literals.set(set), types) =>
+            {
                 // An enum's narrowed set stays of the enum's kind.
                 let kind = types.literals.kind(set);
                 if positive {
@@ -720,58 +755,77 @@ pub(super) fn exhausted_by(ty: Type, singles: &[Type], types: &ir::ValueTypes) -
         })
 }
 
-/// The constants of a literal set, in canonical order (v34 checked assertions).
+/// The constants of a literal set, in canonical order (v34 checked
+/// assertions). A pattern member has no constant; callers refuse sets with
+/// one (`LiteralTypes::has_pattern`).
 pub(super) fn constants(id: u32, span: swc_common::Span, types: &ir::ValueTypes) -> Vec<Expr> {
     types
         .literals
         .set(id)
         .iter()
-        .map(|value| match value {
-            LiteralValue::String(bytes) => Expr {
-                span,
-                ty: Type::String,
-                kind: E::String(bytes.clone()),
-            },
-            LiteralValue::Number(bits) => Expr {
-                span,
-                ty: Type::Float64,
-                kind: E::Float64(f64::from_bits(*bits)),
-            },
-            LiteralValue::Boolean(value) => Expr {
-                span,
-                ty: Type::Boolean,
-                kind: E::Integer(i32::from(*value)),
-            },
+        .filter_map(|value| {
+            Some(match value {
+                LiteralValue::Pattern(_) => return None,
+                LiteralValue::String(bytes) => Expr {
+                    span,
+                    ty: Type::String,
+                    kind: E::String(bytes.clone()),
+                },
+                LiteralValue::Number(bits) => Expr {
+                    span,
+                    ty: Type::Float64,
+                    kind: E::Float64(f64::from_bits(*bits)),
+                },
+                LiteralValue::Boolean(value) => Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::Integer(i32::from(*value)),
+                },
+            })
         })
         .collect()
 }
 
 /// Whether a type graph contains a literal set (rejected as external input).
 pub(super) fn contains(ty: Type, types: &ir::ValueTypes) -> bool {
+    contains_set(ty, types, &|_| true)
+}
+
+/// Whether a type graph contains a literal set with a pattern member (v38
+/// `type_level`), which no run-time check tests.
+pub(super) fn contains_pattern(ty: Type, types: &ir::ValueTypes) -> bool {
+    contains_set(ty, types, &|id| types.literals.has_pattern(id))
+}
+
+/// Whether a type graph contains a literal set whose id satisfies `wanted`.
+fn contains_set(ty: Type, types: &ir::ValueTypes, wanted: &dyn Fn(u32) -> bool) -> bool {
     // Recursive types (v34) make the type graph cyclic: visit each type once.
     fn visit(
         ty: Type,
         types: &ir::ValueTypes,
+        wanted: &dyn Fn(u32) -> bool,
         seen: &mut std::collections::BTreeSet<Type>,
     ) -> bool {
         if !seen.insert(ty) {
             return false;
         }
         match ty {
-            Type::Literal(..) => true,
+            Type::Literal(_, id) => wanted(id),
             Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize]
                 .iter()
-                .any(|m| visit(*m, types, seen)),
+                .any(|m| visit(*m, types, wanted, seen)),
             Type::Record(id) => types.records[id as usize]
                 .fields
                 .iter()
-                .any(|f| visit(f.ty, types, seen)),
-            Type::Array(id) => visit(types.arrays[id as usize], types, seen),
-            Type::Dictionary(id) => visit(types.dictionaries[id as usize].value, types, seen),
+                .any(|f| visit(f.ty, types, wanted, seen)),
+            Type::Array(id) => visit(types.arrays[id as usize], types, wanted, seen),
+            Type::Dictionary(id) => {
+                visit(types.dictionaries[id as usize].value, types, wanted, seen)
+            }
             _ => false,
         }
     }
-    visit(ty, types, &mut std::collections::BTreeSet::new())
+    visit(ty, types, wanted, &mut std::collections::BTreeSet::new())
 }
 
 impl Lower<'_> {

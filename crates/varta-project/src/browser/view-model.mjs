@@ -117,9 +117,9 @@ const engineFailure = new Map([
 ]);
 const flagsOf = (node) => [node.attributes.has("disabled"), Boolean(node.checked)];
 
-export function createViewModel({ linkRequested = () => false, assetRequested = () => true, viewEngine } = {}) {
+export function createViewModel({ linkRequested = () => false, assetRequested = () => true, viewEngine, fontMetrics } = {}) {
   // A program without a view has no engine module and never commits.
-  const engine = viewEngine === undefined ? undefined : createViewEngine(viewEngine);
+  const engine = viewEngine === undefined ? undefined : createViewEngine(viewEngine, { fontMetrics });
   let nodes = new Map([[W.root, element("div")]]), sheets = new Map(), sheetBytes = new Map(), pending = new Set(), title = "", titleBytes = 0, focus = W.noNode;
   let closed = false;
   // The engine's `:disabled`/`:checked` inputs follow the committed tree.

@@ -1,12 +1,17 @@
 //! K8 T2 scenes for the real-Chrome oracle: escaped class selectors,
 //! cascade layers and importance, CSS-wide keywords, conditional rules,
-//! registered custom properties, media features, math functions, units and
-//! CSS Color 4/5 colours, painted natively at a device scale. The browser
+//! registered custom properties, media features, math functions, units,
+//! the font-relative units of the platform's and packaged fonts, and CSS
+//! Color 4/5 colours, painted natively at a device scale. The browser
 //! host's bridge (or Chrome's own cascade) applies the same stylesheet.
+//! The platform measures its own fonts (`varta_desktop::shell::host_fonts`)
+//! as the shell does, so this probe lives with the native host.
 //!
-//! cargo run -p varta-view --example native_css_engine_probe -- 2 > target/native-css-2.json
+//! cargo run -p varta-desktop --example native_css_engine_probe -- 2 > target/native-css-2.json
 //! node scripts/test-native-css-engine.mjs target/native-css-2.json
+use std::sync::Arc;
 use varta_common::view::Tag;
+use varta_style::fonts::FontSet;
 use varta_view::{Access, BatchWriter as B, Broker, Environment, Renderer, View};
 
 /// The CSS viewport of every scene.
@@ -29,15 +34,46 @@ impl Broker for Denied {
 /// One element: its classes and children.
 struct Node(&'static str, &'static [Node]);
 
-/// A scene: its stylesheet, its elements under the root and, when the
-/// colours lie outside sRGB, the reason Chrome's pixels differ.
+/// A scene: its stylesheet, its elements under the root, its packaged
+/// faces and, when the colours lie outside sRGB, the reason Chrome's
+/// pixels differ.
 struct Scene {
     name: &'static str,
     sheet: &'static str,
     nodes: &'static [Node],
     reduced_motion: bool,
     deviation: Option<&'static str>,
+    fonts: &'static [Face],
+    /// Text children: every element with this class gets this text.
+    texts: &'static [(&'static str, &'static str)],
 }
+
+/// The first id of text nodes, apart from the elements whose boxes are
+/// compared.
+const TEXT_IDS: u32 = 1000;
+
+/// A packaged face: its family, its file (relative to the workspace) and
+/// its `FontFace` weight descriptor.
+struct Face(&'static str, &'static str, &'static str);
+
+/// The style engine's metric fixtures (`scripts/generate-style-metrics-fonts.py`).
+const METRIC_FACES: &[Face] = &[
+    Face(
+        "Varta Metrics",
+        "crates/varta-style/tests/fixtures/metrics.ttf",
+        "400",
+    ),
+    Face(
+        "Varta Metrics",
+        "crates/varta-style/tests/fixtures/metrics-bold.ttf",
+        "700",
+    ),
+    Face(
+        "Varta Metrics Variable",
+        "crates/varta-style/tests/fixtures/metrics-variable.ttf",
+        "100 900",
+    ),
+];
 
 const SCENES: &[Scene] = &[
     Scene {
@@ -53,6 +89,8 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "layers",
@@ -60,6 +98,8 @@ const SCENES: &[Scene] = &[
         nodes: &[Node("a box", &[]), Node("b box", &[]), Node("c box", &[])],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "registered-properties",
@@ -67,6 +107,8 @@ const SCENES: &[Scene] = &[
         nodes: &[Node("outer", &[Node("inner", &[]), Node("bad", &[])])],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "theme-colours",
@@ -82,6 +124,8 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "colour-functions",
@@ -105,6 +149,8 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "out-of-gamut",
@@ -121,6 +167,8 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: Some("CSS Color 4 §14.2 gamut mapping natively; Chrome clips per channel"),
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "math-and-units",
@@ -139,6 +187,8 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "media-features",
@@ -153,6 +203,8 @@ const SCENES: &[Scene] = &[
         ],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "reduced-motion",
@@ -160,6 +212,8 @@ const SCENES: &[Scene] = &[
         nodes: &[Node("a", &[]), Node("b", &[])],
         reduced_motion: true,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "comments-and-escapes",
@@ -167,6 +221,8 @@ const SCENES: &[Scene] = &[
         nodes: &[Node("a", &[]), Node("b", &[])],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "css-wide-keywords",
@@ -184,6 +240,8 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "importance",
@@ -201,6 +259,8 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "conditional-rules",
@@ -218,6 +278,8 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "named-colours-and-mixes",
@@ -237,6 +299,8 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "multi-colour-mixes",
@@ -249,6 +313,8 @@ const SCENES: &[Scene] = &[
         deviation: Some(
             "CSS Color 5 §3 mixes one or more colours; Chrome mixes exactly two and drops the declaration",
         ),
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "font-relative-units",
@@ -264,6 +330,8 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "percentage-length-math",
@@ -279,10 +347,188 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "platform-font-units",
+        sheet: ".r { position: relative; width: 320px; height: 200px } .a { position: absolute; left: 0; top: 0; width: 10ex; height: 2cap; background-color: #c00 } .b { position: absolute; left: 80px; top: 0; width: 5ch; height: 1lh; background-color: #0a0 } .c { position: absolute; left: 130px; top: 0; width: 2ic; height: calc(1rex + 1rcap); margin-top: 1rlh; background-color: #00c } .s { position: absolute; left: 170px; top: 0; font-family: sans-serif; width: 6ex; height: 1lh; background-color: #cc0 } .m { position: absolute; left: 230px; top: 0; font-family: monospace; width: 4ch; height: 1lh; background-color: #0cc } .u { position: absolute; left: 0; top: 60px; font-family: system-ui; font-size: 13px; width: 5ch; height: 1lh; background-color: #c0c } .w { position: absolute; left: 50px; top: 60px; font-family: system-ui; font-weight: bold; width: 5ch; height: 3ex; background-color: #888 } .i { position: absolute; left: 100px; top: 60px; font-family: serif; font-style: italic; font-size: 30px; width: 3cap; height: 1ex; background-color: #c60 } .n { position: absolute; left: 170px; top: 60px; font-family: Missing, sans-serif; font-size: 100px; width: 1ch; height: 0.5lh; background-color: #06c }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("s", &[]),
+                Node("m", &[]),
+                Node("u", &[]),
+                Node("w", &[]),
+                Node("i", &[]),
+                Node("n", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "font-metric-references",
+        sheet: "@property --gap { syntax: \"<length>\"; inherits: true; initial-value: 0px } .r { position: relative; width: 320px; height: 200px; font-family: sans-serif; font-size: 20px; --gap: 1ch } .a { position: absolute; left: 0; top: 0; font-size: 2ex; width: 1em; height: 1lh; margin-left: var(--gap); background-color: #c00 } .b { position: absolute; left: 60px; top: 0; line-height: 3ex; width: 2cap; height: 1lh; background-color: #0a0 } .c { position: absolute; left: 0; top: 80px; font-family: monospace; width: calc(50% - 4ch); height: calc(1lh + 1rlh); background-color: #00c } .d { position: absolute; left: 200px; top: 0; font-size: 1.5em; font-family: system-ui; line-height: calc(1ex + 2ch); width: 1lh; height: 2ic; background-color: #cc0 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "packaged-font-units",
+        sheet: ".r { position: relative; width: 320px; height: 200px; font-family: \"Varta Metrics\", serif } .a { position: absolute; left: 0; top: 0; width: 10ex; height: 1lh; background-color: #c00 } .b { position: absolute; left: 100px; top: 0; font-weight: bold; width: 5ch; height: 1lh; background-color: #0a0 } .c { position: absolute; left: 160px; top: 0; width: 2ic; height: 2cap; background-color: #00c } .d { position: absolute; left: 200px; top: 0; font-weight: 600; font-size: 13px; width: 3ex; height: 3cap; background-color: #cc0 } .v { position: absolute; left: 0; top: 60px; font-family: \"Varta Metrics Variable\"; font-weight: 500; width: 4ch; height: 3ex; background-color: #0cc } .w { position: absolute; left: 60px; top: 60px; font-family: \"Varta Metrics Variable\"; font-weight: 900; font-size: 40px; width: 1ch; height: 1ex; background-color: #c0c } .x { position: absolute; left: 120px; top: 60px; font-family: Missing, \"Varta Metrics\"; font-size: 3ex; width: 1ch; height: 1lh; background-color: #888 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
+                Node("v", &[]),
+                Node("w", &[]),
+                Node("x", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: METRIC_FACES,
+        texts: &[],
+    },
+    Scene {
+        name: "logical-and-mapped",
+        sheet: ":root { --pair: 6px 2px } .r { position: relative; width: 320px; height: 200px } .a { position: absolute; left: 0; top: 0; padding-inline: 4px 10px; padding-block: 2px; margin-inline: 3px; width: 20px; height: 10px; background-color: #c00 } .b { position: absolute; inset: 40px 200px 120px 30px; background-color: #0a0 } .c { position: absolute; top: 100px; inset-inline: 10px 250px; height: 8px; background-color: #00c } .d { position: absolute; left: 100px; top: 0; padding-inline: var(--pair); padding-block-start: calc(1rem * 0.5); margin-block-end: 4px; width: 10px; height: 10px; background-color: #cc0 } .e { position: absolute; left: 150px; top: 0; padding-left: 9px; padding-inline-start: 1px; width: 10px; height: 10px; background-color: #0cc } .f { position: absolute; left: 0; top: 150px; width: 300px; display: flex } .f1 { flex: 1; height: 10px; background-color: #c0c } .f2 { flex: 2 1 20px; height: 10px; background-color: #888 } .f3 { flex: none; width: 30px; height: 10px; background-color: #c60 } .g { position: absolute; top: 120px; left: 200px; width: 40px; height: 10px; margin-inline-start: auto; inset-block-end: auto; background-color: #06c }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
+                Node("e", &[]),
+                Node("f", &[Node("f1", &[]), Node("f2", &[]), Node("f3", &[])]),
+                Node("g", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "individual-transforms",
+        sheet: ".r { position: relative; width: 320px; height: 200px } .t { position: absolute; left: 10px; top: 10px; width: 40px; height: 20px; translate: 10px 50%; background-color: #c00 } .s { position: absolute; left: 100px; top: 10px; width: 40px; height: 40px; scale: 50%; transform-origin: top right; background-color: #0a0 } .u { position: absolute; left: 200px; top: 10px; width: 40px; height: 40px; translate: -4px 2px; scale: 1.5 0.5; transform: translateX(3px); background-color: #00c } .v { position: absolute; left: 10px; top: 100px; width: 60px; height: 30px; --x: 8px; translate: var(--x); scale: 1 1.25; transform-origin: 0 100%; background-color: #cc0 } .w { position: absolute; left: 120px; top: 100px; width: 40px; height: 40px; scale: 0.75; transform-origin: left; background-color: #0cc }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("t", &[]),
+                Node("s", &[]),
+                Node("u", &[]),
+                Node("v", &[]),
+                Node("w", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "letter-spacing",
+        sheet: ".r { display: flex; flex-direction: column; align-items: flex-start; font-family: \"Varta Metrics\"; font-size: 20px; line-height: 30px; color: transparent } .a { letter-spacing: 3px; background-color: #fcc } .b { letter-spacing: -0.1em; background-color: #cfc } .c { letter-spacing: 0.25rem; font-size: 10px; background-color: #ccf } .d { background-color: #ffc } .e { letter-spacing: normal; background-color: #cff }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("e", &[]),
+                Node("d", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: METRIC_FACES,
+        texts: &[
+            ("a", "AHx 0A"),
+            ("b", "AHx 0A"),
+            ("c", "AH"),
+            ("e", "x0"),
+            ("d", "AHx 0A"),
+        ],
+    },
+    Scene {
+        name: "complex-selectors",
+        sheet: ":root, :host { --c: #c00 } .r { display: flex; flex-wrap: wrap; align-items: flex-start } .r > div { width: 30px; height: 12px; margin: 2px; background-color: #ccc } .r > :first-child { background-color: var(--c) } .r > :nth-child(3n+2) { background-color: #0a0 } .r > div:last-child { background-color: #00c } :where(.r > :not(:last-child)) { margin-right: 6px } .x + .y { background-color: #cc0 } .x ~ .z { height: 20px } .g .inner { width: 8px; height: 6px; background-color: #0cc } :is(.a, .b.c) div { width: 10px; height: 6px; background-color: #f80 } .r .q:only-child { background-color: #808 } div:not(.p):not(.x):nth-of-type(even) { border: 2px solid #000 } .r > .p:nth-last-child(1) { opacity: 0.5 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("p", &[]),
+                Node("x", &[]),
+                Node("y", &[]),
+                Node("p", &[]),
+                Node("z", &[]),
+                Node("g", &[Node("inner", &[])]),
+                Node("a", &[Node("q", &[])]),
+                Node("p", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
     },
 ];
 
-fn append(batch: &mut B, parent: u32, nodes: &[Node], next: &mut u32) {
+/// A text measurer over the scene's packaged faces.
+fn font_measurer(scene: &Scene) -> Result<varta_view::TextMeasurer, Box<dyn std::error::Error>> {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let fonts = scene
+        .fonts
+        .iter()
+        .map(|Face(family, file, _)| {
+            Ok(varta_view::TextFont {
+                data: std::fs::read(format!("{root}/{file}"))?,
+                family: (*family).to_owned(),
+                aliases: Vec::new(),
+            })
+        })
+        .collect::<Result<Vec<_>, std::io::Error>>()?;
+    Ok(varta_view::TextMeasurer::new_with_packaged_fonts(fonts)?)
+}
+
+/// The view's fonts: the scene's packaged faces, the platform for the rest.
+fn font_set(scene: &Scene) -> Result<FontSet, Box<dyn std::error::Error>> {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let mut set = FontSet::new(None, varta_desktop::shell::host_fonts(Vec::new()));
+    for Face(family, file, _) in scene.fonts {
+        let bytes = std::fs::read(format!("{root}/{file}"))?;
+        set.add_file(family, &[], &bytes)
+            .map_err(|error| format!("{file}: {error:?}"))?;
+    }
+    Ok(set)
+}
+
+fn append(
+    batch: &mut B,
+    parent: u32,
+    (nodes, texts): (&[Node], &[(&str, &str)]),
+    (next, text_id): (&mut u32, &mut u32),
+) {
     for Node(class, children) in nodes {
         let id = *next;
         *next += 1;
@@ -290,7 +536,11 @@ fn append(batch: &mut B, parent: u32, nodes: &[Node], next: &mut u32) {
             .create_element(id, Tag::Div)
             .set_class(id, class)
             .insert(parent, id, 0);
-        append(batch, id, children, next);
+        append(batch, id, (children, texts), (&mut *next, &mut *text_id));
+        for (_, text) in texts.iter().filter(|(owner, _)| owner == class) {
+            batch.create_text(*text_id, text).insert(id, *text_id, 0);
+            *text_id += 1;
+        }
     }
 }
 
@@ -305,9 +555,20 @@ fn tree(nodes: &[Node]) -> serde_json::Value {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scale: f32 = std::env::args().nth(1).map_or(Ok(1.0), |arg| arg.parse())?;
-    let mut renderer = Renderer::new(None, 16.0)?;
     let mut cases = Vec::new();
     for scene in SCENES {
+        // A scene with text lays it out and draws it with its own faces.
+        let mut measurer = match &scene.texts {
+            [] => None,
+            _ => Some(font_measurer(scene)?),
+        };
+        let mut renderer = Renderer::new(
+            match &scene.texts {
+                [] => None,
+                _ => Some(font_measurer(scene)?),
+            },
+            16.0,
+        )?;
         let mut environment = Environment {
             width: f64::from(WIDTH),
             height: f64::from(HEIGHT),
@@ -315,20 +576,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         environment.preferences.reduced_motion = scene.reduced_motion;
         let mut view = View::default();
+        view.set_fonts(Arc::new(font_set(scene)?));
         view.set_environment(environment)?;
         let mut batch = B::new();
         batch.stylesheet(1, scene.sheet);
-        let mut next = 2;
-        append(&mut batch, 1, scene.nodes, &mut next);
+        let (mut next, mut text_id) = (2, TEXT_IDS);
+        append(
+            &mut batch,
+            1,
+            (scene.nodes, scene.texts),
+            (&mut next, &mut text_id),
+        );
         view.commit(&batch.finish(), false, &mut Denied)
             .map_err(|error| {
                 let parsed = varta_common::view::stylesheet::parse(scene.sheet);
                 format!("{}: {error:?} {parsed:?}", scene.name)
             })?;
-        let boxes = view
-            .layout_boxes(WIDTH as f32, HEIGHT as f32)?
+        let boxes = match measurer.as_mut() {
+            Some(measurer) => {
+                view.layout_boxes_with_text(WIDTH as f32, HEIGHT as f32, measurer, 16.0)?
+            }
+            None => view.layout_boxes(WIDTH as f32, HEIGHT as f32)?,
+        };
+        let boxes = boxes
             .into_iter()
-            .filter(|(id, _)| *id != 1)
+            .filter(|(id, _)| *id != 1 && *id < TEXT_IDS)
             .map(|(id, r)| {
                 (
                     id.to_string(),
@@ -345,6 +617,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "nodes": tree(scene.nodes),
             "reducedMotion": scene.reduced_motion,
             "deviation": scene.deviation,
+            "texts": scene.texts,
+            "fonts": scene.fonts.iter().map(|Face(family, file, weight)| serde_json::json!({"family": family, "file": file, "weight": weight})).collect::<Vec<_>>(),
             "boxes": boxes,
             "computed": view.snapshot()["tree"],
             "raster": image.pixels,
