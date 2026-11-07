@@ -186,12 +186,15 @@ fn interaction(tree: &Tree, id: u32, element: &Element) -> Interaction {
 fn native_container(tree: &Tree, id: u32, element: &Element, environment: &Environment) -> bool {
     element.attributes.contains_key(&A::AriaLive)
         || element.attributes.contains_key(&A::AriaBusy)
-        || tree
-            .computed_read(id, environment)
-            .get(&varta_common::view::CssProperty::Overflow)
-            .is_some_and(|value| matches!(value.as_str(), "auto" | "hidden"))
+        || crate::style::overflow(&tree.computed_read(id, environment))
+            .is_some_and(|axes| axes.iter().any(|axis| axis.scrolls()))
 }
 fn represented(tree: &Tree, id: u32, native: bool, environment: &Environment) -> bool {
+    // An invisible box is not exposed; its visible descendants are (CSS
+    // Display 3 §4.1).
+    if id != ROOT_NODE && !crate::style::visible(tree, environment, id) {
+        return false;
+    }
     match &tree.nodes[&id].content {
         Content::Text(text) => !text.trim().is_empty(),
         Content::Element(element) => {

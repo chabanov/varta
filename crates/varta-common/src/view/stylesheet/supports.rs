@@ -151,7 +151,12 @@ fn compound_selector(tokens: &[Spanned]) -> bool {
     // Conditional 4 §6.1: `selector(<complex-selector>)`, one selector.
     let text = syntax::serialize(trimmed(tokens));
     let tokens = syntax::tokenize(&text);
-    super::selector::parse_list(&tokens, &text).is_ok_and(|list| list.len() == 1)
+    super::selector::parse_list(&tokens, &text).is_ok_and(|list| {
+        list.len() == 1
+            && list[0]
+                .pseudo_element
+                .is_none_or(super::selector::PseudoElement::rendered)
+    })
 }
 
 /// Evaluate an `@supports` prelude; the error is the index of the token
@@ -196,6 +201,8 @@ mod tests {
         assert_eq!(holds("selector(.a > .b)"), Ok(true));
         assert_eq!(holds("selector(.a, .b)"), Ok(false));
         assert_eq!(holds("selector(.a::after)"), Ok(false));
+        assert_eq!(holds("selector(::file-selector-button)"), Ok(true));
+        assert_eq!(holds("selector(.a::frob)"), Ok(false));
         assert_eq!(holds("font-tech(color-COLRv1)"), Ok(false));
         assert_eq!(holds("(width > 1px)"), Ok(false));
         assert!(holds("(a: b) and (c: d) or (e: f)").is_err());

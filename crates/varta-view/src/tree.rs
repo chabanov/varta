@@ -28,6 +28,9 @@ pub(crate) struct Preedit {
 }
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct EditorState {
+    /// The control's user validity (HTML §4.10.18.4.1): set by a trusted
+    /// `change` and by its form's submission (`:user-valid`).
+    pub user_validity: bool,
     pub anchor: usize,
     pub focus: usize,
     pub preedit: Option<Preedit>,
@@ -151,6 +154,9 @@ pub(crate) fn geometry_sides(property: CssProperty) -> Option<&'static [CssPrope
         P::PaddingLeft => &[P::PaddingLeft],
         P::RowGap => &[P::RowGap],
         P::ColumnGap => &[P::ColumnGap],
+        P::Overflow => &[P::OverflowX, P::OverflowY],
+        P::OverflowX => &[P::OverflowX],
+        P::OverflowY => &[P::OverflowY],
         _ => return None,
     })
 }
@@ -165,6 +171,14 @@ pub(crate) fn border_components(property: CssProperty) -> Vec<(u8, bool)> {
         P::BorderLeft => (&[3], true, true),
         P::BorderWidth => (&[0, 1, 2, 3], true, false),
         P::BorderStyle => (&[0, 1, 2, 3], false, true),
+        P::BorderTopWidth => (&[0], true, false),
+        P::BorderRightWidth => (&[1], true, false),
+        P::BorderBottomWidth => (&[2], true, false),
+        P::BorderLeftWidth => (&[3], true, false),
+        P::BorderTopStyle => (&[0], false, true),
+        P::BorderRightStyle => (&[1], false, true),
+        P::BorderBottomStyle => (&[2], false, true),
+        P::BorderLeftStyle => (&[3], false, true),
         _ => return Vec::new(),
     };
     sides
@@ -178,10 +192,10 @@ pub(crate) fn border_color_sides(property: CssProperty) -> &'static [u8] {
     use CssProperty as P;
     match property {
         P::Border | P::BorderColor => &[0, 1, 2, 3],
-        P::BorderTop => &[0],
-        P::BorderRight => &[1],
-        P::BorderBottom => &[2],
-        P::BorderLeft => &[3],
+        P::BorderTop | P::BorderTopColor => &[0],
+        P::BorderRight | P::BorderRightColor => &[1],
+        P::BorderBottom | P::BorderBottomColor => &[2],
+        P::BorderLeft | P::BorderLeftColor => &[3],
         _ => &[],
     }
 }
@@ -516,6 +530,7 @@ impl Tree {
             if self
                 .element(id)
                 .is_some_and(|element| element.focusable() && !element.disabled())
+                && crate::style::visible(self, environment, id)
             {
                 candidates.push(id);
             }
@@ -552,6 +567,7 @@ impl Tree {
             .and_then(|modal| modal.restore);
         let restorable = restore.filter(|id| {
             self.displayed(*id, environment)
+                && crate::style::visible(self, environment, *id)
                 && !self.inert(*id)
                 && self
                     .element(*id)
@@ -596,7 +612,7 @@ impl Tree {
     pub(crate) fn document_order(&self) -> Vec<u32> {
         self.subtree_order(ROOT_NODE)
     }
-    fn subtree_order(&self, root: u32) -> Vec<u32> {
+    pub(crate) fn subtree_order(&self, root: u32) -> Vec<u32> {
         let mut out = Vec::new();
         let mut stack = vec![root];
         while let Some(id) = stack.pop() {
@@ -1562,6 +1578,7 @@ impl Apply<'_, '_, '_> {
                 let element = self.element(node)?;
                 if !element.disabled()
                     && self.tree.displayed(node, &self.context.environment)
+                    && crate::style::visible(self.tree, &self.context.environment, node)
                     && !self.tree.inert(node)
                 {
                     let records = focus_records(self.tree, Some(node));
@@ -1684,11 +1701,14 @@ impl Apply<'_, '_, '_> {
                     }
                     return Ok(());
                 }
-                let scrolls = self
-                    .tree
-                    .computed(node, &self.context.environment)
-                    .get(&CssProperty::Overflow)
-                    .is_some_and(|overflow| overflow == "auto");
+                let scrolls =
+                    crate::style::overflow(&self.tree.computed(node, &self.context.environment))
+                        .is_some_and(|axes| {
+                            matches!(
+                                axes[1],
+                                crate::style::Overflow::Auto | crate::style::Overflow::Scroll
+                            )
+                        });
                 if scrolls {
                     self.element(node)?;
                     self.tree.scroll_to(node, argument);
@@ -1865,5 +1885,43 @@ impl varta_style::Document for Tree {
     }
     fn active(&self, id: u32) -> bool {
         self.pointer_contains(self.active.as_ref(), id)
+    }
+    fn attribute(&self, id: u32, name: &str) -> Option<&str> {
+        let attribute = Attribute::ALL
+            .iter()
+            .copied()
+            .find(|attribute| attribute.name() == name)?;
+        Tree::element(self, id)?
+            .attributes
+            .get(&attribute)
+            .map(String::as_str)
+    }
+    fn value(&self, id: u32) -> Option<&str> {
+        let element = Tree::element(self, id)?;
+        (element.text_field() || element.tag == Tag::Select).then_some(element.value.as_str())
+    }
+    fn text_data(&self, id: u32) -> Option<bool> {
+        match &self.nodes.get(&id)?.content {
+            Content::Text(text) => Some(!text.is_empty()),
+            Content::Element(_) => None,
+        }
+    }
+    fn state(&self, id: u32) -> varta_style::ElementState {
+        let Some(element) = Tree::element(self, id) else {
+            return varta_style::ElementState::default();
+        };
+        // A number field's text that is no valid floating-point number is
+        // the user's bad input (HTML §4.10.5.1.12).
+        let bad_input = element.tag == Tag::Input
+            && element.input_type() == "number"
+            && !element.value.is_empty()
+            && !varta_style::valid_float(&element.value);
+        varta_style::ElementState {
+            // The view shows dialogs only modally (`show_modal`).
+            open: element.open,
+            modal: element.open,
+            bad_input,
+            user_validity: element.editor.user_validity,
+        }
     }
 }

@@ -31,9 +31,7 @@ impl Painter<'_> {
         {
             return Ok(());
         }
-        let radius = self
-            .tree
-            .computed_property(self.node, self.env, CssProperty::BorderRadius);
+        let radius = crate::style::border_radius(&self.tree.computed_read(self.node, self.env));
         let raw = radius.as_deref().unwrap_or("0");
         let first = self.pieces[0];
         let snapped = snap::rect(first);

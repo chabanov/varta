@@ -356,9 +356,8 @@ impl Flow<'_> {
         if color.alpha() == 0.0 {
             return Ok(None);
         }
-        let raw = properties
-            .get(&CssProperty::BorderRadius)
-            .map_or("0", String::as_str);
+        let radius = crate::style::border_radius(properties);
+        let raw = radius.unwrap_or_else(|| "0".to_owned());
         let strip = inline_decor::Decoration::strip(raw, pieces, self.units, node)?;
         Ok(Some((strip, widths.map(f64::from), color)))
     }
@@ -372,6 +371,8 @@ impl Flow<'_> {
     ) -> Result<(), PaintError> {
         let hit_scope = pixmap.active_clip.clone();
         let hidden = pixmap.groups.last().is_some_and(|g| g.hidden);
+        // Each inline box draws only when it is visible (CSS Display 3 §4.1).
+        let outer_suppressed = pixmap.suppressed;
         let mut contexts = self
             .shape
             .needs_paint_order
@@ -429,6 +430,7 @@ impl Flow<'_> {
             if let Some(capture) = pixmap.capture.as_mut() {
                 capture.owner = node;
             }
+            pixmap.suppressed = pixmap.invisible.contains(&node);
             let pieces = self
                 .frame
                 .fragments
@@ -492,8 +494,7 @@ impl Flow<'_> {
                     .ok_or(PaintError::Unsupported(node))
                 })
                 .transpose()?;
-            let mut decoration = properties
-                .get(&CssProperty::BorderRadius)
+            let mut decoration = crate::style::border_radius(&properties)
                 .map(|raw| inline_decor::Decoration::new(raw, pieces, self.units, node))
                 .transpose()?
                 .flatten();
@@ -564,6 +565,7 @@ impl Flow<'_> {
                 offset += f64::from(piece.width);
             }
         }
+        pixmap.suppressed = outer_suppressed;
         let mut underlines = underline::Plan::rich(self, work)?;
         let mut colors = BTreeMap::new();
         paint_shaped_with(
@@ -597,6 +599,7 @@ impl Flow<'_> {
             if let Some(capture) = pixmap.capture.as_mut() {
                 capture.owner = node;
             }
+            pixmap.suppressed = pixmap.invisible.contains(&node);
             inline_outline::Painter {
                 tree: self.tree,
                 env: self.env,
@@ -612,6 +615,7 @@ impl Flow<'_> {
             }
             .paint(pixmap, work)?;
         }
+        pixmap.suppressed = outer_suppressed;
         if let Some(mut contexts) = contexts {
             let capture = pixmap.capture.take().expect("inline source capture began");
             for (owner, draw) in capture.outline_draws {
