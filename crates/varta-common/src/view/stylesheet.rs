@@ -5,8 +5,8 @@
 //!
 //! The text is tokenized by CSS Syntax 3 ([`super::syntax`]: comments
 //! dropped, escapes decoded) and parsed as a list of rules (§5.4): style
-//! rules whose selectors are compound class selectors with the subset's
-//! pseudo-classes or `:root` (Selectors 4 §6.6, §16), `@media` (Media
+//! rules whose selectors are the subset's complex selectors ([`selector`]:
+//! Selectors 4 combinators, type, class and pseudo-class selectors), `@media` (Media
 //! Queries 4/5, see [`media`]), `@layer` statements and blocks (Cascade 5
 //! §6.4) and `@property` (Properties and Values API 1 §3). Anything else is
 //! a violation: the subset fails closed instead of dropping what it does not
@@ -170,7 +170,7 @@ pub enum Violation {
     )]
     Forbidden,
     #[error(
-        "expected a selector: compound class selectors (`.a.b:hover`) or `:root`; combinators, type, id, attribute and other pseudo selectors are outside the subset"
+        "expected a selector: complex selectors of type, class and the subset's pseudo-class selectors with combinators; id and attribute selectors, pseudo-elements and `:has()` are outside the subset"
     )]
     Selector,
     #[error("expected `{0}`")]
