@@ -7,10 +7,11 @@
 //! the `v` flag's class set expressions (`classes`).
 use super::RegExpError;
 use super::set::{self, Set};
+use alloc::{borrow::ToOwned, boxed::Box, string::String, vec, vec::Vec};
 
 /// The parsed flags of a pattern.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Flags {
+pub struct Flags {
     pub global: bool,
     pub ignore_case: bool,
     pub multiline: bool,
@@ -24,53 +25,65 @@ pub(crate) struct Flags {
 }
 
 impl Flags {
-    /// The flags of `text`; `full` (v38) admits `d` and `v`.
-    pub(crate) fn parse(text: &str, full: bool) -> Result<Self, RegExpError> {
+    /// The flags of `text` (UTF-16 code units); `full` (v38) admits `d`
+    /// and `v`.
+    pub fn parse(text: &[u16], full: bool) -> Result<Self, RegExpError> {
         let mut flags = Self::default();
-        let mut seen = String::new();
-        for flag in text.chars() {
-            if seen.contains(flag) {
-                return Err(RegExpError::Syntax(format!(
-                    "Invalid flags supplied to RegExp constructor '{text}'"
-                )));
+        let mut seen: Vec<u16> = Vec::new();
+        for &unit in text {
+            if seen.contains(&unit) {
+                return Err(RegExpError::Flags);
             }
-            seen.push(flag);
-            let slot = match flag {
-                'g' => &mut flags.global,
-                'i' => &mut flags.ignore_case,
-                'm' => &mut flags.multiline,
-                's' => &mut flags.dot_all,
-                'u' => &mut flags.unicode,
-                'y' => &mut flags.sticky,
-                'd' if full => &mut flags.has_indices,
-                'v' if full => &mut flags.unicode_sets,
-                'd' => {
+            seen.push(unit);
+            let slot = match char::from_u32(u32::from(unit)) {
+                Some('g') => &mut flags.global,
+                Some('i') => &mut flags.ignore_case,
+                Some('m') => &mut flags.multiline,
+                Some('s') => &mut flags.dot_all,
+                Some('u') => &mut flags.unicode,
+                Some('y') => &mut flags.sticky,
+                Some('d') if full => &mut flags.has_indices,
+                Some('v') if full => &mut flags.unicode_sets,
+                Some('d') => {
                     return Err(RegExpError::Unsupported(
-                        "RegExp flag d (hasIndices match indices)".into(),
+                        "RegExp flag d (hasIndices match indices)",
                     ));
                 }
-                'v' => {
+                Some('v') => {
                     return Err(RegExpError::Unsupported(
-                        "RegExp flag v (unicodeSets class set notation)".into(),
+                        "RegExp flag v (unicodeSets class set notation)",
                     ));
                 }
-                _ => {
-                    return Err(RegExpError::Syntax(format!(
-                        "Invalid flags supplied to RegExp constructor '{text}'"
-                    )));
-                }
+                _ => return Err(RegExpError::Flags),
             };
             *slot = true;
         }
         if flags.unicode && flags.unicode_sets {
-            return Err(RegExpError::Syntax(format!(
-                "Invalid flags supplied to RegExp constructor '{text}'"
-            )));
+            return Err(RegExpError::Flags);
         }
         Ok(flags)
     }
+    /// The RegExp object's flag bits (`varta_common::regexp::bits`).
+    #[must_use]
+    pub fn bits(self) -> u32 {
+        use varta_common::regexp::bits;
+        [
+            (self.global, bits::GLOBAL),
+            (self.ignore_case, bits::IGNORE_CASE),
+            (self.multiline, bits::MULTILINE),
+            (self.dot_all, bits::DOT_ALL),
+            (self.unicode, bits::UNICODE),
+            (self.sticky, bits::STICKY),
+            (self.has_indices, bits::HAS_INDICES),
+            (self.unicode_sets, bits::UNICODE_SETS),
+        ]
+        .into_iter()
+        .filter_map(|(set, bit)| set.then_some(bit))
+        .fold(0, |all, bit| all | bit)
+    }
     /// The canonical `flags` text (`dgimsuvy` order).
-    pub(crate) fn text(self) -> String {
+    #[must_use]
+    pub fn text(self) -> String {
         [
             (self.has_indices, 'd'),
             (self.global, 'g'),
@@ -88,7 +101,7 @@ impl Flags {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Assertion {
+pub enum Assertion {
     Start,
     End,
     WordBoundary,
@@ -96,7 +109,7 @@ pub(crate) enum Assertion {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Node {
+pub enum Node {
     Empty,
     /// One pattern character (a code unit, or a code point under `u`).
     Char(u32),
@@ -133,13 +146,13 @@ pub(crate) enum Node {
 
 /// The flags a modifier group turns on (`Some(true)`) or off.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Modifiers {
+pub struct Modifiers {
     pub ignore_case: Option<bool>,
     pub multiline: Option<bool>,
     pub dot_all: Option<bool>,
 }
 impl Modifiers {
-    pub(crate) fn apply(self, mut flags: Flags) -> Flags {
+    pub fn apply(self, mut flags: Flags) -> Flags {
         flags.ignore_case = self.ignore_case.unwrap_or(flags.ignore_case);
         flags.multiline = self.multiline.unwrap_or(flags.multiline);
         flags.dot_all = self.dot_all.unwrap_or(flags.dot_all);
@@ -149,7 +162,7 @@ impl Modifiers {
 
 impl Node {
     /// Whether the node can match without consuming input.
-    pub(crate) fn nullable(&self) -> bool {
+    pub fn nullable(&self) -> bool {
         match self {
             Self::Empty | Self::Assert(_) | Self::Backref(_) | Self::Look { .. } => true,
             Self::Char(_) | Self::Class { .. } | Self::Dot => false,
@@ -160,7 +173,7 @@ impl Node {
         }
     }
     /// The capture indices inside the node, as an inclusive range.
-    pub(crate) fn groups(&self) -> Option<(usize, usize)> {
+    pub fn groups(&self) -> Option<(usize, usize)> {
         fn join(a: Option<(usize, usize)>, b: Option<(usize, usize)>) -> Option<(usize, usize)> {
             match (a, b) {
                 (Some((a0, a1)), Some((b0, b1))) => Some((a0.min(b0), a1.max(b1))),
@@ -187,7 +200,7 @@ impl Node {
 }
 
 /// A parsed pattern.
-pub(crate) struct Pattern {
+pub struct Pattern {
     pub node: Node,
     /// Number of capturing groups.
     pub groups: usize,
@@ -221,16 +234,23 @@ const HEX_RADIX: u32 = 16;
 const OCTAL_RADIX: u32 = 8;
 const DECIMAL_RADIX: u32 = 10;
 
-/// Pattern characters: UTF-16 code units, or code points under `u`.
-fn characters(pattern: &str, unicode: bool) -> Vec<u32> {
-    if unicode {
-        pattern.chars().map(u32::from).collect()
-    } else {
-        pattern.encode_utf16().map(u32::from).collect()
+/// Pattern characters: UTF-16 code units, or code points under `u` (a
+/// surrogate pair is one code point; a lone surrogate stays itself).
+fn characters(pattern: &[u16], unicode: bool) -> Vec<u32> {
+    if !unicode {
+        return pattern.iter().map(|&unit| u32::from(unit)).collect();
     }
+    char::decode_utf16(pattern.iter().copied())
+        .map(|decoded| match decoded {
+            Ok(character) => u32::from(character),
+            Err(lone) => u32::from(lone.unpaired_surrogate()),
+        })
+        .collect()
 }
 
-pub(crate) fn parse(pattern: &str, flags: Flags, full: bool) -> Result<Pattern, RegExpError> {
+/// Parse `pattern` (UTF-16 code units) under `flags`; `full` (v38) admits
+/// the whole ES2025 grammar.
+pub fn parse(pattern: &[u16], flags: Flags, full: bool) -> Result<Pattern, RegExpError> {
     // Under `v` the pattern grammar is the Unicode one (with class sets).
     let mut grammar = flags;
     grammar.unicode = flags.unicode || flags.unicode_sets;
@@ -240,12 +260,10 @@ pub(crate) fn parse(pattern: &str, flags: Flags, full: bool) -> Result<Pattern, 
         chars,
         at: 0,
         flags: grammar,
-        original: flags,
         full,
         named,
         total,
         names: vec![None],
-        pattern,
         paths: Vec::new(),
         path: Vec::new(),
         disjunctions: 0,
@@ -299,20 +317,17 @@ enum ClassAtom {
     Set(Set),
 }
 
-pub(super) struct Parser<'a> {
+pub(super) struct Parser {
     pub(super) chars: Vec<u32>,
     pub(super) at: usize,
     /// The flags in effect (pattern modifiers change `i`, `m` and `s`);
     /// `unicode` is set under `v` too.
     pub(super) flags: Flags,
-    /// The pattern's flags, for diagnostics.
-    original: Flags,
     /// V38: the full ECMAScript 2025 grammar.
     full: bool,
     named: bool,
     total: usize,
     names: Vec<Option<String>>,
-    pattern: &'a str,
     /// V38: each named group's name and alternative path (MightBothParticipate).
     paths: Vec<(String, Vec<(usize, usize)>)>,
     /// V38: the (disjunction, alternative) path to the cursor.
@@ -326,13 +341,9 @@ pub(super) struct Parser<'a> {
 /// names `references[i]`.
 const NAMED: usize = usize::MAX;
 
-impl Parser<'_> {
-    pub(super) fn error(&self, message: &str) -> RegExpError {
-        RegExpError::Syntax(format!(
-            "Invalid regular expression: /{}/{}: {message}",
-            self.pattern,
-            self.original.text()
-        ))
+impl Parser {
+    pub(super) fn error(&self, message: &'static str) -> RegExpError {
+        RegExpError::Pattern(message)
     }
     /// V38: named backreferences become the groups of their name.
     fn resolve(&self, node: &mut Node) -> Result<(), RegExpError> {
@@ -511,7 +522,7 @@ impl Parser<'_> {
             }
             _ => return Ok(()),
         };
-        Err(RegExpError::Unsupported(kind.into()))
+        Err(RegExpError::Unsupported(kind))
     }
     /// A quantifier after an atom: `(min, max, greedy)`.
     fn quantifier(&mut self) -> Result<Option<(u32, Option<u32>, bool)>, RegExpError> {
@@ -623,7 +634,7 @@ impl Parser<'_> {
                     .any(|existing| *existing == name)
                 {
                     return Err(RegExpError::Unsupported(
-                        "RegExp duplicate named capture groups".into(),
+                        "RegExp duplicate named capture groups",
                     ));
                 }
                 self.names.push(Some(name));
@@ -633,7 +644,7 @@ impl Parser<'_> {
             } else if matches!(self.peek(), Some(ch) if [c(b'i'), c(b'm'), c(b's'), c(b'-')].contains(&ch))
             {
                 return Err(RegExpError::Unsupported(
-                    "RegExp pattern modifiers (?ims-ims:…)".into(),
+                    "RegExp pattern modifiers (?ims-ims:…)",
                 ));
             } else {
                 return Err(self.error("Invalid group"));
@@ -724,7 +735,7 @@ impl Parser<'_> {
                 ch = self.name_escape()?;
             } else if ch == c(b'\\') {
                 return Err(RegExpError::Unsupported(
-                    "RegExp escape sequence in a capture group name".into(),
+                    "RegExp escape sequence in a capture group name",
                 ));
             }
             // Without `u`, an astral name character is a surrogate pair.
@@ -780,16 +791,14 @@ impl Parser<'_> {
             }
             self.group_name()?;
             return Err(RegExpError::Unsupported(
-                "RegExp named backreference \\k<name> (backreferences need backtracking; v37 matches in linear time)".into(),
+                "RegExp named backreference \\k<name> (backreferences need backtracking; v37 matches in linear time)",
             ));
         }
         if (c(b'1')..=c(b'9')).contains(&next) {
             let mut at = self.at + 1;
             let number = self.decimal(&mut at).unwrap_or(0);
             if number as usize <= self.total {
-                return Err(RegExpError::Unsupported(format!(
-                    "RegExp backreference \\{number} (backreferences need backtracking; v37 matches in linear time)"
-                )));
+                return Err(RegExpError::Backreference(number));
             }
             if self.flags.unicode {
                 return Err(self.error("Invalid escape"));
@@ -885,7 +894,7 @@ impl Parser<'_> {
             Some('W') => word().complement(max),
             Some('p' | 'P') if self.flags.unicode => {
                 return Err(RegExpError::Unsupported(
-                    "RegExp Unicode property escape \\p{…}".into(),
+                    "RegExp Unicode property escape \\p{…}",
                 ));
             }
             _ => return Ok(None),
@@ -1149,12 +1158,12 @@ fn add(set: &mut Set, atom: ClassAtom) {
 fn digit(ch: u32, radix: u32) -> Option<u32> {
     char::from_u32(ch)?.to_digit(radix)
 }
-pub(crate) fn is_high(unit: u32) -> bool {
+pub fn is_high(unit: u32) -> bool {
     (0xD800..=0xDBFF).contains(&unit)
 }
-pub(crate) fn is_low(unit: u32) -> bool {
+pub fn is_low(unit: u32) -> bool {
     (0xDC00..=0xDFFF).contains(&unit)
 }
-pub(crate) fn combine(high: u32, low: u32) -> u32 {
+pub fn combine(high: u32, low: u32) -> u32 {
     0x1_0000 + ((high - 0xD800) << 10) + (low - 0xDC00)
 }

@@ -3,18 +3,19 @@
 //! (`sc`), `Script_Extensions` (`scx`), the binary properties of ECMA-262's
 //! table, `Any`, `ASCII` and `Assigned` from the ICU4X 2.4 compiled data,
 //! and under `v` the emoji properties of strings of Unicode Emoji 17.0
-//! (`emoji_sequences.txt`). Names match strictly, as the specification
-//! requires (`\p{l}` and `\p{ L}` are errors).
+//! (`emoji_sequences.txt`, compiled into `emoji_table`). Names match
+//! strictly, as the specification requires (`\p{l}` and `\p{ L}` are
+//! errors).
 use super::set::{MAX_CODE_POINT, Set};
+use alloc::{collections::BTreeSet, vec::Vec};
 use icu_properties::{
     CodePointMapData, CodePointSetData, PropertyParser,
     props::{GeneralCategory, GeneralCategoryGroup, Script},
     script::ScriptWithExtensions,
 };
-use std::collections::BTreeSet;
 
 /// A resolved property: code points, and under `v` strings of several.
-pub(crate) struct Property {
+pub(super) struct Property {
     pub set: Set,
     pub strings: BTreeSet<Vec<u32>>,
 }
@@ -23,7 +24,6 @@ const GENERAL_CATEGORY: [&str; 2] = ["General_Category", "gc"];
 const SCRIPT: [&str; 2] = ["Script", "sc"];
 const SCRIPT_EXTENSIONS: [&str; 2] = ["Script_Extensions", "scx"];
 const ASCII_LAST: u32 = 0x7F;
-const EMOJI: &str = include_str!("emoji_sequences.txt");
 /// The union of every emoji property of strings (UTS #51 ED-27).
 const RGI_EMOJI: &str = "RGI_Emoji";
 /// The properties of strings `RGI_Emoji` unites.
@@ -36,7 +36,7 @@ const RGI_PARTS: [&str; 6] = [
     "RGI_Emoji_ZWJ_Sequence",
 ];
 
-fn ranges(ranges: impl Iterator<Item = std::ops::RangeInclusive<u32>>) -> Set {
+fn ranges(ranges: impl Iterator<Item = core::ops::RangeInclusive<u32>>) -> Set {
     Set::from_ranges(ranges.map(|range| (*range.start(), *range.end())))
 }
 fn general_category(value: &str) -> Option<Set> {
@@ -79,15 +79,33 @@ fn emoji(name: &str) -> Option<Vec<Vec<u32>>> {
         }
         return Some(all);
     }
-    let header = format!("[{name}]");
-    let mut lines = EMOJI.lines().skip_while(|line| *line != header);
+    let (_, mut table) = *super::emoji_table::PROPERTIES
+        .iter()
+        .find(|(property, _)| *property == name)?;
+    let mut sequences = Vec::new();
+    while let Some((&length, rest)) = table.split_first() {
+        let (sequence, next) = rest.split_at_checked(usize::try_from(length).ok()?)?;
+        sequences.push(sequence.to_vec());
+        table = next;
+    }
+    Some(sequences)
+}
+
+/// The sequences of the emoji property of strings `name` in the text of
+/// `emoji_sequences.txt` (the generator and check of `emoji_table`).
+#[cfg(test)]
+pub(super) fn emoji_text(text: &str, name: &str) -> Option<Vec<Vec<u32>>> {
+    fn header(line: &str) -> Option<&str> {
+        line.strip_prefix('[')?.strip_suffix(']')
+    }
+    let mut lines = text.lines().skip_while(|line| header(line) != Some(name));
     lines.next()?;
     let hex = |text: &str| u32::from_str_radix(text, 16).ok();
     let mut sequences = Vec::new();
     for line in lines.take_while(|line| !line.starts_with('[')) {
         if let Some((first, last)) = line.split_once("..") {
             for code_point in hex(first)?..=hex(last)? {
-                sequences.push(vec![code_point]);
+                sequences.push(alloc::vec![code_point]);
             }
         } else {
             sequences.push(line.split(' ').map(hex).collect::<Option<Vec<_>>>()?);
@@ -96,10 +114,14 @@ fn emoji(name: &str) -> Option<Vec<Vec<u32>>> {
     Some(sequences)
 }
 
+/// The emoji properties of strings `RGI_Emoji` unites.
+#[cfg(test)]
+pub(super) const EMOJI_PARTS: [&str; 6] = RGI_PARTS;
+
 /// The property `name` (`name=value` when `value` is present), with the
 /// properties of strings when `strings` (`v`, not negated); `None` for an
 /// unknown name or value.
-pub(crate) fn lookup(name: &str, value: Option<&str>, strings: bool) -> Option<Property> {
+pub(super) fn lookup(name: &str, value: Option<&str>, strings: bool) -> Option<Property> {
     let set = match value {
         Some(value) if GENERAL_CATEGORY.contains(&name) => general_category(value),
         Some(value) if SCRIPT.contains(&name) => script(value, false),
@@ -116,17 +138,18 @@ pub(crate) fn lookup(name: &str, value: Option<&str>, strings: bool) -> Option<P
     if value.is_some() || !strings || !(name == RGI_EMOJI || RGI_PARTS.contains(&name)) {
         return None;
     }
-    let mut property = Property {
-        set: Set::default(),
-        strings: BTreeSet::new(),
-    };
+    let mut singles = Vec::new();
+    let mut strings = BTreeSet::new();
     for sequence in emoji(name)? {
         match sequence.as_slice() {
-            [single] => property.set.add(*single, *single),
+            [single] => singles.push((*single, *single)),
             _ => {
-                property.strings.insert(sequence);
+                strings.insert(sequence);
             }
         }
     }
-    Some(property)
+    Some(Property {
+        set: Set::from_ranges(singles),
+        strings,
+    })
 }

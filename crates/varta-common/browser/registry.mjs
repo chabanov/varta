@@ -5028,6 +5028,28 @@ export const registry = freeze({
       "instanceBookkeeping": false,
       "kvBookkeeping": false,
       "minHostAbi": 34,
+      "name": "regexp_compile",
+      "networkBookkeeping": false,
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "resultGlobals": true,
+      "results": [
+        "i32"
+      ],
+      "scheduler": false,
+      "stringResult": true,
+      "timerBookkeeping": false
+    },
+    {
+      "admittedUnder": [],
+      "capability": null,
+      "instanceBookkeeping": false,
+      "kvBookkeeping": false,
+      "minHostAbi": 34,
       "name": "regexp_exec",
       "networkBookkeeping": false,
       "params": [

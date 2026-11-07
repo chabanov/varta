@@ -176,6 +176,47 @@ pub fn line_terminator(unit: u32) -> bool {
     matches!(unit, 0x0A | 0x0D | 0x2028 | 0x2029)
 }
 
+/// The flag bits of a RegExp object (the `RegExp` preludes' `bits`), in the
+/// `dgimsuvy` order of its getters.
+pub mod bits {
+    pub const GLOBAL: u32 = 1;
+    pub const IGNORE_CASE: u32 = 2;
+    pub const MULTILINE: u32 = 4;
+    pub const DOT_ALL: u32 = 8;
+    pub const UNICODE: u32 = 16;
+    pub const STICKY: u32 = 32;
+    /// V38: `d`.
+    pub const HAS_INDICES: u32 = 64;
+    /// V38: `v`.
+    pub const UNICODE_SETS: u32 = 128;
+}
+
+/// The record the linked `regexp_compile` returns to the v38 RegExp prelude
+/// (`prelude/regexp_v38.ts` mirrors these names): 32-bit little-endian
+/// words read like capture slots, then UTF-16 texts.
+pub mod construction {
+    /// Word: [`OK`] or [`SYNTAX_ERROR`].
+    pub const STATUS: usize = 0;
+    pub const OK: i32 = 0;
+    pub const SYNTAX_ERROR: i32 = 1;
+    /// After [`SYNTAX_ERROR`]: the SyntaxError message, from this unit on.
+    pub const MESSAGE_UNIT: usize = 2;
+    /// Word: the [`super::bits`] of the flags.
+    pub const BITS: usize = 1;
+    /// Word: the captures, the whole match included.
+    pub const COUNT: usize = 2;
+    /// Words: the unit lengths of the texts, in their order.
+    pub const PROGRAM_UNITS: usize = 3;
+    pub const LEAN_UNITS: usize = 4;
+    pub const NAMES_UNITS: usize = 5;
+    pub const SOURCE_UNITS: usize = 6;
+    pub const FLAGS_UNITS: usize = 7;
+    /// The first unit of the texts: the program, the lean program, the
+    /// comma-separated names of groups 1.. (empty without named groups),
+    /// `source` and the canonical `flags`.
+    pub const TEXT_UNIT: usize = 16;
+}
+
 /// The first code point outside ASCII.
 const ASCII: u32 = 0x80;
 

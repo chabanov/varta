@@ -19,22 +19,13 @@ const INTRINSICS: [(&str, RegExpIntrinsic); 3] = [
 /// The string methods that take a RegExp (or a pattern string).
 pub(super) const STRING_METHODS: [&str; 5] =
     ["match", "matchAll", "replace", "replaceAll", "search"];
-/// Flag bits of `RegExp.compiled`, as in the prelude.
-const GLOBAL: u32 = 1;
-const IGNORE_CASE: u32 = 2;
-const MULTILINE: u32 = 4;
-const DOT_ALL: u32 = 8;
-const UNICODE: u32 = 16;
-const STICKY: u32 = 32;
-/// V38 (`full_regexp`): the `d` and `v` flags.
-const HAS_INDICES: u32 = 64;
-const UNICODE_SETS: u32 = 128;
+/// V38 (`full_regexp`): the run-time pattern compiler, `varta.regexp.compile`.
+const COMPILE_INTRINSIC: &str = "varta.regexp.compile";
 /// The split limit when none is given (2^32 - 1).
 const NO_LIMIT: f64 = u32::MAX as f64;
 /// Prelude fields of a match array: element 0 and every element.
 const FIRST: &str = "first";
 const VALUES: &str = "values";
-const GROUP_SEPARATOR: &str = ",";
 /// The match-array parameter of a synthesized replacer adapter; no source
 /// identifier can spell it.
 const MATCH_PARAMETER: &str = "%match";
@@ -80,12 +71,15 @@ impl Lower<'_> {
         call: &ast::CallExpr,
         name: &str,
     ) -> Result<Option<Expr>> {
-        let Some((_, op)) = INTRINSICS.iter().find(|(intrinsic, _)| *intrinsic == name) else {
-            return Ok(None);
-        };
         if !engine::is_prelude_source(self.source) || !self.types.profile.regexp() {
             return Ok(None);
         }
+        if name == COMPILE_INTRINSIC && self.types.profile.full_regexp() {
+            return self.regexp_compile_intrinsic(call).map(Some);
+        }
+        let Some((_, op)) = INTRINSICS.iter().find(|(intrinsic, _)| *intrinsic == name) else {
+            return Ok(None);
+        };
         let number = self.types.number();
         let (params, ty): (&[Type], Type) = match op {
             RegExpIntrinsic::Exec => (
@@ -122,6 +116,29 @@ impl Lower<'_> {
             ty,
             kind,
         }))
+    }
+
+    /// `varta.regexp.compile(pattern, flags)`: the linked `regexp_compile`.
+    fn regexp_compile_intrinsic(&mut self, call: &ast::CallExpr) -> Result<Expr> {
+        if call.args.len() != 2 || call.args.iter().any(|arg| arg.spread.is_some()) {
+            return Err(invalid(format!("{COMPILE_INTRINSIC} expects 2 arguments")));
+        }
+        let mut args = Vec::new();
+        for arg in &call.args {
+            let value = self.expr(&arg.expr)?;
+            if value.ty != Type::String {
+                return Err(type_error(format!(
+                    "{COMPILE_INTRINSIC} requires string, found {}",
+                    value.ty
+                )));
+            }
+            args.push(value);
+        }
+        Ok(Expr {
+            span: call.span,
+            ty: Type::String,
+            kind: E::Host(varta_common::HostOperation::RegExpCompile, args),
+        })
     }
 
     fn prelude_class_id(&self, name: &str) -> Result<u32> {
@@ -235,41 +252,17 @@ impl Lower<'_> {
     ) -> Result<Expr> {
         let crate::regexp::RegExp {
             source,
+            pattern,
             flags,
             compiled,
         } = regexp;
-        let bits = [
-            (flags.global, GLOBAL),
-            (flags.ignore_case, IGNORE_CASE),
-            (flags.multiline, MULTILINE),
-            (flags.dot_all, DOT_ALL),
-            (flags.unicode, UNICODE),
-            (flags.sticky, STICKY),
-            (flags.has_indices, HAS_INDICES),
-            (flags.unicode_sets, UNICODE_SETS),
-        ]
-        .into_iter()
-        .filter_map(|(set, bit)| set.then_some(bit))
-        .fold(0, |bits, bit| bits | bit);
-        let names = if compiled.names.is_empty() {
-            String::new()
-        } else {
-            (1..=compiled.groups)
-                .map(|group| {
-                    compiled
-                        .names
-                        .iter()
-                        .find(|(_, index)| *index == group)
-                        .map_or("", |(name, _)| name.as_str())
-                })
-                .collect::<Vec<_>>()
-                .join(GROUP_SEPARATOR)
-        };
+        let bits = flags.bits();
+        let names = compiled.joined_names();
         let bytes = |units: &[u16]| units.iter().flat_map(|unit| unit.to_le_bytes()).collect();
         let program = bytes(&compiled.units);
         let lean = bytes(&compiled.lean);
         let profile = self.types.profile;
-        let args = vec![
+        let mut args = vec![
             string(span, profile.string_bytes(&source)),
             string(span, profile.string_bytes(&flags.text())),
             number(span, f64::from(bits)),
@@ -278,6 +271,10 @@ impl Lower<'_> {
             string(span, profile.string_bytes(&names)),
             number(span, (compiled.groups + 1) as f64),
         ];
+        // V38 keeps [[OriginalSource]] for `new RegExp(regexp, flags)`.
+        if profile.full_regexp() {
+            args.push(string(span, profile.string_bytes(&pattern)));
+        }
         self.regexp_static("compiled", args, span)
     }
     /// A pattern error as this profile reports it.
@@ -319,12 +316,52 @@ impl Lower<'_> {
             Some(arg) => constant_text(&arg.expr),
         };
         let (Some(pattern), Some(flags)) = (constant(0), constant(1)) else {
+            if self.types.profile.full_regexp() {
+                return self.regexp_runtime("create", args, new.span);
+            }
             return Err(self.source.locate(unsupported(NON_CONSTANT), new.span));
         };
         let compiled =
             crate::regexp::constructed(&pattern, &flags, self.types.profile.full_regexp())
                 .map_err(|e| self.source.locate(self.regexp_error(e), new.span))?;
         self.compiled_regexp(compiled, new.span)
+    }
+    /// V38: `new RegExp(…)` (`create`) or `RegExp(…)` (`call`) whose
+    /// pattern is compiled at run time by the linked pattern compiler.
+    fn regexp_runtime(
+        &mut self,
+        target: &str,
+        args: &[ast::ExprOrSpread],
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        let mut values = Vec::new();
+        for arg in args {
+            values.push(self.expr(&arg.expr)?);
+        }
+        if values.is_empty() {
+            values.push(string(span, Vec::new()));
+        }
+        if values.len() == 1 {
+            values.push(Expr {
+                span,
+                ty: Type::Undefined,
+                kind: E::Integer(0),
+            });
+        }
+        self.regexp_static(target, values, span)
+    }
+    /// V38: `RegExp(pattern?, flags?)` called without `new`
+    /// (§22.2.4.1: a RegExp without flags is returned itself).
+    pub(super) fn regexp_call(&mut self, call: &ast::CallExpr) -> Result<Expr> {
+        let args = &call.args;
+        if args.len() > 2 || args.iter().any(|arg| arg.spread.is_some()) || call.type_args.is_some()
+        {
+            return Err(self.source.locate(
+                invalid("RegExp expects a pattern and optional flags"),
+                call.span,
+            ));
+        }
+        self.regexp_runtime("call", args, call.span)
     }
     /// The RegExp argument of `search`, `match` or `matchAll`: a RegExp
     /// value, or a string literal compiled like `new RegExp(text, flags)`.

@@ -17,9 +17,9 @@ swc_common = "26.0.0"
 swc_ecma_parser = "46.1.2"
 swc_ecma_ast = "29.0.0"
 swc_ecma_visit = "=29.0.0"
-# Unicode property tables for v38 RegExp `\p{…}` escapes, resolved at compile
-# time into class ranges (already locked through the view crate and Parley).
-icu_properties.workspace = true
+# The shared RegExp pattern compiler (`regexp::pattern`), which v38 guests
+# also link to compile patterns built at run time.
+varta-intrinsics = { path = "../varta-intrinsics" }
 
 [features]
 # Test-only: exposes the K4.4 suspension lowering hook and frame test exports

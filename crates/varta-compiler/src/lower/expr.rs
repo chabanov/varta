@@ -1150,6 +1150,13 @@ impl Lower<'_> {
         if let Some(class) = self.error_callee(callee) {
             return self.error_constructor(class, &call.args, call.type_args.is_some(), call.span);
         }
+        // V38: `RegExp(pattern, flags)` called as a function.
+        if self.types.profile.full_regexp()
+            && let Some(class) = self.class_callee(callee)
+            && self.regexp_constructor(class)
+        {
+            return self.regexp_call(call);
+        }
         if let ast::Expr::Member(member) = &**callee
             && self.class_late_receiver(member)
             && !self.prelude_member(callee)

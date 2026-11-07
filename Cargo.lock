@@ -5202,7 +5202,6 @@ dependencies = [
 name = "varta-compiler"
 version = "0.1.0"
 dependencies = [
- "icu_properties",
  "swc_common",
  "swc_ecma_ast",
  "swc_ecma_parser",
@@ -5210,6 +5209,7 @@ dependencies = [
  "thiserror 2.0.21",
  "varta-bigint",
  "varta-common",
+ "varta-intrinsics",
  "wasm-encoder 0.241.2",
  "wasmparser 0.241.2",
  "wasmtime",
@@ -5262,6 +5262,7 @@ dependencies = [
 name = "varta-intrinsics"
 version = "0.1.0"
 dependencies = [
+ "icu_properties",
  "libm",
  "num-bigint",
  "ryu-js",

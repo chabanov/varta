@@ -4,10 +4,13 @@
 // (`prelude/regexp.ts`) under v38 and is loaded the same way; see
 // docs/architecture.md (Full RegExp).
 //
-// Patterns are compiled ahead of time into backtracking programs (format 2)
-// and constructed through `RegExp.compiled`. `varta.regexp.exec` is the
-// linked `regexp_exec` (guest code metered as fuel, no host call), `slot`
-// reads one capture position of its result and `unit` one code unit.
+// Literals and constant `new RegExp` calls are compiled ahead of time into
+// backtracking programs (format 2) and constructed through `RegExp.compiled`;
+// a pattern only known at run time is compiled by `varta.regexp.compile`, the
+// linked `regexp_compile` (the same pattern compiler, as guest code metered as
+// fuel). `varta.regexp.exec` is the linked `regexp_exec` (guest code metered
+// as fuel, no host call), `slot` reads one 32-bit word of a result (a capture
+// position) and `unit` one code unit.
 
 const NOT_GLOBAL_MATCH_ALL = 'String.prototype.matchAll called with a non-global RegExp argument';
 const NOT_GLOBAL_REPLACE_ALL = 'replaceAll must be called with a global RegExp';
@@ -34,6 +37,112 @@ const UNICODE = 16;
 const STICKY = 32;
 const HAS_INDICES = 64;
 const UNICODE_SETS = 128;
+// The construction record of `varta.regexp.compile`
+// (`varta_common::regexp::construction`): words, then texts from TEXT_UNIT.
+const RECORD_STATUS = 0;
+const RECORD_OK = 0;
+const RECORD_MESSAGE_UNIT = 2;
+const RECORD_BITS = 1;
+const RECORD_COUNT = 2;
+const RECORD_PROGRAM_UNITS = 3;
+const RECORD_LEAN_UNITS = 4;
+const RECORD_NAMES_UNITS = 5;
+const RECORD_SOURCE_UNITS = 6;
+const RECORD_FLAGS_UNITS = 7;
+const RECORD_TEXT_UNIT = 16;
+// RegExp.escape (ES2025 §22.2.5.1).
+const HEX_DIGITS = '0123456789abcdef';
+const HEX = 16;
+const BYTE_LAST = 0xff;
+const SUPPLEMENTARY = 0x10000;
+const SURROGATE_BITS = 1024;
+// SyntaxCharacter and `/`, escaped with a backslash.
+const ESCAPE_SYNTAX = '^$\\.*+?()[]{}|/';
+// ControlEscape: TAB, LF, VT, FF and CR as `\t`, `\n`, `\v`, `\f`, `\r`.
+const ESCAPE_CONTROLS = '\t\n\v\f\r';
+const ESCAPE_LETTERS = 'tnvfr';
+// otherPunctuators, escaped as hexadecimal.
+const ESCAPE_PUNCTUATORS = ',-=<>#&!%:;@~\'`"';
+const ZWNBSP = 0xfeff;
+// WhiteSpace beyond the controls (USP, the Zs characters) and the line
+// terminators LS and PS.
+const TAB = 0x09;
+const LF = 0x0a;
+const VT = 0x0b;
+const FF = 0x0c;
+const CR = 0x0d;
+const SPACE = 0x20;
+const NBSP = 0xa0;
+const OGHAM_SPACE = 0x1680;
+const EN_QUAD = 0x2000;
+const HAIR_SPACE = 0x200a;
+const LINE_SEPARATOR = 0x2028;
+const PARAGRAPH_SEPARATOR = 0x2029;
+const NARROW_NBSP = 0x202f;
+const MATH_SPACE = 0x205f;
+const IDEOGRAPHIC_SPACE = 0x3000;
+const ASCII_END = 0x80;
+const DIGIT_FIRST = 0x30;
+const DIGIT_LAST = 0x39;
+const UPPER_FIRST = 0x41;
+const UPPER_LAST = 0x5a;
+const LOWER_FIRST = 0x61;
+const LOWER_LAST = 0x7a;
+const BYTE_DIGITS = 2;
+const UNIT_DIGITS = 4;
+
+// `digits` lowercase hexadecimal digits of `value`.
+function hex(value: number, digits: number): string {
+  let text = '';
+  let rest = value;
+  for (let index = 0; index < digits; index++) {
+    const digit = rest % HEX;
+    text = HEX_DIGITS.slice(digit, digit + 1) + text;
+    rest = (rest - digit) / HEX;
+  }
+  return text;
+}
+
+// WhiteSpace or LineTerminator (§12.2, §12.3).
+function space(code: number): boolean {
+  return (
+    code === TAB ||
+    code === LF ||
+    code === VT ||
+    code === FF ||
+    code === CR ||
+    code === SPACE ||
+    code === NBSP ||
+    code === OGHAM_SPACE ||
+    (code >= EN_QUAD && code <= HAIR_SPACE) ||
+    code === LINE_SEPARATOR ||
+    code === PARAGRAPH_SEPARATOR ||
+    code === NARROW_NBSP ||
+    code === MATH_SPACE ||
+    code === IDEOGRAPHIC_SPACE ||
+    code === ZWNBSP
+  );
+}
+
+// EncodeForRegExpEscape (§22.2.5.1.1) of the code point `code`, spelled `text`.
+function escapeCodePoint(code: number, text: string): string {
+  if (code < ASCII_END && ESCAPE_SYNTAX.indexOf(text) >= 0) {
+    return '\\' + text;
+  }
+  const control = code < ASCII_END ? ESCAPE_CONTROLS.indexOf(text) : -1;
+  if (control >= 0) {
+    return '\\' + ESCAPE_LETTERS.slice(control, control + 1);
+  }
+  if (
+    (code < ASCII_END && ESCAPE_PUNCTUATORS.indexOf(text) >= 0) ||
+    space(code) ||
+    (code >= HIGH_FIRST && code <= LOW_LAST)
+  ) {
+    // Every such code point is in the BMP: one code unit.
+    return code <= BYTE_LAST ? '\\x' + hex(code, BYTE_DIGITS) : '\\u' + hex(code, UNIT_DIGITS);
+  }
+  return text;
+}
 
 // AdvanceStringIndex.
 function advance(input: string, index: number, unicode: boolean): number {
@@ -344,9 +453,12 @@ export class RegExp {
   private readonly names: string;
   private readonly count: number;
   private readonly bits: number;
+  // [[OriginalSource]]: the pattern as written (`source` escapes it).
+  private readonly pattern: string;
 
   // Construction is compiler-only: `RegExp.compiled` is the target of every
-  // literal and constant `new RegExp`.
+  // literal and constant `new RegExp`, `RegExp.create` and `RegExp.call` of
+  // every other `new RegExp(…)` and `RegExp(…)`.
   constructor(
     source: string,
     flags: string,
@@ -355,6 +467,7 @@ export class RegExp {
     lean: string,
     names: string,
     count: number,
+    pattern: string,
   ) {
     this.lastIndex = 0;
     this.source = source;
@@ -372,6 +485,7 @@ export class RegExp {
     this.names = names;
     this.count = count;
     this.bits = bits;
+    this.pattern = pattern;
   }
 
   private static compiled(
@@ -382,8 +496,107 @@ export class RegExp {
     lean: string,
     names: string,
     count: number,
+    pattern: string,
   ): RegExp {
-    return new RegExp(source, flags, bits, program, lean, names, count);
+    return new RegExp(source, flags, bits, program, lean, names, count, pattern);
+  }
+
+  // RegExpInitialize at run time (§22.2.3.3): the linked pattern compiler,
+  // or V8's SyntaxError.
+  private static initialize(pattern: string, flags: string): RegExp {
+    const record = varta.regexp.compile(pattern, flags);
+    if (varta.regexp.slot(record, RECORD_STATUS) !== RECORD_OK) {
+      throw new SyntaxError(record.slice(RECORD_MESSAGE_UNIT));
+    }
+    let at = RECORD_TEXT_UNIT;
+    const parts: string[] = [];
+    for (const word of [
+      RECORD_PROGRAM_UNITS,
+      RECORD_LEAN_UNITS,
+      RECORD_NAMES_UNITS,
+      RECORD_SOURCE_UNITS,
+      RECORD_FLAGS_UNITS,
+    ]) {
+      const end = at + varta.regexp.slot(record, word);
+      parts.push(record.slice(at, end));
+      at = end;
+    }
+    return new RegExp(
+      parts[3]!,
+      parts[4]!,
+      varta.regexp.slot(record, RECORD_BITS),
+      parts[0]!,
+      parts[1]!,
+      parts[2]!,
+      varta.regexp.slot(record, RECORD_COUNT),
+      pattern,
+    );
+  }
+
+  // A new RegExp with the same pattern and flags (`lastIndex` 0).
+  private copy(): RegExp {
+    return new RegExp(
+      this.source,
+      this.flags,
+      this.bits,
+      this.program,
+      this.lean,
+      this.names,
+      this.count,
+      this.pattern,
+    );
+  }
+
+  // `new RegExp(pattern, flags)` (§22.2.4.1) with arguments only known at
+  // run time: a RegExp pattern keeps its [[OriginalSource]] and, without
+  // flags, its [[OriginalFlags]].
+  private static create(pattern: string | RegExp, flags: string | undefined): RegExp {
+    if (pattern instanceof RegExp) {
+      return flags === undefined ? pattern.copy() : RegExp.initialize(pattern.pattern, flags);
+    }
+    return RegExp.initialize(pattern, flags ?? '');
+  }
+
+  // `RegExp(pattern, flags)` called as a function: a RegExp pattern without
+  // flags is returned itself (its constructor is `RegExp`).
+  private static call(pattern: string | RegExp, flags: string | undefined): RegExp {
+    if (pattern instanceof RegExp && flags === undefined) {
+      return pattern;
+    }
+    return RegExp.create(pattern, flags);
+  }
+
+  // RegExp.escape (ES2025 §22.2.5.1): `text` with every character that
+  // could be pattern syntax escaped; a leading digit or ASCII letter as
+  // `\x` hexadecimal.
+  static escape(text: string): string {
+    let escaped = '';
+    let index = 0;
+    while (index < text.length) {
+      const unit = varta.regexp.unit(text, index);
+      let code = unit;
+      let width = 1;
+      if (unit >= HIGH_FIRST && unit <= HIGH_LAST && index + 1 < text.length) {
+        const low = varta.regexp.unit(text, index + 1);
+        if (low >= LOW_FIRST && low <= LOW_LAST) {
+          code = (unit - HIGH_FIRST) * SURROGATE_BITS + (low - LOW_FIRST) + SUPPLEMENTARY;
+          width = 2;
+        }
+      }
+      const character = text.slice(index, index + width);
+      if (
+        index === 0 &&
+        ((code >= DIGIT_FIRST && code <= DIGIT_LAST) ||
+          (code >= UPPER_FIRST && code <= UPPER_LAST) ||
+          (code >= LOWER_FIRST && code <= LOWER_LAST))
+      ) {
+        escaped = '\\x' + hex(code, BYTE_DIGITS);
+      } else {
+        escaped = escaped + escapeCodePoint(code, character);
+      }
+      index = index + width;
+    }
+    return escaped;
   }
 
   // RegExpBuiltinExec up to the match: the matcher result (empty without a
@@ -480,15 +693,7 @@ export class RegExp {
     if (!regexp.global) {
       throw new TypeError(NOT_GLOBAL_MATCH_ALL);
     }
-    const copy = new RegExp(
-      regexp.source,
-      regexp.flags,
-      regexp.bits,
-      regexp.program,
-      regexp.lean,
-      regexp.names,
-      regexp.count,
-    );
+    const copy = regexp.copy();
     copy.lastIndex = regexp.lastIndex;
     const found: RegExpExecArray[] = [];
     for (;;) {
