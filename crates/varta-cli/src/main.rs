@@ -221,7 +221,7 @@ struct ExecutionFlags {
 /// then return the failure (printed by `main` as the diagnostic).
 fn finish(report: varta_project::RunReport, budget_report: bool) -> Result<i32, ProjectError> {
     for line in &report.output.lines {
-        console_line(&line);
+        console_line(line);
     }
     if budget_report && let Some(budget) = &report.budget {
         for line in budget.lines() {

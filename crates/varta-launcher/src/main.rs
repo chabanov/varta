@@ -106,7 +106,7 @@ fn execute(args: Args) -> Result<i32, Error> {
             // Lines emitted before a failure come first, then the report,
             // then the diagnostic.
             for line in &report.output.lines {
-                console_line(&line);
+                console_line(line);
             }
             if args.budget_report
                 && let Some(budget) = &report.budget

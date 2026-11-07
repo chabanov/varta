@@ -259,7 +259,7 @@ impl<M: Memory + ?Sized> Inspector<'_, '_, M> {
     fn collection_entries(
         &mut self,
         value: Value,
-    ) -> Result<Option<(bool, Vec<(Value, Option<Value>)>)>, EncodeError> {
+    ) -> Result<Option<(bool, Vec<CollectionEntry>)>, EncodeError> {
         if value.kind != Kind::Record {
             return Ok(None);
         }
@@ -392,6 +392,9 @@ fn set(column: &mut Vec<Option<Text>>, at: usize, text: Text) {
     }
     column[at] = Some(text);
 }
+
+/// A Map entry (key and value) or a Set entry (the value as its key).
+type CollectionEntry = (Value, Option<Value>);
 
 /// The canonical array index a property key names, if any.
 fn array_index(key: &[u16]) -> Option<u32> {
