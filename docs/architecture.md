@@ -12114,9 +12114,9 @@ unchanged.
   `(?:)` for the empty pattern), so `new RegExp(r.source, r.flags)`
   round-trips. `RegExp.escape(text)` (ES2025 §22.2.5.1) is typed guest
   code. A module links the pattern compiler and its Unicode data only when
-  it constructs a pattern at run time: the library grows by 657 883 bytes (3 631 108 to
-  4 288 991 on `main` with K9 D4) (code 348 KB to 462 KB, data 53 KB to 329 KB, the rest
-  relocations the linker drops), and the linked part joins only such
+  it constructs a pattern at run time: the library grows by 657 883 bytes
+  (3 631 108 to 4 288 991; about 114 KB of code, 276 KB of data and the
+  rest relocations the linker drops), and the linked part joins only such
   modules. Measured fuel (`full_regexp_tests`): about 37 000 for
   `/a(b)+c/`, 228 000 for `/\w+@\w+\.com/iu`, 3.3 million for `/\p{L}+/u`
   and 48 million for `/\p{RGI_Emoji}/v` (its program has 43 090 units).
