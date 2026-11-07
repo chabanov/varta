@@ -865,6 +865,16 @@
       "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-method-definitions"
     },
     {
+      "id": "object-literal-accessors",
+      "title": "Object-literal getters and setters (accessor properties)",
+      "core": [
+        "CORE-02",
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-runtime-semantics-methoddefinitionevaluation"
+    },
+    {
       "id": "computed-property-keys",
       "title": "Constant computed keys of object literals",
       "core": [
@@ -3608,6 +3618,30 @@
         "varta log: count=1 step=1, count=5 step=5",
         "varta log: 15 11 15 11",
         "varta log: widget#3"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "object-literal-accessors",
+      "feature": "object-literal-accessors",
+      "path": "cases/object-literal-accessors.ts",
+      "sha256": "4fa948949a5d4c981200701cbc48f96a26d02789c7c86be6f4ed52b03a9da9dd",
+      "stdout": [
+        "varta log: 212 212",
+        "varta log: 32 reads 3",
+        "varta log: 10 10",
+        "varta log: 22",
+        "varta log: stored,value",
+        "varta log: {\"stored\":22,\"value\":22}",
+        "varta log: {\"celsius\":0,\"fahrenheit\":32}",
+        "varta log: 3 22 {\"stored\":22,\"value\":3}",
+        "varta log: celsius=0 fahrenheit=32",
+        "varta log: TypeError",
+        "varta log: 3 2",
+        "varta log: {\"count\":2,\"list\":[{\"celsius\":10,\"fahrenheit\":50},{\"celsius\":20,\"fahrenheit\":68}]}",
+        "varta log: 7"
       ],
       "baseline": {
         "status": "supported"

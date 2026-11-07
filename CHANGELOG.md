@@ -15,8 +15,13 @@
   initializers may `await`: a synthesized evaluator runs the asynchronous
   module algorithm (siblings run while an awaiting module is suspended,
   dependents run in the job its completion settles, a rejection fails every
-  waiting importer) and the entry module calls `main` at its end. No host
-  ABI or value layout change; v37 keeps rejecting every form.
+  waiting importer) and the entry module calls `main` at its end. Object
+  literals have getters and setters (accessor properties): reads, writes,
+  compound assignments, views, spreads, own keys, entries and
+  `JSON.stringify` (through a materializing copy) go through them; other
+  host reads of such objects are refused. No host ABI or value layout
+  change (the accepted value ABI bump was not needed); v37 keeps rejecting
+  every form.
 - V38 K9 type level, step 2 (owner decisions): branded primitives
   (`string & { __brand: … }` is the primitive), `typeof` of local bindings,
   overloaded call/construct signatures and function intersections (calls

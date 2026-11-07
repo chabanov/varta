@@ -4009,7 +4009,18 @@ Contract: [architecture.md](architecture.md#expression-forms-expression_forms).
   must go through `E::FunctionCall` so a method never reads a stale
   receiver. `o.m(...)` of a plain function field takes `o` into a hidden
   local (`method_call`); a receiver that is not such a local stores
-  `undefined`. Getters/setters stay refused until records have accessors.
+  `undefined`.
+- Object-literal accessors (`object_accessors`): the physical shape names
+  getter and setter fields with `accessor_field`'s reserved prefixes
+  (interned by `records::intern_accessors`, the only intern that admits
+  them); the value is a view (`Views::note_view`) of that shape as the
+  literal's type. `subtyping` reads (`accessor_call`), writes (setter or
+  the stored read-only `TypeError`), `has` and own-key names understand the
+  reserved fields. Every host read of a value that may hold such an object
+  must go through a `JSON.stringify` materializer or is refused by
+  `refuse_host_reads`; a new host operation that reads records needs no
+  change, but a new path that serializes guest values on the guest side
+  must call the getters itself.
 - Top-level `await` (`top_level_await`): a module that awaits is one
   async initializer (`module_constants::link_module`, split with
   `split_async`); the evaluator text is generated from the static plan and

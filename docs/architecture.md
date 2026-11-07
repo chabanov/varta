@@ -11688,9 +11688,42 @@ Node 24 is the reference for every output below.
   object that is not of its literal type` (deviation: JavaScript would read
   the other object's properties; a spread copy with more fields than the
   literal is such an object). Spreads, `Object.assign` and own-key
-  enumeration of such objects are admitted. Getters and setters of object
-  literals (accessor properties), generator methods that use `this` and a
-  spread in a literal whose methods use `this` stay refused by name.
+  enumeration of such objects are admitted. Generator methods that use
+  `this` and a spread in a literal whose methods use `this` stay refused by
+  name.
+- **Object-literal getters and setters.** `get p() {…}` and `set p(v) {…}`
+  define accessor properties (owner decision 2026-11-06): reading `o.p`
+  calls the getter and assigning it calls the setter, with the object as
+  `this` (the receiver register above); compound and logical assignments
+  read through the getter and write through the setter; an assignment to a
+  getter-only property throws `TypeError: Cannot set property p of
+  #<Object> which has only a getter`; `in` and `Object.hasOwn` report the
+  property; spreads, `Object.keys`/`values`/`entries`, `Object.assign`
+  sources and `for...in` read through the getter, so a spread copy has a
+  data property. The literal's type is its contextual record type, or the
+  record of its data fields, annotated methods and annotated accessors (a
+  getter's return or a setter's parameter type). The object has a physical
+  shape of its own: its data fields and, per accessor, the getter and
+  setter closures in fields with reserved private names, and the literal's
+  value is a [structural view](#structural-subtyping-structural_subtyping)
+  of that shape as its type, so member accesses select the layout by the
+  object's descriptor and call the accessor functions. No value layout or
+  host ABI changes (the owner had accepted a new value ABI version; none is
+  needed): hosts read records as data and skip private fields, so the
+  compiler never lets an object with accessors reach a host read silently.
+  `JSON.stringify` of a record or array that may hold such an object
+  serializes a copy made by a synthesized materializer, which reads every
+  property through its getter (nested records and arrays included); every
+  other host operation (`varta.kv`, logging of objects, HTTP bodies) of a
+  value that may hold one, and an `unknown` cell that may hold one, is
+  refused by name. Deviations: the own keys of an object with accessors,
+  and of the objects a `JSON.stringify` materializer copies, are in the
+  order of the type's members (sorted by name) rather than creation order,
+  and a cyclic graph of such objects exhausts the materializer instead of
+  throwing JavaScript's `TypeError`. Refused: a setter without a getter, a
+  spread in a literal with accessors, a `this` parameter of a setter, an
+  optional member in a type whose objects `JSON.stringify` copies, and
+  accessors in an `unknown` or other non-record context.
 - **Computed keys.** `{ [k]: v }` with a constant key — a string or number
   literal, a template without substitutions, or a `const` binding or
   module constant initialized by such a literal — names a closed record

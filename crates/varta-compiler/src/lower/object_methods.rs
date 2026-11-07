@@ -15,14 +15,14 @@
 //!
 //! The object's type is its contextual record type, or, without one, the
 //! record of its literal or binding field values and annotated methods.
-//! Getters and setters (accessor properties) of object literals stay
-//! refused: a closed record has data fields only.
+//! Getters and setters of object literals take their receiver the same way
+//! (`object_accessors`).
 use super::*;
 use swc_ecma_visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 /// The hidden binding of a method's receiver; `#` cannot start a source
 /// identifier.
-const SELF: &str = "#self";
+pub(super) const SELF: &str = "#self";
 /// The module-constant index of the receiver register while bodies are
 /// lowered; `finish` places it behind the program's module constants.
 const REGISTER: u32 = 1 << 29;
@@ -42,8 +42,23 @@ pub(crate) struct Receivers {
     register: Option<u32>,
     /// A method read the register while bodies were lowered.
     used: bool,
+    /// The `TypeError` an assignment to a getter-only accessor throws, by
+    /// physical shape and property name.
+    pub(super) read_only: BTreeMap<(u32, String), Expr>,
+    /// The program has an object literal with a getter or setter.
+    pub(super) accessors: bool,
+    /// `JSON.stringify` materializers of objects with accessors, by type
+    /// (`object_accessors`): the function and whether its body is written.
+    pub(super) materializers: BTreeMap<Type, (usize, bool)>,
+    /// The source and span of the first materialized `JSON.stringify`.
+    pub(super) origin: Option<(Source, swc_common::Span)>,
 }
 impl Receivers {
+    /// The `TypeError` of assigning the getter-only accessor `name` of an
+    /// object of physical shape `shape`.
+    pub(crate) fn read_only(&self, shape: u32, name: &str) -> Option<&Expr> {
+        self.read_only.get(&(shape, name.to_owned()))
+    }
     /// The register's module-constant index, when the program has one.
     pub(crate) fn register(&self) -> Option<u32> {
         self.register
@@ -56,28 +71,38 @@ impl Receivers {
 
 /// A method that uses `this` without declaring a `this` parameter (one
 /// that declares it keeps its receiver: `o.m()` passes the object).
-fn bound(function: &ast::Function) -> bool {
+pub(super) fn bound(function: &ast::Function) -> bool {
     function.this_param.is_none() && records::uses_receiver(function)
 }
 
 /// Note whether any module has an object-literal method that uses `this`:
 /// only such programs pass receivers through the register.
 pub(super) fn scan(graph: &crate::modules::Graph, types: &mut ir::ValueTypes) {
-    struct Methods(bool);
+    struct Methods(bool, bool);
     impl Visit for Methods {
         fn visit_method_prop(&mut self, method: &ast::MethodProp) {
             self.0 |= bound(&method.function);
             method.visit_children_with(self);
         }
+        // Accessors take their receiver like methods (`accessor_literal`).
+        fn visit_getter_prop(&mut self, getter: &ast::GetterProp) {
+            (self.0, self.1) = (true, true);
+            getter.visit_children_with(self);
+        }
+        fn visit_setter_prop(&mut self, setter: &ast::SetterProp) {
+            (self.0, self.1) = (true, true);
+            setter.visit_children_with(self);
+        }
     }
     if !types.profile.expression_forms() {
         return;
     }
-    let mut methods = Methods(false);
+    let mut methods = Methods(false, false);
     for unit in graph.units.values() {
         unit.ast.visit_with(&mut methods);
     }
     types.receivers.enabled = methods.0;
+    types.receivers.accessors = methods.1;
 }
 
 /// After every body is lowered: place the register behind the `stored`
@@ -137,8 +162,8 @@ pub(super) fn receiver_shapes(program: &mut ir::Program) {
 }
 
 /// Replaces `this` (outside nested functions and classes) by `#self!`.
-struct Receiver {
-    sup: Option<swc_common::Span>,
+pub(super) struct Receiver {
+    pub(super) sup: Option<swc_common::Span>,
 }
 impl VisitMut for Receiver {
     fn visit_mut_expr(&mut self, expr: &mut ast::Expr) {
@@ -171,20 +196,11 @@ impl Lower<'_> {
         object: &ast::ObjectLit,
         expected: Option<Type>,
     ) -> Result<Option<Expr>> {
-        if let Some(span) = object.props.iter().find_map(|prop| match prop {
-            ast::PropOrSpread::Prop(prop) => match &**prop {
-                ast::Prop::Getter(getter) => Some(getter.span),
-                ast::Prop::Setter(setter) => Some(setter.span),
-                _ => None,
-            },
-            ast::PropOrSpread::Spread(_) => None,
+        if object.props.iter().any(|prop| {
+            matches!(prop, ast::PropOrSpread::Prop(prop)
+                if matches!(&**prop, ast::Prop::Getter(_) | ast::Prop::Setter(_)))
         }) {
-            return Err(self.source.locate(
-                unsupported(
-                    "getter or setter in an object literal (a closed record has data fields only; declare a class)",
-                ),
-                span,
-            ));
+            return self.accessor_literal(object, expected).map(Some);
         }
         let receiver = |prop: &ast::PropOrSpread| {
             matches!(prop, ast::PropOrSpread::Prop(prop)
@@ -239,7 +255,7 @@ impl Lower<'_> {
 
     /// `m(params): R { body }` as `m: (params): R => { body }` with `this`
     /// replaced by the method's hidden receiver binding.
-    fn bound_method(&self, method: &ast::MethodProp) -> Result<ast::Prop> {
+    pub(super) fn bound_method(&self, method: &ast::MethodProp) -> Result<ast::Prop> {
         let function = &method.function;
         if function.is_generator {
             return Err(self.source.locate(
@@ -497,7 +513,7 @@ impl Lower<'_> {
         }
         records::intern(fields, self.types)
     }
-    fn evident_type(&self, value: &ast::Expr, span: swc_common::Span) -> Result<Type> {
+    pub(super) fn evident_type(&self, value: &ast::Expr, span: swc_common::Span) -> Result<Type> {
         parameters::literal(value, self.types)
             .or_else(|| self.peek_type(value, 0))
             .map(|ty| literals::erased(ty, self.types))
@@ -510,7 +526,7 @@ impl Lower<'_> {
                 )
             })
     }
-    fn method_type(&mut self, method: &ast::MethodProp) -> Result<Type> {
+    pub(super) fn method_type(&mut self, method: &ast::MethodProp) -> Result<Type> {
         let function = &method.function;
         let span = function.span;
         let Some(result) = function.return_type.clone() else {

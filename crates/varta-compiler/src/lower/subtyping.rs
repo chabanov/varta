@@ -94,6 +94,46 @@ impl Views {
             .borrow_mut()
             .push((shape, form, source.clone(), span));
     }
+    /// Note that objects of `source` are viewed as record `target` (v38
+    /// `expression_forms`: an object literal with accessors is a view of its
+    /// physical shape as its type, `object_accessors`).
+    pub(crate) fn note_view(&self, source: Type, target: u32) {
+        self.edges.borrow_mut().insert((source, target));
+    }
+    /// The record shapes whose values may hold an object literal with
+    /// accessors (v38 `object_accessors`): the types such objects are viewed
+    /// as, and every type those are viewed as in turn.
+    pub(crate) fn accessor_views(&self, types: &ir::ValueTypes) -> BTreeSet<u32> {
+        let edges = self.edges.borrow();
+        let mut views: BTreeSet<u32> = edges
+            .iter()
+            .filter(|(source, _)| {
+                matches!(source, Type::Record(id) if types.records[*id as usize]
+                    .fields
+                    .iter()
+                    .any(|field| super::object_accessors::accessor_field(&field.name).is_some()))
+            })
+            .map(|(_, target)| *target)
+            .collect();
+        loop {
+            let more: Vec<u32> = edges
+                .iter()
+                .filter(|(source, target)| {
+                    matches!(source, Type::Record(id) if views.contains(id))
+                        && !views.contains(target)
+                })
+                .map(|(_, target)| *target)
+                .collect();
+            if more.is_empty() {
+                return views;
+            }
+            views.extend(more);
+        }
+    }
+    /// Whether a value of record `shape` entered an `unknown` cell.
+    pub(crate) fn is_boxed(&self, shape: u32) -> bool {
+        self.boxed.borrow().contains(&shape)
+    }
     /// The source types viewed as record `shape` (after `resolve`).
     pub(crate) fn sources_of(&self, shape: u32) -> &[Type] {
         self.sources.get(&shape).map_or(&[], Vec::as_slice)
@@ -836,13 +876,29 @@ fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result
             Type::Class(id) => types.classes.shape(id),
             _ => return None,
         };
-        Some(
-            types.records[shape as usize]
-                .fields
+        let fields = &types.records[shape as usize].fields;
+        // V38 (`object_accessors`): an accessor object's own keys are its
+        // data fields and accessor properties, in the order of its type's
+        // members (records keep their fields sorted by name).
+        if matches!(ty, Type::Record(_))
+            && fields
                 .iter()
-                .map(|field| field.name.as_str())
-                .collect(),
-        )
+                .any(|field| super::object_accessors::accessor_field(&field.name).is_some())
+        {
+            let mut names: Vec<&str> = fields
+                .iter()
+                .filter_map(
+                    |field| match super::object_accessors::accessor_field(&field.name) {
+                        Some((property, true)) => Some(property),
+                        Some((_, false)) => None,
+                        None => Some(field.name.as_str()),
+                    },
+                )
+                .collect();
+            names.sort_unstable();
+            return Some(names);
+        }
+        Some(fields.iter().map(|field| field.name.as_str()).collect())
     };
     for (shape, form, source, span) in types.subtyping.spreads.borrow().iter() {
         let declared = names(Type::Record(*shape)).unwrap_or_default();
@@ -1694,9 +1750,13 @@ impl Rewriter<'_> {
                 _ => return Err(CompilerError::Internal("view source type".into())),
             };
             let branch = match access {
-                Access::Get(result) => finish(self.read(*source, name, result, span)?),
+                Access::Get(result) => {
+                    finish(self.read(*source, name, result, span, &mut locals)?)
+                }
                 Access::Has => finish(self.has(*source, name, span)),
-                Access::Set(value) => self.write(*source, shape, &wanted, value, span)?,
+                Access::Set(value) => {
+                    self.write(*source, shape, &wanted, value, span, &mut locals)?
+                }
                 Access::Call(function) => {
                     let Type::Function(id) = function else {
                         return Err(CompilerError::Internal("view call".into()));
@@ -1728,7 +1788,13 @@ impl Rewriter<'_> {
                                 vec![S::Return(Some(convert(call, result, types)?))]
                             }
                         }
-                        None => finish(invoke(self.read(*source, name, function, span)?)),
+                        None => finish(invoke(self.read(
+                            *source,
+                            name,
+                            function,
+                            span,
+                            &mut locals,
+                        )?)),
                     }
                 }
             };
@@ -1780,7 +1846,14 @@ impl Rewriter<'_> {
     }
     /// The read of member `name` of an object of `source` type, converted
     /// to `result`; a missing optional member reads `undefined`.
-    fn read(&self, source: Type, name: &str, result: Type, span: swc_common::Span) -> Result<Expr> {
+    fn read(
+        &self,
+        source: Type,
+        name: &str,
+        result: Type,
+        span: swc_common::Span,
+        locals: &mut Vec<Type>,
+    ) -> Result<Expr> {
         let types = self.types;
         let receiver = |ty: Type| local(span, 0, ty);
         let value = match source {
@@ -1792,7 +1865,9 @@ impl Rewriter<'_> {
                     span,
                     ty: types.records[id as usize].fields[slot].ty,
                     kind: E::Field(Box::new(receiver(source)), slot as u32),
-                }),
+                })
+                // V38 (`object_accessors`): the getter of an accessor.
+                .or_else(|| accessor_call(source, name, true, &[], span, locals, types)),
             Type::Class(class) => match types.classes.field(class, name) {
                 Some((slot, field)) => Some(Expr {
                     span,
@@ -2000,7 +2075,14 @@ impl Rewriter<'_> {
                         ty: Type::Boolean,
                         kind: E::HasOwn(Box::new(local(span, 0, source)), Some(slot as u32)),
                     },
-                    None => constant(span, false),
+                    // V38 (`object_accessors`): an accessor is an own property.
+                    None => constant(
+                        span,
+                        types.records[id as usize].fields.iter().any(|field| {
+                            super::object_accessors::accessor_field(&field.name)
+                                .is_some_and(|(property, _)| property == name)
+                        }),
+                    ),
                 }
             }
             Type::Class(class) => constant(
@@ -2018,9 +2100,27 @@ impl Rewriter<'_> {
         wanted: &ir::RecordField,
         value: Type,
         span: swc_common::Span,
+        locals: &mut Vec<Type>,
     ) -> Result<Vec<S>> {
         let types = self.types;
         let name = &wanted.name;
+        // V38 (`object_accessors`): an accessor property calls its setter;
+        // one without a setter throws `TypeError`.
+        if let Type::Record(id) = source
+            && !types.records[id as usize]
+                .fields
+                .iter()
+                .any(|field| field.name == *name)
+        {
+            let argument = local(span, 1, value);
+            if let Some(call) = accessor_call(source, name, false, &[argument], span, locals, types)
+            {
+                return Ok(vec![S::Expr(call), S::Return(None)]);
+            }
+            if let Some(error) = types.receivers.read_only(id, name) {
+                return Ok(vec![S::Throw(error.clone())]);
+            }
+        }
         let target = match source {
             Type::Record(id) => types.records[id as usize]
                 .fields
@@ -2321,4 +2421,59 @@ pub(super) fn identity_operands(
     } else {
         (left, right)
     }
+}
+
+/// A call of the getter (`getter`) or setter of the accessor property
+/// `name` of an object of record `source` (v38 `object_accessors`), with the
+/// object (local 0) as its receiver, when the shape has that accessor.
+fn accessor_call(
+    source: Type,
+    name: &str,
+    getter: bool,
+    args: &[Expr],
+    span: swc_common::Span,
+    locals: &mut Vec<Type>,
+    types: &ir::ValueTypes,
+) -> Option<Expr> {
+    let Type::Record(id) = source else {
+        return None;
+    };
+    let field = if getter {
+        super::object_accessors::getter_field(name)
+    } else {
+        super::object_accessors::setter_field(name)
+    };
+    let (slot, function) = types.records[id as usize]
+        .fields
+        .iter()
+        .enumerate()
+        .find(|(_, candidate)| candidate.name == field)
+        .map(|(slot, candidate)| (slot as u32, candidate.ty))?;
+    let Type::Function(signature) = function else {
+        return None;
+    };
+    let result = types.functions[signature as usize].result;
+    let mut hidden = |ty: Type| {
+        locals.push(ty);
+        locals.len() as u32 - 1
+    };
+    let callee = hidden(function);
+    let arguments = args.iter().map(|arg| hidden(arg.ty)).collect();
+    let output = (result != Type::Void).then(|| hidden(result));
+    Some(Expr {
+        span,
+        ty: result,
+        kind: E::FunctionCall {
+            callee: Box::new(Expr {
+                span,
+                ty: function,
+                kind: E::Field(Box::new(local(span, 0, source)), slot),
+            }),
+            ignored_receiver: Some(Box::new(local(span, 0, source))),
+            args: args.to_vec(),
+            slot: callee,
+            arguments,
+            output,
+        },
+    })
 }

@@ -218,6 +218,7 @@ fn lower_with(
         )?;
     }
     // Tagged template objects (v38) are built before any module code runs.
+    object_accessors::finish(&mut types, &functions, &mut generated, &mut next)?;
     object_methods::finish(
         &mut types,
         &mut functions,

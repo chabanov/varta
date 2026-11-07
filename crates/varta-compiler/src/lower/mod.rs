@@ -460,6 +460,7 @@ mod number_parse;
 mod number_predicates;
 mod number_radix;
 mod numeric_constants;
+mod object_accessors;
 mod object_assign;
 mod object_entries;
 mod object_enumeration;
