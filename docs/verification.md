@@ -8,9 +8,28 @@ any previous check whose scope includes those inputs.
 
 ## Current verification evidence — 2026-11-07
 
-- **Recovered integration batch:** all fourteen original unmerged branch tips
-  are included. Focused checks cover the cross-branch fixes; one full gate will
-  run after the complete code batch. It has not run yet.
+- **Recovered integration batch, verified at `5c23aec4`:** all fourteen original
+  unmerged branch tips are included. Consolidated local results: **4577 Rust
+  tests passed, 0 unresolved failures, 26 ignored; 189 browser Node tests passed**.
+  Checked-v38 conformance matches its baseline: **236 passed, 4 known unsupported
+  out of 240**, with 131 feature rows and 7 without cases.
+- **One full attempt, followed by scoped corrections and completion:**
+  `target/verification/20261107-052505-1iefx_gl/report.json` passed formatting,
+  core/no-std checks, generated-module checks, launcher build, strict workspace
+  Clippy and all-target builds, then stopped on an obsolete CSS import test.
+  After correcting that expectation, the compiler suite and the unfinished
+  workspace, Node and conformance suites ran. They exposed two further stale
+  expectations: the permitted shared-format dependency of `varta-intl`, and
+  refusal of now-supported v38 WeakMap construction. Both were corrected and
+  their affected tests and Clippy checks passed. No full restart was run.
+- **Evidence scope:** production code has not changed since `bf8e2db5`; only
+  three test files changed after that full attempt. Inputs stayed unchanged
+  during both the full attempt and the continuation. Counts deduplicate repeated
+  tests by suite and name and use the final result. The original failed reports
+  remain intact; this is consolidated verification, not an uninterrupted green
+  `verify.py full` report. The durable [recovery record](evidence/2026-11-07-recovery-verification.json)
+  lists the commits, branch tips, changes and local logs; the detailed local
+  aggregate is `target/recovery-20261107/final-report.json`.
 - **Previous successful full gate (before recovery):**
   `target/verification/20261107-025634-207xufk2/report.json` passes every
   command with unchanged inputs: **4447 Rust tests, 0 failures, 25 ignored; 186

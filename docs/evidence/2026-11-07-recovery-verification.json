@@ -1,0 +1,128 @@
+{
+  "mode": "one-full-attempt-with-targeted-continuations",
+  "fullInvocationCount": 1,
+  "codeHead": "5c23aec451b75a97a2497206ab4f532295cc7bdc",
+  "productionCheckpoint": "bf8e2db50d2dc4894d0f9a3f03e94c4d8d829b79",
+  "fullAttempt": {
+    "path": "target/verification/20261107-052505-1iefx_gl/report.json",
+    "passed": false,
+    "sourceUnchanged": true
+  },
+  "continuation": {
+    "path": "target/recovery-20261107/continuation-report.json",
+    "passed": false,
+    "sourceUnchanged": true
+  },
+  "postAttemptChanges": [
+    "crates/varta-compiler/src/modules/tests.rs",
+    "crates/varta-project/tests/boundaries.rs",
+    "crates/varta-runtime/src/standard_library_tests.rs"
+  ],
+  "productionCodeUnchangedSinceFullAttempt": true,
+  "resolvedFailures": [
+    "CSS import error-recovery expectation",
+    "varta-intl shared-format dependency allowlist",
+    "v38 WeakMap obsolete refusal expectation"
+  ],
+  "finalTargetedChecks": {
+    "sessionExitCode": 0,
+    "logs": [
+      "target/recovery-20261107/final-boundaries.log",
+      "target/recovery-20261107/final-standard.log",
+      "target/recovery-20261107/final-clippy.log",
+      "target/recovery-20261107/final-format.log"
+    ]
+  },
+  "reusedChecks": "Full attempt stages 1\u20138; completed Rust suites; unfinished suites from continuation; compiler tests rerun after its test-only edits; affected final tests rerun after remaining test-only edits.",
+  "rust": {
+    "passed": 4577,
+    "ignored": 26,
+    "failed": 0,
+    "deduplication": "latest result by suite and test name",
+    "results": "target/recovery-20261107/rust-results-final.json"
+  },
+  "browserNode": {
+    "passed": 189,
+    "failed": 0,
+    "log": "target/recovery-20261107/continuation-06.log"
+  },
+  "conformance": {
+    "counts": {
+      "total": 240,
+      "passed": 236,
+      "knownUnsupported": 4,
+      "unexpectedSupport": 0,
+      "regressions": 0,
+      "infrastructureFailures": 0
+    },
+    "baselineMatches": true,
+    "featureRows": 131,
+    "untestedFeatures": 7,
+    "report": "target/recovery-20261107/final-conformance.json"
+  },
+  "integratedOriginalBranchTips": [
+    {
+      "branch": "k9-d1-console-dev-acfdc",
+      "head": "97c4cb5726006adc2e35bbcdd7c04b0906f72dd5"
+    },
+    {
+      "branch": "worktree-agent-a07cb3bb9c624a7de",
+      "head": "98b11ee7a93186f82337273b3a15e3abd739caf5"
+    },
+    {
+      "branch": "worktree-agent-a12aed840397f93f5",
+      "head": "7dc7e958653c46a7bdf3fc6aa96829f1a8b45518"
+    },
+    {
+      "branch": "worktree-agent-a28374bbc87a0cb3a",
+      "head": "c319c4bfa8ded53fb8afbdacbcccf7b5c067c37c"
+    },
+    {
+      "branch": "worktree-agent-a30bf3a6b2ab4568f",
+      "head": "5c94fc05670d61700dfbd8c9d8fdc75e824f5fb1"
+    },
+    {
+      "branch": "worktree-agent-a556f77b6f34baeb7",
+      "head": "91ae880216e07706a2b401863ccfc04cdeac4756"
+    },
+    {
+      "branch": "worktree-agent-a83f72a3cf1edca8c",
+      "head": "f4c5cad1bdd9061fdf4a555ad0a45b690342ffa2"
+    },
+    {
+      "branch": "worktree-agent-a9608fba774345c07",
+      "head": "913e5baec49644b1b2851e4ce0095dec52cf0a25"
+    },
+    {
+      "branch": "worktree-agent-aad3e2e8069633310",
+      "head": "24922bb4a2df24868b9ae2a5152ca9bfe69f526b"
+    },
+    {
+      "branch": "worktree-agent-abc17c0cdddbad335",
+      "head": "e08da64e05186744eacdb2153fd83e381d4d65fb"
+    },
+    {
+      "branch": "worktree-agent-acfdc2c4ef3b6ded8",
+      "head": "f0413035af7d32ed5ab08abecf3ee7b00bf90553"
+    },
+    {
+      "branch": "worktree-agent-ada530d9943f7bbca",
+      "head": "f40b617aef53546c8938d6f11b24f81472a5397d"
+    },
+    {
+      "branch": "worktree-agent-adc7b62e12e5b2f08",
+      "head": "02ce959eb009d34b76b083afa13a28b6cca20941"
+    },
+    {
+      "branch": "worktree-agent-ae85572a5b112024f",
+      "head": "3fbe239e962690ef875bc39a008ac27fc8da2ae1"
+    }
+  ],
+  "passed": true,
+  "limitations": [
+    "Local macOS arm64 evidence only",
+    "26 Rust tests ignored",
+    "4 known unsupported conformance cases; 7 feature rows without cases",
+    "Original full attempt and continuation reports retain their failures; this is a consolidated result, not a successful uninterrupted full run"
+  ]
+}

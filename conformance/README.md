@@ -18,8 +18,9 @@ The first command checks the reviewed baseline and emits a standalone JSON repor
 The second additionally fails for known unsupported cases and features without
 executable cases. The merged inventory has 131 feature rows and 240 cases:
 236 have a supported baseline, 4 are known unsupported, and 7 feature rows have no case.
-The combined recovery batch is awaiting execution of this baseline. These counts
-are inventory observations, not a percentage of ECMAScript or total kernel work.
+The combined recovery batch matched this baseline on 2026-11-07: 236 passed,
+4 known unsupported, no regressions or infrastructure failures ([verification](../docs/verification.md#current-verification-evidence--2026-11-07)).
+These counts are bounded inventory results, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
 Each source file is read as an immutable UTF-8 snapshot and checked against its

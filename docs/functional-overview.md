@@ -1,6 +1,6 @@
 # Varta functional overview
 
-Checkpoint: 2026-11-07, recovered integration batch (final verification pending).
+Checkpoint: 2026-11-07, recovered integration batch verified at `5c23aec4`.
 
 Varta compiles strictly typed TypeScript ahead of time into portable WebAssembly.
 Native applications execute in Wasmtime through a capability-checked host;
@@ -28,7 +28,7 @@ defaults maintained in this overview.
 | --- | --- | --- |
 | Compiler | Shared TS parsing, resolved typed IR, Wasm emission and validation for check/dev/build; explicit profile negotiation and source-aware diagnostics | Deliberate checked subset; unsupported syntax/types produce diagnostics |
 | Types and programs | Interfaces/aliases, unions and narrowing, optional fields, checked `unknown`/assertions, classes/inheritance/generics/private fields, functions/closures, supported control flow, modules and re-exports; v38 iteration protocol: `[Symbol.iterator]()` iterable classes, generator methods, array literal spreads, `Array.from` of iterables and synchronous `yield*` ([contract](architecture.md#iteration-protocol-iteration_protocol)); v38 K9 type level: conditional types with `infer`, mapped and template literal types, every utility type, `keyof`/`T[K]`/`typeof` queries, record intersections, call/construct signatures and constructor types, variadic/optional/rest tuples, type predicates, assertion functions, `satisfies`, polymorphic `this`, `never` exhaustiveness, tsc's literal inference, checked pattern template types and class arrays shared under ancestor element types ([contract](architecture.md#type-level-type_level)); v38 declarations and classes: enums with reverse mapping, namespaces and declaration merging, abstract classes, function/method/constructor overloads, setters and auto-accessors, static fields and `this` in static methods, class expressions and local classes ([contract](architecture.md#declarations-and-classes-declaration_forms)); v38 expression forms: `await` in every operand, object-literal methods with `this`, constant computed keys, tagged templates, destructuring of iterables, hand-written iterators, `using`, structural thenables, object-literal getters and setters ([contract](architecture.md#expression-forms-expression_forms)) | General dynamic properties/prototypes/descriptors, wider receiver behavior and remaining type/module semantics |
-| Values and built-ins | Number/BigInt/UTF-16 strings, objects, sparse/resizable arrays, hashed dictionaries, tuples, Map/Set, JSON, admitted Math/String/Array operations, RegExp (v38 K9 D3: the full ES2025 pattern language with backreferences, lookaround, modifiers, property escapes, `d` and `v`, matched by a backtracking matcher bounded by fuel; patterns built at run time compiled in the guest, `RegExp.escape`, match results as arrays, lazy `matchAll`, symbol protocols and custom matchers, [contract](architecture.md#full-regexp-full_regexp)); v38 standard library (K9 D): V8-order `sort`/`toSorted`, the ES2023 copying methods, `splice`/`flat`/`flatMap`, iterator helpers, Set methods, `Object.groupBy`/`Map.groupBy`/`Object.fromEntries`, `JSON.stringify` property lists and indentation, `AggregateError` and the complete `Date` in the UTC zone ([contract](architecture.md#standard-library-standard_library)); v38 console notation (K9 D1): multi-argument `console.log`/`info`/`debug` printed exactly as Node 24 prints them, class names, Errors, Map/Set/Date ([contract](architecture.md#console-notation-node_console)), standard error and the rest of Node's console (`error`, `warn`, `trace`, `assert`, `group`, `count`, `time`, `dir`, `table`; [contract](architecture.md#console-methods-console_methods)); v38 `Symbol` values with their own value tag ([contract](architecture.md#symbol-values-symbol_values)); v38 `WeakMap`/`WeakSet`/`WeakRef`/`FinalizationRegistry` over ephemeron tables in the collector ([contract](architecture.md#weak-references-weak_references)) | String-key enumeration of symbol-keyed records, Proxy/Reflect, integrity levels, `structuredClone`, object coercion, wrappers, Intl, host time zones, and full conversion inventory; static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
+| Values and built-ins | Number/BigInt/UTF-16 strings, objects, sparse/resizable arrays, hashed dictionaries, tuples, Map/Set, JSON, admitted Math/String/Array operations, RegExp (v38 K9 D3: the full ES2025 pattern language with backreferences, lookaround, modifiers, property escapes, `d` and `v`, matched by a backtracking matcher bounded by fuel; patterns built at run time compiled in the guest, `RegExp.escape`, match results as arrays, lazy `matchAll`, symbol protocols and custom matchers, [contract](architecture.md#full-regexp-full_regexp)); v38 standard library (K9 D): V8-order `sort`/`toSorted`, the ES2023 copying methods, `splice`/`flat`/`flatMap`, iterator helpers, Set methods, `Object.groupBy`/`Map.groupBy`/`Object.fromEntries`, `JSON.stringify` property lists and indentation, `AggregateError` and the complete `Date` in the UTC zone ([contract](architecture.md#standard-library-standard_library)); v38 console notation (K9 D1): multi-argument `console.log`/`info`/`debug` printed exactly as Node 24 prints them, class names, Errors, Map/Set/Date ([contract](architecture.md#console-notation-node_console)), standard error and the rest of Node's console (`error`, `warn`, `trace`, `assert`, `group`, `count`, `time`, `dir`, `table`; [contract](architecture.md#console-methods-console_methods)); v38 `Symbol` values with their own value tag ([contract](architecture.md#symbol-values-symbol_values)), object integrity levels ([contract](architecture.md#integrity-levels-integrity_levels)), local-time `Date` and linked locale data ([contract](architecture.md#local-time-local_time)); v38 `WeakMap`/`WeakSet`/`WeakRef`/`FinalizationRegistry` over ephemeron tables in the collector ([contract](architecture.md#weak-references-weak_references)) | String-key enumeration of symbol-keyed records, Proxy/Reflect, `structuredClone`, object coercion, wrappers, the remaining Intl API surface, and full conversion inventory; static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
 | Async language | Promise chains/combinators, async/await (v38: in every operand position), sync/async generators, for-await, timers, microtasks and abort support; v38 structural thenables of statically known types, `await using` and top-level `await` in module initializers | Thenables through unions or `unknown` and wider async iterable forms |
 | Runtime | Bounded executions, isolated HTTP request instances and long-lived application instances with event turns, host tasks, permission answers and captured state | Broader sustained cancellation/shutdown, retained-resource and target evidence |
 | Collection | Exact roots/tracing across values, closures and suspension, incremental collection and idle maintenance; large-heap bitmap clearing before the root snapshot | Sustained leak/retained-root checks, collector tuning and peak-memory/RSS measurements |
@@ -56,9 +56,9 @@ instance. Request-owned async/streaming work stays with that request until its
 response ends or is cancelled. Shared persistence is provided through admitted
 host APIs such as KV, not an implicitly shared request heap.
 
-Language-level async/await is implemented. The planned HTTP execution migration
-to Wasmtime `async_support`/`call_async`, yielding and pooling is an independent
-server scalability increment; see [K7](development-plan.md#k7--modern-http-server-agreed-design-2026-11-05).
+Language-level async/await is implemented. HTTP execution also uses Wasmtime
+`async_support`/`call_async`, yielding and pooled instances; broader server
+acceptance remains open; see [K7](development-plan.md#k7--modern-http-server-agreed-design-2026-11-05).
 
 | Policy | Authoritative value | Meaning |
 | --- | --- | --- |
@@ -270,25 +270,26 @@ pilot/browser/hardware observation.
 
 ## Verification and completion boundary
 
-The previous full gate at `0a2ab63a`, recorded in
-`target/verification/20261107-025634-207xufk2/report.json`, passed 4447 Rust tests
-and 186 browser Node tests on unchanged inputs. It predates the recovered
-integration batch and does not verify that batch. See
+The recovered batch passes consolidated verification: **4577 Rust tests,
+189 browser Node tests, 0 unresolved failures; 26 Rust tests ignored**. One full
+attempt was followed by scoped corrections to three stale test expectations and
+completion of the unfinished suites; production code stayed unchanged after the
+full attempt. The original failed reports are preserved. See
 [current verification evidence](verification.md#current-verification-evidence--2026-11-07).
 
 The recovery batch combines the K9 A type-level steps, B declarations and
 classes, C expressions and accessors, D1 console and standard-library additions,
 D2 symbols and integrity levels, D3 RegExp follow-ups, D4 local time and locale
-data, and D5 weak references and collections. Its combined conformance result
-and full-gate status remain pending; counts from earlier branch checkpoints do
-not verify this integrated tree. The bounded compatibility inventory is not
+data, and D5 weak references and collections. Its combined conformance baseline
+matches: 236 passed and 4 known unsupported cases out of 240; 7 of 131 feature
+rows still have no executable cases. The bounded compatibility inventory is not
 Test262, full language compatibility or a global completion percentage; see
 [the inventory](../conformance/README.md).
 
 Remaining delivery work is grouped into four broad acceptance boundaries:
 
 1. Wider language/value/module/API semantics and package-own-test execution.
-2. K7 H1–H4 server work and its security/resource/performance evidence.
+2. Remaining K7 server features and broader security/resource/performance evidence.
 3. Remaining native UI plus real-window, system-input and platform matrices.
 4. Sustained resource/latency measurements, fuzzing, independent security review,
    artifact/release policy and production acceptance.
