@@ -7810,6 +7810,22 @@ gate):
   full RegExp with matching bounded by fuel, Proxy and Reflect where sound,
   and `Intl` through ICU4X with deterministic data.
 
+**Release definition (owner, 2026-11-06).** The release ships a full
+implementation: every gap found by the tracks is closed by the standard, and
+no deviation from Node/tsc stays documented unless the owner approves it
+(approved so far: a lying type predicate throws `TypeError` at the narrowed
+read). Follow-up tracks after the first merges: A3 (shared covariant arrays
+with checked reads, the remaining refused type forms), B2 (standard
+decorators on class values, run-time TDZ, index-signature JSON), C2
+(object-literal accessors, `TemplateStringsArray.raw`, dynamic `this`,
+top-level `await`, `SuppressedError` in `using`), D1 (Node console with a
+standard-error host operation, JSON reviver/replacer, `structuredClone`,
+`normalize`, `Promise.any`), D2 (Symbol values and keys, integrity levels,
+weak collections), D3 (full RegExp), D4 (local-time `Date`, `Intl`), then
+Proxy/Reflect. Release work after the language tracks settle: profile
+freeze, macOS and web distributions, Chrome acceptance reruns, security
+review and release notes.
+
 **K9 A record (2026-11-06, type level).** Admitted in v38 under the
 selector `type_level` ([contract](architecture.md#type-level-type_level),
 [rules](profile-rules.md#type-level-type_level)), all evaluated at compile
