@@ -5,10 +5,13 @@ abstract class Shape {
   abstract area(): number;
   static describe(): string { return 'shape'; }
   static unit(): number { return 1; }
+  static sides: number = 0;
+  static label = 'any';
 }
 class Square extends Shape {
   area(): number { return this.size * this.size; }
   static describe(): string { return 'square'; }
+  static sides: number = 4;
 }
 class Circle extends Shape {
   area(): number { return Math.round(3 * this.size * this.size); }
@@ -30,4 +33,7 @@ export function main(): void {
   console.log(String(make(Square, 4).area()) + ' ' + typeof chosen);
   const ctor: typeof Circle = Circle;
   console.log(String(new ctor(2).area()) + ' ' + ctor.describe());
+  Shape.label = 'changed';
+  const square: typeof Shape = Square;
+  console.log(String(chosen.sides) + ' ' + String(square.sides) + ' ' + square.label + ' ' + chosen.label);
 }

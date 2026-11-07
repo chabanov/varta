@@ -177,12 +177,41 @@ Still open, with the reason:
   static fields, field initializers right after their field, the class's
   last; instance method initializers at construction before the fields.
 - **Class values, remaining:** class values in unions, arrays, records and
-  `unknown` (they have no value tag; a value ABI decision), static fields
-  read through a class value, a generic class as a value, `instanceof` a
-  class value, a static method that writes a static field through `this`
-  called with a subclass as `this` (an own property in JavaScript; refused),
-  and the TDZ of a class binding reached before its declaration.
-- **Generic method overload signatures** (class methods; functions done).
+  `unknown` (a class-value tag added to the unreleased value layout 18,
+  decided 2026-11-07, not built yet), a generic class as a value,
+  `instanceof` a class value, writes of static fields through a class
+  value or a subclass (per-class static storage, decided 2026-11-07, not
+  built yet: a subclass's own static property needs storage per class and
+  field across modules, which module variables of the declaring module
+  cannot give), and the TDZ of a class binding reached before its
+  declaration (decided 2026-11-07, not built yet: the class binding needs
+  a flag set after its static elements and a test at every reference
+  outside the class body, which static initializers moved out of the
+  class body by `desugar::statics` must not take).
+
+Fourth increment (coordinator decisions of 2026-11-07 under the owner's
+delegated authority; each by the specification):
+
+- **Early `var` and static-field reads are checked reads.** JavaScript reads
+  `undefined` before the definition of a module `var` or a static field;
+  under the approved category of checked reads at TypeScript's
+  unsoundness, such a read yields `undefined` when the declared type
+  admits it and otherwise throws `TypeError` at that read (Node continues
+  with `undefined`), and a write before the definition defines the
+  binding (`ir::ModuleFlag::hoisted`). Both former refusals are gone
+  (`early_reads` case).
+- **`ReferenceError` is a real class.** The errors prelude declares
+  `ReferenceError` and `EvalError` as `Error` subclasses of typed guest
+  code (like `URIError`); a temporal-dead-zone access in a v38 module
+  throws its `ReferenceError`, so `instanceof ReferenceError` holds
+  (`module_tdz` case). No value-layout change: the native error families
+  stay Error, TypeError, RangeError and SyntaxError.
+- **Static fields through class values.** `v.x` of a static field with a
+  declared or literal type calls a generated static getter through the
+  static-method dispatch (`class_values` case); writes stay refused.
+- **Generic method overloads.** Generic overload signatures of methods and
+  static methods, also in generic class instances, are instantiated per
+  call like those of functions (`generic_overloads` case).
 
 Earlier state, superseded by the increment above where it says so:
 
@@ -3612,7 +3641,7 @@ The selectors are registered; the table records what each stream admits.
 | `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Iterable<T>` value annotations (`Array.from` with a map function: `standard_library()`) |
 | `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag, host time-zone grant; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
 | `expression_forms()` | K9 C — expressions and functions (2026-11-06): `await` anywhere, comma, `new.target` comparisons, tagged templates, spreads into fixed parameters, `this` parameters and field arrows, object-literal methods with `this`, computed keys, destructuring everywhere, hand-written iterators, `using`, structural thenables | Implemented in part ([contract](architecture.md#expression-forms-expression_forms), [record](#k9-c--expressions-and-functions-2026-11-06)): no ABI, value-layout, scheduler or host change. Pending: `SuppressedError` for double throws in `using`, `await` in `switch` case tests |
-| `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results; class values (`typeof C`, dispatch over subclasses), static receivers and generic function overloads (2026-11-06). No ABI, value-layout or host change. Pending: standard decorators (prerequisites in the [record](#k9-b--declarations-and-classes--2026-11-06)) |
+| `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results; class values (`typeof C`, dispatch over subclasses), static receivers and generic function overloads (2026-11-06); checked early `var`/static-field reads, `ReferenceError` instances, static fields through class values and generic method overloads (2026-11-07). No ABI, value-layout or host change. Pending: standard decorators (prerequisites in the [record](#k9-b--declarations-and-classes--2026-11-06)) |
 | `full_regexp()` | K9 D3 full RegExp (2026-11-06): the ES2025 pattern language with a backtracking matcher bounded by fuel, match indices, the `v` flag | Implemented ([contract](architecture.md#full-regexp-full_regexp), [record](#k9--typescript-completeness-and-the-first-release-agreed-2026-11-06)): program format 2 and the linked `regexp_exec`; V37 keeps the linear-time subset. Pending: run-time patterns, `matchAll` iterators, match-array methods, symbol protocols |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module

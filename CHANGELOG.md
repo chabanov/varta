@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- V38 K9 B, fourth increment (coordinator decisions under the owner's
+  delegated authority): a module `var` or static field read before its
+  definition reads `undefined` as in JavaScript, a checked read that
+  throws `TypeError` when the declared type does not admit it (before:
+  refused at compile time); a write before the definition defines it. A
+  temporal-dead-zone access throws an instance of the new `ReferenceError`
+  class (an `Error` subclass of typed guest code, with `EvalError`), so
+  `instanceof ReferenceError` holds. Static fields are read through class
+  values (`v.x`), and generic overload signatures of methods are
+  instantiated per call. The expression lowering keeps a smaller native
+  stack frame per nesting level.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
   2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as

@@ -529,12 +529,7 @@ impl Lower<'_> {
         let span = member.span;
         let name = self.member_key(&member.prop)?;
         if name != "name" {
-            return Err(self.source.locate(
-                unsupported(&format!(
-                    "member {name} of a class value (only name, new and static method calls are dispatched; a static field is read through its class)"
-                )),
-                member.prop.span(),
-            ));
+            return self.class_value_field(member, class, &name);
         }
         let callee = self.expr(&member.obj)?;
         let identity = self.hidden(Type::Number);
@@ -574,6 +569,40 @@ impl Lower<'_> {
                 body,
             },
         })
+    }
+    /// `v.x` of a static field `x`: a call of the field's generated getter
+    /// (`desugar::getter_key`), dispatched over the subclasses like any
+    /// static method, so each class reads the field it declares or
+    /// inherits.
+    fn class_value_field(
+        &mut self,
+        member: &ast::MemberExpr,
+        class: u32,
+        name: &str,
+    ) -> Result<Expr> {
+        let key = crate::desugar::getter_key(name);
+        if !self.types.classes.get(class).statics.contains_key(&key) {
+            return Err(self.source.locate(
+                unsupported(&format!(
+                    "member {name} of a class value (only name, static fields with a declared or literal type, new and static method calls are dispatched)"
+                )),
+                member.prop.span(),
+            ));
+        }
+        let span = member.span;
+        let getter = ast::MemberExpr {
+            span,
+            obj: member.obj.clone(),
+            prop: ast::MemberProp::Ident(ast::IdentName::new(key.into(), member.prop.span())),
+        };
+        let call = ast::CallExpr {
+            span,
+            ctxt: Default::default(),
+            callee: ast::Callee::Expr(Box::new(ast::Expr::Member(getter.clone()))),
+            args: Vec::new(),
+            type_args: None,
+        };
+        self.class_value_static_call(&call, &getter, class)
     }
     /// `a === b` (or `!==`, `==`, `!=`) of two class objects: their
     /// identities.

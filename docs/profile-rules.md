@@ -4137,16 +4137,21 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   case program).
 - Module evaluation (`module_evaluation`, `lower::module_evaluation`): an
   initializer may run code. `module_constants::check` refuses only a read
-  while an initializer is evaluated (`module_evaluation::immediate`,
-  TS2448) and an early `var` or static-field read (JavaScript reads
-  `undefined`); it returns the `Early` bindings (mentioned by function
-  values of earlier initializers, or `reachable` from effectful ones:
-  names reach whole declarations, classes their instance members, `C.m` a
-  static method). Those are stored in root slots, never folded, with a
-  flag slot in `ValueTypes::module_flags`; `globals::global_read`
-  and `global_store` test it, the initializer sets it
-  (`mark_initialized`), and `module_constants::has_early_bindings` must
-  agree with `check` so the Error root exists. Reserve the initializer
+  of a `let`, `const` or class binding while an initializer is evaluated
+  (`module_evaluation::immediate`, TS2448); it returns the `Early`
+  bindings (mentioned by function values of earlier initializers, or
+  `reachable` from effectful ones: names reach whole declarations, classes
+  their instance members, `C.m` a static method), with `Early::hoisted`
+  for the `var`s and static fields among them. Those are stored in root
+  slots, never folded, with an `ir::ModuleFlag` in
+  `ValueTypes::module_flags`; `globals::global_read` and `global_store`
+  test it, the initializer sets it (`mark_initialized`). A hoisted flag
+  makes an early read a checked read (`undefined` or `TypeError`, never a
+  `ReferenceError`) and an early write a definition; keep that difference
+  in both paths. `module_constants::has_early_bindings` must agree with
+  `check`, since `lower::reference_errors` loads the errors prelude whose
+  `ReferenceError` the flag test throws (`tdz::reference_error`; v37
+  keeps the Error-root instance). Reserve the initializer
   index for effectful chunks, and never let `prune::unread_constants` drop
   an initializer that calls code. Top-level `await` is the K9 C stream's
   (`top_level_await`, under `expression_forms`).

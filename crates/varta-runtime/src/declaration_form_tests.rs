@@ -323,8 +323,12 @@ fn class_values_match_node() {
     matches_node("static_receivers");
     for (source, diagnostic) in [
         (
-            "class A { static n = 1; } export function main(): void { const k = A; console.log(String(k.n)); }",
+            "class A { static n = make(); } function make(): number { return 1; } export function main(): void { const k = A; console.log(String(k.n)); }",
             "member n of a class value",
+        ),
+        (
+            "class A { private static n = 1; } export function main(): void { const k = A; console.log(String(k.n)); }",
+            "is private",
         ),
         (
             "class A {} export function main(): void { const ks: (typeof A)[] = [A]; console.log(String(ks.length)); }",

@@ -12370,8 +12370,11 @@ time (`new.target.name`, an Error subclass's `name`).
   candidate does not match; the selected instantiation's result type
   checks the implementation's result as above. Generic overloads do not
   type arguments contextually and are not checked against the
-  implementation (TS2394 applies to the others). A generic method overload
-  and an overloaded function used as a value are refused by name.
+  implementation (TS2394 applies to the others). Generic overload
+  signatures of methods and static methods (2026-11-07) are candidates of
+  the same kind; in an instance of a generic class the class's type
+  arguments stay bound while the method's own are inferred. An overloaded
+  function used as a value is refused by name.
 - **Setters and accessors.** `set x(v)` with or without a `get x()`: an
   assignment `o.x = v` evaluates `o`, then `v`, calls the setter and yields
   `v`; `o.x op= v` and `o.x++` read through the getter first. Accessors are
@@ -12431,10 +12434,16 @@ time (`new.target.name`, an Error subclass's `name`).
   Where a constructor type `new (…) => T` is expected, a class value
   binding converts to the closure that constructs through the dispatch,
   and generic inference sees its constructor type. A class value never
-  enters a union, an array, a record or `unknown` (it has no value tag),
-  a static field is not read through it (only through its class), and a
-  generic class is no value; each is refused by name (an engine class
-  keeps its own value rules).
+  enters a union, an array, a record or `unknown` (it has no value tag)
+  and a generic class is no value; each is refused by name (an engine
+  class keeps its own value rules). A static field `x` with a declared or
+  literal type is read through a class value (`v.x`, 2026-11-07): each
+  such field gets a generated static method `[get]x` with the field's
+  accessibility (`desugar::getter_key`, no source name can spell it) that
+  returns the field's module variable, and `v.x` calls it through the
+  static-method dispatch, so each class reads the field it declares or
+  inherits; unused getters are pruned. Writes through a class value stay
+  refused.
   `ConstructorParameters` and `InstanceType` take `typeof C` through its
   constructor type. V37 keeps the class name an unknown identifier.
 - **Class expressions and local classes.** `const X = class [N] { … }` at
@@ -12504,17 +12513,29 @@ Such a binding is stored in its root slot like a module variable (never
 folded to a literal) with an initialization flag in a further root slot
 (`0` or `1`, below the heap base, so the collector skips it); its
 initializer sets the flag, and every read and write through the root slot
-tests it first and throws an Error-root instance named `ReferenceError`
-with Node's message (`Cannot access 'X' before initialization`), a write
-after evaluating its right side. The analysis over-approximates calls,
+tests it first and throws a `ReferenceError` with Node's message
+(`Cannot access 'X' before initialization`), a write after evaluating its
+right side. The thrown value (2026-11-07) is an instance of the
+`ReferenceError` class of the errors prelude (`<varta>/builtins/errors.ts`,
+an `Error` subclass of typed guest code like `URIError`, with `EvalError`
+beside it), which every v38 module with such a binding or with a closure's
+early capture loads (`Prelude::required`, `lower::reference_errors`), so
+`e instanceof ReferenceError` and `e instanceof Error` both hold, as does
+`instanceof ReferenceError` of a program's own `new ReferenceError(…)`. The analysis over-approximates calls,
 which costs only the flag test. A binding mentioned by a function value of
 an earlier initializer is reached through its root slot before its own
 initializer is lowered, so its type must follow from its annotation or its
-function syntax (otherwise `annotate the binding`). Two early reads stay
-refused because JavaScript reads `undefined` there, which the declared
-type does not admit: a static field read before its definition and a
-module `var` (`X is read before its definition by code this initializer
-runs`). Other modules cannot reach this module's bindings early, since
+function syntax (otherwise `annotate the binding`). A module `var` and a
+static field have no temporal dead zone: JavaScript reads `undefined`
+before their definition, also while an initializer is evaluated (`var a =
+b; var b = 1`). Such a read is a checked read (owner decision of
+2026-11-07, the approved category of checked reads at TypeScript's
+unsoundness, `ir::ModuleFlag::hoisted`): it yields `undefined` when the
+declared type admits it and otherwise throws `TypeError` (`X is read
+before its definition: undefined is not a value of its type T`) at that
+read, where Node would continue with `undefined`; a write before the
+definition stores the value and marks the binding defined, and the
+definition later overwrites it, as in JavaScript. Other modules cannot reach this module's bindings early, since
 imports are acyclic and initialized first. A module-level class reached
 before its declaration still constructs (JavaScript throws there; the
 class binding has no flag yet). A module variable whose type is

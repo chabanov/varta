@@ -355,6 +355,52 @@ fn this_to_class(
     }
 }
 
+/// The key of the static method that reads the static field `field` for a
+/// class value (v38 class values, `lower::class_values`): no source member
+/// name can spell it.
+pub(crate) fn getter_key(field: &str) -> String {
+    generated(&[GETTER, field])
+}
+/// The name segment of [`getter_key`].
+const GETTER: &str = "get";
+
+/// `static [get]x(): T { return __vartaDecl$C$x; }`: a class value reads the
+/// static field `x` through this method, which subclasses inherit (and a
+/// subclass's own field overrides). Its accessibility is the field's, so
+/// TypeScript's access checks apply to the read. A field whose type is
+/// neither annotated nor a literal's has none.
+fn getter(property: &ast::ClassProp, class: &str) -> Option<ast::ClassMember> {
+    let field = key(&property.key)?;
+    let ty = field_type(property)?;
+    let span = property.span;
+    let read = ast::Expr::Ident(ast::Ident::new_no_ctxt(
+        generated(&[class, &field]).into(),
+        span,
+    ));
+    Some(ast::ClassMember::Method(ast::ClassMethod {
+        span,
+        key: ast::PropName::Ident(ast::IdentName::new(getter_key(&field).into(), span)),
+        function: Box::new(ast::Function {
+            span,
+            body: Some(ast::FunctionBody {
+                span,
+                stmts: vec![ast::Stmt::Return(ast::ReturnStmt {
+                    span,
+                    arg: Some(Box::new(read)),
+                })],
+            }),
+            return_type: Some(Box::new(ast::TsTypeAnn { span, type_ann: ty })),
+            ..Default::default()
+        }),
+        kind: ast::MethodKind::Method,
+        is_static: true,
+        accessibility: property.accessibility,
+        is_abstract: false,
+        is_optional: false,
+        is_override: false,
+    }))
+}
+
 /// The key of the receiver version of the static method `method` (v38
 /// class values): no source member name can spell it.
 pub(crate) fn receiver_key(method: &str) -> String {
@@ -647,6 +693,7 @@ pub(super) fn lower_class(
         match static_accessor(&member).into_owned() {
             ast::ClassMember::ClassProp(property) if property.is_static => {
                 let setter = exported.then(|| setter(&property, name)).flatten();
+                body.extend(getter(&property, name));
                 variables.push(variable(property, name, classes, source)?);
                 variables.extend(setter);
             }
