@@ -3469,6 +3469,60 @@
       }
     },
     {
+      "id": "ts-shared-arrays",
+      "feature": "ts-class-subtyping",
+      "path": "cases/ts-shared-arrays.ts",
+      "sha256": "23ed69489b3b0d5ea47ec39186390f041f15cbf7bde1e55e4852dcc8cc12f93b",
+      "stdout": [
+        "varta log: 2 2 BB 2 true",
+        "varta log: BCBC BCBC 4",
+        "varta log: BBCC BB",
+        "varta log: C C 3",
+        "varta log: true true 1 true",
+        "varta log: CBCB CBCBC [{\"x\":1,\"z\":3},{\"x\":1,\"y\":2},{\"x\":1,\"z\":3},{\"x\":1,\"y\":2}]",
+        "varta log: BBCC 2,2,3,3",
+        "varta log: 4,3,4,- 4 true",
+        "varta log: 4",
+        "varta log: 3",
+        "varta log: 4"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-pattern-templates",
+      "feature": "ts-template-literal-types",
+      "path": "cases/ts-pattern-templates.ts",
+      "sha256": "147cb6fe2adbad2f5c5622459f27e456206d76fdb81ea78e7cdaa53e3e727df9",
+      "stdout": [
+        "varta log: Click Key on3 12.5 id-42 HELLO",
+        "varta log: Hello world ONCLICK none,#fff 7",
+        "varta log: true yes no yes yes",
+        "varta log: 1 2 #000 color #abc empty",
+        "varta log: 1,2.5,1000 {\"title\":\"t\"}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-admitted-forms",
+      "feature": "ts-type-operators",
+      "path": "cases/ts-admitted-forms.ts",
+      "sha256": "b1421a49800de3553d515c01e6379033c8f91fa5de9cc046acab857aed366b41",
+      "stdout": [
+        "varta log: 1 x q",
+        "varta log: 4 3 2",
+        "varta log: 9",
+        "varta log: not a square",
+        "varta log: a-b-c 3  6 4"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "enum-members",
       "feature": "enums",
       "path": "cases/enum-members.ts",

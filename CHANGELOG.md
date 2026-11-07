@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- V38 K9 type level, step 3 (owner decision): a class array viewed as an
+  ancestor array (`B[]` or `(B | C)[]` as `A[]`) is one shared array, as in
+  JavaScript; an element read through a narrower name that does not admit
+  the element throws `TypeError` (replacing the copy of step 2). Pattern
+  template literal types (`` `on${string}` ``, `` `${number}px` ``) and
+  `Uppercase<string>` are checked like tsc: literals and template
+  expressions must match, `string` is not assignable. Admitted: `infer` in
+  intersection patterns, `this` in generic declarations and generic
+  declarations referring to themselves, `asserts this` methods and overloads
+  with rest parameters. Conformance: 178 passed, 5 known unsupported of 183.
 - V38 K9 type level, step 2 (owner decisions): branded primitives
   (`string & { __brand: … }` is the primitive), `typeof` of local bindings,
   overloaded call/construct signatures and function intersections (calls
