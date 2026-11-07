@@ -17136,6 +17136,62 @@ fn v38_standard_library_runs_in_dev_and_artifacts() {
 }
 
 #[test]
+fn v38_expression_forms_run_in_dev_and_artifacts() {
+    let source = "import {Range} from './range.ts';\
+         class Lock implements Disposable{[Symbol.dispose]():void{console.log('released');}}\
+         async function value(n:number):Promise<number>{return n;}\
+         function max3(a:number,b:number,c:number):number{return Math.max(a,b,c);}\
+         export async function main():Promise<void>{\
+         const o={n:2,dbl():number{return this.n*2;}};const key='total';\
+         const sums={[key]:(await value(1))+(await value(2))};\
+         const [a,b,...more]=new Range(4);const args:[number,number,number]=[3,9,4];\
+         {using lock=new Lock();\
+         console.log(`${o.dbl()} ${sums.total} ${a}${b}${more.join('')} ${max3(...args)} ${String.raw`\\d${(1,2)}`}`);}}";
+    let range = "export class Range implements Iterable<number>{last:number;constructor(last:number){this.last=last;}\
+         [Symbol.iterator]():Iterator<number>{let n=0;const last=this.last;\
+         return {next():IteratorResult<number>{return n<last?{value:n++,done:false}:{value:undefined,done:true};}};}}";
+    let project = RegressionProject::new(source, serde_json::json!({}));
+    fs::write(project.0.join("src/range.ts"), range).unwrap();
+    project.language_profile("checked-f64-utf16-v38");
+    // Node 24 prints the same lines.
+    let expected = ["varta log: 4 3 0123 9 \\d2", "varta log: released"];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+    project.language_profile("checked-f64-utf16-v37");
+    let rejected = project.command(&["dev"]);
+    assert!(!rejected.status.success());
+    let text = combined(&rejected);
+    assert!(
+        text.contains("computed or numeric class member name"),
+        "{text}"
+    );
+    assert!(!text.contains("varta log:"), "{text}");
+}
+
+#[test]
 fn linked_intrinsics_v38_run_identically_through_dev_build_single_and_both_binaries() {
     use varta_common::HostOperation;
     const PROFILE: &str = "checked-f64-utf16-v38";

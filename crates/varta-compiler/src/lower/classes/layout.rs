@@ -486,6 +486,14 @@ fn field(
                     .as_deref()
                     .and_then(|value| constructed_type(value, types).transpose())
             })
+            .or_else(|| {
+                // V38 (`expression_forms`): an arrow or function expression.
+                property
+                    .value
+                    .as_deref()
+                    .filter(|_| types.profile.expression_forms())
+                    .and_then(|value| field_arrows::field_type(value, types).transpose())
+            })
             .transpose()?
             .ok_or_else(|| {
                 invalid(format!(

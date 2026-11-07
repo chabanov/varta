@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with the K8 CSS engine's font sizes, font-relative units and layout-time `calc` on top of the K9 A TypeScript type level, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **4333 Rust tests passed, 0 failures, 25 ignored; 185 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-192642-e303l5b8/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **160 passed, 5 known unsupported out of 165** after the K9 A type-level step 2 cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **175 passed, 5 known unsupported out of 180** after the K9 A type-level step 2 and K9 C expression-forms cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -3445,6 +3445,7 @@ The selectors are registered; the table records what each stream admits.
 | `file_roots()` | Virtual file roots (wave 2): `fs.*` paths and grants are virtual paths `/<root>/...`; the configuration names roots inside the project, the host policy maps them for packaged runs | Implemented ([contract](architecture.md#virtual-file-roots-file_roots)): `fs.roots` in the configuration pinned no-follow at load, manifest `fsRoots` names (host ABI 34), host-policy `fsRoots` mapping pinned at startup, canonical virtual paths with whole-component matching against request and ceiling, no-follow reads below the root descriptor; run, application, view, HTTP request stores and tool invocation. V1–v37 keep host paths |
 | `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Iterable<T>` value annotations (`Array.from` with a map function: `standard_library()`) |
 | `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag, host time-zone grant; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
+| `expression_forms()` | K9 C — expressions and functions (2026-11-06): `await` anywhere, comma, `new.target` comparisons, tagged templates, spreads into fixed parameters, `this` parameters and field arrows, object-literal methods with `this`, computed keys, destructuring everywhere, hand-written iterators, `using`, structural thenables | Implemented in part ([contract](architecture.md#expression-forms-expression_forms), [record](#k9-c--expressions-and-functions-2026-11-06)): no ABI, value-layout, scheduler or host change. Pending: top-level `await` (needs module-level evaluation), object-literal getters/setters, `TemplateStringsArray.raw`, `SuppressedError` for double throws in `using`, `await` in `switch` case tests |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module
 under v38, scratch copies only, no live API call): the unmodified pilot checks
@@ -7619,6 +7620,42 @@ earlier bounds. Open: a per-stream write-idle bound for HTTP/2 streams whose
 client never opens its window, h2c, HTTP/3, certificate reload, and Linux
 and sustained-load benchmarks.
 
+### K9 C — expressions and functions (2026-11-06)
+
+Owner decision (2026-11-06, K9): the first release covers the whole
+TypeScript language except `any`, with Node 24 as the runtime oracle and tsc
+5.x as the type-system reference. Track C admits the expression and function
+forms under the v38 selector `expression_forms()`
+([contract](architecture.md#expression-forms-expression_forms)); v37 and
+earlier keep every old diagnostic. No host ABI, value layout, frame catalog
+or scheduler change, so the browser host runs every form unchanged.
+
+| Construct | Status | Evidence (`expression_form_cases`) |
+| --- | --- | --- |
+| `await` in call/`new` arguments, operands, templates, conditions, object/array literals, assignments, optional chains | Admitted (value blocks split around suspensions) | `await_positions`, `await_arguments`, `await_operands` |
+| Top-level `await` (native and browser schedulers) | Refused: module code runs only pure constant initializers; needs module-level evaluation (calls and statements at module scope) first | refusal test |
+| Object-literal methods with `this`, shorthand methods, fluent chains | Admitted (methods bound to the object; copies of such objects refused) | `object_methods` |
+| Object-literal getters and setters | Refused: closed records have data fields only | refusal test |
+| Constant computed keys (string/number literals, templates, `const` bindings, module constants) | Admitted; symbol keys wait for track D | `computed_keys` |
+| Tagged templates, `String.raw` | Admitted; `TemplateStringsArray.raw` refused (cooked strings only), strings array fresh per evaluation | `tagged_templates` |
+| Explicit `this` parameters (`f.call(o)`, `o.m()`) | Admitted for binding/`this` bases | `receivers` |
+| Contextually typed class-field arrows | Admitted (annotated parameters; return annotation or evident body type) | `receivers` |
+| Destructuring: parameters of arrows, functions, methods and callbacks (array methods, iterator helpers), tuples with rest, nested, defaults, assignment patterns, `for...of` heads, iterables | Admitted (iterables taken before targets run) | `destructuring`, `callback_patterns`, `iterators` |
+| Spread in calls and `new` | Admitted for static spreads (literals, tuples); `Math.max(...xs)` is K9 D's | `spreads` |
+| Hand-written iterators (`{ next() }` behind `[Symbol.iterator]()`) | Admitted for classes (body runs at the first `next()`) | `iterators` |
+| `using` / `await using` with `Symbol.dispose`/`asyncDispose` | Admitted; `SuppressedError` (track D) not built | `using` |
+| `new.target` | Admitted: `new.target.name` (v32) and comparisons | `operators` |
+| Structural thenables in `await`/`Promise.resolve` | Admitted for statically known `then` shapes, job order as Node | `thenables` |
+| Comma, `void`, `delete`, `in`, `instanceof`, optional chains, `&&=`/`\|\|=`/`??=`, `**=`, labelled blocks, `switch` fallthrough | Admitted (comma new; the rest pinned) | `operators` |
+| Generators driven by `next`/`return`/`throw` | Admitted; results now `{ value, done }` in creation order | `generators` |
+
+Every track-C probe of the K9 brief (`a29`–`a33`, `a41`, `a46`–`a49`,
+`a57`–`a61`, `a63`, `a64`, `a67`, `a68`) now compiles and prints Node's
+output; of the brief's 89 programs 50 run (43 compiled before). Still
+refused: top-level `await`, object-literal accessors and `raw`. Fuel: the v38 iterator
+result layout is `{ value, done }`; no fuel golden changed. Conformance:
+eleven feature rows and fifteen cases (after the K9 D and K9 A step 2 merges:
+175 passed, 5 known unsupported of 180).
 ### K9 — TypeScript completeness and the first release (agreed, 2026-11-06)
 
 **Owner decisions.** The first release targets **macOS (arm64) and the web**;

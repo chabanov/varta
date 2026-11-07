@@ -58,7 +58,7 @@ impl Lower<'_> {
             .to_vec())
     }
     /// ECMAScript ToString for admitted primitive kinds; strings pass through.
-    fn template_text(&mut self, value: Expr) -> Result<Expr> {
+    pub(super) fn template_text(&mut self, value: Expr) -> Result<Expr> {
         if value.ty == Type::String {
             return Ok(value);
         }

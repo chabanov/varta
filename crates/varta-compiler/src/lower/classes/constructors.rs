@@ -26,6 +26,9 @@ struct ThisUse<'a> {
     /// v32 `error_subclasses`: `new.target.name` is admitted in constructor
     /// parameters and bodies (not in field initializers or closures).
     new_target: bool,
+    /// V38 (`expression_forms`): `new.target === C` comparisons are admitted
+    /// wherever `new.target.name` is.
+    compare_target: bool,
     violation: Violation,
 }
 impl ThisUse<'_> {
@@ -134,6 +137,17 @@ impl Visit for ThisUse<'_> {
         }
         node.visit_children_with(self);
     }
+    fn visit_bin_expr(&mut self, node: &ast::BinExpr) {
+        if self.compare_target
+            && let Some(other) = expression_forms::new_target_operand(node)
+        {
+            if self.closure {
+                self.fail("constructor closures cannot capture new.target", node.span);
+            }
+            return other.visit_with(self);
+        }
+        node.visit_children_with(self);
+    }
     fn visit_meta_prop_expr(&mut self, node: &ast::MetaPropExpr) {
         self.fail("new.target", node.span);
     }
@@ -180,6 +194,8 @@ struct Discipline<'a> {
     assigned: BTreeSet<String>,
     source: &'a Source,
     new_target: bool,
+    /// V38 (`expression_forms`): `new.target` comparisons.
+    compare_target: bool,
     /// V37 (`language_core`): constructor closures may capture `this.field`.
     closures: bool,
 }
@@ -191,15 +207,28 @@ impl Discipline<'_> {
     fn check_initializer(&self, node: &dyn Checked) -> Result<()> {
         self.visit(node, false, false)
     }
+    /// A field initializer that sees `this` with the fields in `assigned`.
+    fn check_field(&self, node: &dyn Checked, assigned: &BTreeSet<String>) -> Result<()> {
+        self.visit_with(node, (true, false), assigned)
+    }
     fn visit(&self, node: &dyn Checked, allow_this: bool, new_target: bool) -> Result<()> {
+        self.visit_with(node, (allow_this, new_target), &self.assigned)
+    }
+    fn visit_with(
+        &self,
+        node: &dyn Checked,
+        (allow_this, new_target): (bool, bool),
+        assigned: &BTreeSet<String>,
+    ) -> Result<()> {
         let mut visitor = ThisUse {
             fields: &self.fields,
-            assigned: &self.assigned,
+            assigned,
             allow_this,
             closure: false,
             capture: false,
             complete: self.closures && allow_this,
             new_target,
+            compare_target: new_target && self.compare_target,
             violation: None,
         };
         node.accept(&mut visitor);
@@ -281,6 +310,7 @@ pub(super) fn declaration(id: u32, types: &ir::ValueTypes) -> Result<ast::FnDecl
         assigned: BTreeSet::new(),
         source,
         new_target: types.profile.error_subclasses(),
+        compare_target: types.profile.expression_forms(),
         closures: types.profile.language_core(),
     };
     // Field initializers never see `this` or constructor-scoped bindings.
@@ -321,8 +351,21 @@ pub(super) fn declaration(id: u32, types: &ir::ValueTypes) -> Result<ast::FnDecl
         }
         None => statements,
     };
-    for (_, value) in &class.initializers {
-        discipline.check_initializer(&**value)?;
+    let mut prior: BTreeSet<String> = if derived {
+        inherited.clone()
+    } else {
+        BTreeSet::new()
+    };
+    for (name, value) in &class.initializers {
+        if types.profile.expression_forms() {
+            // V38 (`expression_forms`): an initializer runs as the injected
+            // `this.name = value` and may read (or capture) the fields
+            // initialized before it, as in TypeScript's field order.
+            discipline.check_field(&**value, &prior)?;
+        } else {
+            discipline.check_initializer(&**value)?;
+        }
+        prior.insert(name.clone());
         let mut identifiers = Identifiers::default();
         value.visit_with(&mut identifiers);
         if let Some(name) = identifiers.0.intersection(&scoped).next() {
