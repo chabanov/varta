@@ -608,10 +608,16 @@ impl Lower<'_> {
             }
             Combinator::Any => {
                 let reject = self.reject_helper(span, result)?;
-                let errors = Expr {
-                    span,
-                    ty: arrays::intern(Type::Unknown, self.types)?,
-                    kind: E::Array(vec![]),
+                // V38: an `AggregateError` with no reasons. Earlier profiles
+                // keep their bytes (no `unknown[]` type is interned).
+                let errors = if self.types.profile.standard_library() {
+                    Some(Expr {
+                        span,
+                        ty: arrays::intern(Type::Unknown, self.types)?,
+                        kind: E::Array(vec![]),
+                    })
+                } else {
+                    None
                 };
                 let error = self.aggregate_error(span, errors)?;
                 vec![invoke(span, reject, vec![promise, error])]
@@ -621,10 +627,10 @@ impl Lower<'_> {
     }
     /// The `Promise.any` rejection reason, widened to the exception type:
     /// under v38 (`standard_library`) an `AggregateError` of the `unknown[]`
-    /// reasons `errors` (ECMA-262 §27.2.4.3), earlier an `Error`.
-    fn aggregate_error(&mut self, span: swc_common::Span, errors: Expr) -> Result<Expr> {
+    /// reasons `errors` (ECMA-262 §27.2.4.3), earlier (`None`) an `Error`.
+    fn aggregate_error(&mut self, span: swc_common::Span, errors: Option<Expr>) -> Result<Expr> {
         let reason = self.exception_type()?;
-        if self.types.profile.standard_library() {
+        if let Some(errors) = errors {
             let error = self.engine_apply((&AGGREGATE, ANY_REJECTION, &[]), vec![errors], span)?;
             return unions::widen(error, Some(reason), self.types);
         }
@@ -846,10 +852,17 @@ impl Lower<'_> {
             Combinator::Any => {
                 // On the last rejection every element has settled rejected:
                 // their reasons, in input order, are the error's `errors`.
-                let array = arrays::intern(Type::Unknown, self.types)?;
-                let errors = self.hidden(array);
-                let mut rejection = self.any_reasons(span, (id, holder()), errors)?;
-                let error = self.aggregate_error(span, local(span, errors, array))?;
+                // Earlier profiles keep their bytes: no reasons are gathered.
+                let mut rejection = Vec::new();
+                let errors = if self.types.profile.standard_library() {
+                    let array = arrays::intern(Type::Unknown, self.types)?;
+                    let errors = self.hidden(array);
+                    rejection = self.any_reasons(span, (id, holder()), errors)?;
+                    Some(local(span, errors, array))
+                } else {
+                    None
+                };
+                let error = self.aggregate_error(span, errors)?;
                 rejection.push(invoke(span, reject, vec![target(self)?, error]));
                 S::TryCatch {
                     body: vec![
