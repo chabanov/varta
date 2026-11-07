@@ -300,6 +300,13 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
             }
             return Err(unsupported("generic type reference"));
         }
+        // V38 (`expression_forms`): the strings array of a tagged template.
+        if types.profile.expression_forms()
+            && id.sym == "TemplateStringsArray"
+            && !named::declared(types, "TemplateStringsArray")
+        {
+            return arrays::intern(Type::String, types);
+        }
         return named::resolve(id.sym.as_ref(), types);
     }
     if types.profile.generics()
@@ -394,6 +401,7 @@ mod collection_hashing;
 mod collections;
 mod completion;
 mod compound_assignments;
+mod computed_keys;
 mod core;
 mod declarations;
 mod declared_fields;
@@ -410,6 +418,8 @@ mod errors;
 mod exceptions;
 mod exports;
 mod expr;
+mod expression_forms;
+mod field_arrows;
 mod flow;
 mod flow_call_ast;
 mod flow_calls;
@@ -428,7 +438,9 @@ mod globals;
 mod guest_logical;
 mod http;
 mod interfaces;
+mod iterable_patterns;
 mod iteration;
+mod iterator_objects;
 pub(crate) mod json;
 mod kv;
 mod labels;
@@ -453,6 +465,7 @@ mod object_assign;
 mod object_entries;
 mod object_enumeration;
 mod object_is;
+mod object_methods;
 mod object_narrowing;
 mod optional_chains;
 pub(crate) mod overloads;
@@ -483,6 +496,7 @@ mod sdk_paths;
 mod shared_unions;
 mod signature;
 mod spread;
+mod spread_arguments;
 mod standard;
 mod stmt;
 mod string_enumeration;
@@ -491,8 +505,10 @@ mod strings;
 pub(crate) mod subtyping;
 pub(crate) mod suspension;
 mod switches;
+mod tagged_templates;
 mod tdz;
 mod templates;
+mod thenables;
 mod tools;
 mod tuples;
 pub(crate) mod type_level;
@@ -502,6 +518,7 @@ mod unions;
 mod unknown;
 mod unknown_arrays;
 mod updates;
+mod using_declarations;
 mod view;
 mod void_functions;
 mod web_bytes;

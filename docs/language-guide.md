@@ -5820,9 +5820,61 @@ reach its delegate, as in JavaScript. `Iterator<T>` and
 `IterableIterator<T>` annotate generator objects; `Iterable<T>` is accepted in
 `implements` only, since a parameter of that type would also have to accept
 arrays. Strings spread their code points (`[..."a😀"]` has two elements).
-Hand-written `{ next() }` iterators, `Symbol()` values and destructuring of
-generators are not supported, and a hole in a `number[]` throws `TypeError`
-when it is spread, as in `for...of`.
+`Symbol()` values are not supported, and a hole in a `number[]` throws
+`TypeError` when it is spread, as in `for...of`. Hand-written iterators and
+destructuring of iterables follow below.
+
+#### Expressions and functions (opt-in v38)
+
+`await` may appear in any operand of an async function; object-literal
+methods see the object as `this`; constant computed keys name fields; a
+hand-written `{ next() }` iterator behind `[Symbol.iterator]()` feeds
+`for...of`, spreads and destructuring; tuples spread into fixed parameters;
+`String.raw` and tagged templates, `using` declarations and structural
+thenables behave as in JavaScript:
+
+```ts
+interface Counter { count: number; inc(): Counter }
+class Range implements Iterable<number> {
+  last: number;
+  constructor(last: number) { this.last = last; }
+  [Symbol.iterator](): Iterator<number> {
+    let n = 0;
+    const last = this.last;
+    return { next(): IteratorResult<number> { return n < last ? { value: n++, done: false } : { value: undefined, done: true }; } };
+  }
+}
+class Lock implements Disposable {
+  [Symbol.dispose](): void { console.log("released"); }
+}
+async function value(n: number): Promise<number> { return n; }
+function max3(a: number, b: number, c: number): number { return Math.max(a, b, c); }
+export async function main(): Promise<void> {
+  const counter: Counter = { count: 0, inc() { this.count++; return this; } };
+  console.log(String(counter.inc().inc().count)); // 2
+  const key = "total";
+  const sums = { [key]: (await value(1)) + (await value(2)) };
+  console.log(String(sums.total)); // 3
+  const [a, b, ...more] = new Range(5);
+  console.log(`${a} ${b} ${more.join(",")}`); // 0 1 2,3,4
+  const args: [number, number, number] = [3, 9, 4];
+  console.log(String(max3(...args))); // 9
+  console.log(String.raw`\d+${a}`); // \d+0
+  {
+    using lock = new Lock();
+    console.log("locked");
+  } // locked, then released
+}
+```
+
+The comma operator, `new.target === C` in constructors, explicit `this`
+parameters (`o.m()` passes `o`), class-field arrows without annotations
+(their type comes from their parameters and body) and destructuring in
+parameters, nested patterns and `for...of` heads are admitted too. Getters
+and setters in object literals, `TemplateStringsArray.raw`, top-level `await`
+and `await` in a `switch` case test are refused by name; copying an object
+whose methods use `this` with a spread is refused, since the copied methods
+would keep the original object as `this`.
 
 #### Enums, namespaces and class declarations (opt-in v38)
 

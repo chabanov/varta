@@ -1,0 +1,22 @@
+open early
+close early
+returned
+open early
+open late
+close late
+close early
+end
+open loop1
+close loop1
+open loop2
+body 2
+close loop2
+open inner
+work
+close inner
+async closed
+open a
+open b
+close b
+close a
+caught boom
