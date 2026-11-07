@@ -1133,7 +1133,7 @@ pub(super) fn implicit_imports(
             let required = prelude
                 .required
                 .is_some_and(|required| required(module, profile))
-                .then(|| module.span);
+                .then_some(module.span);
             bindings.extend(prelude.triggers.iter().filter_map(|trigger| {
                 trigger
                     .names
