@@ -100,7 +100,8 @@ fn check_class_header(class: &ast::Class, types: &ir::ValueTypes) -> Result<()> 
     {
         return Err(unsupported("generic class"));
     }
-    if class.is_abstract {
+    // Abstract classes and members are `declaration_forms` (v38).
+    if class.is_abstract && !types.profile.declaration_forms() {
         return Err(unsupported("abstract class"));
     }
     // `implements` is a checked conformance (v37 `class_generics`).
@@ -206,7 +207,13 @@ fn layout_members(
                     }
                     continue;
                 }
-                if property.declare {
+                // An abstract field (v38, `forms`) is a declared slot that a
+                // concrete descendant defines.
+                let abstract_field = types.classes.list[id as usize]
+                    .forms
+                    .abstracts
+                    .contains(&field.name);
+                if property.declare && !abstract_field {
                     return Err(source.locate(unsupported("ambient class field"), property.span));
                 }
                 if fields.iter().any(|f| f.name == field.name)
@@ -218,7 +225,9 @@ fn layout_members(
                         property.span,
                     ));
                 }
-                if let Some(value) = initializer {
+                if abstract_field {
+                    // Defined by the concrete descendant.
+                } else if let Some(value) = initializer {
                     initializers.push((field.name.clone(), value));
                 } else if property.is_optional
                     // V37 (`language_core`): an uninitialized field whose type
@@ -436,6 +445,13 @@ fn layout_members(
     (entry.generic_methods, entry.generic_statics) = generic;
     entry.init = Some(init);
     entry.initializers = initializers;
+    if types.profile.declaration_forms() {
+        forms::check_concrete(id, source, types)?;
+        forms::check_accessor_pairs(id, source, types)?;
+        index_signatures::check_members(id, source, types)?;
+        let overloads = types.classes.list[id as usize].forms.overloads.clone();
+        overloads::declare_methods(id, &overloads, source, types)?;
+    }
     implements::check(id, class, source, types)
 }
 

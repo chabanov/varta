@@ -30,6 +30,12 @@ pub(super) fn collect<'a>(
         };
         match declaration {
             ast::Decl::Fn(function) if !function.declare => declarations.push(function),
+            // Overload signatures (v38 `declaration_forms`, marked by
+            // `desugar::overloads`) attach to their implementation.
+            ast::Decl::Fn(function)
+                if function.declare
+                    && function.function.body.is_none()
+                    && profile.declaration_forms() => {}
             ast::Decl::TsInterface(interface)
                 if matches!(
                     interface.id.sym.as_ref(),

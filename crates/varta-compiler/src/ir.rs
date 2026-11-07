@@ -358,6 +358,9 @@ pub(crate) struct ValueTypes {
     /// ([`varta_common::value::ValueKind::Bytes`]) wherever a tag is written
     /// ([`tag_of`]). Set only after erasure.
     pub bytes: Option<u32>,
+    /// V38 (`declaration_forms`): overload signatures of functions and
+    /// methods, by implementation.
+    pub overloads: crate::lower::overloads::Overloads,
     /// K9 type-level state (v38 `type_level`); see `lower::type_level`.
     pub type_level: crate::lower::type_level::TypeLevel,
 }

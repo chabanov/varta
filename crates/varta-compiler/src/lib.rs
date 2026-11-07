@@ -2,6 +2,7 @@
 //! Checked TypeScript subset -> typed IR -> validated portable WebAssembly.
 pub mod browser_meter;
 mod classes;
+mod desugar;
 mod emit;
 mod error;
 mod ir;

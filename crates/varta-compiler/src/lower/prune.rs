@@ -167,6 +167,20 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
     Ok(())
 }
 
+/// Whether statements call a function or the host (module initializers
+/// with effects, v38 `module_evaluation`).
+fn calls(body: &mut [S]) -> bool {
+    let mut found = false;
+    // The visitor only reads the nodes.
+    statements(body, &mut |expr| {
+        found |= matches!(
+            expr.kind,
+            E::Call(..) | E::FunctionCall { .. } | E::Host(..) | E::CheckedBigIntHost { .. }
+        );
+    });
+    found
+}
+
 /// V38 (`program_limits`): drop the initialization of every module constant
 /// that no reachable code reads. Initializers are a checked pure subset, so
 /// skipping an unread one is unobservable; this removes the startup cost of
@@ -185,12 +199,18 @@ fn unread_constants(program: &mut ir::Program) -> Result<()> {
             .iter()
             .all(|statement| matches!(statement, S::Init(..) | S::InitModuleConstant(..)))
     };
-    let prunable: BTreeSet<usize> = program
+    // V38 (`module_evaluation`): an initializer that calls code has effects
+    // and always runs.
+    let effects = program.types.profile.module_evaluation();
+    let mut prunable: BTreeSet<usize> = program
         .initializers
         .iter()
         .copied()
         .filter(|index| program.functions.get(*index).is_some_and(initializer))
         .collect();
+    if effects {
+        prunable.retain(|index| !calls(&mut program.functions[*index].body));
+    }
     let mut live = vec![false; count];
     let mut read = BTreeSet::new();
     // Every root of `prune` (the v38 view event dispatcher included) reads.

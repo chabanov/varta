@@ -62,8 +62,8 @@
   `{ value, done }`. Still refused: top-level `await`, object-literal
   getters/setters, `TemplateStringsArray.raw`, `SuppressedError`. No host
   ABI or value layout change; v37 keeps rejecting every form. Conformance:
-  eleven new feature rows and fifteen cases (with K9 A and K9 D: 175
-  passed, 5 known unsupported of 180).
+  eleven new feature rows and fifteen cases (with K9 A, B and D: 190
+  passed, 5 known unsupported of 195).
 - K8 T2 standards items and K8 T3: the browser host runs the Rust CSS engine
   as `view-engine.wasm` (built by `scripts/build-view-engine.py`) and applies
   its computed values, so browser and native hosts accept, refuse and
@@ -123,6 +123,43 @@
   images and alternative-text rendering are refused. New dependencies `png`
   0.18.1, `image` 0.25.10 and `moxcms` 0.8.1; the image limits await an
   owner decision.
+- V38 module evaluation (K9 B, `module_evaluation`): module initializers may
+  call code, as ECMAScript evaluates a module once per instance in source
+  order; static fields with calls and `static { … }` blocks run where their
+  class is defined, and a read before initialization that the initializer
+  can reach is a compile error (JavaScript's `ReferenceError`). Also `super`
+  in static methods, re-exports of enums, namespaces and classes with static
+  fields, static fields of classes in namespaces and writes of imported
+  static fields. Conformance: `static-block` passes.
+- V38 class index signatures (K9 B): `[key: string]: T` in a class stores
+  undeclared members of its instances in a hidden dictionary, read and
+  written by name or computed key; members must fit the index type
+  (TS2411).
+- V38 enum assignability as tsc 5 decides it (K9 B): any `number` value is
+  assignable to a numeric enum type (a numeric literal only if it is a
+  member), and string enum types are nominal; `E[k]` with a dynamic key stays
+  `string | undefined` (owner decision).
+- V38 enum and namespace objects (K9 B): a non-const enum or a namespace used
+  as a value is a generated object with JavaScript's keys and order
+  (`Object.keys(E)`, `f(NS)`, `typeof E`, `keyof typeof E`). Conformance: two
+  new cases.
+- V38 declarations and classes (K9 B, `declaration_forms`): numeric,
+  string, heterogeneous and `const` enums with constant member expressions,
+  enum types as literal unions and the reverse mapping `E[n]`; namespaces
+  (nested, dotted, exported across modules) and declaration merging with
+  namespaces, functions, classes and enums; abstract classes, methods,
+  getters and fields (TS2511/TS2513/TS2515 checks); function, method, static
+  and constructor overloads resolved as tsc resolves them, with the
+  implementation's result checked against the selected signature; class
+  setters and getter/setter pairs, `accessor` fields; static fields as module
+  variables with `private`/`readonly` checks and `this` in static methods
+  resolved through the called subclass; class expressions bound by `const`
+  and classes declared in functions; parameter-property defaults. Static
+  blocks, effectful static initializers and decorators are refused by name
+  pending a module-initialization design. No host ABI or value layout
+  change; v37 keeps rejecting every form. Conformance: eight new feature rows
+  (`typescript_handbook` and ECMAScript class references), nine passing
+  cases, two known gaps and `class-instance` promoted.
 - V38 iteration protocol: a class's `[Symbol.iterator]()` generator method
   makes its instances iterable by `for...of`, array spreads, `Array.from` and
   `yield*`; classes declare synchronous generator methods; array literals

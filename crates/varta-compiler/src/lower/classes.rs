@@ -128,6 +128,8 @@ pub(super) struct Class {
     unallocated: Vec<Member>,
     /// V38 (`web_bytes`): the same-named interface merged with the class.
     merged: Option<merged_interfaces::MergedInterface>,
+    /// V38 (`declaration_forms`): abstract members and overload signatures.
+    pub forms: forms::Forms,
 }
 impl Class {
     /// A generic class declaration (not one of its instances).
@@ -405,10 +407,13 @@ fn member_name(key: &ast::PropName) -> Result<String> {
             "class member named like the inherited {name}"
         )));
     }
+    // A setter's registered name (v38) is an identifier key only after the
+    // `forms` rewrite; a string key cannot spell it.
     if name == ASYNC_ITERATOR_METHOD
         || name == ITERATOR_METHOD
         || name == DISPOSE_METHOD
         || name == ASYNC_DISPOSE_METHOD
+        || matches!(key, ast::PropName::Str(_)) && name.starts_with(SETTER_PREFIX)
     {
         return Err(unsupported(&format!("class member named {name}")));
     }
@@ -622,8 +627,11 @@ pub(super) fn register(
         _ => None,
     };
     let id = types.classes.list.len() as u32;
+    let mut class_forms = forms::Forms::default();
     types.classes.list.push(Class {
-        name: name.clone(),
+        // A class hoisted from a namespace or class expression shows its own
+        // declared name (v38 `declaration_forms`).
+        name: crate::desugar::display_name(&name).to_owned(),
         module,
         source: source.clone(),
         span: declaration.ident.span,
@@ -636,7 +644,15 @@ pub(super) fn register(
             };
             // `constructor(private readonly x: T)` (v38).
             let class = if types.profile.structural_subtyping() {
-                parameter_properties::rewrite(class, source)?
+                parameter_properties::rewrite(class, source, types.profile)?
+            } else {
+                class
+            };
+            // Abstract members, setters and overloads (v38).
+            let class = if types.profile.declaration_forms() {
+                let (class, found) = forms::rewrite(class, source)?;
+                class_forms = found;
+                class
             } else {
                 class
             };
@@ -664,7 +680,9 @@ pub(super) fn register(
         unallocated: Vec::new(),
         opaque: crate::modules::engine::is_builtin_source(source),
         merged: None,
+        forms: Default::default(),
     });
+    types.classes.list[id as usize].forms = class_forms;
     Ok(Some((name, id)))
 }
 
@@ -718,12 +736,15 @@ pub(super) fn constructor_patterns(types: &ir::ValueTypes, class: u32) -> Vec<as
     Vec::new()
 }
 
+mod accessors;
 mod constructors;
 mod dispatch;
 mod error_classes;
+mod forms;
 mod generic_classes;
 mod generic_methods;
 mod implements;
+mod index_signatures;
 mod layout;
 mod members;
 mod merged_interfaces;
@@ -734,6 +755,7 @@ pub(super) use error_classes::{
     CAUSE, MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance, reaches_json_form,
     reaches_prelude, root as error_family_root,
 };
+pub(super) use forms::{CONSTRUCTOR_KEY, OverloadDeclaration, SETTER_PREFIX};
 pub(super) use generic_classes::{UNALLOCATED, instantiate_class, member_body, next_member};
 pub(super) use generic_methods::{
     generic_dispatch_bodies, generic_method_body, next_generic_method,
