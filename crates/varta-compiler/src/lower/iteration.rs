@@ -47,7 +47,7 @@ enum Segment {
 }
 
 /// An iterated source after normalization.
-enum Iterated {
+pub(super) enum Iterated {
     /// A checked array; `packed` storage (a tuple or a collection's fresh
     /// snapshot) has no holes.
     Array { value: Expr, packed: bool },
@@ -137,7 +137,7 @@ impl Lower<'_> {
     /// Normalize an iterated value as `for...of` does: a `RegExp` match
     /// array, an iterable class instance, a collection, a tuple and a string
     /// (its code points) become a generator or a checked array.
-    fn iterated(&mut self, value: Expr, what: &str) -> Result<Iterated> {
+    pub(super) fn iterated(&mut self, value: Expr, what: &str) -> Result<Iterated> {
         let span = value.span;
         let value = self.match_array_values(value)?;
         let value = self.iterable_instance(value, what)?;
@@ -453,7 +453,13 @@ impl Lower<'_> {
     }
 
     /// `output.push(value)`, widening `value` to the element type.
-    fn pushed(&mut self, output: u32, array: Type, element: Type, value: Expr) -> Result<S> {
+    pub(super) fn pushed(
+        &mut self,
+        output: u32,
+        array: Type,
+        element: Type,
+        value: Expr,
+    ) -> Result<S> {
         let span = value.span;
         let found = value.ty;
         let value = unions::widen(value, Some(element), self.types)

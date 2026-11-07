@@ -1,0 +1,12 @@
+before
+t 1
+ok then
+t 2
+got 7
+t 3
+caught refused
+then called 3
+lazy3
+resolve returned
+then called 4
+lazy4

@@ -515,9 +515,11 @@ impl<'a> Normalizer<'a> {
                 body,
                 ..
             } => {
-                let construct = self.namer.describe(span);
-                if !construct.splittable {
-                    return Err(self.reject(span, &construct.name));
+                if !self.namer.splits_all() {
+                    let construct = self.namer.describe(span);
+                    if !construct.splittable {
+                        return Err(self.reject(span, &construct.name));
+                    }
                 }
                 self.pending.extend(roots);
                 let prefix = self.statements(body)?;
@@ -526,9 +528,11 @@ impl<'a> Normalizer<'a> {
             E::Assignment {
                 value, input, body, ..
             } => {
-                let construct = self.namer.describe(span);
-                if !construct.splittable {
-                    return Err(self.reject(span, &construct.name));
+                if !self.namer.splits_all() {
+                    let construct = self.namer.describe(span);
+                    if !construct.splittable {
+                        return Err(self.reject(span, &construct.name));
+                    }
                 }
                 let value_ty = value.ty;
                 let (mut prefix, value) = self.expr(*value)?;
@@ -583,6 +587,14 @@ impl<'a> Normalizer<'a> {
                 let (slots, values): (Vec<_>, Vec<_>) = fields.into_iter().unzip();
                 let (prefix, values) = self.operands(values)?;
                 (prefix, E::Record(slots.into_iter().zip(values).collect()))
+            }
+            E::OptionalRecord(fields, present) if self.namer.splits_all() => {
+                let (slots, values): (Vec<_>, Vec<_>) = fields.into_iter().unzip();
+                let (prefix, values) = self.operands(values)?;
+                (
+                    prefix,
+                    E::OptionalRecord(slots.into_iter().zip(values).collect(), present),
+                )
             }
             E::Array(elements) if elements.iter().all(Option::is_some) => {
                 let (prefix, values) = self.operands(elements.into_iter().flatten().collect())?;

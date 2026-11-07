@@ -1,0 +1,14 @@
+{"value":1,"done":false}
+got 5
+{"value":2,"done":false}
+cleanup
+{"value":"early","done":true}
+{"done":true}
+cleanup
+thrown bad
+0
+caught x
+1
+2
+{"done":true}
+value,done
