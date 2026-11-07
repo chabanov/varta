@@ -118,14 +118,17 @@ fn signatures(
     Ok(overloads.into())
 }
 
-/// A literal argument, which lowers without effects in any context.
+/// A literal argument or a binding, which lowers without effects in any
+/// context (a string enum member is `'x' as E`).
 fn literal(expr: &ast::Expr) -> bool {
     match expr {
-        ast::Expr::Lit(ast::Lit::Num(_) | ast::Lit::Str(_) | ast::Lit::Bool(_)) => true,
+        ast::Expr::Lit(ast::Lit::Num(_) | ast::Lit::Str(_) | ast::Lit::Bool(_))
+        | ast::Expr::Ident(_) => true,
         ast::Expr::Unary(unary) if unary.op == ast::UnaryOp::Minus => {
             matches!(&*unary.arg, ast::Expr::Lit(ast::Lit::Num(_)))
         }
         ast::Expr::Paren(paren) => literal(&paren.expr),
+        ast::Expr::TsAs(assertion) => literal(&assertion.expr),
         _ => false,
     }
 }
