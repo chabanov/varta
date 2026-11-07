@@ -13,7 +13,12 @@
   extra keys in own-key order (previously they were silently dropped), in
   the linked library and the host serializer alike. Tool entries cannot
   run module evaluation yet: binary64 profiles have no tool adapter (owner
-  decision pending). Conformance: 177 passed, 5 known unsupported of 182.
+  decision pending). Classes are values: `typeof C` holds `C` or a
+  subclass, and `new`, static calls and `name` dispatch over the
+  subclasses; `this`-using static methods inherited across modules run with
+  the calling subclass as `this` (before, silently with the declaring
+  class); generic overload signatures of functions infer their type
+  arguments per call. Conformance: 179 passed, 5 known unsupported of 184.
 - V38 K9 type level, step 2 (owner decisions): branded primitives
   (`string & { __brand: … }` is the primitive), `typeof` of local bindings,
   overloaded call/construct signatures and function intersections (calls

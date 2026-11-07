@@ -146,6 +146,25 @@ impl Lower<'_> {
                 self.class_constructor_value(id, context)
             }
             ast::Expr::New(new) if self.constructs_value(&new.callee) => self.construct_value(new),
+            // V38 (`declaration_forms`): class objects.
+            ast::Expr::Ident(id) if let Some(class) = self.class_value_name(expression) => {
+                self.class_value(id, class)
+            }
+            ast::Expr::New(new) if let Some(class) = self.class_value_path(&new.callee) => {
+                self.class_value_new(new, class)
+            }
+            ast::Expr::Member(member)
+                if let Some(class) = self.class_value_path(&member.obj).or_else(|| {
+                    self.class_value_name(&member.obj).filter(
+                        |_| matches!(&member.prop, ast::MemberProp::Ident(id) if id.sym == "name"),
+                    )
+                }) && matches!(member.prop, ast::MemberProp::Ident(_)) =>
+            {
+                self.class_value_member(member, class)
+            }
+            ast::Expr::Bin(binary) if let Some(value) = self.class_value_equality(binary)? => {
+                Ok(value)
+            }
             _ => self.expr_inner(expression),
         };
         if let Ok(value) = &result {
@@ -167,6 +186,7 @@ impl Lower<'_> {
             })
             .and_then(|value| self.void_function(value, expected))
             .map(|value| self.class_union_array(value, expected))
+            .and_then(|value| self.class_value_conversion(value, expected, expression))
             .and_then(|value| unions::widen(value, expected, self.types))
             .map_err(|e| self.source.locate(e, expression.span()))
     }
@@ -391,7 +411,7 @@ impl Lower<'_> {
                     }
                     ast::UnaryOp::TypeOf if self.types.profile.has_undefined() => {
                         let name = match value.ty {
-                            Type::Function(_) => "function",
+                            Type::Function(_) | Type::ClassValue(_) => "function",
                             Type::Undefined | Type::Void => "undefined",
                             Type::Error
                             | Type::NativeError(_)
@@ -838,6 +858,11 @@ impl Lower<'_> {
                     && !self.prelude_member(callee)
                 {
                     return self.class_static_call(call, member, class, expected);
+                }
+                if let ast::Expr::Member(member) = stmt::unparen(callee)
+                    && let Some(class) = self.class_value_path(&member.obj)
+                {
+                    return self.class_value_static_call(call, member, class);
                 }
                 if let ast::Expr::Member(member) = stmt::unparen(callee)
                     && self

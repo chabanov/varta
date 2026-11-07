@@ -92,6 +92,21 @@ const CASES: &[(&str, &str, &str)] = &[
         include_str!("declaration_form_cases/module_evaluation.expected"),
     ),
     (
+        "class_values",
+        include_str!("declaration_form_cases/class_values.ts"),
+        include_str!("declaration_form_cases/class_values.expected"),
+    ),
+    (
+        "static_receivers",
+        include_str!("declaration_form_cases/static_receivers.ts"),
+        include_str!("declaration_form_cases/static_receivers.expected"),
+    ),
+    (
+        "generic_overloads",
+        include_str!("declaration_form_cases/generic_overloads.ts"),
+        include_str!("declaration_form_cases/generic_overloads.expected"),
+    ),
+    (
         "index_json",
         include_str!("declaration_form_cases/index_json.ts"),
         include_str!("declaration_form_cases/index_json.expected"),
@@ -293,6 +308,105 @@ fn module_temporal_dead_zone_matches_node() {
         error.contains("ReferenceError")
             && error.contains("Cannot access 'M' before initialization"),
         "{error}"
+    );
+}
+
+/// Classes as values (`typeof C`): `new`, static calls, `name` and `===`
+/// dispatch over the closed set of subclasses; `this` in a static method
+/// is the class it is called through, also through a class value.
+#[test]
+fn class_values_match_node() {
+    matches_node("class_values");
+    matches_node("static_receivers");
+    for (source, diagnostic) in [
+        (
+            "class A { static n = 1; } export function main(): void { const k = A; console.log(String(k.n)); }",
+            "member n of a class value",
+        ),
+        (
+            "class A {} export function main(): void { const ks: (typeof A)[] = [A]; console.log(String(ks.length)); }",
+            "array element type",
+        ),
+        (
+            "class A {} export function main(): void { const k: typeof A | null = A; console.log(String(k === null)); }",
+            "class value in a union type",
+        ),
+        (
+            "class A { constructor(public n: number) {} } class B extends A { constructor() { super(1); } } function make(k: typeof A): A { return new k(2); } export function main(): void { console.log(String(make(A).n)); }",
+            "the constructor of class B does not accept the arguments of the constructor of class A",
+        ),
+        (
+            "abstract class A { abstract f(): number; } function make(k: typeof A): A { return new k(); } export function main(): void { console.log('x'); }",
+            "cannot create an instance of the abstract class A (TS2511)",
+        ),
+        (
+            "class A {} export function main(): void { const k = A; console.log(String(k === 1)); }",
+            "comparison of a class value with number (TS2367)",
+        ),
+    ] {
+        refused(V38, source, diagnostic);
+    }
+    refused(
+        V37,
+        "class A {} export function main(): void { const k = A; console.log(typeof k); }",
+        "unknown identifier: A",
+    );
+}
+
+/// A `this`-using static method inherited by a subclass declared in
+/// another module runs with that subclass as `this` (its receiver
+/// version); before, it silently ran with the declaring class. Node 24
+/// prints the same line.
+#[test]
+fn static_methods_inherited_across_modules_match_node() {
+    let model = "function prefix(): string { return 'table:'; }
+         export class Model {
+           static table(): string { return 'models'; }
+           static describe(): string { return prefix() + this.table() + ' ' + this.name; }
+           static count = 0;
+           static bump(): number { this.count++; return this.count; }
+           static create(): Model { return new this(); }
+           kind(): string { return 'model'; }
+         }";
+    let entry = "import { Model } from './model.ts';
+         class User extends Model {
+           static table(): string { return 'users'; }
+           kind(): string { return 'user'; }
+         }
+         export function main(): void {
+           console.log(User.describe() + ' ' + User.create().kind() + ' ' + Model.describe() + ' ' + String(Model.bump()));
+         }";
+    let bytes = compile_modules(entry, &[("model.ts", model)]).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    assert_eq!(
+        lines(&bytes),
+        ["table:users User user table:models Model 1"]
+    );
+    // `this.count++` through User would create an own static property of
+    // User in JavaScript, which a static field variable cannot model.
+    let writes = "import { Model } from './model.ts';
+         class User extends Model {}
+         export function main(): void { console.log(String(User.bump())); }";
+    let error = compile_modules(writes, &[("model.ts", model)])
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(
+        error.contains("it writes a static field through this"),
+        "{error}"
+    );
+}
+
+/// Generic overload signatures infer their type arguments per candidate
+/// (constraints included) and check the result against the instantiated
+/// signature.
+#[test]
+fn generic_overloads_match_node() {
+    matches_node("generic_overloads");
+    refused(
+        V38,
+        "class C { m<T>(x: T): T; m(x: string): string; m(x: unknown): unknown { return x; } } export function main(): void { console.log('x'); }",
+        "generic method overload signature",
     );
 }
 
@@ -534,11 +648,11 @@ fn unsupported_declaration_forms_are_refused_by_name() {
         ),
         (
             "function dec(value: unknown, context: unknown): void {} @dec class C {} export function main(): void { console.log('x'); }",
-            "decorator (a decorator runs code when its class is defined",
+            "decorator (standard decorators are not implemented yet",
         ),
         (
             "function dec(value: unknown, context: unknown): void {} class C { @dec m(): void {} } export function main(): void { console.log('x'); }",
-            "decorator (a decorator runs code when its class is defined",
+            "decorator (standard decorators are not implemented yet",
         ),
         (
             "class C { private static secret = 1; } export function main(): void { console.log(String(C.secret)); }",

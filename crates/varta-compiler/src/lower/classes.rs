@@ -219,6 +219,10 @@ impl Classes {
     pub(super) fn get(&self, id: u32) -> &Class {
         &self.list[id as usize]
     }
+    /// The number of classes (ids `0..count`).
+    pub(super) fn count(&self) -> u32 {
+        self.list.len() as u32
+    }
     /// Whether some class declares a method of this name. Native intrinsic
     /// member calls of the same name are then no longer provably user-code free.
     pub(super) fn has_method(&self, name: &str) -> bool {
@@ -312,7 +316,12 @@ impl Classes {
 
 /// `upcast` is exact or an ancestor class of `actual`.
 pub(super) fn upcast(types: &ir::ValueTypes, actual: Type, expected: Type) -> bool {
-    matches!((actual, expected), (Type::Class(a), Type::Class(e)) if types.classes.descends(a, e))
+    match (actual, expected) {
+        (Type::Class(a), Type::Class(e)) => types.classes.descends(a, e),
+        // A class object of a subclass is a `typeof` its ancestor (v38).
+        (Type::ClassValue(a), Type::ClassValue(e)) => class_values::assignable(types, a, e),
+        _ => false,
+    }
 }
 
 /// Retype a class value (or a union of them) whose class members widen to

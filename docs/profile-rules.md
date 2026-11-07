@@ -4054,7 +4054,29 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   `arguments::accepts`, literal arguments retyped against literal
   parameters, arguments bound to the hidden implementation and the result
   checked with `assert_value`. Keyed by implementation function index for
-  functions and by (declaring class, key, static) for methods.
+  functions and by (declaring class, key, static) for methods. A generic
+  function overload keeps its declaration (`Overload::generic`) and is
+  instantiated per call by `generic_calls::instantiate_overload`
+  (inference, then `generics::bind` for defaults and constraints); it gives
+  no argument context, and its candidates see literal argument types.
+- Class values (`lower::class_values`): `Type::ClassValue(C)` is a
+  lowering-only type erased to `Number` in `literal_erasure`; give it no
+  value tag, keep it out of `unions::intern`, aggregates and `unknown`, and
+  compare or store its id retyped as `Number`. Every dispatch (`new`,
+  static call, `name`) iterates `family` (all non-template, non-prelude
+  descendants) and ends in `S::Trap`. Assignability is
+  `class_values::assignable` (descent plus constructor compatibility),
+  reached through `classes::upcast`. `typeof C` resolves to the class value
+  (`type_level::queries`); `type_level::utilities` and generic inference
+  convert it to the constructor type.
+- Static receivers (`desugar::statics::receiver_version`): each
+  `this`-using static method also becomes `[this]m` (key
+  `desugar::receiver_key`) with a `typeof C` first parameter, or an
+  `[unshared]m` marker when it writes a static field through `this` or its
+  `super` reaches no module-level parent. `Lower::receiver_method` routes a
+  static call of a subclass without its own copy to the receiver version
+  (or refuses through the marker); static calls and class-value dispatch
+  must both ask it.
 - Tests: `varta-runtime` `declaration_form_tests` (the
   `declaration_form_cases/*.expected` files are Node 24.20.0 output of the
   tsc 5.9.3 emit; the collector stress builds must print the same, and the

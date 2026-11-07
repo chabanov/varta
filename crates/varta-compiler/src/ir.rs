@@ -74,6 +74,12 @@ pub(crate) enum Type {
     /// `ValueTypes::tuples[id].array` of the union of its element types.
     /// Erased to that array before emission; see `lower::tuples`.
     Tuple(u32),
+    /// A class object (v38 `declaration_forms`, `typeof C`): the identity of
+    /// the class `C` or of one of its subclasses, the class id. Physically an
+    /// `i32` (erased to `Number` before emission); `new`, static calls and
+    /// `name` dispatch over the closed set of subclasses. It never enters a
+    /// union, an aggregate or `unknown`; see `lower::class_values`.
+    ClassValue(u32),
 }
 
 /// The engine collection families of v37 (`Type::Collection`).
@@ -1305,6 +1311,7 @@ impl std::fmt::Display for Type {
             Self::Record(_) => "object",
             Self::Dictionary(_) => "dictionary object",
             Self::Class(_) => "class instance",
+            Self::ClassValue(_) => "class",
             Self::Generator(_) => "generator",
             Self::Promise(_) => "promise",
             Self::Collection(kind, _) => kind.name(),

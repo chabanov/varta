@@ -30,7 +30,7 @@ impl Lower<'_> {
             }),
         }
     }
-    pub(super) fn check_access(
+    pub(in crate::lower) fn check_access(
         &self,
         owner: u32,
         access: Access,
@@ -56,7 +56,12 @@ impl Lower<'_> {
     }
     /// A missing member; engine prelude classes (v35) explain the members
     /// they name but do not implement yet.
-    fn unknown_member(&self, class: u32, name: &str, kind: &str) -> CompilerError {
+    pub(in crate::lower) fn unknown_member(
+        &self,
+        class: u32,
+        name: &str,
+        kind: &str,
+    ) -> CompilerError {
         match self
             .types
             .classes
@@ -83,7 +88,7 @@ impl Lower<'_> {
         }
         self.unknown_member(class, name, kind)
     }
-    pub(super) fn member_key(&self, prop: &ast::MemberProp) -> Result<String> {
+    pub(in crate::lower) fn member_key(&self, prop: &ast::MemberProp) -> Result<String> {
         match prop {
             ast::MemberProp::Ident(id) => Ok(id.sym.to_string()),
             ast::MemberProp::PrivateName(_) => Err(unsupported("#private class member")),
@@ -296,7 +301,12 @@ impl Lower<'_> {
     }
     /// Allocate an instance of `class` with placeholder slots and run its
     /// initializer with the bound arguments.
-    fn construct(&mut self, span: Span, class: u32, values: Vec<Expr>) -> Result<Expr> {
+    pub(in crate::lower) fn construct(
+        &mut self,
+        span: Span,
+        class: u32,
+        values: Vec<Expr>,
+    ) -> Result<Expr> {
         let info = self.types.classes.get(class);
         let shape = info.shape;
         let field_types: Vec<Type> = info.fields.iter().map(|f| f.ty).collect();
@@ -613,6 +623,13 @@ impl Lower<'_> {
         )?;
         if call.type_args.is_some() {
             return Err(unsupported("generic class method call"));
+        }
+        // V38: a `this`-using method inherited from another module.
+        if let Some(receiver) = self
+            .receiver_method(class, &name)
+            .map_err(|e| self.source.locate(e, member.prop.span()))?
+        {
+            return self.receiver_static_call(call, class, &receiver);
         }
         if call.args.iter().any(|arg| arg.spread.is_some()) {
             return Err(unsupported("spread to a class method"));

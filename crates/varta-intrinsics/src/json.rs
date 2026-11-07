@@ -312,13 +312,14 @@ enum Frame {
         written: bool,
     },
     /// `fields` by slot; `order` the present slots in output order, where
-    /// `fields.len() + p` is the entry at position `p` of `extra`, a class
-    /// instance's index dictionary (v38).
+    /// `fields.len() + p` is the entry at position `p` of a class
+    /// instance's index dictionary (v38), the top of `Encoder::extras`
+    /// when `extra` is set.
     Record {
         ptr: usize,
         fields: Vec<Field>,
         order: Vec<usize>,
-        extra: Option<alloc::boxed::Box<Dictionary>>,
+        extra: bool,
         index: usize,
         depth: usize,
         written: bool,
@@ -399,6 +400,8 @@ struct Encoder<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> {
     /// Field lists of closed records, reused (no allocation per record).
     spare_fields: Vec<Vec<Field>>,
     spare_order: Vec<Vec<usize>>,
+    /// The index dictionaries of the open records whose frame has `extra`.
+    extras: Vec<Dictionary>,
     /// The record descriptors validated during this call (static data does
     /// not change while it runs): each record of a known shape checks only
     /// its own block, presence, order and link word.
@@ -428,6 +431,7 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
             stack: Vec::new(),
             spare_fields: Vec::new(),
             spare_order: Vec::new(),
+            extras: Vec::new(),
             shapes: Vec::new(),
         }
     }
@@ -829,6 +833,9 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
             return Err(EncodeError::Cyclic);
         }
         let mut indexed = false;
+        // Whether a present field holds a dictionary: only then can the
+        // record be a class instance with an index signature (v38).
+        let mut dictionaries = false;
         for field in fields.iter_mut() {
             if field.present
                 && field.len == TO_JSON.len()
@@ -854,6 +861,7 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
             field.kind = kind;
             field.payload = payload;
             indexed |= field.present && self.index_key(*field).is_some();
+            dictionaries |= field.present && kind == Kind::Dictionary as u32;
         }
         // Integer-index keys move ahead of the others, ascending (a stable
         // sort keeps the rest in insertion order).
@@ -866,7 +874,11 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
                 (index.is_none(), index.unwrap_or(0))
             });
         }
-        let extra = self.index_members(&fields, &mut order)?;
+        let extra = if dictionaries {
+            self.index_members(&fields, &mut order)?
+        } else {
+            None
+        };
         self.path.insert(ptr);
         self.punct(b'{')?;
         // Every reserved slot, absent ones included, consumes the traversal
@@ -879,14 +891,15 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
                 }
             }
         }
-        if extra.is_some() {
+        if let Some(dictionary) = extra {
             self.visit(depth + 1)?;
+            self.extras.push(dictionary);
         }
         self.stack.push(Frame::Record {
             ptr,
             fields,
             order,
-            extra,
+            extra: extra.is_some(),
             index: 0,
             depth,
             written: false,
@@ -903,7 +916,7 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
         &mut self,
         fields: &[Field],
         order: &mut Vec<usize>,
-    ) -> Result<Option<alloc::boxed::Box<Dictionary>>, EncodeError> {
+    ) -> Result<Option<Dictionary>, EncodeError> {
         let memory = self.memory;
         let Some(slot) = fields.iter().position(|field| {
             field.present
@@ -949,7 +962,7 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
         members.sort_by_key(|(class, key, _)| (*class, *key));
         order.clear();
         order.extend(members.into_iter().map(|(.., member)| member));
-        Ok(Some(alloc::boxed::Box::new(dictionary)))
+        Ok(Some(dictionary))
     }
     /// The index in [`Self::shapes`] of the validated shape of the record
     /// `payload`.
@@ -1113,9 +1126,18 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
     /// Pop the innermost aggregate after writing its closing `text`.
     fn close(&mut self, ptr: usize, closing: u8) -> Result<(), EncodeError> {
         // A record's field lists serve the next record.
-        if let Some(Frame::Record { fields, order, .. }) = self.stack.pop() {
+        if let Some(Frame::Record {
+            fields,
+            order,
+            extra,
+            ..
+        }) = self.stack.pop()
+        {
             self.spare_fields.push(fields);
             self.spare_order.push(order);
+            if extra {
+                self.extras.pop();
+            }
         }
         self.punct(closing)?;
         self.path.remove(ptr);
@@ -1187,10 +1209,10 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
                 return self.close(ptr, b'}');
             };
             *index += 1;
-            let dictionary = extra.as_deref().copied();
             // An entry of the instance's index dictionary.
-            if let Some(position) = slot.checked_sub(fields.len()) {
-                let Some(dictionary) = dictionary else {
+            let entry = slot.checked_sub(fields.len()).filter(|_| *extra);
+            if let Some(position) = entry {
+                let Some(&dictionary) = self.extras.last() else {
                     return Err(EncodeError::Layout);
                 };
                 let values = dictionary.values.kind as u32;

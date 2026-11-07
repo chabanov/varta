@@ -5876,6 +5876,37 @@ constant initializer rules, `this` in a static method is the class it is
 called through, and a class expression is admitted as the initializer of its
 own `const`, like a class declared inside a function (neither may capture the
 function's locals).
+
+Classes are values: a parameter of type `typeof Shape` holds `Shape` or any
+subclass, and `new`, static methods and `name` act on the class it holds.
+Overload signatures may be generic; each call infers their type arguments.
+
+```ts
+abstract class Shape {
+  constructor(public size: number) {}
+  abstract area(): number;
+  static describe(): string { return 'shape'; }
+}
+class Square extends Shape {
+  area(): number { return this.size * this.size; }
+  static describe(): string { return 'square'; }
+}
+function build(kind: typeof Shape, size: number): string {
+  return kind.name + ' ' + kind.describe(); // `new kind(size)` needs a concrete class
+}
+function make(kind: typeof Square, size: number): Square { return new kind(size); }
+
+function first<T>(items: T[]): T | undefined;
+function first(text: string): string;
+function first(value: unknown): unknown {
+  return typeof value === 'string' ? value.charAt(0) : Array.isArray(value) ? value[0] : undefined;
+}
+export function main(): void {
+  console.log(build(Square, 2) + ' ' + String(make(Square, 3).area())); // Square square 9
+  console.log(String(first([3, 4])) + first('hey')); // 3h
+}
+```
+
 Modules evaluate as in JavaScript: initializers may call functions, and static
 fields and `static { … }` blocks run where their class is defined. Code that
 runs during module evaluation and reads or writes a binding before its

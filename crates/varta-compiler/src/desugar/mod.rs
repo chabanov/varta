@@ -29,6 +29,8 @@ mod rewrite;
 mod scope;
 mod statics;
 
+pub(crate) use statics::{receiver_key, unshared_key};
+
 use crate::CompilerError;
 use crate::modules::{Dependency, Export};
 use crate::source::Source;

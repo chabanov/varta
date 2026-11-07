@@ -69,6 +69,10 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     if !types.profile.unions() {
         return Err(unsupported("union types require checked-f64-utf16-v2"));
     }
+    // A class object (v38) has no value tag.
+    if values.iter().any(|ty| matches!(ty, Type::ClassValue(_))) {
+        return Err(unsupported("class value in a union type"));
+    }
     // A reserved recursive union (empty members) cannot be flattened into
     // another union before its declaration is resolved.
     if values
@@ -310,7 +314,7 @@ pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes)
             kind: E::Reinterpret(Box::new(cell)),
         });
     }
-    if let Some(ty @ Type::Class(_)) = expected
+    if let Some(ty @ (Type::Class(_) | Type::ClassValue(_))) = expected
         && classes::upcast(types, value.ty, ty)
     {
         return Ok(Expr { ty, ..value });

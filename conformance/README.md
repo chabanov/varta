@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 105 feature rows and 182 cases:
-177 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 105 feature rows and 184 cases:
+179 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -499,3 +499,8 @@ and writes later bindings before their initialization and catches
 `ReferenceError`; `class-index-json` serializes instances with index
 signatures, nested and with a replacer list, in own-key order. Both match
 Node.js v24.20.0.
+Class values add `class-values` (`typeof C` parameters and results, `new`,
+static calls, `name`, `===` and `typeof` of class objects, dispatched over
+subclasses) under `static-class-members`, and generic overload signatures
+add `generic-overloads` (per-candidate inference with constraints) under
+`overloads`; both match Node.js v24.20.0.

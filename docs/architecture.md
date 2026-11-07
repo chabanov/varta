@@ -12023,8 +12023,16 @@ time (`new.target.name`, an Error subclass's `name`).
   `TypeError` if the implementation returns a value its overload does not
   admit). Signatures need return annotations and must be compatible with the
   implementation (TS2394); they precede it directly with the same export
-  state (TS2391, TS2383). Generic overloads and an overloaded function used
-  as a value are refused by name.
+  state (TS2391, TS2383). A generic overload signature of a function (owner
+  decision of 2026-11-06) is a candidate instantiated per call, as tsc
+  infers it: its type arguments are inferred from the argument types (a
+  primitive argument keeps its literal type), an unbound one takes its
+  default or `unknown`, and each must satisfy its constraint, or the
+  candidate does not match; the selected instantiation's result type
+  checks the implementation's result as above. Generic overloads do not
+  type arguments contextually and are not checked against the
+  implementation (TS2394 applies to the others). A generic method overload
+  and an overloaded function used as a value are refused by name.
 - **Setters and accessors.** `set x(v)` with or without a `get x()`: an
   assignment `o.x = v` evaluates `o`, then `v`, calls the setter and yields
   `v`; `o.x op= v` and `o.x++` read through the getter first. Accessors are
@@ -12056,9 +12064,40 @@ time (`new.target.name`, an Error subclass's `name`).
   `Derived.kind()` as in JavaScript. `super.m()` in static code calls the
   parent's `m` with the calling class as `this` (a copy of `m` in the
   calling class when `m` uses `this`), and `super.x` reads the parent's
-  static field. A `this`-using static method inherited from a class of
-  another module, and `super.m()` of such a method from a static field
-  initializer or block, are refused by name.
+  static field. Every static method that uses `this` also gets a receiver
+  version (`[this]m`, owner decision of 2026-11-06: class values) whose
+  first parameter, a class value, is `this`: a subclass without a copy
+  (declared in another module, whose copy could not reach the declaring
+  module's private names, or never named through) and a class value that
+  may hold any subclass call it with their own class, so `this.m()`, `new
+  this()` and `this.name` dispatch over the subclasses. `this.x` of a
+  static field reads the declaring class's field there. A method that
+  writes a static field through `this` (an own property of the subclass
+  in JavaScript) or whose `super` reaches no module-level parent has no
+  receiver version, and calling it with such a subclass as `this` is
+  refused by name; so is `super.m()` of a `this`-using method from a
+  static field initializer or block.
+- **Class values.** A class named where a value is expected, and a value
+  of type `typeof C`, is a class object (owner decision of 2026-11-06):
+  the identity of `C` or of one of its subclasses, an `i32` class id
+  (`Type::ClassValue`, erased to a Number before emission), with no host,
+  value-layout or ABI change. Classes are a closed world, so `new v(…)`,
+  static calls `v.m(…)` and `v.name` dispatch over the subclasses of `C`
+  known at link time (one direct call when they share the
+  implementation); `typeof v` is `"function"` and `===`/`!==` compare
+  identities. `typeof D` is assignable to `typeof C` when `D` descends
+  from `C` and its constructor accepts `C`'s parameters; `new v(…)`
+  refuses a subclass whose constructor does not (TS2511 for an abstract
+  `C`), and a subclass static method incompatible with `C`'s is TS2417.
+  Where a constructor type `new (…) => T` is expected, a class value
+  binding converts to the closure that constructs through the dispatch,
+  and generic inference sees its constructor type. A class value never
+  enters a union, an array, a record or `unknown` (it has no value tag),
+  a static field is not read through it (only through its class), and a
+  generic class is no value; each is refused by name (an engine class
+  keeps its own value rules).
+  `ConstructorParameters` and `InstanceType` take `typeof C` through its
+  constructor type. V37 keeps the class name an unknown identifier.
 - **Class expressions and local classes.** `const X = class [N] { … }` at
   module level or in a function body, and a class declaration in a function
   body, is a module class declaration (named `X`, or the class's own name
@@ -12090,10 +12129,10 @@ time (`new.target.name`, an Error subclass's `name`).
   omitted, as for fields. One difference remains: an extra property that a
   base constructor adds before a subclass's own fields are defined is
   listed after those fields, where JavaScript lists it before them.
-- **Not admitted yet.** Standard decorators (they need classes as values
-  and the decorator context objects) and generic overload signatures are
-  refused by name (`decorator`, `generic overload signature`). Legacy
-  `experimentalDecorators` are not planned.
+- **Not admitted yet.** Standard decorators (they need the decorator
+  context objects, `this` in field initializers and method values) are
+  refused by name (`decorator`). Legacy `experimentalDecorators` are not
+  planned.
 
 #### Module evaluation (`module_evaluation`)
 

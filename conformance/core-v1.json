@@ -3662,7 +3662,7 @@
       "baseline": {
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
-        "reason": "Decorators run code when the class is defined and receive the class as a value; pending the module-initialization design."
+        "reason": "Standard decorators are pending: they need this in field initializers, method values and rest parameters of tuple type first."
       }
     },
     {
@@ -3737,6 +3737,35 @@
         "varta log: {\"top\":9,\"count\":0}",
         "varta log: {\"0\":\"first\",\"title\":\"notes\",\"body\":\"text\"}",
         "varta log: {\"count\":0,\"size\":2}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-values",
+      "feature": "static-class-members",
+      "path": "cases/class-values.ts",
+      "sha256": "2d5851254cb0f73922c19cb8c12a4478ea5a2678cc2722414d38a7d1d6324a7e",
+      "stdout": [
+        "varta log: Square square 1 | Circle shape 2",
+        "varta log: Circle true true",
+        "varta log: 16 function",
+        "varta log: 12 shape"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "generic-overloads",
+      "feature": "overloads",
+      "path": "cases/generic-overloads.ts",
+      "sha256": "c344c1265447d418ac8d2d22927a58763c3b5d1d34d3c2ea3fdeb5fa48a79e17",
+      "stdout": [
+        "varta log: 3 h x",
+        "varta log: 2ONE true",
+        "varta log: a n2"
       ],
       "baseline": {
         "status": "supported"
