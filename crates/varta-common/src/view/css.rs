@@ -801,8 +801,40 @@ pub fn grammar(property: CssProperty) -> &'static str {
         P::TransitionTimingFunction => {
             "[linear | ease | ease-in | ease-out | ease-in-out | step-start | step-end | cubic-bezier(<number>, <number>, <number>, <number>) | steps(<integer> [, [jump-start | jump-end | jump-none | jump-both | start | end]]?)]#"
         }
+        // CSS Backgrounds 3 §3.3: `<line-width>`, whose keywords [`lower`]
+        // turns into `px` ([`LINE_WIDTH_KEYWORDS`]).
+        P::BorderWidth => "[<length> | thin | medium | thick]{1,4}",
+        P::BorderTopWidth | P::BorderRightWidth | P::BorderBottomWidth | P::BorderLeftWidth => {
+            "<length> | thin | medium | thick"
+        }
+        P::Border | P::BorderTop | P::BorderRight | P::BorderBottom | P::BorderLeft => {
+            "[<length> | thin | medium | thick] || [none | hidden | solid] || <color>"
+        }
         _ => property.grammar(),
     }
+}
+
+/// The `<line-width>` keywords (CSS Backgrounds 3 §3.3: `thin` ≤ `medium` ≤
+/// `thick`, user-agent lengths) as Chrome resolves them, in CSS pixels.
+pub const LINE_WIDTH_KEYWORDS: [(&str, &str); 3] =
+    [("thin", "1px"), ("medium", "3px"), ("thick", "5px")];
+
+/// Whether `property` takes `<line-width>` components.
+fn line_width_property(property: CssProperty) -> bool {
+    use CssProperty as P;
+    matches!(
+        property,
+        P::Border
+            | P::BorderTop
+            | P::BorderRight
+            | P::BorderBottom
+            | P::BorderLeft
+            | P::BorderWidth
+            | P::BorderTopWidth
+            | P::BorderRightWidth
+            | P::BorderBottomWidth
+            | P::BorderLeftWidth
+    )
 }
 
 /// Values of the CSS specifications the native layout does not support yet
@@ -819,11 +851,16 @@ fn unrendered(property: CssProperty) -> Option<&'static str> {
         P::Width | P::Height | P::MinWidth | P::MinHeight | P::MaxWidth | P::MaxHeight => {
             "min-content | max-content | fit-content | fit-content(<length-percentage>) | stretch"
         }
-        P::Overflow => "[visible | hidden | clip | scroll | auto]{1,2}",
         P::WhiteSpace => "pre-line | break-spaces",
         P::TextAlign => "justify | match-parent",
         P::BorderStyle | P::OutlineStyle => {
             "[none | hidden | dotted | dashed | solid | double | groove | ridge | inset | outset]{1,4}"
+        }
+        P::BorderTopStyle | P::BorderRightStyle | P::BorderBottomStyle | P::BorderLeftStyle => {
+            "dotted | dashed | double | groove | ridge | inset | outset"
+        }
+        P::Border | P::BorderTop | P::BorderRight | P::BorderBottom | P::BorderLeft => {
+            "[<length> | thin | medium | thick] || [none | hidden | dotted | dashed | solid | double | groove | ridge | inset | outset] || <color>"
         }
         _ => return None,
     })
@@ -938,8 +975,16 @@ fn nonnegative(property: CssProperty) -> bool {
             | P::FlexShrink
             | P::FlexBasis
             | P::BorderWidth
+            | P::BorderTopWidth
+            | P::BorderRightWidth
+            | P::BorderBottomWidth
+            | P::BorderLeftWidth
             | P::OutlineWidth
             | P::BorderRadius
+            | P::BorderTopLeftRadius
+            | P::BorderTopRightRadius
+            | P::BorderBottomRightRadius
+            | P::BorderBottomLeftRadius
             | P::FontSize
             | P::LineHeight
             | P::TransitionDuration
@@ -987,7 +1032,17 @@ fn literal_notes(property: CssProperty, tokens: &[V], mode: Mode) -> bool {
                 | CssProperty::PaddingBottom
                 | CssProperty::PaddingLeft
                 | CssProperty::FlexGrow
-                | CssProperty::FlexShrink,
+                | CssProperty::FlexShrink
+                | CssProperty::BorderWidth
+                | CssProperty::BorderTopWidth
+                | CssProperty::BorderRightWidth
+                | CssProperty::BorderBottomWidth
+                | CssProperty::BorderLeftWidth
+                | CssProperty::BorderRadius
+                | CssProperty::BorderTopLeftRadius
+                | CssProperty::BorderTopRightRadius
+                | CssProperty::BorderBottomRightRadius
+                | CssProperty::BorderBottomLeftRadius,
                 V::Num { value, text, .. },
             ) => *value >= 0.0 && !text.starts_with('-'),
             // Color 4 §11.2: an `<alpha-value>` outside [0, 1] is valid and
@@ -1500,7 +1555,15 @@ pub fn lower(property: CssProperty, value: &str, context: &Context) -> Option<St
     }
     let tokens = lex_value(value)?;
     let target = grammar(property);
-    if matches_tokens(target, &tokens, Mode::Host) && literal_notes(property, &tokens, Mode::Host) {
+    // `<line-width>` keywords are in the engine grammar but become `px`.
+    let line_width_keyword = line_width_property(property)
+        && tokens.iter().any(|token| {
+            matches!(token, V::Ident(word) if LINE_WIDTH_KEYWORDS.iter().any(|(name, _)| word.eq_ignore_ascii_case(name)))
+        });
+    if !line_width_keyword
+        && matches_tokens(target, &tokens, Mode::Host)
+        && literal_notes(property, &tokens, Mode::Host)
+    {
         return Some(value.to_owned());
     }
     let mut parts = Vec::with_capacity(tokens.len());
@@ -1543,6 +1606,10 @@ pub fn lower(property: CssProperty, value: &str, context: &Context) -> Option<St
         }
         parts.push(match token {
             V::Num { .. } => lower_numeric(property, token, context)?,
+            V::Ident(word) if line_width_property(property) => LINE_WIDTH_KEYWORDS
+                .iter()
+                .find(|(name, _)| word.eq_ignore_ascii_case(name))
+                .map_or_else(|| token_text(token), |(_, px)| (*px).to_owned()),
             token => token_text(token),
         });
         at += 1;
@@ -1859,6 +1926,61 @@ mod font_tests {
             ..Context::NOMINAL
         };
         assert_eq!(super::lower(CssProperty::Width, "2em", &bare), None);
+    }
+}
+
+/// K8 T2 S4: per-side borders, corner radii, overflow axes, visibility,
+/// text transforms, pointer events and user selection.
+#[cfg(test)]
+mod s4_property_tests {
+    use super::*;
+    use CssProperty as P;
+
+    #[test]
+    fn line_widths_lower_their_keywords_to_pixels() {
+        let lower = |property, value| lower(property, value, &Context::NOMINAL);
+        assert_eq!(lower(P::BorderTopWidth, "thin").as_deref(), Some("1px"));
+        assert_eq!(
+            lower(P::BorderWidth, "thin medium thick 2px").as_deref(),
+            Some("1px 3px 5px 2px")
+        );
+        assert_eq!(
+            lower(P::Border, "thick solid #fff").as_deref(),
+            Some("5px solid #fff")
+        );
+        assert_eq!(lower(P::BorderLeftWidth, "2px").as_deref(), Some("2px"));
+        assert_eq!(check(P::BorderLeftWidth, "-1px"), Err(Refusal::Invalid));
+        assert_eq!(
+            check(P::BorderTopStyle, "dashed"),
+            Err(Refusal::Unrenderable)
+        );
+        assert_eq!(check(P::BorderTopStyle, "hidden"), Ok(()));
+        assert_eq!(check(P::Border, "none"), Ok(()));
+        assert_eq!(
+            check(P::Border, "1px dotted red"),
+            Err(Refusal::Unrenderable)
+        );
+    }
+
+    #[test]
+    fn the_s4_keyword_properties_take_their_specified_grammars() {
+        for (property, valid, invalid) in [
+            (P::OverflowX, "clip", "overlay"),
+            (P::Overflow, "hidden scroll", "auto auto auto"),
+            (P::Visibility, "collapse", "none"),
+            (
+                P::TextTransform,
+                "full-size-kana capitalize",
+                "uppercase lowercase",
+            ),
+            (P::PointerEvents, "none", "visiblePainted"),
+            (P::UserSelect, "contain", "element"),
+            (P::BorderTopLeftRadius, "4px 50%", "1px 2px 3px"),
+        ] {
+            assert_eq!(check(property, valid), Ok(()), "{valid}");
+            assert_eq!(check(property, invalid), Err(Refusal::Invalid), "{invalid}");
+        }
+        assert_eq!(check(P::BorderTopLeftRadius, "-2px"), Err(Refusal::Invalid));
     }
 }
 

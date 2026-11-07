@@ -389,6 +389,29 @@ coded! {
         Scale = 82 => "scale",
         TransformOrigin = 83 => "transform-origin",
         LetterSpacing = 84 => "letter-spacing",
+        BorderTopWidth = 85 => "border-top-width",
+        BorderRightWidth = 86 => "border-right-width",
+        BorderBottomWidth = 87 => "border-bottom-width",
+        BorderLeftWidth = 88 => "border-left-width",
+        BorderTopStyle = 89 => "border-top-style",
+        BorderRightStyle = 90 => "border-right-style",
+        BorderBottomStyle = 91 => "border-bottom-style",
+        BorderLeftStyle = 92 => "border-left-style",
+        BorderTopColor = 93 => "border-top-color",
+        BorderRightColor = 94 => "border-right-color",
+        BorderBottomColor = 95 => "border-bottom-color",
+        BorderLeftColor = 96 => "border-left-color",
+        BorderTopLeftRadius = 97 => "border-top-left-radius",
+        BorderTopRightRadius = 98 => "border-top-right-radius",
+        BorderBottomRightRadius = 99 => "border-bottom-right-radius",
+        BorderBottomLeftRadius = 100 => "border-bottom-left-radius",
+        OverflowX = 101 => "overflow-x",
+        OverflowY = 102 => "overflow-y",
+        Visibility = 103 => "visibility",
+        TextTransform = 104 => "text-transform",
+        PointerEvents = 105 => "pointer-events",
+        UserSelect = 106 => "user-select",
+        BoxSizing = 107 => "box-sizing",
     }
 }
 
@@ -1083,18 +1106,19 @@ impl CssProperty {
             Self::Position => "static | relative | absolute | fixed",
             Self::Top | Self::Right | Self::Bottom | Self::Left => "auto | <length-percentage>",
             Self::ZIndex => "auto | <integer>",
-            Self::Overflow => "visible | hidden | auto",
+            Self::Overflow => "[visible | hidden | clip | scroll | auto]{1,2}",
             Self::Border
             | Self::BorderTop
             | Self::BorderRight
             | Self::BorderBottom
-            | Self::BorderLeft
-            | Self::Outline => "none | [<length> || solid || <color>]",
-            Self::BorderWidth | Self::OutlineWidth | Self::OutlineOffset => "<length>",
-            Self::BorderStyle | Self::OutlineStyle => "none | solid",
-            Self::BorderColor | Self::OutlineColor | Self::BackgroundColor | Self::Color => {
-                "<color>"
-            }
+            | Self::BorderLeft => "<length> || [none | hidden | solid] || <color>",
+            Self::Outline => "none | [<length> || solid || <color>]",
+            Self::BorderWidth => "<length>{1,4}",
+            Self::OutlineWidth | Self::OutlineOffset => "<length>",
+            Self::BorderStyle => "[none | hidden | solid]{1,4}",
+            Self::OutlineStyle => "none | solid",
+            Self::BorderColor => "<color>{1,4}",
+            Self::OutlineColor | Self::BackgroundColor | Self::Color => "<color>",
             Self::BorderRadius => "<length-percentage>{1,4}",
             Self::Opacity => "<number>",
             Self::FontFamily => {
@@ -1134,6 +1158,30 @@ impl CssProperty {
             Self::Scale => "none | <number> <number>?",
             Self::TransformOrigin => "<length-percentage> <length-percentage>",
             Self::LetterSpacing => "normal | <length>",
+            Self::BorderTopWidth
+            | Self::BorderRightWidth
+            | Self::BorderBottomWidth
+            | Self::BorderLeftWidth => "<length>",
+            Self::BorderTopStyle
+            | Self::BorderRightStyle
+            | Self::BorderBottomStyle
+            | Self::BorderLeftStyle => "none | hidden | solid",
+            Self::BorderTopColor
+            | Self::BorderRightColor
+            | Self::BorderBottomColor
+            | Self::BorderLeftColor => "<color>",
+            Self::BorderTopLeftRadius
+            | Self::BorderTopRightRadius
+            | Self::BorderBottomRightRadius
+            | Self::BorderBottomLeftRadius => "<length-percentage>{1,2}",
+            Self::OverflowX | Self::OverflowY => "visible | hidden | clip | scroll | auto",
+            Self::Visibility => "visible | hidden | collapse",
+            Self::TextTransform => {
+                "none | [capitalize | uppercase | lowercase] || full-width || full-size-kana"
+            }
+            Self::PointerEvents => "auto | none",
+            Self::UserSelect => "auto | text | none | contain | all",
+            Self::BoxSizing => "content-box | border-box",
         }
     }
 }
@@ -1162,6 +1210,15 @@ impl CssProperty {
             Self::ImageOrientation => Some("inherited"),
             Self::Scale => Some("positive factors"),
             Self::LetterSpacing => Some("inherited"),
+            Self::BorderTopWidth
+            | Self::BorderRightWidth
+            | Self::BorderBottomWidth
+            | Self::BorderLeftWidth => Some("nonnegative"),
+            Self::BorderTopLeftRadius
+            | Self::BorderTopRightRadius
+            | Self::BorderBottomRightRadius
+            | Self::BorderBottomLeftRadius => Some("nonnegative; horizontal then vertical radius"),
+            Self::Visibility | Self::TextTransform | Self::PointerEvents => Some("inherited"),
             _ => None,
         }
     }
@@ -1625,6 +1682,25 @@ mod tests {
             P::Scale => &["none", "0.95", "1 2"],
             P::TransformOrigin => &["0 0", "100% 50%", "4px 10%"],
             P::LetterSpacing => &["normal", "0.4px", "-1px"],
+            P::BorderTopWidth | P::BorderRightWidth | P::BorderBottomWidth | P::BorderLeftWidth => {
+                &["1px", "0"]
+            }
+            P::BorderTopStyle | P::BorderRightStyle | P::BorderBottomStyle | P::BorderLeftStyle => {
+                &["solid", "none", "hidden"]
+            }
+            P::BorderTopColor | P::BorderRightColor | P::BorderBottomColor | P::BorderLeftColor => {
+                &["#fff", "currentcolor"]
+            }
+            P::BorderTopLeftRadius
+            | P::BorderTopRightRadius
+            | P::BorderBottomRightRadius
+            | P::BorderBottomLeftRadius => &["4px", "50%", "4px 8px"],
+            P::OverflowX | P::OverflowY => &["auto", "clip", "visible"],
+            P::Visibility => &["hidden", "collapse"],
+            P::TextTransform => &["uppercase", "none", "capitalize full-width"],
+            P::PointerEvents => &["none", "auto"],
+            P::UserSelect => &["none", "all"],
+            P::BoxSizing => &["border-box", "content-box"],
         }
     }
 

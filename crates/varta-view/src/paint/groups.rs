@@ -298,6 +298,8 @@ mod tests {
             isolation_required: false,
             affines: Vec::new(),
             capture: None,
+            invisible: std::collections::BTreeSet::new(),
+            suppressed: false,
         };
         let bounds = BoxRect {
             x: 0.0,

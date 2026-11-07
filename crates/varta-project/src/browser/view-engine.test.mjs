@@ -40,9 +40,12 @@ test("the browser view model decides the cross-host corpus as the native rendere
     let parent = 1;
     item.classes.forEach((klass, index) => {
       const node = index + 2;
-      ops.push({ name: "create_element", node, tag: "div" }, { name: "insert", parent, node, before: 0 }, { name: "set_class", node, text: klass });
+      ops.push({ name: "create_element", node, tag: item.tags?.[index] ?? "div" }, { name: "insert", parent, node, before: 0 }, { name: "set_class", node, text: klass });
       parent = node;
     });
+    for (const [index, attribute, text] of item.attributes ?? []) ops.push({ name: "set_attribute", node: index + 2, attribute, text });
+    for (const [index, text] of item.values ?? []) ops.push({ name: "set_value", node: index + 2, text, base_seq: 0 });
+    for (const index of item.checked ?? []) ops.push({ name: "set_checked", node: index + 2, checked: 1, base_seq: 0 });
     ops.push({ name: "stylesheet", sheet: 1, text: item.sheet });
     for (const [property, text] of item.style) ops.push({ name: "set_style", node: parent, property, text });
     const record = expected[item.name];
@@ -84,7 +87,7 @@ test("refusals happen before any effect and keep the committed engine state", ()
   const model = createViewModel({ viewEngine });
   model.commit(encodeViewBatch([{ name: "create_element", node: 2, tag: "div" }, { name: "insert", parent: 1, node: 2, before: 0 }, { name: "set_class", node: 2, text: "sm:flex" }, { name: "stylesheet", sheet: 1, text: ".sm\\:flex { color: oklch(0.5 0.1 10) }" }]));
   const before = Object.fromEntries(model.engine.computed(2));
-  assert.throws(() => model.commit(encodeViewBatch([{ name: "stylesheet", sheet: 1, text: ".sm\\:flex { color: #fff }" }, { name: "stylesheet", sheet: 2, text: "#b {}" }])), /stylesheet value/);
+  assert.throws(() => model.commit(encodeViewBatch([{ name: "stylesheet", sheet: 1, text: ".sm\\:flex { color: #fff }" }, { name: "stylesheet", sheet: 2, text: "#1b {}" }])), /stylesheet value/);
   assert.deepEqual(Object.fromEntries(model.engine.computed(2)), before);
   assert.throws(() => model.commit(encodeViewBatch([{ name: "set_class", node: 2, text: "a\u0001" }])), /class value/);
   assert.throws(() => model.commit(encodeViewBatch([{ name: "set_style", node: 2, property: "border-radius", text: "calc(100% - 1rem)" }])), /style value/);

@@ -9,16 +9,17 @@ any previous check whose scope includes those inputs.
 ## Current verification evidence — 2026-11-06
 
 - **Latest successful full gate:**
-  `target/verification/20261107-000755-zz38unzh/report.json` passes every
-  command with unchanged inputs: **4417 Rust tests, 0 failures, 25 ignored; 186
-  browser Node tests**; checked-v38 conformance matches its baseline (201
-  passed, 5 known unsupported out of 206). It covers merged `main` with the K9 C
-  expression forms with object-literal accessors, template raw strings, dynamic
-  `this` and top-level `await`, K9 D3 full RegExp, K9 A steps 1–3 (shared
-  covariant class arrays, pattern template types), K9 B declarations and
-  classes, the K8 CSS engine's font-metric units, logical properties and
-  selectors, the first K9 D standard library stream, the Tailwind compiler,
-  native `img`, the iteration protocol, overlay scrollbars and the audit fixes.
+  `target/verification/20261107-025634-207xufk2/report.json` passes every
+  command with unchanged inputs: **4447 Rust tests, 0 failures, 25 ignored; 186
+  browser Node tests**; checked-v38 conformance matches its baseline (205
+  passed, 4 known unsupported out of 209). It covers merged `main` with K9 D2
+  Symbol values and symbol-keyed properties, K9 D4 local-time `Date` with host
+  zone and locale inputs, and the stack-frame fix, on top of the K9 C expression
+  forms with object-literal accessors and top-level `await`, K9 D3 full RegExp,
+  K9 A steps 1–3, K9 B declarations and classes, the K8 CSS engine's font-metric
+  units, logical properties and selectors, the first K9 D standard library
+  stream, the Tailwind compiler, native `img`, the iteration protocol, overlay
+  scrollbars and the audit fixes.
 - **One full gate at a time:** `verify.py full` waits for the machine-wide
   lock (`VARTA_GATE_LOCK`, default `varta-full-gate.lock` in the temporary
   directory) before taking its fingerprint, so gates of several worktrees

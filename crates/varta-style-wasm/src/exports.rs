@@ -150,6 +150,43 @@ pub extern "C" fn view_engine_flags(id: u32, disabled: u32, checked: u32) -> u32
     with(|session, _| session.set_flags(id, disabled != 0, checked != 0))
 }
 
+/// Set an attribute: the input holds its name (`name_len` UTF-8 bytes)
+/// followed by its value.
+#[unsafe(no_mangle)]
+pub extern "C" fn view_engine_attribute(id: u32, name_len: u32) -> u32 {
+    with(|session, text| {
+        let Some((name, value)) = text.and_then(|text| text.split_at_checked(name_len as usize))
+        else {
+            return status::MISUSE;
+        };
+        session.set_attribute(id, name, value)
+    })
+}
+
+/// Remove the attribute the input names.
+#[unsafe(no_mangle)]
+pub extern "C" fn view_engine_unattribute(id: u32) -> u32 {
+    with(|session, text| match text {
+        Some(name) => session.remove_attribute(id, name),
+        None => status::MISUSE,
+    })
+}
+
+/// A form control's value or a text node's data: the input.
+#[unsafe(no_mangle)]
+pub extern "C" fn view_engine_value(id: u32) -> u32 {
+    with(|session, text| match text {
+        Some(value) => session.set_value(id, value),
+        None => status::MISUSE,
+    })
+}
+
+/// The element state bits of `mask` (`varta_style::ElementState`).
+#[unsafe(no_mangle)]
+pub extern "C" fn view_engine_states(id: u32, bits: u32, mask: u32) -> u32 {
+    with(|session, _| session.set_states(id, bits, mask))
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn view_engine_sheet(id: u32) -> u32 {
     with(|session, text| match text {

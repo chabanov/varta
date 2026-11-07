@@ -19,6 +19,9 @@ pub(crate) struct Names<'a> {
     labels: BTreeMap<&'a str, Vec<u32>>,
     hidden: BTreeMap<u32, bool>,
     hidden_in_tree: BTreeMap<u32, bool>,
+    /// Nodes whose `visibility` is not `visible` (CSS Display 3 §4.1): their
+    /// text names nothing (accname 1.2 §4.3.2 step 2A), visible descendants do.
+    invisible: std::collections::BTreeSet<u32>,
 }
 
 impl<'a> Names<'a> {
@@ -30,6 +33,7 @@ impl<'a> Names<'a> {
             labels: BTreeMap::new(),
             hidden: BTreeMap::new(),
             hidden_in_tree: BTreeMap::new(),
+            invisible: std::collections::BTreeSet::new(),
         };
         let order = tree.document_order();
         for id in order {
@@ -41,6 +45,19 @@ impl<'a> Names<'a> {
                 .is_some_and(|p| names.hidden_in_tree[&p]);
             names.hidden.insert(id, own);
             names.hidden_in_tree.insert(id, own || parent_hidden);
+            let parent_invisible = tree.nodes[&id]
+                .parent
+                .is_some_and(|p| names.invisible.contains(&p));
+            let invisible = match tree
+                .element(id)
+                .and_then(|_| tree.computed_property(id, environment, CssProperty::Visibility))
+            {
+                Some(value) if value != crate::style::INHERIT => value != "visible",
+                _ => parent_invisible,
+            };
+            if invisible {
+                names.invisible.insert(id);
+            }
             if let Some(element) = tree.element(id) {
                 if let Some(ident) = element.attributes.get(&Attribute::Id) {
                     names.ids.insert(ident, id);
@@ -214,6 +231,10 @@ fn compute_with_origin<'a>(
         let element = match &node.content {
             // 2G: a text node contributes its text.
             Content::Text(text) => {
+                if !traversal.include_hidden && names.invisible.contains(&id) {
+                    parts.push(String::new());
+                    continue;
+                }
                 parts.push(text.clone());
                 continue;
             }

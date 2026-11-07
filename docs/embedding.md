@@ -3028,7 +3028,7 @@ values:
 <!-- generated:view-stylesheet-tokens:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
 | Item | Values |
 | --- | --- |
-| Pseudo-classes | `:hover`, `:active`, `:focus`, `:focus-within`, `:focus-visible`, `:disabled`, `:enabled`, `:checked`, `:root`, `:host`, `:first-child`, `:last-child`, `:only-child`, `:first-of-type`, `:last-of-type`, `:only-of-type`, `:nth-child()`, `:nth-last-child()`, `:nth-of-type()`, `:nth-last-of-type()`, `:is()`, `:where()`, `:not()` |
+| Pseudo-classes | `:hover`, `:active`, `:focus`, `:focus-within`, `:focus-visible`, `:disabled`, `:enabled`, `:checked`, `:root`, `:host`, `:scope`, `:first-child`, `:last-child`, `:only-child`, `:first-of-type`, `:last-of-type`, `:only-of-type`, `:nth-child()`, `:nth-last-child()`, `:nth-of-type()`, `:nth-last-of-type()`, `:empty`, `:link`, `:any-link`, `:visited`, `:target`, `:target-within`, `:read-only`, `:read-write`, `:placeholder-shown`, `:default`, `:indeterminate`, `:valid`, `:invalid`, `:user-valid`, `:user-invalid`, `:in-range`, `:out-of-range`, `:required`, `:optional`, `:autofill`, `:open`, `:modal`, `:defined`, `:dir()`, `:lang()`, `:is()`, `:where()`, `:not()`, `:has()` |
 | Media features | `prefers-color-scheme`, `min-width`, `max-width` |
 | Forbidden anywhere | `\`, `<`, `>`, `/*`, `@import`, `!important`, `url(`, `image-set(`, `expression(` |
 | Forbidden in `set_style` values | `;`, `{`, `}` |
@@ -3356,11 +3356,11 @@ not imply complete CSS rendering or typography acceptance.
 | 36 | `bottom` | `auto \| <length-percentage>` | — |
 | 37 | `left` | `auto \| <length-percentage>` | — |
 | 38 | `z-index` | `auto \| <integer>` | — |
-| 39 | `overflow` | `visible \| hidden \| auto` | — |
-| 40 | `border` | `none \| [<length> \|\| solid \|\| <color>]` | — |
-| 41 | `border-width` | `<length>` | — |
-| 42 | `border-style` | `none \| solid` | — |
-| 43 | `border-color` | `<color>` | — |
+| 39 | `overflow` | `[visible \| hidden \| clip \| scroll \| auto]{1,2}` | — |
+| 40 | `border` | `<length> \|\| [none \| hidden \| solid] \|\| <color>` | — |
+| 41 | `border-width` | `<length>{1,4}` | — |
+| 42 | `border-style` | `[none \| hidden \| solid]{1,4}` | — |
+| 43 | `border-color` | `<color>{1,4}` | — |
 | 44 | `border-radius` | `<length-percentage>{1,4}` | — |
 | 45 | `background-color` | `<color>` | — |
 | 46 | `color` | `<color>` | — |
@@ -3387,10 +3387,10 @@ not imply complete CSS rendering or typography acceptance.
 | 67 | `transition-timing-function` | `[linear \| ease \| ease-in \| ease-out \| ease-in-out]#` | — |
 | 68 | `transition-delay` | `<time>#` | — |
 | 69 | `field-sizing` | `fixed \| content` | textarea only |
-| 70 | `border-top` | `none \| [<length> \|\| solid \|\| <color>]` | — |
-| 71 | `border-right` | `none \| [<length> \|\| solid \|\| <color>]` | — |
-| 72 | `border-bottom` | `none \| [<length> \|\| solid \|\| <color>]` | — |
-| 73 | `border-left` | `none \| [<length> \|\| solid \|\| <color>]` | — |
+| 70 | `border-top` | `<length> \|\| [none \| hidden \| solid] \|\| <color>` | — |
+| 71 | `border-right` | `<length> \|\| [none \| hidden \| solid] \|\| <color>` | — |
+| 72 | `border-bottom` | `<length> \|\| [none \| hidden \| solid] \|\| <color>` | — |
+| 73 | `border-left` | `<length> \|\| [none \| hidden \| solid] \|\| <color>` | — |
 | 74 | `resize` | `none \| vertical` | textarea only; treated as `none` with `field-sizing: content` |
 | 75 | `object-fit` | `fill \| contain \| cover \| none \| scale-down` | replaced elements (`img`) |
 | 76 | `object-position` | `[left \| center \| right \| <length-percentage>] [top \| center \| bottom \| <length-percentage>]?` | replaced elements (`img`) |
@@ -3402,6 +3402,29 @@ not imply complete CSS rendering or typography acceptance.
 | 82 | `scale` | `none \| <number> <number>?` | positive factors |
 | 83 | `transform-origin` | `<length-percentage> <length-percentage>` | — |
 | 84 | `letter-spacing` | `normal \| <length>` | inherited |
+| 85 | `border-top-width` | `<length>` | nonnegative |
+| 86 | `border-right-width` | `<length>` | nonnegative |
+| 87 | `border-bottom-width` | `<length>` | nonnegative |
+| 88 | `border-left-width` | `<length>` | nonnegative |
+| 89 | `border-top-style` | `none \| hidden \| solid` | — |
+| 90 | `border-right-style` | `none \| hidden \| solid` | — |
+| 91 | `border-bottom-style` | `none \| hidden \| solid` | — |
+| 92 | `border-left-style` | `none \| hidden \| solid` | — |
+| 93 | `border-top-color` | `<color>` | — |
+| 94 | `border-right-color` | `<color>` | — |
+| 95 | `border-bottom-color` | `<color>` | — |
+| 96 | `border-left-color` | `<color>` | — |
+| 97 | `border-top-left-radius` | `<length-percentage>{1,2}` | nonnegative; horizontal then vertical radius |
+| 98 | `border-top-right-radius` | `<length-percentage>{1,2}` | nonnegative; horizontal then vertical radius |
+| 99 | `border-bottom-right-radius` | `<length-percentage>{1,2}` | nonnegative; horizontal then vertical radius |
+| 100 | `border-bottom-left-radius` | `<length-percentage>{1,2}` | nonnegative; horizontal then vertical radius |
+| 101 | `overflow-x` | `visible \| hidden \| clip \| scroll \| auto` | — |
+| 102 | `overflow-y` | `visible \| hidden \| clip \| scroll \| auto` | — |
+| 103 | `visibility` | `visible \| hidden \| collapse` | inherited |
+| 104 | `text-transform` | `none \| [capitalize \| uppercase \| lowercase] \|\| full-width \|\| full-size-kana` | inherited |
+| 105 | `pointer-events` | `auto \| none` | inherited |
+| 106 | `user-select` | `auto \| text \| none \| contain \| all` | — |
+| 107 | `box-sizing` | `content-box \| border-box` | — |
 <!-- generated:view-css-properties:end -->
 
 **Events.**
