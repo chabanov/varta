@@ -934,7 +934,11 @@ impl Lower<'_> {
             source,
         } = split;
         self.types.asynchrony.bodies.remove(&self.index);
-        if entry || environment || self_slot.is_some() {
+        // V38 (`expression_forms`): an async generator closure's body is an
+        // environment function over the closure's captures.
+        let closure =
+            (environment || self_slot.is_some()) && !self.types.profile.expression_forms();
+        if entry || closure {
             return Err(self
                 .source
                 .locate(rejected("async generator entry or closure"), span));
@@ -1025,8 +1029,22 @@ impl Lower<'_> {
         let locals: Vec<Type> = (0..self.next)
             .map(|slot| self.local_types.get(&slot).copied().unwrap_or(Type::Number))
             .collect();
-        // The wrapper needs its parameters, the state record and the frame.
-        let wrapper_locals = locals[..=body.frame as usize].to_vec();
+        // The wrapper needs its parameters, the state record, the frame and
+        // the captured cells it validates; every other slot is an unused
+        // scalar.
+        let used = captures.iter().copied().fold(body.frame, u32::max) as usize + 1;
+        let wrapper_locals = locals[..used]
+            .iter()
+            .enumerate()
+            .map(|(slot, ty)| {
+                let slot = slot as u32;
+                if slot <= body.frame || captures.contains(&slot) {
+                    *ty
+                } else {
+                    Type::Number
+                }
+            })
+            .collect();
         self.generated.insert(
             index,
             ir::Function {
@@ -1034,8 +1052,8 @@ impl Lower<'_> {
                 self_slot: None,
                 receiver: None,
                 cells: std::mem::take(&mut self.cells),
-                captures: Vec::new(),
-                environment: false,
+                captures: captures.clone(),
+                environment,
                 generator: Some(shapes.info.body),
                 source: source.clone(),
                 span,
@@ -1098,11 +1116,11 @@ impl Lower<'_> {
         ];
         Ok(ir::Function {
             shape,
-            self_slot: None,
+            self_slot,
             receiver,
-            cells: Default::default(),
+            cells: captures.iter().copied().collect(),
             captures,
-            environment: false,
+            environment,
             generator: None,
             source: source.clone(),
             span,

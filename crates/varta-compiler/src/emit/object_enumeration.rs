@@ -22,6 +22,12 @@ impl Emitter<'_> {
         let [index, cursor, selected, backing] = slots.map(|slot| self.local_slots[slot as usize]);
         let fields = self.records[shape as usize].fields.clone();
         let count = fields.len();
+        // The target holds one entry per property (V38 `object_accessors`:
+        // getter and setter fields are not properties).
+        let properties = fields
+            .iter()
+            .filter(|field| !crate::lower::object_accessors::hidden_field(&field.name))
+            .count();
         let order = values::order_offset(count);
         self.code.extend([
             I::LocalGet(target),
@@ -38,6 +44,11 @@ impl Emitter<'_> {
         let mut numeric = Vec::new();
         let mut names = Vec::new();
         for (slot, field) in fields.iter().enumerate() {
+            // V38 (`object_accessors`): getter and setter fields of an object
+            // with accessors are not properties.
+            if crate::lower::object_accessors::hidden_field(&field.name) {
+                continue;
+            }
             let integer = field
                 .name
                 .parse::<u32>()
@@ -112,7 +123,7 @@ impl Emitter<'_> {
             I::Block(BlockType::Empty),
             I::Loop(BlockType::Empty),
             I::LocalGet(index),
-            I::I32Const(count as i32),
+            I::I32Const(properties as i32),
             I::I32GeU,
             I::BrIf(1),
             I::LocalGet(backing),

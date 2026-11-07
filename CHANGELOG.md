@@ -26,6 +26,50 @@
   values (`v.x`), and generic overload signatures of methods are
   instantiated per call. The expression lowering keeps a smaller native
   stack frame per nesting level.
+- V38 K9 C generator closures and layout spreads, continued: `function*`
+  and `async function*` expressions and (async) generator methods of object
+  literals, with or without `this`, are closures that share their captured
+  bindings; parameter defaults and the method receiver are taken at the
+  call. `Object.assign` into a fresh literal is that spread literal;
+  `Object.values`/`entries` of a view list the object's own values with
+  checked reads; layout spreads reach dictionaries of every value type
+  (values checked at the entry type) and literals with accessors (widened
+  objects keep their accessors). A spread of a value that may hold a
+  widened object now copies its extra properties (they were dropped).
+- V38 K9 C layout spreads, continued: a literal may have several spreads
+  of views of other layouts; `Object.keys` and `for...in` of such a view
+  list the object's own keys; a class instance held by a record type is
+  copied by its declared fields; a spread into a dictionary of `unknown`
+  copies every own entry; literals whose methods use `this` and literals
+  with accessors may spread closed objects (optional members included).
+- V38 K9 C layout spreads and receivers: a spread or rest of a value that
+  may hold an object of another layout copies that object's own properties
+  in its own-key order, as CopyDataProperties does (lowering runs in a
+  bounded number of passes and copies such sites by the run-time layout);
+  object-literal methods that use `this` see receivers of other layouts
+  (spread copies, objects that received the method), reading their members
+  by name, with a `TypeError` where a member is missing or of another type
+  than the method's `this` type declares. A spread of an optional source
+  no longer traps a serializer (its absent slots hold `undefined`).
+- V38 K9 C accessor objects by the specification (owner approval
+  2026-11-06, a value layout 18 addition): an object literal with getters
+  and setters keeps one data slot per accessor property at its creation
+  position, so its own keys, `Object.keys`/`values`/`entries`, `for...in`,
+  spreads, rest patterns and `Object.assign` follow OrdinaryOwnPropertyKeys
+  and read each getter when its key is reached. `JSON.stringify` walks such
+  values in the guest as SerializeJSONProperty does: a getter runs once per
+  occurrence, its exception propagates before any text, and a cycle throws
+  V8's circular-structure `TypeError` with its path. `varta.kv.set` stages
+  them after a structured refresh that calls each getter once per object by
+  identity (the hook `structuredClone` will use). Under v38 object spreads
+  create their keys in CopyDataProperties order (the source's own-key order,
+  literal members in place), as rest patterns and `Object.assign` do.
+  Dictionaries, class instances (their declared fields, by the instance's
+  own class) and `unknown` cells holding such objects are walked the same
+  way, and JSON-object reads of `unknown` call the getters. A literal with
+  accessors may spread closed objects (CopyDataProperties: a later
+  definition replaces an earlier one in its first position). Logging such
+  objects waits for the console notation. Earlier profiles are unchanged.
 - K8 T2 S5 (second part), selectors: id and attribute selectors with every
   matcher and the `i`/`s` flags, `:has()` with bounded relative selectors,
   and the location, input and tree pseudo-classes (`:any-link`, `:empty`,
@@ -137,6 +181,9 @@
   waiting importer) and the entry module calls `main` at its end. Object
   literals have getters and setters (accessor properties): reads, writes,
   compound assignments, views, spreads, own keys, entries and
+  `JSON.stringify` go through them; other host reads of such objects are
+  refused. No host ABI change (the accepted value ABI bump was not needed);
+  v37 keeps rejecting every form.
   `JSON.stringify` (through a materializing copy) go through them; other
   host reads of such objects are refused. No host ABI or value layout
   change (the accepted value ABI bump was not needed); v37 keeps rejecting

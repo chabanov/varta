@@ -9,11 +9,22 @@
 use super::*;
 use ir::RecordField;
 
+/// The `TypeError` message of a layout spread value outside the type of the
+/// dictionary entry it is stored at (v38 `layout_spreads`).
+const SPREAD_VALUE_ERROR: &str = "own property value is not of the dictionary's value type";
+
 fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
     Expr {
         span,
         ty,
         kind: E::Local(slot),
+    }
+}
+fn boolean(span: swc_common::Span, value: bool) -> Expr {
+    Expr {
+        span,
+        ty: Type::Boolean,
+        kind: E::Integer(i32::from(value)),
     }
 }
 fn number(span: swc_common::Span, value: f64) -> Expr {
@@ -229,6 +240,134 @@ impl Lower<'_> {
             },
         })
     }
+    /// Copy the entries of `graph`, a JSON-object read (a dictionary of
+    /// `unknown`) of a layout spread source, into the dictionary `target`
+    /// of another value type (v38 `layout_spreads`). Each value is stored
+    /// at its key's declared type, else the index type; a value of another
+    /// type (a property the source's view does not declare) throws
+    /// `TypeError` where it is read. Returns the hidden roots and the
+    /// statements.
+    fn checked_entries(
+        &mut self,
+        graph: Expr,
+        target: Expr,
+        declared: &[RecordField],
+    ) -> Result<(Vec<u32>, Vec<S>)> {
+        let span = graph.span;
+        let (Type::Dictionary(id), Type::Dictionary(from)) = (target.ty, graph.ty) else {
+            return Err(invalid("missing dictionary type"));
+        };
+        let element = self.types.dictionaries[id as usize].value;
+        let from = self.types.dictionaries[from as usize];
+        let graph_ty = graph.ty;
+        let held = self.hidden(graph_ty);
+        let index = self.hidden(Type::Float64);
+        let name = self.hidden(Type::String);
+        let raw = self.hidden(Type::Unknown);
+        let item = self.hidden(element);
+        let found = self.hidden(Type::Boolean);
+        let roots = vec![held, index, name, raw, item];
+        let mut body = vec![S::Init(held, graph), S::Init(index, number(span, 0.0))];
+        body.extend(self.dictionary_compact(local(span, held, graph_ty))?);
+        body.extend([
+            S::Init(
+                name,
+                Expr {
+                    span,
+                    ty: Type::String,
+                    kind: E::Zero,
+                },
+            ),
+            S::Init(
+                raw,
+                Expr {
+                    span,
+                    ty: Type::Unknown,
+                    kind: E::Zero,
+                },
+            ),
+            S::Init(
+                item,
+                Expr {
+                    span,
+                    ty: element,
+                    kind: E::Zero,
+                },
+            ),
+            S::Init(found, boolean(span, false)),
+        ]);
+        let at = || local(span, index, Type::Float64);
+        let vector = |slot: u32, ty: Type| Expr {
+            span,
+            ty,
+            kind: E::Field(Box::new(local(span, held, graph_ty)), slot),
+        };
+        let entry = |vector: Expr, ty: Type| Expr {
+            span,
+            ty,
+            kind: E::Index(Box::new(vector), Box::new(at())),
+        };
+        let checked = |this: &mut Self, expected: Type| -> Result<Expr> {
+            let value = this.assert_value(
+                local(span, raw, Type::Unknown),
+                expected,
+                &subtyping::describe(expected, this.types),
+                SPREAD_VALUE_ERROR,
+                span,
+            )?;
+            unions::widen(value, Some(element), this.types)
+        };
+        let mut cases = Vec::new();
+        for field in declared {
+            let value = checked(self, field.ty)?;
+            cases.push((
+                self.types.profile.string_bytes(&field.name),
+                field.name.clone(),
+                vec![S::Set(item, value), S::Set(found, boolean(span, true))],
+            ));
+        }
+        cases.sort_by(|a, b| a.1.encode_utf16().cmp(b.1.encode_utf16()));
+        let mut entries: Vec<_> = cases.into_iter().map(|(k, _, s)| (k, s)).collect();
+        let fallback = checked(self, element)?;
+        let stored = self.dictionary_set(
+            target,
+            local(span, name, Type::String),
+            local(span, item, element),
+            element,
+        )?;
+        let mut visit = vec![
+            S::Set(
+                name,
+                entry(vector(from.keys_slot(), from.keys), Type::String),
+            ),
+            S::Set(
+                raw,
+                entry(vector(from.values_slot(), from.values), Type::Unknown),
+            ),
+            S::Set(found, boolean(span, false)),
+        ];
+        visit.extend(own_keys::lookup(span, name, &mut entries));
+        visit.push(S::If(
+            local(span, found, Type::Boolean),
+            vec![],
+            vec![S::Set(item, fallback)],
+        ));
+        visit.push(S::Expr(stored));
+        visit.push(S::Set(
+            index,
+            binary(ast::BinaryOp::Add, at(), number(span, 1.0), Type::Float64),
+        ));
+        body.push(S::While(
+            binary(
+                ast::BinaryOp::Lt,
+                at(),
+                length(vector(from.keys_slot(), from.keys)),
+                Type::Boolean,
+            ),
+            visit,
+        ));
+        Ok((roots, body))
+    }
     /// Copy the own entries of `source` into the dictionary `target`. Returns
     /// the declared names the source always provides, the hidden roots and
     /// the statements.
@@ -337,21 +476,47 @@ impl Lower<'_> {
                 Ok((provided, roots, body))
             }
             Type::Record(shape) if self.types.records[shape as usize].class.is_none() => {
-                // V38 (`sdk_paths`): a view of wider objects is refused by
-                // `subtyping::resolve` (its keys are the view's, not the object's).
-                if self.types.profile.sdk_paths() {
-                    self.types.subtyping.note_key_copy(
-                        shape,
-                        subtyping::KeyCopy::Spread,
-                        self.source,
-                        span,
-                    );
-                }
                 let fields = self.types.records[shape as usize].fields.clone();
                 for field in &fields {
                     if !accepts(self, Some(&field.name), field.ty) {
                         return Err(self.source.locate(mismatch(field.ty), span));
                     }
+                }
+                // V38 (`layout_spreads`): a view of objects of other layouts
+                // copies the actual object's own entries through its
+                // JSON-object read (one branch per layout). Into a dictionary
+                // of another value type, each value the view does not declare
+                // is checked against the type it is stored at (checked reads
+                // at TypeScript unsoundness).
+                if self.layout_site(span) {
+                    let provided = fields
+                        .iter()
+                        .filter(|field| !field.optional)
+                        .map(|field| field.name.clone())
+                        .collect();
+                    let cell = unknown::widen(local(span, held, source_ty), self.types)?;
+                    let graph = self.record_graph(cell, span)?;
+                    let (more, statements) = if element == Type::Unknown {
+                        let (_, more, statements) = self.spread_entries(graph, target, declared)?;
+                        (more, statements)
+                    } else {
+                        self.checked_entries(graph, target, declared)?
+                    };
+                    roots.extend(more);
+                    body.extend(statements);
+                    return Ok((provided, roots, body));
+                }
+                if self.types.profile.sdk_paths() {
+                    self.types.subtyping.note_key_copy(
+                        shape,
+                        if self.types.profile.expression_forms() {
+                            subtyping::KeyCopy::LayoutSpread
+                        } else {
+                            subtyping::KeyCopy::Spread
+                        },
+                        self.source,
+                        span,
+                    );
                 }
                 // Present fields in their run-time order, then a static switch
                 // over the field names selects each value.

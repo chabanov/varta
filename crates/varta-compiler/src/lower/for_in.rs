@@ -119,7 +119,15 @@ impl Lower<'_> {
             },
             None => self.dictionary_has(local(span, source, source_ty), key, false)?,
             Some(shape) => {
-                self.dynamic_record_own(span, local(span, source, source_ty), key, shape)
+                // A key the record type does not declare comes from an
+                // object of a wider layout (a view) and cannot be deleted.
+                self.dynamic_record_own(
+                    span,
+                    local(span, source, source_ty),
+                    key,
+                    shape,
+                    self.types.profile.expression_forms(),
+                )
             }
         };
         let mut visit = self.binding_pattern(

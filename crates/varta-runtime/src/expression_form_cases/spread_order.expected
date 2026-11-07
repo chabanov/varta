@@ -1,0 +1,8 @@
+y,x,label {"y":2,"x":1,"label":"p"}
+y,x,label,z {"y":2,"x":1,"label":"p","z":true}
+z,y,x,label {"z":false,"y":2,"x":1,"label":"p"}
+y,x,label {"y":2,"x":9,"label":"p"}
+2 x,label {"x":1,"label":"p"}
+label,x,y {"label":"p","x":1,"y":2}
+y=2,x=1,label=p
+1,2,b,a {"1":4,"2":2,"b":1,"a":3}

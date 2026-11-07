@@ -1,0 +1,8 @@
+{"left":{"label":"s","count":1},"right":{"label":"s","count":2},"list":[{"label":"s","count":3},{"label":"t","count":1},{"label":"s","count":4}]}
+s1,s2,s3,t1,s4
+{"first":{"deep":1},"second":2}
+first,deep,second
+{"z":1,"b":"B","a":true}
+{"list":[{"z":1,"b":"B","a":true},{"z":1,"b":"B","a":true}],"plain":{"1":"1","b":"2"}}
+{"2":{"label":"s","count":5},"b":{"label":"b","count":1},"a":{"label":"s","count":6}}
+s5,b1,s6

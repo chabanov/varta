@@ -69,17 +69,26 @@ impl Lower<'_> {
             ));
         }
         let function = &expression.function;
-        let asynchronous = function.is_async && self.types.profile.async_methods();
+        let asynchronous = function.is_async
+            && (self.types.profile.async_methods()
+                || function.is_generator && self.types.profile.expression_forms());
         if function.is_async && !asynchronous && self.types.profile.async_functions() {
             return Err(promises::rejected("async function expression"));
         }
-        if function.is_async && function.is_generator && self.types.profile.async_generators() {
+        if function.is_async
+            && function.is_generator
+            && self.types.profile.async_generators()
+            && !self.types.profile.expression_forms()
+        {
             return Err(promises::async_generator_rejected(
                 "async generator function expression",
             ));
         }
+        // V38 (`expression_forms`): a synchronous `function*` expression is
+        // a generator closure.
+        let generating = function.is_generator && self.types.profile.expression_forms();
         if function.is_async && !asynchronous
-            || function.is_generator
+            || function.is_generator && !generating
             || function.type_params.is_some()
             || !function.decorators.is_empty()
         {
@@ -119,6 +128,7 @@ impl Lower<'_> {
             body: Box::new(ast::ArrowFunctionBody::FunctionBody(body.clone())),
             return_type: function.return_type.clone(),
             is_async: asynchronous,
+            is_generator: generating,
             ..Default::default()
         };
         self.arrow_context(

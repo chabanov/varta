@@ -237,6 +237,7 @@ impl Eraser {
             S::Trap
             | S::Rebind(_)
             | S::RecordRest { .. }
+            | S::RecordOrder { .. }
             | S::BreakLabel(_)
             | S::ContinueLabel(_)
             | S::Break

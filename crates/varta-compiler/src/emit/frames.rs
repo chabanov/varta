@@ -985,13 +985,8 @@ impl<'a> Emitter<'a> {
         for arg in args {
             self.expr(arg)?;
         }
-        if self.environment_functions.contains(&function) {
-            // An async closure starts its body with its own environment.
-            let environment = self.environment_param.ok_or_else(|| {
-                CompilerError::Internal("scheduled closure body without an environment".into())
-            })?;
-            self.code.push(I::LocalGet(environment));
-        }
+        // An async closure starts its body with its own environment.
+        self.forward_environment(function)?;
         let index = self.functions_begin + function as u32;
         if !self.frame_functions.contains_key(&function) {
             if mode == ir::ScheduleMode::Enqueue {
@@ -1183,6 +1178,18 @@ impl<'a> Emitter<'a> {
         self.store_completion(self.result)?;
         self.end_frame();
         self.code.push(I::Return);
+        Ok(())
+    }
+    /// Before a direct call of an environment function (the body of an
+    /// async or generator closure), push the caller's own environment: the
+    /// body shares the closure's captured cells.
+    pub(super) fn forward_environment(&mut self, function: usize) -> Result<()> {
+        if self.environment_functions.contains(&function) {
+            let environment = self.environment_param.ok_or_else(|| {
+                CompilerError::Internal("closure body called without an environment".into())
+            })?;
+            self.code.push(I::LocalGet(environment));
+        }
         Ok(())
     }
     /// The creator allocates and registers the frame, binds the arguments into

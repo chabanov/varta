@@ -1848,6 +1848,57 @@
       }
     },
     {
+      "id": "generator-closures",
+      "feature": "generators",
+      "path": "cases/generator-closures.ts",
+      "sha256": "834e6b402c9844781c37da0526831c77555c961b013c5f9b47019d20806b5cea",
+      "stdout": [
+        "varta log: 1,11,21",
+        "varta log: 2,12,22",
+        "varta log: not started",
+        "varta log: {\"value\":\"a\",\"done\":false}",
+        "varta log: started;",
+        "varta log: {\"done\":true}",
+        "varta log: started;resumed;",
+        "varta log: {\"value\":0,\"done\":false}",
+        "varta log: {\"value\":5,\"done\":false}",
+        "varta log: {\"value\":\"total 12\",\"done\":true}",
+        "varta log: {\"done\":true}",
+        "varta log: 4,5,6",
+        "varta log: 10,11",
+        "varta log: [{\"value\":\"x!\",\"done\":false},{\"value\":\"y?\",\"done\":false},{\"value\":2,\"done\":true},{\"done\":true}]",
+        "varta log: ?",
+        "varta log: created",
+        "varta log: TypeError at next",
+        "varta log: {\"value\":1,\"done\":false}",
+        "varta log: {\"done\":true}",
+        "varta log: closed",
+        "varta log: 1",
+        "varta log: [1,7]",
+        "varta log: [0,1,4,9]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "async-generator-closures",
+      "feature": "async-generators",
+      "path": "cases/async-generator-closures.ts",
+      "sha256": "e1bdf9857d96483bc0d0e9eaf49d18a26d1f6b106bf3510e53027926286cd525",
+      "stdout": [
+        "varta log: 11,12,12,13",
+        "varta log: {\"value\":13,\"done\":false}",
+        "varta log: {\"value\":14,\"done\":false}",
+        "varta log: {\"value\":\"end 3\",\"done\":true}",
+        "varta log: #0 #1 #2",
+        "varta log: 1,10 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "async-generator-iteration",
       "feature": "async-generators",
       "path": "cases/async-generator-iteration.ts",
@@ -3792,6 +3843,29 @@
         "varta log: 3 2",
         "varta log: {\"count\":2,\"list\":[{\"celsius\":10,\"fahrenheit\":50},{\"celsius\":20,\"fahrenheit\":68}]}",
         "varta log: 7"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "accessor-layout-spreads",
+      "feature": "object-literal-accessors",
+      "path": "cases/accessor-layout-spreads.ts",
+      "sha256": "991c06ec14b9de252773a2b794bcdb64e60ebf724dfc28423598082e024a6c7b",
+      "stdout": [
+        "varta log: twice,b,a,c,label",
+        "varta log: {\"twice\":4,\"b\":1,\"a\":2,\"c\":\"x\",\"label\":\"wide\"}",
+        "varta log: 4 2",
+        "varta log: twice,a,b,label {\"twice\":10,\"a\":5,\"b\":6,\"label\":\"plain\"}",
+        "varta log: 3",
+        "varta log: 13",
+        "varta log: {\"b\":1,\"a\":2,\"c\":\"x\",\"total\":13}",
+        "varta log: b",
+        "varta log: a",
+        "varta log: c",
+        "varta log: total",
+        "varta log: Cannot set property twice of #<Object> which has only a getter"
       ],
       "baseline": {
         "status": "supported"

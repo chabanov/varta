@@ -389,6 +389,9 @@ pub(crate) struct ValueTypes {
     /// V38 (`declaration_forms`): the own static properties subclasses
     /// create by writing inherited static fields; see `lower::static_store`.
     pub static_stores: crate::lower::static_store::Stores,
+    /// Record spreads of views copied by the source's run-time layout (v38
+    /// `expression_forms`); see `lower::layout_spreads`.
+    pub layouts: crate::lower::layout_spreads::Layouts,
     /// V38 (`symbol_values`, K9 D2): the class id of the symbol prelude's
     /// record class (`SymbolValue`) that every `symbol` value erases to
     /// (`literal_erasure`), so emission tags it with the value18 symbol tag
@@ -1346,6 +1349,21 @@ pub(crate) enum Statement {
         shape: u32,
         slots: [u32; 4],
         values: Vec<Expr>,
+    },
+    /// V38: rewrite the insertion order of the fresh record in local
+    /// `target` (of record `shape`): append, in order and skipping slots
+    /// already placed or absent, the slots `mapping` maps the present slots
+    /// of `source` (a local of record shape, in its own insertion order) to,
+    /// or with no source the mapped slots themselves. `start` begins a new
+    /// order; `slots` are the hidden cursor, index and probe locals.
+    /// CopyDataProperties creates a spread's keys in the source's order.
+    RecordOrder {
+        target: u32,
+        shape: u32,
+        source: Option<(u32, u32)>,
+        mapping: Vec<(u32, u32)>,
+        start: bool,
+        slots: [u32; 3],
     },
     RecordRest {
         source: u32,

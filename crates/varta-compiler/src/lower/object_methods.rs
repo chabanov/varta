@@ -18,6 +18,7 @@
 //! Getters and setters of object literals take their receiver the same way
 //! (`object_accessors`).
 use super::*;
+use std::collections::BTreeSet;
 use swc_ecma_visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 /// The hidden binding of a method's receiver; `#` cannot start a source
@@ -47,13 +48,46 @@ pub(crate) struct Receivers {
     pub(super) read_only: BTreeMap<(u32, String), Expr>,
     /// The program has an object literal with a getter or setter.
     pub(super) accessors: bool,
+    /// The type each physical shape of an object with accessors is viewed
+    /// as (`object_accessors`).
+    pub(super) logical: BTreeMap<u32, u32>,
+    /// The fields of each literal type whose methods use `this`.
+    this_methods: BTreeMap<u32, BTreeSet<String>>,
+    /// The object types and field names of `o.m(...)` calls.
+    callers: BTreeSet<(Type, String)>,
     /// `JSON.stringify` materializers of objects with accessors, by type
     /// (`object_accessors`): the function and whether its body is written.
     pub(super) materializers: BTreeMap<Type, (usize, bool)>,
+    /// Structured refreshes of objects with accessors, by type
+    /// (`object_accessors`): the function and whether its body is written.
+    pub(super) refreshers: BTreeMap<Type, (usize, bool)>,
     /// The source and span of the first materialized `JSON.stringify`.
     pub(super) origin: Option<(Source, swc_common::Span)>,
 }
 impl Receivers {
+    /// The type the physical shape of an object with accessors is viewed as.
+    pub(crate) fn logical(&self, shape: u32) -> Option<u32> {
+        self.logical.get(&shape).copied()
+    }
+    /// Note the physical shape `wide` of an object with accessors widened
+    /// from `shape` (v38 `layout_spreads`): viewed as the same type, with
+    /// the same getter-only properties.
+    pub(crate) fn widen(&mut self, shape: u32, wide: u32, logical: u32) {
+        self.logical.insert(wide, logical);
+        let read_only: Vec<(String, Expr)> = self
+            .read_only
+            .iter()
+            .filter(|((owner, _), _)| *owner == shape)
+            .map(|((_, name), error)| (name.clone(), error.clone()))
+            .collect();
+        for (name, error) in read_only {
+            self.read_only.insert((wide, name), error);
+        }
+    }
+    /// Whether the program has an object literal with a getter or setter.
+    pub(crate) fn has_accessors(&self) -> bool {
+        self.accessors
+    }
     /// The `TypeError` of assigning the getter-only accessor `name` of an
     /// object of physical shape `shape`.
     pub(crate) fn read_only(&self, shape: u32, name: &str) -> Option<&Expr> {
@@ -103,6 +137,33 @@ pub(super) fn scan(graph: &crate::modules::Graph, types: &mut ir::ValueTypes) {
     }
     types.receivers.enabled = methods.0;
     types.receivers.accessors = methods.1;
+}
+
+/// After every body is lowered, before the view sources are closed: each
+/// object type `L` of an `o.m(...)` call whose field `m` may hold a method
+/// that uses `this` of a literal type `T` is a view source of `T` (the
+/// method reads its receiver through `T`): an ordinary one when `L` is
+/// assignable to `T`, else a checked one (`subtyping::note_receiver`),
+/// whose missing or differently typed members throw `TypeError` when read.
+pub(super) fn loose_receivers(types: &mut ir::ValueTypes) -> Result<()> {
+    let pairs: Vec<(Type, u32)> = types
+        .receivers
+        .callers
+        .iter()
+        .flat_map(|(caller, name)| {
+            types
+                .receivers
+                .this_methods
+                .iter()
+                .filter(move |(_, names)| names.contains(name))
+                .map(move |(shape, _)| (*caller, *shape))
+        })
+        .filter(|(caller, shape)| *caller != Type::Record(*shape))
+        .collect();
+    for (caller, shape) in pairs {
+        subtyping::note_receiver(caller, shape, types)?;
+    }
+    Ok(())
 }
 
 /// After every body is lowered: place the register behind the `stored`
@@ -210,15 +271,6 @@ impl Lower<'_> {
             return Ok(None);
         }
         let span = object.span;
-        if let Some(spread) = object.props.iter().find_map(|prop| match prop {
-            ast::PropOrSpread::Spread(spread) => Some(spread.dot3_token),
-            ast::PropOrSpread::Prop(_) => None,
-        }) {
-            return Err(self.source.locate(
-                unsupported("spread in an object literal whose methods use this"),
-                spread,
-            ));
-        }
         let ty = match expected {
             Some(ty @ Type::Record(_)) => ty,
             None => self.receiver_type(object)?,
@@ -247,9 +299,19 @@ impl Lower<'_> {
                 (function.span.lo.0, function.span.hi.0),
                 (SELF.to_owned(), ty),
             );
+            if let (Type::Record(shape), Ok(name)) = (ty, records::property_key(&method.key)) {
+                self.types
+                    .receivers
+                    .this_methods
+                    .entry(shape)
+                    .or_default()
+                    .insert(name);
+            }
             **prop = self.bound_method(method)?;
         }
+        // Spreads copy data properties around the methods (record_spread).
         let value = self.record(&rewritten, Some(ty))?;
+        let value = subtyping::coerce(value, Some(ty), self.types)?;
         Ok(Some(unions::widen(value, Some(ty), self.types)?))
     }
 
@@ -257,7 +319,8 @@ impl Lower<'_> {
     /// replaced by the method's hidden receiver binding.
     pub(super) fn bound_method(&self, method: &ast::MethodProp) -> Result<ast::Prop> {
         let function = &method.function;
-        if function.is_generator {
+        // V38 (`expression_forms`): a generator method is a generator closure.
+        if function.is_generator && !self.types.profile.expression_forms() {
             return Err(self.source.locate(
                 unsupported("generator method that uses this in an object literal"),
                 function.span,
@@ -286,7 +349,7 @@ impl Lower<'_> {
             params,
             body: Box::new(ast::ArrowFunctionBody::FunctionBody(body)),
             is_async: function.is_async,
-            is_generator: false,
+            is_generator: function.is_generator,
             type_params: function.type_params.clone(),
             return_type: function.return_type.clone(),
         };
@@ -417,6 +480,12 @@ impl Lower<'_> {
                 "method call on a base that is not an object".into(),
             ));
         }
+        if let ast::MemberProp::Ident(name) = &member.prop {
+            self.types
+                .receivers
+                .callers
+                .insert((base.ty, name.sym.to_string()));
+        }
         let span = call.span;
         let name = format!("#receiver{}", self.next);
         self.declare(&name, Some(base.ty), true, false)?;
@@ -485,10 +554,28 @@ impl Lower<'_> {
     /// The record type of a literal without a context: literal and binding
     /// field values, and the annotated signatures of its methods.
     fn receiver_type(&mut self, object: &ast::ObjectLit) -> Result<Type> {
-        let mut fields = Vec::with_capacity(object.props.len());
+        let mut fields: Vec<ir::RecordField> = Vec::with_capacity(object.props.len());
         for prop in &object.props {
-            let ast::PropOrSpread::Prop(prop) = prop else {
-                continue;
+            let prop = match prop {
+                ast::PropOrSpread::Prop(prop) => prop,
+                // A spread provides its source's fields.
+                ast::PropOrSpread::Spread(spread) => {
+                    let Type::Record(shape) =
+                        self.evident_type(&spread.expr, spread.expr.span())?
+                    else {
+                        return Err(self.source.locate(
+                            unsupported("spread of a value that is not a closed object into an unannotated object literal whose methods use this"),
+                            spread.expr.span(),
+                        ));
+                    };
+                    for field in self.types.records[shape as usize].fields.clone() {
+                        match fields.iter_mut().find(|own| own.name == field.name) {
+                            Some(own) => *own = field,
+                            None => fields.push(field),
+                        }
+                    }
+                    continue;
+                }
             };
             let (name, ty) = match &**prop {
                 ast::Prop::KeyValue(pair) => (
@@ -505,11 +592,15 @@ impl Lower<'_> {
                 ),
                 _ => return Err(unsupported("object literal member form")),
             };
-            fields.push(ir::RecordField {
+            let field = ir::RecordField {
                 name,
                 ty,
                 optional: false,
-            });
+            };
+            match fields.iter_mut().find(|own| own.name == field.name) {
+                Some(own) => *own = field,
+                None => fields.push(field),
+            }
         }
         records::intern(fields, self.types)
     }

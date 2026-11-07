@@ -1,0 +1,23 @@
+1,11,21
+2,12,22
+not started
+{"value":"a","done":false}
+started;
+{"done":true}
+started;resumed;
+{"value":0,"done":false}
+{"value":5,"done":false}
+{"value":"total 12","done":true}
+{"done":true}
+4,5,6
+10,11
+[{"value":"x!","done":false},{"value":"y?","done":false},{"value":2,"done":true},{"done":true}]
+?
+created
+TypeError at next
+{"value":1,"done":false}
+{"done":true}
+closed
+1
+[1,7]
+[0,1,4,9]

@@ -8029,15 +8029,21 @@ TypeScript language except `any`, with Node 24 as the runtime oracle and tsc
 5.x as the type-system reference. Track C admits the expression and function
 forms under the v38 selector `expression_forms()`
 ([contract](architecture.md#expression-forms-expression_forms)); v37 and
-earlier keep every old diagnostic. No host ABI, value layout, frame catalog
-or scheduler change, so the browser host runs every form unchanged.
+earlier keep every old diagnostic. No host ABI, frame catalog or scheduler
+change, so the browser host runs every form unchanged; one value layout 18
+addition (owner approval 2026-11-06, like the `Symbol` tag and the console
+display trailer): objects with accessors carry reserved getter and setter
+fields that every reader skips (the KV codec included).
 
 | Construct | Status | Evidence (`expression_form_cases`) |
 | --- | --- | --- |
 | `await` in call/`new` arguments, operands, templates, conditions, object/array literals, assignments, optional chains | Admitted (value blocks split around suspensions) | `await_positions`, `await_arguments`, `await_operands` |
 | Top-level `await` (native and browser schedulers) | Admitted in module initializers on the K9 B module evaluation (owner decision 2026-11-06): Evaluate() order with requests in source order, the asynchronous module algorithm in a synthesized evaluator, `main` at the end of the entry module; top-level statements other than declarations stay K9 B's | `top_level_await_tests` (Node-pinned module graph) |
 | Object-literal methods with `this`, shorthand methods, fluent chains | Admitted; owner decision 2026-11-06: a method sees the receiver it is called on (receiver register), so copies, moved methods and extracted methods behave as in Node | `object_methods`, `method_receivers` |
-| Object-literal getters and setters | Admitted (owner decision 2026-11-06): accessor properties through a view of the object's physical shape; `JSON.stringify` copies through the getters, other host reads refused; no value ABI change | `accessors` |
+| Object-literal getters and setters | Admitted (owner decision 2026-11-06): accessor properties through a view of the object's physical shape, own keys in OrdinaryOwnPropertyKeys order; `JSON.stringify` by a guest walk (a getter per occurrence, exceptions before any text, V8's circular-structure `TypeError`); KV staging by a structured refresh (a getter once per object by identity, the hook for `structuredClone`); value layout 18 addition. dictionaries, class instances and `unknown` cells walked alike; spreads (optional members included) in literals with accessors. Refused by name, pending: logging (`[Getter]`/`[Setter]` needs the console display trailer), spreads of class instances or of views of other layouts into such literals | `accessors`, `accessor_order`, `accessor_json`, `accessor_cycles`, `accessor_spreads`, `accessor_optional_spreads` |
+| Spreads and rests of views of other layouts | Admitted: two-pass lowering (`LAYOUT_PASSES`) with run-time copies by layout, so a copy has the actual object's own properties in its own-key order; optional spread results keep `undefined` in absent slots (fixes a serializer trap). Several layout spreads in one literal and `Object.keys`/`for...in` of views admitted. Class-instance sources and dictionaries of `unknown` admitted. Interim refusals by name: layout spreads into dictionaries of other value types and literals with accessors, `Object.values`/`entries` and `Object.assign` sources of views of other layouts | `layout_spreads`, `layout_rests`, `optional_spreads`, `layout_merges`, `layout_keys`, `layout_classes`, `layout_dictionaries` |
+| Methods on receivers of other layouts | Admitted: an object type of an `o.m(...)` call is a view source of the method's type (assignable) or a checked view source (TypeError at a read of a missing or mistyped member, intentional deviation (3), owner confirmation pending) | `loose_receivers` |
+| Spread, rest and `Object.assign` key order | CopyDataProperties order under v38: a spread's keys in the source's own-key order, literal members in place; rests and `Object.assign` keep it (earlier profiles keep their member order) | `spread_order`, `accessor_order` |
 | Constant computed keys (string/number literals, templates, `const` bindings, module constants) | Admitted; symbol keys wait for track D | `computed_keys` |
 | Tagged templates, `String.raw` | Admitted; owner decision 2026-11-06: per-site template objects (GetTemplateObject) with `raw`; `String.raw(strings, ...values)` as a function stays refused | `tagged_templates`, `template_objects` |
 | Explicit `this` parameters (`f.call(o)`, `o.m()`) | Admitted for binding/`this` bases | `receivers` |
@@ -8054,7 +8060,8 @@ or scheduler change, so the browser host runs every form unchanged.
 Every track-C probe of the K9 brief (`a29`–`a33`, `a41`, `a46`–`a49`,
 `a57`–`a61`, `a63`, `a64`, `a67`, `a68`) now compiles and prints Node's
 output; of the brief's 89 programs 50 run (43 compiled before). Still
-refused: top-level `await`, object-literal accessors and `raw`. Fuel: the v38 iterator
+refused at that point: top-level `await`, object-literal accessors and `raw`, which
+the second and third batches admitted. Fuel: the v38 iterator
 result layout is `{ value, done }`; no fuel golden changed. Conformance:
 eleven feature rows and fifteen cases (after the K9 D, K9 A step 2 and K9 B merges:
 190 passed, 5 known unsupported of 195).

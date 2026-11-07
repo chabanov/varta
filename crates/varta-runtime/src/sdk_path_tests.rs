@@ -234,24 +234,61 @@ fn sdk_path_enumerations_of_wider_views_are_refused() {
     };
     let diagnostic = "own-key enumeration (Object.keys, values, entries, an Object.assign \
                       source or for...in) of a Narrow that may hold a wider Wide (a view)";
-    for body in [
-        "return Object.keys(n).join(',');",
-        "return JSON.stringify(Object.values(n));",
-        "return JSON.stringify(Object.entries(n));",
-        "return JSON.stringify(Object.assign({}, n));",
-        "let s = ''; for (const k in n) s += k; return s;",
-    ] {
-        refused(V38, &program(body), diagnostic);
-    }
+    // Into a fresh literal, `Object.assign` copies by layout as a spread.
+    matches_node(
+        &program("return JSON.stringify(Object.assign({}, n));"),
+        r#"{"b":1,"a":2,"c":"x"}"#,
+    );
+    // Values of the object's own layout, checked against the declared
+    // property types (here all numbers, as Node prints them).
+    let numeric = |body: &str| {
+        format!(
+            "interface Wide {{ b: number; a: number; c: number }}
+             interface Narrow {{ a: number; b: number }}
+             function show(n: Narrow): string {{ {body} }}
+             export function main(): void {{
+               const w: Wide = {{ b: 1, a: 2, c: 3 }};
+               console.log(show(w));
+             }}"
+        )
+    };
+    matches_node(
+        &numeric("return JSON.stringify(Object.values(n));"),
+        "[1,2,3]",
+    );
+    matches_node(
+        &numeric("return JSON.stringify(Object.entries(n));"),
+        r#"[["b",1],["a",2],["c",3]]"#,
+    );
+    // A value outside the declared property types (tsc types it `any`)
+    // throws `TypeError` where it is read (checked reads at TypeScript
+    // unsoundness); Node returns it.
+    assert_eq!(
+        logs(&program(
+            "try { return JSON.stringify(Object.values(n)); } catch (e) { return e instanceof TypeError ? e.message : 'other'; }"
+        )),
+        ["own property value is not of the object type's declared property types"]
+    );
     refused(
         V38,
+        &program("const t = { a: 0, b: 0 }; Object.assign(t, n); return JSON.stringify(t);"),
+        diagnostic,
+    );
+    // Own keys enumerate the object's own layout (`layout_spreads`), as Node
+    // does.
+    matches_node(&program("return Object.keys(n).join(',');"), "b,a,c");
+    matches_node(
+        &program("let s = ''; for (const k in n) s += k; return s;"),
+        "bac",
+    );
+    matches_node(
         "interface Wide { b: number; a: number; c: string }
          interface Narrow { a: number; b: number }
          export function main(): void {
            const w: Wide = { b: 1, a: 2, c: 'x' };
            console.log(JSON.stringify(Object.assign({}, w as Narrow)));
          }",
-        diagnostic,
+        r#"{"b":1,"a":2,"c":"x"}"#,
     );
     // A view of a narrower field type with the same fields in the same
     // order: Node prints the same keys.
@@ -707,12 +744,35 @@ fn sdk_path_refused_forms_name_their_diagnostics() {
              }}"
         )
     };
-    let wider = "object spread of a Narrow that may hold a wider Wide (a view)";
-    refused(V38, &view("return JSON.stringify({ ...n });"), wider);
-    refused(
-        V38,
+    // A record spread copies the object's own properties by its run-time
+    // layout (`layout_spreads`), as Node does.
+    matches_node(
+        &view("return JSON.stringify({ ...n });"),
+        r#"{"b":1,"a":2,"c":"x"}"#,
+    );
+    // Into a dictionary of `unknown`, through the object's JSON-object read
+    // (`layout_spreads`), as Node does.
+    matches_node(
         &view("const q: Record<string, unknown> = { ...n }; return Object.keys(q).join(',');"),
-        wider,
+        "b,a,c",
+    );
+    // Into a dictionary of another value type, by the same read: values the
+    // view does not declare are checked against the entry type.
+    matches_node(
+        &view(
+            "const q: Record<string, number | string> = { first: 0, ...n }; return JSON.stringify(q);",
+        ),
+        r#"{"first":0,"b":1,"a":2,"c":"x"}"#,
+    );
+    // A value outside the entry type (tsc admits the spread of the view)
+    // throws `TypeError` where it is read (checked reads at TypeScript
+    // unsoundness); Node copies it.
+    assert_eq!(
+        logs(&view(
+            "try { const q: Record<string, number> = { ...n }; return JSON.stringify(q); } \
+             catch (e) { return e instanceof TypeError ? e.message : 'other'; }",
+        )),
+        ["own property value is not of the dictionary's value type"]
     );
     // Error constructors take (message?, options?) and nothing else.
     let constructor = "error constructor arguments other than (message?, options?)";

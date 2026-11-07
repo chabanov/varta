@@ -299,6 +299,22 @@ impl Classes {
             .map(|c| c.shape)
             .collect()
     }
+    /// Every instantiable class (not a generic template).
+    pub(crate) fn instantiable(&self) -> Vec<u32> {
+        (0..self.list.len() as u32)
+            .filter(|id| !self.list[*id as usize].is_template())
+            .collect()
+    }
+    /// The instantiable classes that inherit from `ancestor` (not itself).
+    pub(crate) fn descendants(&self, ancestor: u32) -> Vec<u32> {
+        (0..self.list.len() as u32)
+            .filter(|id| {
+                *id != ancestor
+                    && !self.list[*id as usize].is_template()
+                    && self.descends(*id, ancestor)
+            })
+            .collect()
+    }
     /// Record shapes of `ancestor` and all of its descendants.
     pub(crate) fn family_shapes(&self, ancestor: u32) -> Vec<u32> {
         (0..self.list.len() as u32)
@@ -849,6 +865,7 @@ pub(super) use generic_classes::{UNALLOCATED, instantiate_class, member_body, ne
 pub(super) use generic_methods::{
     generic_dispatch_bodies, generic_method_body, next_generic_method,
 };
+pub(super) use index_signatures::INDEX_FIELD;
 pub(super) use layout::layout_module;
 pub(super) use private_names::{
     PREFIX as PRIVATE_PREFIX, hide_prelude_state, is_private_name, reaches_private,

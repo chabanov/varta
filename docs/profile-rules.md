@@ -2417,7 +2417,16 @@ earlier profiles frozen, and add each stream's rules under its own heading here.
   (`Emitter::environment_param`) and the frame creator stores captured cells as
   shared slots. Do not copy captured values into the body: mutable captures
   must stay one cell. `suspension::admissible` admits environment functions only
-  for v35 scheduled bodies; generator closures and self slots stay rejected.
+  for v35 scheduled bodies and v38 generator closure bodies; self slots stay
+  rejected.
+- V38 generator closures (`Lower::split_generator_closure`, and
+  `split_async_generator` with captures) follow the same rule: the body is an
+  environment generator over the closure's captures, called directly by the
+  wrapper, and `E::Call` of an environment function forwards the caller's
+  environment (`Emitter::forward_environment`). A prologue (parameter
+  initialization, the object-literal receiver register) must run in the call:
+  the synchronous body suspends once after it and the wrapper steps it there.
+  Never read the receiver register from a generator body after a suspension.
 - Keep v34 frozen: async instance methods, async arrows and function
   expressions, async optional/rest parameters and `Promise<T>` inference in
   generic calls are gated on `async_methods()`; v34 keeps its diagnostics.
@@ -4053,11 +4062,50 @@ Contract: [architecture.md](architecture.md#expression-forms-expression_forms).
   them); the value is a view (`Views::note_view`) of that shape as the
   literal's type. `subtyping` reads (`accessor_call`), writes (setter or
   the stored read-only `TypeError`), `has` and own-key names understand the
-  reserved fields. Every host read of a value that may hold such an object
-  must go through a `JSON.stringify` materializer or is refused by
-  `refuse_host_reads`; a new host operation that reads records needs no
-  change, but a new path that serializes guest values on the guest side
-  must call the getters itself.
+  reserved fields (`hidden_field`). Each accessor property has a data slot
+  at its creation position, so own-key order is the object's own; reads of
+  several properties (enumerations, spreads, rest patterns,
+  `Object.assign`) go through `read_in_key_order`/`values_in_key_order` so a
+  getter runs when its key is reached, and spreads and rests set the
+  result's key order with `S::RecordOrder`. Every host read of a value that
+  may hold such an object goes through the JSON walk (`json_serialized`:
+  per occurrence, with the circular-structure stack) or the structured
+  refresh (`structured_refreshed`: once per object by identity; the hook
+  for every structured reader, KV staging today and `structuredClone`
+  next), or `finish` refuses it (`refuse_host_reads`); a new host operation
+  that reads records needs no change, but a new structured reader must call
+  `structured_refreshed` and a new guest-side serializer must call the
+  getters itself. `reaches` decides which types may hold such an object
+  (records, arrays, unions, dictionaries, class instance fields, `unknown`
+  once such an object was boxed, marked by `UNKNOWN_REACHES`); keep it
+  complete, since a type it misses reaches a host as stale data. Only the
+  `DEEP_READERS` host operations read properties; a new host operation that
+  logs, formats or serializes values belongs in that list. Physical shapes
+  of boxed views are boxed too (`note_boxed_shape`), so
+  `graph_branches` calls getters for JSON-object reads of `unknown`.
+- Layout spreads (`layout_spreads`): a record spread or rest of a closed
+  object type notes its site (`KeyCopy::LayoutSpread`); a site whose type
+  has view sources with other own keys is lowered by the next pass
+  (`link::LAYOUT_PASSES`) through `copy_T` and `widen`, which `finish`
+  writes when the view sources are known. Synthesized bodies set
+  `layouts.exact` (their spreads and enumerations read one exact layout and
+  note no key copy); a ValueBlock's rooted locals are not read after the
+  block (the widen runs inside the literal's block). A new reader of own
+  keys of a view must dispatch on the layout as the JSON walk does
+  (`wider_layouts`). Optional fields of merged spread results include
+  `undefined`. A widened layout is a view source of the shapes it is
+  viewed as: `finish` writes a copy again when its shape's view sources
+  changed after it was written, and a widen again when a copy it reads
+  changed its layouts, up to `MAX_LAYOUT_ROUNDS`. Never read
+  `view_sources` once and assume no later synthesized body adds one. A
+  widened object with accessors keeps its accessor fields
+  (`intern_accessors`) and is viewed as its type with the extra
+  properties (`Receivers::widen`), with the same getter-only errors.
+- Receivers (`object_methods::loose_receivers`): `this_methods` and
+  `callers` are recorded while lowering; every caller type that may hold a
+  method becomes a view source of the method's type before
+  `layout_spreads::finish` (`subtyping::note_receiver`), a checked one
+  (`note_loose`, `Rewriter::loose_branch`) when it is not assignable.
 - Top-level `await` (`top_level_await`): a module that awaits is one
   async initializer (`module_constants::link_module`, split with
   `split_async`); the evaluator text is generated from the static plan and

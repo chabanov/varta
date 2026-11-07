@@ -23,6 +23,7 @@ impl Emitter<'_> {
             && !self.quiet_mode
             && let E::Call(index, args) = &expr.kind
             && !self.frame_functions.contains_key(index)
+            && !self.environment_functions.contains(index)
             && args.iter().all(|arg| self.quiet(arg))
         {
             // Quiet arguments push nothing; the callee roots parameters.
@@ -753,6 +754,7 @@ impl Emitter<'_> {
                 for arg in args {
                     self.expr(arg)?;
                 }
+                self.forward_environment(*index)?;
                 self.code
                     .push(I::Call(self.functions_begin + *index as u32));
                 self.check_exception()?;
