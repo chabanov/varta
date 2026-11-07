@@ -8116,7 +8116,13 @@ and five conformance cases in five new feature rows (205 → 210 passing of
 209 → 214 after the K9 D2 and D4 merges). V37 keeps its prelude, programs and diagnostics (the v37
 `regexp_cases` and v37 rejections pass unchanged). Fuel goldens: v38 match
 arrays read element 0 live (one checked element read instead of a field
-read); no recorded golden moved. Refused: `replaceAll`/`matchAll` with a custom matcher that also has
+read). Three v38 goldens moved down with the rebuilt `intrinsics.wasm` (the
+same programs and IR; LTO lays out the shared linked code differently once
+the pattern compiler joins the library): `json` 33 558 → 33 553 and
+`unknown assertions` 26 693 → 26 637 (`fuel_determinism_tests`,
+`codegen_v2_tests::COSTLIER_UNDER_V38`), and `value15_cases/values.ts`
+178 592 → 178 536 (`COSTLIER_UNDER_V38`). With `main`'s library both keep
+their old figures; production budgets are unchanged. Refused: `replaceAll`/`matchAll` with a custom matcher that also has
 `[Symbol.match]` (by name; its IsRegExp `flags` check), and
 `re[Symbol.replace]` called directly with a replacer function (a type
 error: the prelude method takes a template). Owner decisions open: Annex B
