@@ -15,9 +15,12 @@
   identity (the hook `structuredClone` will use). Under v38 object spreads
   create their keys in CopyDataProperties order (the source's own-key order,
   literal members in place), as rest patterns and `Object.assign` do.
-  Dictionaries of such objects are walked the same way. Logging,
-  `unknown` holders and class-instance fields of such objects reaching a
-  host stay refused by name. Earlier profiles are unchanged.
+  Dictionaries, class instances (their declared fields, by the instance's
+  own class) and `unknown` cells holding such objects are walked the same
+  way, and JSON-object reads of `unknown` call the getters. A literal with
+  accessors may spread closed objects (CopyDataProperties: a later
+  definition replaces an earlier one in its first position). Logging such
+  objects waits for the console notation. Earlier profiles are unchanged.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
   2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as

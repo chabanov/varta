@@ -1,0 +1,9 @@
+{"name":"alpha","size":5}
+[{"name":"alpha","size":5},{"name":"be","size":2}]
+{"inner":{"name":"alpha","size":5},"list":[{"name":"alpha","size":5}]}
+{"item":{"name":"boxed","size":5}}
+alpha,alpha,be,alpha,alpha,boxed
+name,size
+5
+alpha
+has size

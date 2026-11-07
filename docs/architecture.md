@@ -11729,8 +11729,9 @@ Node 24 is the reference for every output below.
     enumerate the keys first and read each value (calling its getter) when
     its key is reached, as EnumerableOwnProperties and CopyDataProperties
     do; a rest pattern's named properties are not read again.
-  - *`JSON.stringify`* of a record, array, dictionary or union that may hold such an
-    object is a guest walk (`object_accessors::json_walk`): each object's
+  - *`JSON.stringify`* of a value that may hold such an object (a record,
+    array, dictionary, class instance, `unknown` or union) is a guest walk
+    (`object_accessors::json_walk`): each object's
     own keys in order, each property read (its getter called) when it is
     reached and serialized at once, as SerializeJSONProperty does — a
     getter runs once per occurrence of its object, and a getter's
@@ -11738,8 +11739,12 @@ Node 24 is the reference for every output below.
     while it is being serialized (a getter returning an ancestor, or a data
     cycle through such objects) throws V8's `TypeError: Converting circular
     structure to JSON` with its `-->`/`|`/`---` path lines (the first two
-    levels, `...` for more than three, and the last). Values that cannot
-    hold such an object keep the host serializer.
+    levels, `...` for more than three, and the last). A class instance
+    serializes its declared fields (base class first; an instance of a
+    subclass its own class's fields, by its descriptor); an `unknown` cell
+    dispatches on what it holds (records, objects with accessors, class
+    instances and dictionaries by descriptor, arrays as `unknown[]`). Values
+    that cannot hold such an object keep the host serializer.
   - *Structured readers* read every object once by identity, as
     StructuredSerializeInternal does: before a reader runs, the structured
     refresh (`Lower::structured_refreshed`, a hook for every structured
@@ -11751,13 +11756,24 @@ Node 24 is the reference for every output below.
     value and calls the getter as often.
   - *View props* are ordinary guest objects: a component reading
     `props.p` calls the getter on every read, as in JavaScript.
-  - Refused by name: a setter without a getter, a spread in a literal with
-    accessors, a `this` parameter of a setter, accessors in a context that
-    is not a closed object type, and (until the console notation shows
-    accessors and `unknown` readers dispatch on them) logging a value that
-    may hold an object with accessors, such an object held by `unknown`,
-    and a class instance whose fields may hold one reaching a host
-    (`JSON.stringify`, KV, logging).
+  - *Held by `unknown`*: when a type an object with accessors is viewed as
+    enters `unknown`, its physical shapes are boxed shapes too, so the
+    JSON-object reads of `unknown` (`as Record<string, unknown>`, checked
+    conversions) call each getter in own-key order and leave out the
+    reserved fields.
+  - *Spreads in such a literal* copy data properties as CopyDataProperties
+    does: members are evaluated in source order, a spread reads its
+    source's properties (calling its getters) in the source's own-key order
+    when it is reached, a later definition of a key replaces the earlier one
+    in its first position (an accessor after a spread drops the copied
+    value, a spread after an accessor makes the property data), and the
+    object takes the members' key order.
+  - Refused by name: a setter without a getter, a `this` parameter of a
+    setter, accessors in a context that is not a closed object type, a
+    spread of a source with optional members or of a class instance into a
+    literal with accessors, a class with an index signature whose fields may
+    hold such an object reaching a host, and (until the console notation
+    shows accessors) logging a value that may hold one.
 - **Computed keys.** `{ [k]: v }` with a constant key — a string or number
   literal, a template without substitutions, or a `const` binding or
   module constant initialized by such a literal — names a closed record

@@ -26,14 +26,14 @@ fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
 }
 
 /// One member of a spread literal, in source order.
-enum Member {
+pub(super) enum Member {
     Spread(u32, u32, Option<Type>),
     Value(String),
 }
 impl Lower<'_> {
     /// The statements that give the spread result `output` (record `id`)
     /// the key order of its members.
-    fn spread_order(
+    pub(super) fn spread_order(
         &mut self,
         output: u32,
         id: u32,

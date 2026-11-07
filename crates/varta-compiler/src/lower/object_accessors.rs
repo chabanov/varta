@@ -62,15 +62,10 @@ impl Lower<'_> {
         expected: Option<Type>,
     ) -> Result<Expr> {
         let span = object.span;
-        if let Some(spread) = object.props.iter().find_map(|prop| match prop {
-            ast::PropOrSpread::Spread(spread) => Some(spread.dot3_token),
-            ast::PropOrSpread::Prop(_) => None,
-        }) {
-            return Err(self.source.locate(
-                unsupported("spread in an object literal with getters or setters"),
-                spread,
-            ));
-        }
+        let spreads = object
+            .props
+            .iter()
+            .any(|prop| matches!(prop, ast::PropOrSpread::Spread(_)));
         let ty = match expected {
             Some(ty @ Type::Record(_)) => ty,
             None => self.accessor_type(object)?,
@@ -105,9 +100,77 @@ impl Lower<'_> {
         let mut values: Vec<(String, Expr)> = Vec::new();
         let mut getters = Vec::new();
         let mut setters = Vec::new();
+        // With spreads (CopyDataProperties): every member is evaluated into a
+        // local in source order, a spread copies its source's own properties
+        // when it is reached (getters in the source's own-key order), a later
+        // definition replaces an earlier one at its first position, and the
+        // object's key order follows the members (`spread_order`).
+        let mut prelude: Vec<S> = Vec::new();
+        let mut roots: Vec<u32> = Vec::new();
+        let mut members: Vec<super::record_spread::Member> = Vec::new();
+        let mut explicit: Vec<String> = Vec::new();
+        let mut ordered: Vec<String> = Vec::new();
         for prop in &object.props {
-            let ast::PropOrSpread::Prop(prop) = prop else {
-                continue;
+            let prop = match prop {
+                ast::PropOrSpread::Prop(prop) => prop,
+                ast::PropOrSpread::Spread(spread) => {
+                    let value = self.expr(&spread.expr)?;
+                    let Type::Record(shape) = value.ty else {
+                        return Err(self.source.locate(
+                            unsupported(&format!(
+                                "spread of a {} into an object literal with getters or setters; spread a closed object",
+                                subtyping::describe(value.ty, self.types)
+                            )),
+                            spread.expr.span(),
+                        ));
+                    };
+                    let declared = self.types.records[shape as usize].fields.clone();
+                    if self.types.records[shape as usize].class.is_some()
+                        || declared.iter().any(|field| field.optional)
+                    {
+                        return Err(self.source.locate(
+                            unsupported(&format!(
+                                "spread of a {} with optional members or of a class instance into an object literal with getters or setters",
+                                subtyping::describe(value.ty, self.types)
+                            )),
+                            spread.expr.span(),
+                        ));
+                    }
+                    if self.types.profile.sdk_paths() {
+                        self.types.subtyping.note_key_copy(
+                            shape,
+                            subtyping::KeyCopy::Spread,
+                            self.source,
+                            spread.expr.span(),
+                        );
+                    }
+                    let slot = self.hidden(value.ty);
+                    roots.push(slot);
+                    prelude.push(S::Init(slot, value));
+                    let (reads, locals) = self.read_in_key_order(slot, shape, &[], span)?;
+                    roots.extend(locals.iter().copied());
+                    prelude.extend(reads);
+                    members.push(super::record_spread::Member::Spread(slot, shape, None));
+                    for (field, local) in declared.iter().zip(locals) {
+                        let expected = field_type(self, &field.name, spread.expr.span())?;
+                        let read = unions::widen(
+                            local_value(span, local, field.ty),
+                            Some(expected),
+                            self.types,
+                        )?;
+                        // A data property replaces an accessor of that name.
+                        values.retain(|(name, _)| {
+                            accessor_field(name).is_none_or(|(property, _)| property != field.name)
+                        });
+                        getters.retain(|name| *name != field.name);
+                        setters.retain(|name| *name != field.name);
+                        match values.iter_mut().find(|(name, _)| *name == field.name) {
+                            Some((_, existing)) => *existing = read,
+                            None => values.push((field.name.clone(), read)),
+                        }
+                    }
+                    continue;
+                }
             };
             let (name, value) = match &**prop {
                 ast::Prop::KeyValue(pair) => {
@@ -212,11 +275,53 @@ impl Lower<'_> {
                 }
                 _ => return Err(unsupported("object literal member form")),
             };
-            if values.iter().any(|(existing, _)| *existing == name) {
+            if explicit.contains(&name) {
                 return Err(self.source.locate(
                     unsupported(&format!("object literal member {name} defined twice")),
                     span,
                 ));
+            }
+            explicit.push(name.clone());
+            let property =
+                accessor_field(&name).map_or(name.clone(), |(property, _)| property.to_owned());
+            if !ordered.contains(&property) {
+                ordered.push(property.clone());
+                members.push(super::record_spread::Member::Value(property.clone()));
+            }
+            let value = if spreads {
+                let slot = self.hidden(value.ty);
+                if value.ty.needs_root() {
+                    roots.push(slot);
+                }
+                let read = local_value(span, slot, value.ty);
+                prelude.push(S::Init(slot, value));
+                read
+            } else {
+                value
+            };
+            // A definition after a spread replaces the spread's property in
+            // its place: an accessor drops the data value, data replaces it.
+            if accessor_field(&name).is_some() {
+                if let Some((_, existing)) = values
+                    .iter_mut()
+                    .find(|(existing, _)| *existing == property)
+                {
+                    let cache = unions::intern(
+                        vec![field_type(self, &property, span)?, Type::Undefined],
+                        self.types,
+                    )?;
+                    let undefined = Expr {
+                        span,
+                        ty: Type::Undefined,
+                        kind: E::Integer(0),
+                    };
+                    *existing = unions::widen(undefined, Some(cache), self.types)?;
+                }
+            } else if let Some((_, existing)) =
+                values.iter_mut().find(|(existing, _)| *existing == name)
+            {
+                *existing = value;
+                continue;
             }
             // An accessor property owns a data slot at its creation position
             // (its first definition): the cache readers see after a refresh.
@@ -303,13 +408,41 @@ impl Lower<'_> {
             })
             .collect::<Result<_>>()?;
         self.types.subtyping.note_view(physical, logical);
+        let built = Expr {
+            span,
+            ty: physical,
+            kind: E::Record(fields),
+        };
+        if !spreads {
+            return Ok(Expr {
+                span,
+                ty,
+                kind: E::Reinterpret(Box::new(built)),
+            });
+        }
+        let output = self.hidden(physical);
+        roots.push(output);
+        prelude.push(S::Init(output, built));
+        // Reserved fields keep their places after the properties.
+        for field in self.types.records[shape as usize].fields.clone() {
+            if hidden_field(&field.name) {
+                members.push(super::record_spread::Member::Value(field.name));
+            }
+        }
+        prelude.extend(self.spread_order(output, shape, &members, span)?);
+        let marker = self.hidden(Type::Number);
         Ok(Expr {
             span,
             ty,
             kind: E::Reinterpret(Box::new(Expr {
                 span,
                 ty: physical,
-                kind: E::Record(fields),
+                kind: E::ValueBlock {
+                    output,
+                    marker,
+                    roots,
+                    body: prelude,
+                },
             })),
         })
     }
@@ -355,8 +488,24 @@ impl Lower<'_> {
     fn accessor_type(&mut self, object: &ast::ObjectLit) -> Result<Type> {
         let mut fields: Vec<ir::RecordField> = Vec::with_capacity(object.props.len());
         for prop in &object.props {
-            let ast::PropOrSpread::Prop(prop) = prop else {
-                continue;
+            let prop = match prop {
+                ast::PropOrSpread::Prop(prop) => prop,
+                ast::PropOrSpread::Spread(spread) => {
+                    let source = self.evident_type(&spread.expr, spread.expr.span())?;
+                    let Type::Record(shape) = source else {
+                        return Err(self.source.locate(
+                            unsupported("spread of a value that is not a closed object into an unannotated object literal with getters or setters"),
+                            spread.expr.span(),
+                        ));
+                    };
+                    for field in self.types.records[shape as usize].fields.clone() {
+                        match fields.iter_mut().find(|own| own.name == field.name) {
+                            Some(own) => *own = field,
+                            None => fields.push(field),
+                        }
+                    }
+                    continue;
+                }
             };
             let (name, ty) = match &**prop {
                 ast::Prop::KeyValue(pair) => (
@@ -443,6 +592,8 @@ impl Lower<'_> {
                 Type::Record(_)
                     | Type::Array(_)
                     | Type::Dictionary(_)
+                    | Type::Class(_)
+                    | Type::Unknown
                     | Type::Union(_)
                     | Type::ReferenceUnion(_)
             )
@@ -502,7 +653,28 @@ impl Lower<'_> {
             return Ok(vec![S::Return(None)]);
         }
         let mut body = Vec::new();
-        if matches!(ty, Type::Record(_) | Type::Array(_) | Type::Dictionary(_)) {
+        if let Type::Class(class) = ty {
+            let seen = identities(self.types)?;
+            for (test, derived) in self.subclass_tests(class, span)? {
+                let index = refresher(derived.ty, self.types, self.generated, self.next_function)?;
+                body.push(S::If(
+                    test,
+                    vec![
+                        S::Expr(Expr {
+                            span,
+                            ty: Type::Void,
+                            kind: E::Call(index, vec![derived, local_value(span, 1, seen)]),
+                        }),
+                        S::Return(None),
+                    ],
+                    vec![],
+                ));
+            }
+        }
+        if matches!(
+            ty,
+            Type::Record(_) | Type::Array(_) | Type::Dictionary(_) | Type::Class(_)
+        ) {
             body.extend(self.refresh_enter(ty, span)?);
         }
         match ty {
@@ -606,6 +778,35 @@ impl Lower<'_> {
                     dispatch,
                 ));
             }
+            Type::Class(class) => {
+                let (record, fields) = self.class_fields(class, span)?;
+                let source = self.hidden(record);
+                body.push(S::Init(
+                    source,
+                    Expr {
+                        span,
+                        ty: record,
+                        kind: E::Reinterpret(Box::new(local_value(span, 0, ty))),
+                    },
+                ));
+                for (slot, field) in fields {
+                    let read = Expr {
+                        span,
+                        ty: field.ty,
+                        kind: E::Field(Box::new(local_value(span, source, record)), slot),
+                    };
+                    if let Some(call) = self.refresh_call(read, span)? {
+                        body.push(call);
+                    }
+                }
+            }
+            Type::Unknown => {
+                for (test, held) in self.unknown_holders(views, span)? {
+                    if let Some(call) = self.refresh_call(held, span)? {
+                        body.push(S::If(test, vec![call], vec![]));
+                    }
+                }
+            }
             Type::Dictionary(_) => {
                 let walk = self.own_key_loop(ty, span, |this, key| {
                     let read = this.dictionary_get(local_value(span, 0, ty), key)?;
@@ -650,7 +851,10 @@ impl Lower<'_> {
             }
             Type::Union(id) | Type::ReferenceUnion(id) => {
                 for member in self.types.unions[id as usize].clone() {
-                    if !matches!(member, Type::Record(_) | Type::Array(_) | Type::Dictionary(_)) {
+                    if !matches!(
+                        member,
+                        Type::Record(_) | Type::Array(_) | Type::Dictionary(_) | Type::Class(_)
+                    ) {
                         continue;
                     }
                     let value = Expr {
@@ -726,10 +930,12 @@ impl Lower<'_> {
         if !matches!(
             value.ty,
             Type::Record(_)
-                    | Type::Array(_)
-                    | Type::Dictionary(_)
-                    | Type::Union(_)
-                    | Type::ReferenceUnion(_)
+                | Type::Array(_)
+                | Type::Dictionary(_)
+                | Type::Class(_)
+                | Type::Unknown
+                | Type::Union(_)
+                | Type::ReferenceUnion(_)
         ) {
             return Ok(None);
         }
@@ -754,6 +960,8 @@ impl Lower<'_> {
                 Type::Record(_)
                     | Type::Array(_)
                     | Type::Dictionary(_)
+                    | Type::Class(_)
+                    | Type::Unknown
                     | Type::Union(_)
                     | Type::ReferenceUnion(_)
             )
@@ -853,11 +1061,25 @@ impl Lower<'_> {
             Type::Record(shape) => self.json_record(shape, span),
             Type::Array(id) => self.json_array(id, span),
             Type::Dictionary(id) => self.json_dictionary(id, span),
+            Type::Class(class) => self.json_class(class, span),
+            Type::Unknown => {
+                let mut body = Vec::new();
+                for (test, held) in self.unknown_holders(views, span)? {
+                    let value =
+                        self.json_value(held, local_value(span, JSON_KEY, Type::String), span)?;
+                    body.push(S::If(test, vec![S::Return(Some(value))], vec![]));
+                }
+                let rest = self.json_host_text(param(ty), span)?;
+                body.push(S::Return(Some(rest)));
+                Ok(body)
+            }
             Type::Union(id) | Type::ReferenceUnion(id) => {
                 let mut body = Vec::new();
                 for member in self.types.unions[id as usize].clone() {
-                    if !matches!(member, Type::Record(_) | Type::Array(_) | Type::Dictionary(_))
-                        || !reaches(member, views, self.types, &mut BTreeSet::new())
+                    if !matches!(
+                        member,
+                        Type::Record(_) | Type::Array(_) | Type::Dictionary(_) | Type::Class(_)
+                    ) || !reaches(member, views, self.types, &mut BTreeSet::new())
                     {
                         continue;
                     }
@@ -897,10 +1119,12 @@ impl Lower<'_> {
         if matches!(
             value.ty,
             Type::Record(_)
-                    | Type::Array(_)
-                    | Type::Dictionary(_)
-                    | Type::Union(_)
-                    | Type::ReferenceUnion(_)
+                | Type::Array(_)
+                | Type::Dictionary(_)
+                | Type::Class(_)
+                | Type::Unknown
+                | Type::Union(_)
+                | Type::ReferenceUnion(_)
         ) {
             let index = serializer(value.ty, self.types, self.generated, self.next_function)?;
             let (identities, path) = (identities(self.types)?, path_type(self.types)?);
@@ -1282,6 +1506,307 @@ impl Lower<'_> {
         Ok(body)
     }
 
+    /// The instance layout of `class` and its own enumerable fields in
+    /// own-key order: the declared fields, which every instance defines at
+    /// construction in declaration order (base class first); private names
+    /// are not properties. A class with an index signature (keys added at
+    /// run time) is refused by name.
+    fn class_fields(
+        &mut self,
+        class: u32,
+        span: swc_common::Span,
+    ) -> Result<(Type, Vec<(u32, ir::RecordField)>)> {
+        let shape = self.types.classes.shape(class);
+        let fields = &self.types.records[shape as usize].fields;
+        if fields
+            .iter()
+            .any(|field| field.name == super::classes::INDEX_FIELD)
+        {
+            return Err(self.source.locate(
+                unsupported(&format!(
+                    "a host read of a {} with an index signature that may hold an object with getters",
+                    subtyping::describe(Type::Class(class), self.types)
+                )),
+                span,
+            ));
+        }
+        let own = fields
+            .iter()
+            .enumerate()
+            .filter(|(_, field)| !super::classes::is_private_name(&field.name))
+            .map(|(slot, field)| (slot as u32, field.clone()))
+            .collect();
+        Ok((Type::Record(shape), own))
+    }
+
+    /// The values an `unknown` cell (local 0) may hold that may hold an
+    /// object with accessors, each with the test that the cell holds it:
+    /// records (objects with accessors included), class instances and
+    /// dictionaries by their exact descriptors, and arrays as `unknown[]`.
+    fn unknown_holders(
+        &mut self,
+        views: &BTreeSet<u32>,
+        span: swc_common::Span,
+    ) -> Result<Vec<(Expr, Expr)>> {
+        let mut targets: Vec<Type> = Vec::new();
+        for id in 0..self.types.records.len() as u32 {
+            if self.types.records[id as usize].class.is_none()
+                && reaches(Type::Record(id), views, self.types, &mut BTreeSet::new())
+            {
+                targets.push(Type::Record(id));
+            }
+        }
+        for id in 0..self.types.dictionaries.len() as u32 {
+            if reaches(
+                Type::Dictionary(id),
+                views,
+                self.types,
+                &mut BTreeSet::new(),
+            ) {
+                targets.push(Type::Dictionary(id));
+            }
+        }
+        for class in self.types.classes.instantiable() {
+            if reaches(Type::Class(class), views, self.types, &mut BTreeSet::new()) {
+                targets.push(Type::Class(class));
+            }
+        }
+        let mut holders = Vec::new();
+        // An object with accessors itself, read as the type it is viewed as
+        // (so its accessor properties call their getters).
+        let mut seen = BTreeSet::new();
+        for view in views
+            .iter()
+            .copied()
+            .filter(|view| *view != UNKNOWN_REACHES)
+        {
+            for physical in accessor_shapes(view, self.types) {
+                if physical == view || !seen.insert(physical) {
+                    continue;
+                }
+                let test = self.cell_test(span, 0, Type::Unknown, Type::Record(physical), "")?;
+                holders.push((
+                    test,
+                    Expr {
+                        span,
+                        ty: Type::Record(view),
+                        kind: E::Reinterpret(Box::new(Expr {
+                            span,
+                            ty: Type::Record(physical),
+                            kind: E::UnboxUnion(Box::new(local_value(span, 0, Type::Unknown))),
+                        })),
+                    },
+                ));
+            }
+        }
+        for target in targets {
+            let test = match target {
+                Type::Class(class) => {
+                    let descriptor = self.hidden(Type::Number);
+                    Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::Binary(
+                            ast::BinaryOp::LogicalAnd,
+                            Box::new(Expr {
+                                span,
+                                ty: Type::Boolean,
+                                kind: E::IsUnionMember(
+                                    Box::new(local_value(span, 0, Type::Unknown)),
+                                    target,
+                                ),
+                            }),
+                            Box::new(Expr {
+                                span,
+                                ty: Type::Boolean,
+                                kind: E::IsClass {
+                                    value: Box::new(Expr {
+                                        span,
+                                        ty: target,
+                                        kind: E::UnboxUnion(Box::new(local_value(
+                                            span,
+                                            0,
+                                            Type::Unknown,
+                                        ))),
+                                    }),
+                                    shapes: vec![self.types.classes.shape(class)],
+                                    slot: descriptor,
+                                },
+                            }),
+                        ),
+                    }
+                }
+                _ => self.cell_test(span, 0, Type::Unknown, target, "")?,
+            };
+            holders.push((
+                test,
+                Expr {
+                    span,
+                    ty: target,
+                    kind: E::UnboxUnion(Box::new(local_value(span, 0, Type::Unknown))),
+                },
+            ));
+        }
+        let any = Self::unknown_array_type(self.types)?;
+        let array = Expr {
+            span,
+            ty: Type::Boolean,
+            kind: E::IsUnionMember(Box::new(local_value(span, 0, Type::Unknown)), any),
+        };
+        let elements = self.unknown_array(local_value(span, 0, Type::Unknown))?;
+        holders.push((array, elements));
+        Ok(holders)
+    }
+
+    /// For each class derived from `class`: the test that the instance in
+    /// local 0 is of exactly that class, and the instance as that class.
+    fn subclass_tests(&mut self, class: u32, span: swc_common::Span) -> Result<Vec<(Expr, Expr)>> {
+        let mut tests = Vec::new();
+        for derived in self.types.classes.descendants(class) {
+            let shape = self.types.classes.shape(derived);
+            let descriptor = self.hidden(Type::Number);
+            tests.push((
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::IsClass {
+                        value: Box::new(local_value(span, 0, Type::Class(class))),
+                        shapes: vec![shape],
+                        slot: descriptor,
+                    },
+                },
+                Expr {
+                    span,
+                    ty: Type::Class(derived),
+                    kind: E::Reinterpret(Box::new(local_value(span, 0, Type::Class(class)))),
+                },
+            ));
+        }
+        Ok(tests)
+    }
+
+    /// `{"key":value,…}` of a class instance: its own fields in order, each
+    /// read when reached; an absent optional field is no key.
+    fn json_class(&mut self, class: u32, span: swc_common::Span) -> Result<Vec<S>> {
+        let ty = Type::Class(class);
+        let text = text_type(self.types)?;
+        let name = self.types.classes.get(class).name.clone();
+        // An instance of a subclass serializes its own fields.
+        let mut body = Vec::new();
+        for (test, derived) in self.subclass_tests(class, span)? {
+            let index = serializer(derived.ty, self.types, self.generated, self.next_function)?;
+            let (identities, path) = (identities(self.types)?, path_type(self.types)?);
+            body.push(S::If(
+                test,
+                vec![S::Return(Some(Expr {
+                    span,
+                    ty: text,
+                    kind: E::Call(
+                        index,
+                        vec![
+                            derived,
+                            local_value(span, JSON_IDENTITIES, identities),
+                            local_value(span, JSON_PATH, path),
+                            local_value(span, JSON_KEY, Type::String),
+                        ],
+                    ),
+                }))],
+                vec![],
+            ));
+        }
+        body.extend(self.json_enter(ty, &name, span)?);
+        let (record, fields) = self.class_fields(class, span)?;
+        let (source, out, separator, value) = (
+            self.hidden(record),
+            self.hidden(Type::String),
+            self.hidden(Type::String),
+            self.hidden(text),
+        );
+        body.extend([
+            S::Init(
+                source,
+                Expr {
+                    span,
+                    ty: record,
+                    kind: E::Reinterpret(Box::new(local_value(span, 0, ty))),
+                },
+            ),
+            S::Init(out, string(span, "{", self.types)),
+            S::Init(separator, string(span, "", self.types)),
+            S::Init(value, self.json_host_text(undefined(span), span)?),
+        ]);
+        for (slot, field) in fields {
+            let read = Expr {
+                span,
+                ty: field.ty,
+                kind: E::Field(Box::new(local_value(span, source, record)), slot),
+            };
+            let described = string(span, &format!("property '{}'", field.name), self.types);
+            let serialized = self.json_value(read, described, span)?;
+            let quoted = self.json_host_text(string(span, &field.name, self.types), span)?;
+            let member = concat(
+                span,
+                vec![
+                    local_value(span, out, Type::String),
+                    local_value(span, separator, Type::String),
+                    Expr {
+                        span,
+                        ty: Type::String,
+                        kind: E::UnboxUnion(Box::new(quoted)),
+                    },
+                    string(span, ":", self.types),
+                    Expr {
+                        span,
+                        ty: Type::String,
+                        kind: E::UnboxUnion(Box::new(local_value(span, value, text))),
+                    },
+                ],
+            );
+            let emit = vec![
+                S::Set(value, serialized),
+                S::If(
+                    Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::IsUndefined(Box::new(local_value(span, value, text))),
+                    },
+                    vec![],
+                    vec![
+                        S::Set(out, member),
+                        S::Set(separator, string(span, ",", self.types)),
+                    ],
+                ),
+            ];
+            if field.optional {
+                body.push(S::If(
+                    Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::HasOwn(Box::new(local_value(span, source, record)), Some(slot)),
+                    },
+                    emit,
+                    vec![],
+                ));
+            } else {
+                body.extend(emit);
+            }
+        }
+        body.extend(self.json_leave(span)?);
+        let closed = concat(
+            span,
+            vec![
+                local_value(span, out, Type::String),
+                string(span, "}", self.types),
+            ],
+        );
+        body.push(S::Return(Some(unions::widen(
+            closed,
+            Some(text),
+            self.types,
+        )?)));
+        Ok(body)
+    }
+
     /// A loop over the own keys of the record or dictionary in local 0, in
     /// own-key order; `step` gives the statements of one key.
     fn own_key_loop(
@@ -1400,7 +1925,11 @@ impl Lower<'_> {
                 string(span, "}", self.types),
             ],
         );
-        body.push(S::Return(Some(unions::widen(closed, Some(text), self.types)?)));
+        body.push(S::Return(Some(unions::widen(
+            closed,
+            Some(text),
+            self.types,
+        )?)));
         Ok(body)
     }
 
@@ -1719,6 +2248,10 @@ fn json_params(ty: Type, types: &mut ir::ValueTypes) -> Result<Vec<Type>> {
     ])
 }
 
+/// The host operations (by name prefix of every versioned form) that read
+/// the properties of the values they receive.
+const DEEP_READERS: [&str; 4] = ["ValueLog", "ValueFormat", "JsonStringify", "UnionLog"];
+
 /// Hosts read records as data: an `unknown` cell or a host operation other
 /// than the `JSON.stringify` serializers that may receive an object with
 /// accessors is refused.
@@ -1727,17 +2260,17 @@ fn refuse_host_reads<'f>(
     types: &ir::ValueTypes,
     functions: impl Iterator<Item = &'f ir::Function>,
 ) -> Result<()> {
-    if let Some(shape) = views.iter().find(|shape| types.subtyping.is_boxed(**shape)) {
-        return Err(unsupported(&format!(
-            "a {} held by unknown may be an object with getters, whose accessor properties are not data",
-            subtyping::describe(Type::Record(*shape), types)
-        )));
-    }
     for function in functions {
         let mut found = None;
         let mut body = function.body.clone();
         prune::statements(&mut body, &mut |expr| {
-            if let E::Host(host, args) = &expr.kind {
+            // Hosts that read a value's properties (logging, formatting,
+            // serializing); type tests and primitive conversions read none.
+            if let E::Host(host, args) = &expr.kind
+                && DEEP_READERS
+                    .iter()
+                    .any(|reader| format!("{host:?}").starts_with(reader))
+            {
                 for arg in args {
                     if reaches(arg.ty, views, types, &mut BTreeSet::new()) {
                         found.get_or_insert((format!("{host:?}"), arg.ty, arg.span));
@@ -1762,6 +2295,10 @@ fn refuse_host_reads<'f>(
     }
     Ok(())
 }
+
+/// The marker in the set of accessor views that an object with accessors
+/// entered `unknown` (no record shape has this index).
+const UNKNOWN_REACHES: u32 = u32::MAX;
 
 /// Whether a value of `ty` may hold an object with accessors.
 fn reaches(
@@ -1793,6 +2330,8 @@ fn reaches(
             types,
             seen,
         ),
+        // An `unknown` cell may hold one when one entered `unknown`.
+        Type::Unknown => views.contains(&UNKNOWN_REACHES),
         _ => false,
     }
 }
@@ -1809,7 +2348,22 @@ pub(super) fn finish(
     if !types.receivers.accessors {
         return Ok(());
     }
-    let views = types.subtyping.accessor_views(types);
+    let mut views = types.subtyping.accessor_views(types);
+    // An object with accessors held by `unknown`: its physical shapes are
+    // boxed too, so the JSON-object reads of `unknown` call its getters.
+    let boxed: Vec<u32> = views
+        .iter()
+        .copied()
+        .filter(|view| types.subtyping.is_boxed(*view))
+        .collect();
+    for view in &boxed {
+        for physical in accessor_shapes(*view, types) {
+            types.subtyping.note_boxed_shape(physical);
+        }
+    }
+    if !boxed.is_empty() {
+        views.insert(UNKNOWN_REACHES);
+    }
     if let Some((source, span)) = types.receivers.origin.clone() {
         let functions_map = BTreeMap::new();
         let mut effects = BTreeMap::new();

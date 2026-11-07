@@ -148,6 +148,11 @@ impl Views {
         }
         found
     }
+    /// Note that values of record `shape` may be held by `unknown` (the
+    /// physical shapes of objects with accessors, `object_accessors`).
+    pub(crate) fn note_boxed_shape(&self, shape: u32) {
+        self.boxed.borrow_mut().insert(shape);
+    }
     /// Whether a value of record `shape` entered an `unknown` cell.
     pub(crate) fn is_boxed(&self, shape: u32) -> bool {
         self.boxed.borrow().contains(&shape)
@@ -175,6 +180,12 @@ impl Views {
                     stack.extend(types.unions[id as usize].iter().copied());
                 }
                 Type::Dictionary(id) => stack.push(types.dictionaries[id as usize].value),
+                // A class instance's fields (v38 `object_accessors`: an
+                // object with accessors in a field may reach `unknown`).
+                Type::Class(class) => {
+                    let shape = types.classes.shape(class);
+                    stack.extend(types.records[shape as usize].fields.iter().map(|f| f.ty));
+                }
                 _ => {}
             }
         }
@@ -2105,6 +2116,10 @@ impl Rewriter<'_> {
             let mut branch = Vec::new();
             let mut names = Vec::new();
             let mut cached = Vec::new();
+            // V38 (`object_accessors`): an object with accessors gives each
+            // accessor property its getter's result, read in own-key order;
+            // its getter and setter fields are not properties.
+            let mut reads = Vec::new();
             for ((slot, field), cache) in fields.iter().enumerate().zip(&caches) {
                 let read = Expr {
                     span,
@@ -2117,24 +2132,52 @@ impl Rewriter<'_> {
                     kind: E::String(types.profile.string_bytes(&field.name)),
                 });
                 cached.push(local(span, *cache, Type::Unknown));
+                if super::object_accessors::hidden_field(&field.name) {
+                    reads.push((slot, S::Set(*cache, undefined.clone())));
+                    continue;
+                }
+                let read = if super::object_accessors::is_accessor(shape, &field.name, types) {
+                    accessor_call(record, &field.name, true, &[], span, locals, types)
+                        .ok_or_else(|| CompilerError::Internal("accessor getter".into()))?
+                } else {
+                    read
+                };
                 // V38 (`byte_values`): a `Uint8Array` field enters `unknown`
                 // with its own tag, as every other field does. An absent
                 // field is left out by the enumeration below.
                 let value = unknown::widen(read, types)?;
-                branch.push(if field.optional {
-                    S::If(
-                        Expr {
-                            span,
-                            ty: Type::Boolean,
-                            kind: E::HasOwn(Box::new(local(span, 0, record)), Some(slot as u32)),
-                        },
-                        vec![S::Set(*cache, value)],
-                        vec![S::Set(*cache, undefined.clone())],
-                    )
-                } else {
-                    S::Set(*cache, value)
-                });
+                reads.push((
+                    slot,
+                    if field.optional {
+                        S::If(
+                            Expr {
+                                span,
+                                ty: Type::Boolean,
+                                kind: E::HasOwn(
+                                    Box::new(local(span, 0, record)),
+                                    Some(slot as u32),
+                                ),
+                            },
+                            vec![S::Set(*cache, value)],
+                            vec![S::Set(*cache, undefined.clone())],
+                        )
+                    } else {
+                        S::Set(*cache, value)
+                    },
+                ));
             }
+            // Integer keys first, ascending, then creation order.
+            let index = |slot: usize| {
+                let name = &fields[slot].name;
+                name.parse::<u32>()
+                    .ok()
+                    .filter(|n| *n != u32::MAX && n.to_string() == *name)
+            };
+            reads.sort_by_key(|(slot, _)| match index(*slot) {
+                Some(n) => (0, u64::from(n)),
+                None => (1, *slot as u64),
+            });
+            branch.extend(reads.into_iter().map(|(_, read)| read));
             // Every field's entry, then only the present ones in own-key
             // order: the values are literals and rooted locals, so the
             // rearrangement does not allocate.

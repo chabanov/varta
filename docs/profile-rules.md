@@ -4066,8 +4066,13 @@ Contract: [architecture.md](architecture.md#expression-forms-expression_forms).
   that reads records needs no change, but a new structured reader must call
   `structured_refreshed` and a new guest-side serializer must call the
   getters itself. `reaches` decides which types may hold such an object
-  (records, arrays, unions, dictionaries, class instance fields); keep it
-  complete, since a type it misses reaches a host as stale data.
+  (records, arrays, unions, dictionaries, class instance fields, `unknown`
+  once such an object was boxed, marked by `UNKNOWN_REACHES`); keep it
+  complete, since a type it misses reaches a host as stale data. Only the
+  `DEEP_READERS` host operations read properties; a new host operation that
+  logs, formats or serializes values belongs in that list. Physical shapes
+  of boxed views are boxed too (`note_boxed_shape`), so
+  `graph_branches` calls getters for JSON-object reads of `unknown`.
 - Top-level `await` (`top_level_await`): a module that awaits is one
   async initializer (`module_constants::link_module`, split with
   `split_async`); the evaluator text is generated from the static plan and

@@ -52,6 +52,9 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("accessor_json"),
     case!("spread_order"),
     case!("accessor_cycles"),
+    case!("accessor_holders"),
+    case!("accessor_unknown"),
+    case!("accessor_spreads"),
     case!("computed_keys"),
     case!("destructuring"),
     case!("callback_patterns"),
@@ -164,6 +167,24 @@ fn accessor_keys_and_getter_calls_follow_node_order() {
 
 /// `JSON.stringify` calls a getter once per occurrence of its object, in
 /// SerializeJSONProperty order, and writes keys in the objects' own order.
+/// Class instances whose fields hold objects with accessors serialize their
+/// own fields (a subclass instance its own class's), and such objects held
+/// by `unknown` (directly, in arrays, records and class instances) are read
+/// through their getters by `JSON.stringify` and JSON-object reads.
+#[test]
+fn accessor_objects_in_instances_and_unknown_match_node() {
+    matches_node("accessor_holders");
+    matches_node("accessor_unknown");
+}
+
+/// Spreads in a literal with getters and setters copy data properties as
+/// CopyDataProperties does; a later accessor or spread replaces a property
+/// in its first position.
+#[test]
+fn spreads_in_accessor_literals_match_node() {
+    matches_node("accessor_spreads");
+}
+
 /// SerializeJSONObject/SerializeJSONArray step 1: an ancestor reached
 /// again (here through getters) throws V8's circular-structure `TypeError`
 /// with its path; a repeated object that is no ancestor is serialized again.
@@ -276,16 +297,12 @@ fn unsupported_expression_forms_are_refused_by_name() {
             "setter two without a getter",
         ),
         (
-            "export function main(): void { const o = { get x(): number { return 1; } }; const u: unknown = o; console.log(JSON.stringify(u)); }",
-            "held by unknown may be an object with getters",
+            "export function main(): void { const o = { get x(): number { return 1; } }; const u: unknown = o; console.log(u); }",
+            "of a unknown that may hold an object with getters",
         ),
         (
-            "interface P { readonly v: number } class Holder { p: P; constructor(p: P) { this.p = p; } } export function main(): void { const h = new Holder({ get v(): number { return 1; } }); console.log(JSON.stringify(h)); }",
-            "JSON.stringify of a Holder that may hold an object with getters",
-        ),
-        (
-            "export function main(): void { const base = { n: 1 }; const o = { ...base, get two(): number { return 2; } }; console.log(String(o.two)); }",
-            "spread in an object literal with getters or setters",
+            "interface O { n?: number; readonly two: number } export function main(): void { const base: { n?: number } = {}; const o: O = { ...base, get two(): number { return 2; } }; console.log(String(o.two)); }",
+            "with optional members or of a class instance into an object literal with getters or setters",
         ),
         (
             "function tag(s: TemplateStringsArray): string { s.raw = ['x']; return s[0]; } export function main(): void { console.log(tag`a`); }",
