@@ -12782,10 +12782,14 @@ every form below (`symbol_forms_stay_refused_by_v37`).
   key may spell one (`reserved for symbol keys`). The key never depends on
   the symbol value, which is created once per instance. A constant shadowed
   by any other binding of its name in the module keeps the computed-key
-  rules. `Object.keys`/`values`/`entries` and `for...in` of a record with a
-  symbol-keyed member are refused by name (the string-key enumeration that
-  skips them is not implemented); `Object.getOwnPropertySymbols` and
-  symbol keys known only at run time stay refused.
+  rules. `Object.keys`/`values`/`entries`, `for...in` and
+  `Object.getOwnPropertyNames` list string keys only and skip a symbol-keyed
+  member; spreads and `Object.assign` copy it (§7.3.25
+  CopyDataProperties); `Object.getOwnPropertySymbols` lists the symbols of
+  a record's present symbol-keyed members in insertion order (a primitive,
+  array, dictionary or engine object has none; a value typed `unknown` or a
+  class instance with symbol-keyed fields is refused by name). Symbol keys
+  known only at run time stay refused.
 - **Protocols.** A class instance converts through its
   `[Symbol.toPrimitive](hint)` method (§7.1.1) in `String`, `Number`,
   template literals and unary `+`/`-` (hints `"string"` and `"number"`; the
@@ -12793,10 +12797,98 @@ every form below (`symbol_forms_stay_refused_by_v37`).
   an instance without one but with a `[Symbol.toStringTag]` getter give
   `[object <tag>]` (§20.1.3.6); `x instanceof C` calls a class's static
   `[Symbol.hasInstance](x)` and applies ToBoolean (§13.10.2).
-  `JSON.stringify(symbol)` statically typed `symbol` is `undefined`; a value
-  of type `unknown` (or a union) that holds no JSON form keeps Varta's
-  `TypeError`, because the result is typed `string` as in TypeScript's lib
-  (see the K9 D2 record for the owner question).
+  `JSON.stringify(x)` of an `x` statically typed `symbol`, `undefined` or a
+  function is `undefined`, as in Node. **Checked read at TypeScript
+  unsoundness:** for any other argument the result is typed `string`, as in
+  TypeScript's lib (`lib.es5.d.ts`), so when an `x` of type `unknown` or a
+  union holds no JSON form (a symbol, a function, `undefined`) the read of
+  that `string` throws `TypeError` (`JSON.stringify produced undefined: the
+  value has no JSON form`) where Node would continue with `undefined`. A
+  discarded result (an expression statement or `void`, with or without
+  property list and indentation) is never read and never throws
+  (`Lower::discarded`). Coordinator decision of 2026-11-07 under the
+  owner-approved checked-read category, pending the owner's confirmation
+  (K9 D2 record).
+
+#### Integrity levels (`integrity_levels`)
+
+K9 track D2 (owner decision of 2026-11-06, replacing the earlier refusal),
+selector `LanguageProfile::integrity_levels()`: `Object.preventExtensions`,
+`Object.seal`, `Object.freeze` and `Object.isExtensible`, `Object.isSealed`,
+`Object.isFrozen` ([ECMA-262 §7.3.15 SetIntegrityLevel, §7.3.16
+TestIntegrityLevel, §20.1.2](https://tc39.es/ecma262/2025/#sec-setintegritylevel))
+with Node 24.20.0 as the oracle. No host import, budget or ABI number
+changes; v37 and earlier keep value layout 17 and refuse the six members.
+
+- **Value layout.** The value ABI number stays 18. An object block carries
+  its level in three header flag bits (`value::HEAP_NON_EXTENSIBLE_FLAG`
+  8192, `HEAP_SEALED_FLAG` 16384, `HEAP_FROZEN_FLAG` 32768): a record, class
+  instance, dictionary, error or promise block, or the vector cell of an
+  array (its identity; the element storage never carries them). They are
+  only ever added (`preventExtensions` sets the first, `seal` the first two,
+  `freeze` all three), the collector keeps them and a fresh block starts
+  without them. Readers of value layout 18 ignore them
+  (`value::integrity_flags`): the shared record, array and error readers
+  (`value::reference`, `value::vector`, `value::error`, so the host JSON
+  encoder, the linked serializer and both KV stagers), the runtime's JSON
+  object reader and the browser's rejection reader; readers of earlier
+  layouts keep their exact flag checks. The linked serializer's mask raises
+  the v38 `json` fuel golden of `fuel_determinism_tests` from 33558 to 33580.
+- **Operations.** `preventExtensions`, `seal` and `freeze` return their
+  argument: a primitive unchanged, an object after setting its bits
+  (`ir::Intrinsic::Integrity`); a value of type `unknown` or a reference
+  union sets the bits of the object it holds. The predicates answer as
+  §7.3.16 does: a primitive is frozen, sealed and not extensible; an object
+  is sealed when it is not extensible and sealed or has no own property,
+  and frozen when it is not extensible and frozen, or sealed (or without
+  own properties) with no own data property. Own properties are the
+  string- and symbol-keyed members a record or class instance has present
+  (by the object's layout, so a view of a wider object or a subclass
+  instance counts its own; an accessor property of an object literal is no
+  data property), the entries of a dictionary, an array's elements and its
+  `length` (writable, so an array is frozen only by `freeze`), an `Error`'s
+  `stack` accessor and own `message`; engine collections (`Map`, `Set`)
+  and promises have none, and their internal slots stay writable, as the
+  specification requires. Private names (`#x`) are no properties and stay
+  writable.
+- **Write checks.** A program that names one of the six members loads the
+  integrity prelude (`<varta>/builtins/integrity.ts`) and checks every
+  write; any other program gets no check, so its code and fuel are
+  unchanged. Each check runs after the right-hand side was evaluated and
+  before the store (`lower::integrity::guard`): a field write fails on a
+  frozen object (`Cannot assign to read only property 'k' of object
+  '#<Name>'`, the class name of the instance's own layout), the write of an
+  absent optional member on a non-extensible one (`Cannot add property k,
+  object is not extensible`), a deletion of a present member on a sealed
+  one (`Cannot delete property 'k' of #<Name>`); element writes, holes and
+  `length` follow §10.4.2 (a sealed array's shrink stops at its last
+  element, `Cannot delete property 'i' of [object Array]`); `push` and
+  `pop` check before they change the array; `reverse`, `fill`, `sort`,
+  `splice`, `shift`, `unshift` and `copyWithin` of an array with a level run
+  step by step, so the first failing step throws after the earlier steps
+  took effect; dictionary writes and deletions check in their shared
+  helpers; a derived class whose base constructor made `this`
+  non-extensible fails defining its first own field (`Cannot define property
+  f, object is not extensible`, §7.3.33). A symbol key prints as
+  `Symbol(description)`. Writes through a setter are calls, not checked
+  stores. A constructor may pass `this` to the six members of the
+  unshadowed `Object` (they read and set only the header bits). The
+  `unknown[]` snapshot of `Array.isArray` narrowing keeps the array's level.
+- **Refused by name.** A function or generator (no own-property storage
+  yet; a function or `Uint8Array` held by `unknown` throws a recoverable
+  `TypeError` naming the gap), a `Uint8Array` (its elements stay
+  configurable and freezing a non-empty one throws; not modelled), an
+  `Error` subclass instance in the predicates, and `isSealed`/`isFrozen` of
+  a value typed `unknown` or a reference union (its layout is not known
+  statically). `Reflect` and `Proxy` invariants over these bits belong to
+  K9 D6.
+- **Specification over V8.** Node 24.20.0 deviates from §7.3.16 for empty
+  arrays (`Object.isFrozen(Object.preventExtensions([]))` is `true` there;
+  `length` is a writable data property, so it is `false`) and from §23.1.3.30
+  for a frozen one-element array (`sort` writes its element back, so it
+  throws). Varta follows the specification in both; the cases are pinned
+  against the specification, not Node (owner question in the K9 D2
+  record).
 
 #### Virtual file roots (`file_roots`)
 

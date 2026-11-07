@@ -340,7 +340,31 @@ pub(crate) const SYMBOL: Prelude = Prelude {
     triggers: &[],
     admitted: LanguageProfile::symbol_values,
     extended: None,
-    loads: &[SYMBOL_GLOBAL],
+    // `Object.getOwnPropertySymbols` gives a `symbol[]` without naming
+    // `Symbol`.
+    loads: &[SYMBOL_GLOBAL, ".getOwnPropertySymbols"],
+    lifted: None,
+};
+/// Integrity levels (v38 `integrity_levels`, K9 D2): the failures of writes
+/// to an object with an integrity level and the element-by-element array
+/// methods, called by `lower::integrity`; loaded by the six static members
+/// of `Object` that set and test a level.
+pub(crate) const INTEGRITY: Prelude = Prelude {
+    path: "<varta>/builtins/integrity.ts",
+    source: include_str!("../prelude/integrity.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::integrity_levels,
+    extended: None,
+    loads: &[
+        ".freeze",
+        ".seal",
+        ".preventExtensions",
+        ".isFrozen",
+        ".isSealed",
+        ".isExtensible",
+    ],
     lifted: None,
 };
 /// The global that loads [`SYMBOL`].
@@ -826,7 +850,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 22] = [
+pub(crate) const PRELUDES: [&Prelude; 23] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -838,6 +862,7 @@ pub(crate) const PRELUDES: [&Prelude; 22] = [
     &STANDARD,
     &AGGREGATE,
     &SYMBOL,
+    &INTEGRITY,
     &REGEXP,
     &BLOB,
     &FETCH,
@@ -908,7 +933,7 @@ pub(crate) fn is_prelude_source(source: &crate::source::Source) -> bool {
 
 /// The v37 builtin preludes (`collections`), whose class instances are
 /// private to every host value reader.
-pub(crate) const BUILTINS: [&Prelude; 7] = [
+pub(crate) const BUILTINS: [&Prelude; 8] = [
     &TEXT,
     &COLLECTIONS,
     &BINARY,
@@ -916,6 +941,7 @@ pub(crate) const BUILTINS: [&Prelude; 7] = [
     &DATE,
     &STANDARD,
     &SYMBOL,
+    &INTEGRITY,
 ];
 
 /// Whether `source` is a v37 builtin prelude module.

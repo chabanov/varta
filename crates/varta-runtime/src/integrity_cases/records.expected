@@ -1,0 +1,29 @@
+false false true
+true
+true true false
+assign frozen: TypeError: Cannot assign to read only property 'a' of object '#<Object>'
+update frozen: TypeError: Cannot assign to read only property 'a' of object '#<Object>'
+compound frozen: TypeError: Cannot assign to read only property 'b' of object '#<Object>'
+{"a":1,"b":"two"}
+true false
+assign sealed: ok
+add sealed: TypeError: Cannot add property y, object is not extensible
+delete sealed: ok
+{"x":2}
+false false false
+delete non-extensible: ok
+re-add non-extensible: TypeError: Cannot add property y, object is not extensible
+assign non-extensible: ok
+{"x":9}
+false false
+true true
+assign instance: TypeError: Cannot assign to read only property 'extra' of object '#<Derived>'
+assign inherited field: TypeError: Cannot assign to read only property 'value' of object '#<Derived>'
+3
+private field: ok
+assign through base: TypeError: Cannot assign to read only property 'label' of object '#<Derived>'
+assign sealed instance: ok
+c true false
+true true false
+7 text
+2 false

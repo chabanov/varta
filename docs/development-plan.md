@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with the K9 C expression forms with object-literal accessors, template raw strings, dynamic `this` and top-level `await`, K9 D3 full RegExp, K9 A steps 1–3 (shared covariant class arrays, pattern template types), K9 B declarations and classes, the K8 CSS engine's font-metric units, logical properties and selectors, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-07, the commit that records it: **4417 Rust tests passed, 0 failures, 25 ignored; 186 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261107-000755-zz38unzh/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **205 passed, 4 known unsupported out of 209** after the K9 A (steps 1–3), B, C, D, D2, D3 and D4 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures and full RegExp (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **208 passed, 4 known unsupported out of 212** after the K9 A (steps 1–3), B, C, D, D2 (with integrity levels and symbol keys), D3 and D4 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures and full RegExp (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -377,8 +377,8 @@ Not done, each refused by name with its reason:
   contract of v37; needs a new matcher contract.
 - **Proxy, Reflect, descriptors and prototypes**: closed checked values have
   no exotic objects or mutable prototypes.
-- **`Object.freeze`/`seal`/`preventExtensions`**: a per-object flag checked
-  by every write (value layout 18) — owner decision.
+- **`Object.freeze`/`seal`/`preventExtensions`**: admitted by the [K9 D2
+  record](#k9-d2-value-layout-and-collector--2026-11-06) (integrity levels).
 - **`structuredClone`, `JSON.parse` revivers, `JSON.stringify` replacer
   functions**: need a type-directed deep copy and guest-driven
   (de)serialization walks.
@@ -425,8 +425,65 @@ module-level `unique symbol` constant, across modules, and by
 to members with stable keys (`modules::symbol_keys`); the ToPrimitive,
 `Object.prototype.toString` tag and `instanceof` protocols of classes.
 Evidence: the `keyed` and `protocols` Node programs and the cross-module
-test of `symbol_tests`. Refused by name: string-key enumeration of a record
-with symbol-keyed members, `Object.getOwnPropertySymbols`.
+test of `symbol_tests`.
+
+Item 1, symbol gaps closed (2026-11-07): string-key enumeration
+(`Object.keys`/`values`/`entries`, `for...in`, `Object.getOwnPropertyNames`)
+of a record with symbol-keyed members skips them, spreads and
+`Object.assign` copy them, and `Object.getOwnPropertySymbols` lists a
+record's present symbols in insertion order (`RecordEnumerate { symbols }`;
+each key's symbol comes from its stored module constant,
+`ValueTypes::symbols.constants`, or the well-known symbol). Evidence: the
+`enumeration` Node program of `symbol_tests`. Refused by name:
+`Object.getOwnPropertySymbols` of a value typed `unknown` and of a class
+instance with symbol-keyed fields; `Reflect.ownKeys` belongs to the
+Proxy/Reflect track (K9 D6).
+
+Item 2, integrity levels (selector `integrity_levels()`,
+[contract](architecture.md#integrity-levels-integrity_levels),
+[rules](profile-rules.md#integrity-levels-integrity_levels)): header flag
+bits 8192/16384/32768 of value layout 18 (`value::HEAP_INTEGRITY_FLAGS`,
+added in place like the symbol tag), masked by every value18 reader that
+checks header flags (`value::integrity_flags`: the record, vector cell and
+error readers shared by the host encoder, the linked serializer and both KV
+stagers, rebuilt `intrinsics.wasm`, `kv-codec.wasm` and `view-engine.wasm`;
+the browser rejection reader through the regenerated registry; the runtime's
+JSON object reader already masked unknown bits). The six `Object` members;
+every write of a program that loads them is checked between its right-hand
+side and its store by one pass after erasure and view resolution
+(`lower::integrity::guard`), dictionary helpers check their own writes,
+`reverse`/`fill`/`push()` of a receiver with a level run step by step in the
+integrity prelude, and the standard prelude's `sort`, `splice`, `shift`,
+`unshift` and `copyWithin` are checked write by write, so partial effects
+match §23.1.3. Derived classes check the definition of their first own field
+after `super(...)`; constructors may pass `this` to the six members. A
+program without them keeps its bytes and fuel; the linked serializer's
+masking raises the v38 `json` fuel golden from 33558 to 33580. Evidence:
+`varta-runtime` `integrity_tests` (five Node 24.20.0 programs including the
+language-guide example, collector stress builds, v37 denials) and the
+conformance feature `integrity-levels` (two cases). Refused by name:
+functions and generators (no own-property storage yet), `Uint8Array`
+(configurable elements, freeze/seal TypeErrors not modelled), Error
+subclass instances in the predicates, `isSealed`/`isFrozen` of `unknown`
+or reference unions.
+
+Owner questions (integrity levels): Node 24.20.0 deviates from ECMA-262 in
+two places this track found, and Varta follows the specification:
+`Object.isFrozen(Object.preventExtensions([]))` (and of any non-extensible
+array without elements) is `true` in V8 but `false` by §7.3.16, since
+`length` stays a writable data property; and `Object.freeze([x]).sort()`
+returns in V8 but throws by §23.1.3.30, which writes the sorted element
+back. No pinned case covers either. Functions, generators and `Uint8Array`
+need their own-property models before they can carry a level.
+
+Coordinator decision of 2026-11-07 (owner to confirm), implemented: the
+result keeps TypeScript's `string` type, a value statically typed `symbol`,
+`undefined` or a function gives `undefined`, and a value held by `unknown`
+or a union without a JSON form makes the `string` a checked read under the
+owner-approved category (TypeError where a value violates its declared
+type); a discarded result (an expression statement, `void`) is never read
+and never throws (`json_stringify_without_json_form_is_a_checked_read`).
+The original question:
 
 Owner question (`JSON.stringify` by the spec, decision 2 of 2026-11-06):
 returning `undefined` from `JSON.stringify(x)` for `x: unknown` makes the

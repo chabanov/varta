@@ -286,6 +286,24 @@ impl Classes {
             .map(|id| self.shape(id))
             .collect()
     }
+    /// The record shape and source name of `ancestor` and of each laid-out
+    /// descendant (a generic class instance under its template's name), as
+    /// V8 names an instance's constructor in `#<Name>`.
+    pub(super) fn family_names(&self, ancestor: u32) -> Vec<(u32, String)> {
+        (0..self.list.len() as u32)
+            .filter(|id| {
+                let class = &self.list[*id as usize];
+                !class.is_template() && class.state == State::Ready && self.descends(*id, ancestor)
+            })
+            .map(|id| {
+                let class = &self.list[id as usize];
+                let name = class
+                    .template
+                    .map_or(&class.name, |template| &self.list[template as usize].name);
+                (class.shape, name.clone())
+            })
+            .collect()
+    }
     pub(super) fn field(&self, class: u32, name: &str) -> Option<(u32, &Field)> {
         self.list[class as usize]
             .fields

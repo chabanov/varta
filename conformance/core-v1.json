@@ -191,6 +191,15 @@
       "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-symbol-constructor"
     },
     {
+      "id": "integrity-levels",
+      "title": "Object integrity levels",
+      "core": [
+        "CORE-01"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-setintegritylevel"
+    },
+    {
       "id": "classes",
       "title": "Class construction and properties",
       "core": [
@@ -1496,6 +1505,49 @@
         "varta log: true app",
         "varta log: Symbol(Symbol.iterator) undefined",
         "varta log: app"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "symbol-keys",
+      "feature": "symbol",
+      "path": "cases/symbol-keys.ts",
+      "sha256": "218951355679dcca64c3dcc6893fb6e6b7e5e8a0fb62f1a599752955fc19206a",
+      "stdout": [
+        "varta log: name 1 true t"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "integrity-objects",
+      "feature": "integrity-levels",
+      "path": "cases/integrity-objects.ts",
+      "sha256": "fea02f4fb65e156a8e5ad133e2c8b6a4652bdfe3661d2f1b3202a0232cac04ea",
+      "stdout": [
+        "varta log: TypeError: Cannot add property y, object is not extensible",
+        "varta log: TypeError: Cannot assign to read only property 'a' of object '#<Object>'",
+        "varta log: true false true true",
+        "varta log: {\"x\":2}{\"a\":1}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "integrity-arrays",
+      "feature": "integrity-levels",
+      "path": "cases/integrity-arrays.ts",
+      "sha256": "c5452b211fa93f7777bf2ad5da92daaf5ca2e07653797883dad9ec55e9dc8780",
+      "stdout": [
+        "varta log: TypeError: Cannot delete property '2' of [object Array]",
+        "varta log: 2,3,3",
+        "varta log: TypeError: Cannot add property 2, object is not extensible",
+        "varta log: TypeError: Cannot assign to read only property 'length' of object '[object Array]'",
+        "varta log: true true 2"
       ],
       "baseline": {
         "status": "supported"

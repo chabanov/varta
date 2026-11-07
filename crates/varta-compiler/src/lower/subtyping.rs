@@ -1131,11 +1131,15 @@ impl Rewriter<'_> {
                 for value in values.iter_mut() {
                     self.expression(value)?;
                 }
+                // The symbol-keyed form is admitted only where every source
+                // declares the view's members (`note_key_copy`): the same
+                // canonical slots in every layout.
                 if let S::RecordEnumerate {
                     source,
                     target,
                     shape,
                     values,
+                    symbols: false,
                     ..
                 } = statement
                     && let Some(view) = self.view(Type::Record(*shape))
@@ -1998,6 +2002,7 @@ impl Rewriter<'_> {
                     },
                 ));
                 branch.push(S::RecordEnumerate {
+                    symbols: false,
                     source: 0,
                     target,
                     shape,

@@ -946,7 +946,8 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
     /// The index in [`Self::shapes`] of the validated shape of the record
     /// `payload`.
     fn shape(&mut self, payload: u64) -> Result<usize, EncodeError> {
-        let (descriptor, count) = record_descriptor(self.memory, payload).map_err(layout)?;
+        let (descriptor, count) =
+            record_descriptor(self.memory, payload, VERSION).map_err(layout)?;
         if let Some(index) = self
             .shapes
             .iter()

@@ -4418,14 +4418,58 @@ Contract: [architecture.md](architecture.md#symbol-values-symbol_values).
   rewrites before lowering: a key is `symbol_keys::key` (declaring module's
   graph index and name) or `well_known_key`, and `is_symbol_key` tells it
   apart. Never derive a key from a symbol value, never let a quoted key
-  spell one (`records::quoted_key`), and refuse every string-key view of a
-  record that has one (enumeration does). A new computed-key form adds its
+  spell one (`records::quoted_key`). String-key forms skip them (the
+  emitted enumeration filters `is_symbol_key` slots), and
+  `RecordEnumerate { symbols: true }` lists only them; a symbol's value for
+  its key comes from `ValueTypes::symbols.constants` or the well-known
+  symbol (`modules::symbol_keys::well_known_name`). A new computed-key form adds its
   case to the rewriter's visitor; a new protocol member adds its symbol to
   `WELL_KNOWN_KEYS` and its call to `lower::symbols`.
 - Tests: `varta-runtime` `symbol_tests` (`symbol_cases/*.ts` with Node
   24.20.0 expected files, collector stress builds, v37 denials), the KV
   refusal in `kv_tests`, the `language` test of the tag, the conformance
   feature `symbol`.
+
+### Integrity levels (`integrity_levels`)
+
+Contract: [architecture.md](architecture.md#integrity-levels-integrity_levels).
+
+- Gate every admission on `integrity_levels()`; v37 keeps refusing the six
+  members (`integrity_members_stay_refused_by_v37`).
+- The bits are `value::HEAP_INTEGRITY_FLAGS` in the header of the block a
+  handle's low word addresses (for an array, its vector cell). Only
+  `ir::Intrinsic::Integrity` sets or tests them (`emit::integrity`); they
+  are only ever added. A new object block kind either carries them or is
+  refused by name in `lower::integrity`. A reader of value layout 18 that
+  checks header flags masks them with `value::integrity_flags(version)`;
+  readers of earlier layouts keep exact checks. Rebuild `intrinsics.wasm`
+  and the browser `kv-codec.wasm` with every change of those readers, and
+  regenerate the browser registry.
+- Checks exist only in a program that loaded the integrity prelude
+  (`lower::integrity::enabled`); never emit one otherwise, so programs
+  without the members keep their bytes and fuel. Every write form goes
+  through `lower::integrity::guard` (statements `SetField`, `SetIndex`,
+  `ArrayLength`; expressions `ArrayPush`, `ArrayPop`, `ArrayDelete`,
+  `RecordDelete`), which runs after erasure and `subtyping::resolve` and
+  before suspension: the operands are evaluated into fresh locals, the check
+  runs, then the store. A new IR write form adds its case there. Dictionary
+  writes check in their shared helpers (`dictionary_write_checks`,
+  `dictionary_delete_checks`); a new array method that changes its receiver
+  either checks there or, when it can fail midway, runs the integrity
+  prelude's element-by-element form for a receiver with a level, so the
+  steps before the failing one take effect.
+- Failures throw through the prelude's functions with V8's messages; never
+  format one in Rust. Private names, engine-class private state and the
+  storage of a `Uint8Array` are not properties: never check them.
+- `isSealed`/`isFrozen` of a record or class instance is
+  `IntegrityOp::Level`, which the guard expands per layout
+  (`Views::shapes`, class families); it never reaches emission.
+- These helpers (`test`, `set`, `enabled`, `Level`) are the integrity state
+  that Proxy and Reflect invariants (K9 D6) build on; do not add a second
+  representation.
+- Tests: `varta-runtime` `integrity_tests` (`integrity_cases/*.ts` with Node
+  24.20.0 expected files, collector stress builds, v37 denials), the
+  `json` fuel golden, the conformance feature `integrity-levels`.
 
 ### V38 linked intrinsics
 

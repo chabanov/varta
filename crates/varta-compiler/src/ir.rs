@@ -955,6 +955,26 @@ pub(crate) enum Intrinsic {
     /// BigInt keys use the dictionary probes where one exists).
     /// Allocation-free.
     Collection(CollectionProbe, KeyHash),
+    /// V38 (`integrity_levels`, K9 D2): an operation on the integrity-level
+    /// header bits of an object (`varta_common::value::HEAP_INTEGRITY_FLAGS`).
+    /// The operand is an object handle, or a union or `unknown` cell whose
+    /// object payload carries the bits (a primitive payload has none).
+    /// Allocation-free.
+    Integrity(IntegrityOp),
+}
+/// The [`Intrinsic::Integrity`] operations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum IntegrityOp {
+    /// `(object) -> object`: add these bits (`Object.freeze`, `seal`,
+    /// `preventExtensions`) and give the operand back.
+    Set(u32),
+    /// `(object) -> boolean`: whether any of these bits is set.
+    Test(u32),
+    /// `(record or class instance) -> boolean`: `Object.isFrozen` (`frozen`)
+    /// or `Object.isSealed` of an object whose own properties depend on its
+    /// layout; `lower::integrity::guard` expands it per layout before
+    /// emission.
+    Level { frozen: bool },
 }
 impl Intrinsic {
     /// The operand that a [`Self::Collection`] probe takes as a key slot
@@ -1286,6 +1306,9 @@ pub(crate) enum Statement {
         shape: u32,
         slots: [u32; 4],
         values: Vec<Expr>,
+        /// V38 (`symbol_values`): the symbol-keyed members instead of the
+        /// string-keyed ones (`Object.getOwnPropertySymbols`).
+        symbols: bool,
     },
     RecordRest {
         source: u32,

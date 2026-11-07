@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- V38 K9 D2 integrity levels (selector `integrity_levels`):
+  `Object.freeze`, `Object.seal`, `Object.preventExtensions` and their
+  predicates over header flag bits added in place to value layout 18
+  (8192/16384/32768, masked by every value18 reader). A program that names
+  them checks every field, element, `length`, `push`/`pop`, deletion and
+  dictionary write between its right-hand side and its store and throws
+  V8's `TypeError`; array methods fail step by step as §23.1.3 specifies;
+  `Map`/`Set` entries and private names stay writable. Other programs keep
+  their bytes; the v38 `json` fuel golden rises from 33558 to 33580. Symbol
+  gaps: string-key enumeration skips symbol-keyed members, spreads and
+  `Object.assign` copy them, `Object.getOwnPropertySymbols` lists them.
+  `JSON.stringify` keeps its `string` type; a value without a JSON form held
+  by `unknown` makes it a checked read, and a discarded result never throws.
+  Conformance: 208 passed, 4 known unsupported of 212.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
   2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as

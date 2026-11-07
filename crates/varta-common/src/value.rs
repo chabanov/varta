@@ -518,6 +518,32 @@ pub const HEAP_ALLOCATED_FLAG: u32 = 1;
 pub const HEAP_FLAGS_OFFSET: usize = 4;
 pub const HEAP_LINK_OFFSET: usize = 8;
 pub const HEAP_RECORD_FLAG: i32 = 4;
+/// Value18 integrity levels (v38 `integrity_levels`, K9 D2; ECMA-262
+/// §7.3.15 SetIntegrityLevel): header flag bits of an object block (a
+/// record, class instance, array, vector cell, dictionary, error or
+/// promise). `Object.preventExtensions` sets [`HEAP_NON_EXTENSIBLE_FLAG`],
+/// `Object.seal` also [`HEAP_SEALED_FLAG`] (every own property
+/// non-configurable) and `Object.freeze` all three ([`HEAP_FROZEN_FLAG`]:
+/// every own data property also non-writable). Bits are only ever added;
+/// the collector keeps them and a fresh block starts without them. They are
+/// an additive change of the unreleased value layout 18, so readers of
+/// earlier layouts keep their exact flag checks ([`integrity_flags`]).
+pub const HEAP_NON_EXTENSIBLE_FLAG: u32 = 8192;
+pub const HEAP_SEALED_FLAG: u32 = 16384;
+pub const HEAP_FROZEN_FLAG: u32 = 32768;
+/// Every integrity-level bit.
+pub const HEAP_INTEGRITY_FLAGS: u32 =
+    HEAP_NON_EXTENSIBLE_FLAG | HEAP_SEALED_FLAG | HEAP_FROZEN_FLAG;
+/// The integrity-level bits a reader of value layout `version` ignores in an
+/// object block's header flags: all of them under value18, none before.
+#[must_use]
+pub fn integrity_flags(version: u32) -> u32 {
+    if version == HASHED_DICTIONARY_VALUE_VERSION {
+        HEAP_INTEGRITY_FLAGS
+    } else {
+        0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]

@@ -9797,6 +9797,10 @@ export const registry = freeze({
     "firstPageEnd": 65536,
     "flagsOffset": 4,
     "headerBytes": 16,
+    "integrity": {
+      "flags": 57344,
+      "version": 18
+    },
     "legacyStringBytes": 1048576,
     "linkOffset": 8,
     "maxKeyBytes": 256,

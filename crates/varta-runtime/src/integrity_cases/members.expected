@@ -1,0 +1,11 @@
+derived field: TypeError: Cannot define property note, object is not extensible
+id 2
+derived without field: ok
+1 true
+212 true
+5 true
+symbol key: TypeError: Cannot assign to read only property 'Symbol(tag)' of object '#<Object>'
+string key: TypeError: Cannot assign to read only property 'plain' of object '#<Object>'
+symbol add: TypeError: Cannot add property Symbol(tag), object is not extensible
+symbol delete: TypeError: Cannot delete property 'Symbol(tag)' of #<Object>
+d undefined

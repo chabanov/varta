@@ -897,6 +897,16 @@ impl LanguageProfile {
     pub fn symbol_values(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 D2 integrity stream: `Object.freeze`, `Object.seal`,
+    /// `Object.preventExtensions` and their predicates (ECMA-262 §20.1.2)
+    /// over integrity-level header bits of value layout 18
+    /// ([`crate::value::HEAP_INTEGRITY_FLAGS`]), checked by every property
+    /// write, addition and deletion of a program that loads them; a failed
+    /// write throws V8's `TypeError` (modules are strict code).
+    #[must_use]
+    pub fn integrity_levels(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, virtual-roots stream: `fs.*` paths and grants are virtual
     /// paths `/<root>/...` under named roots that the host maps to pinned
     /// directories ([`crate::files`]); an absolute host path is denied.

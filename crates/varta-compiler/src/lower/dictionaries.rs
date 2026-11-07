@@ -679,13 +679,24 @@ impl Lower<'_> {
             }
         };
         let replace = self.set_index(block.values(), at(index), local(span, output, element));
+        // V38 (`integrity_levels`): replacing fails on a frozen dictionary,
+        // adding on a non-extensible one.
+        let (replace, absent) = {
+            let (frozen, extensible) =
+                self.dictionary_write_checks(block.receiver(), block.key_value())?;
+            let mut replacing = frozen;
+            replacing.push(replace);
+            let mut adding = extensible;
+            adding.extend(absent);
+            (replacing, adding)
+        };
         block.body.push(S::Init(output, value));
         let search = self.dictionary_search(&mut block, false)?;
         block.body.extend([
             S::Init(index, search),
             S::If(
                 binary(ast::BinaryOp::GtEq, at(index), number(span, 0.0)),
-                vec![replace],
+                replace,
                 absent,
             ),
         ]);
@@ -764,6 +775,12 @@ impl Lower<'_> {
                 error,
             });
         }
+        // V38 (`integrity_levels`): a sealed dictionary keeps its entries.
+        let remove = {
+            let mut checked = self.dictionary_delete_checks(block.receiver(), block.key_value())?;
+            checked.extend(remove);
+            checked
+        };
         let (remove, search) = match dictionary_hashing::Hashed::of(block.dictionary) {
             Some(hashed) => (
                 self.hashed_remove(&block, index, hashed, remove),

@@ -19,7 +19,9 @@ function reasonReader(memory, module, profile, descriptor) {
     const size = word(header);
     if (size < L.headerBytes || size % L.alignment || len > size - L.headerBytes) invalid();
     range(header, size);
-    if (word(header + L.flagsOffset) !== (L.allocated | flag)) invalid();
+    // Value18 object blocks may carry integrity-level bits (Object.freeze).
+    const ignored = profile.valueAbi === L.integrity.version ? L.integrity.flags : 0;
+    if ((word(header + L.flagsOffset) & ~ignored) >>> 0 !== (L.allocated | flag)) invalid();
     return { ptr, len, header, size };
   };
   const cell = (handle) => {

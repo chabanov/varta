@@ -256,9 +256,23 @@ impl Lower<'_> {
                 kind,
             });
         }
+        // V38 (`integrity_levels`): a receiver with an integrity level runs
+        // these element by element, each write checked.
+        let checked = integrity::enabled(self.types);
         let (ty, kind) = if method == "reverse" {
             if !call.args.is_empty() {
                 return Err(invalid("array.reverse expects no arguments"));
+            }
+            if checked {
+                let ty = base.ty;
+                return self.integrity_array_method(
+                    base,
+                    element,
+                    method,
+                    vec![],
+                    |array, _| E::ArrayReverse(Box::new(array)),
+                    (ty, call.span),
+                );
             }
             (base.ty, E::ArrayReverse(Box::new(base)))
         } else if method == "fill" {
@@ -276,6 +290,27 @@ impl Lower<'_> {
             }
             let start = self.array_bound(call.args.get(1), call.span)?;
             let end = self.array_bound(call.args.get(2), call.span)?;
+            if checked {
+                let ty = base.ty;
+                return self.integrity_array_method(
+                    base,
+                    element,
+                    method,
+                    vec![value, start, end],
+                    |array, operands| {
+                        let [value, start, end]: [Expr; 3] = operands
+                            .try_into()
+                            .unwrap_or_else(|_| unreachable!("three fill operands"));
+                        E::ArrayFill(
+                            Box::new(array),
+                            Box::new(value),
+                            Box::new(start),
+                            Box::new(end),
+                        )
+                    },
+                    (ty, call.span),
+                );
+            }
             (
                 base.ty,
                 E::ArrayFill(
@@ -292,6 +327,18 @@ impl Lower<'_> {
             let result = unions::intern(vec![element, Type::Undefined], self.types)?;
             (result, E::ArrayPop(Box::new(base)))
         } else if call.args.is_empty() {
+            // `push()` still writes `length` (§23.1.3.23 step 7).
+            if checked {
+                let ty = self.types.number();
+                return self.integrity_array_method(
+                    base,
+                    element,
+                    "push",
+                    vec![],
+                    |array, _| E::Length(Box::new(array)),
+                    (ty, call.span),
+                );
+            }
             (self.types.number(), E::Length(Box::new(base)))
         } else {
             if call.args.len() > self.types.profile.data().array_elements {

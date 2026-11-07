@@ -28,7 +28,7 @@ pub(super) fn values() -> Value {
         .filter_map(v::ValueKind::from_tag)
         .map(|kind| (format!("{kind:?}"), kind as u32))
         .collect();
-    json!({
+    let mut values = json!({
         "tags":tags,"references":(0..=v::ValueKind::LAST as u32).filter_map(v::ValueKind::from_tag).filter(|k|k.is_reference()).map(|k|k as u32).collect::<Vec<_>>(),
         "ownedBase":abi::OWNED_STRING_BASE,"headerBytes":abi::STRING_HEADER_BYTES,
         "alignment":v::HEAP_ALIGNMENT,"flagsOffset":v::HEAP_FLAGS_OFFSET,"linkOffset":v::HEAP_LINK_OFFSET,
@@ -48,5 +48,10 @@ pub(super) fn values() -> Value {
         })).collect::<Vec<_>>(),
         "bigint":{"flag":bigint::HEAP_FLAG,"meta":bigint::META_BYTES,"digitBytes":bigint::DIGIT_BYTES,"maxBytes":bigint::MAX_PAYLOAD_BYTES,
             "zero":bigint::Sign::Zero as u32,"positive":bigint::Sign::Positive as u32,"negative":bigint::Sign::Negative as u32}
-    })
+    });
+    // Value18 integrity-level header bits (`Object.freeze`), which the
+    // reasons reader ignores in an object block of that layout.
+    values["integrity"] =
+        json!({"flags":v::HEAP_INTEGRITY_FLAGS,"version":v::HASHED_DICTIONARY_VALUE_VERSION});
+    values
 }

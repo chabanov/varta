@@ -254,10 +254,6 @@ fn unsupported_standard_forms_are_refused_by_name() {
             "Proxy (traps would intercept property access",
         ),
         (
-            "export function main(): void { const o = Object.freeze({ a: 1 }); console.log(o.a); }",
-            "object integrity levels",
-        ),
-        (
             "export function main(): void { console.log(Reflect.ownKeys({ a: 1 }).length); }",
             "Reflect (it operates on property descriptors",
         ),
