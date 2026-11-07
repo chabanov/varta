@@ -130,7 +130,12 @@ impl Lower<'_> {
         }
     }
     /// `if (!flag) throw ReferenceError` for module binding `name`.
-    fn module_flag_check(&mut self, flag: u32, name: &str, span: swc_common::Span) -> Result<S> {
+    pub(super) fn module_flag_check(
+        &mut self,
+        flag: u32,
+        name: &str,
+        span: swc_common::Span,
+    ) -> Result<S> {
         let error = self.reference_error(name, span)?;
         Ok(S::If(
             Self::module_flag_unset(flag, span),

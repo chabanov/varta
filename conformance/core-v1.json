@@ -4533,6 +4533,18 @@
       "baseline": {
         "status": "supported"
       }
+    },
+    {
+      "id": "class-tdz",
+      "feature": "temporal-dead-zone",
+      "path": "cases/class-tdz.ts",
+      "sha256": "6a27eed12a79af6c731a678a64870b5d57e83bde45f064852416011f842ac240",
+      "stdout": [
+        "varta log: Cannot access 'Gadget' before initialization | gadget gadget"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
     }
   ]
 }

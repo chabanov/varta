@@ -770,7 +770,80 @@ pub(super) fn lower_class(
         body.push(ast::ClassMember::Method(copy));
     }
     class.body = body;
+    variables.push(class_binding_declaration(name, class.span));
     Ok(variables)
+}
+
+/// The binding of a module-level class `class` (v38 `module_evaluation`):
+/// the class is initialized after its static elements, so code that
+/// reaches it outside its body earlier throws `ReferenceError`. No source
+/// name can spell it, and its last segment shows the class's name.
+pub(crate) fn class_binding(class: &str) -> String {
+    generated(&[CLASS, class])
+}
+/// Whether `declaration` declares a class binding ([`class_binding`]),
+/// which is never exported.
+pub(super) fn is_binding(declaration: &ast::Decl) -> bool {
+    let ast::Decl::Var(var) = declaration else {
+        return false;
+    };
+    var.decls.iter().any(|declarator| {
+        matches!(&declarator.name, ast::Pat::Ident(id)
+            if super::untagged(id.id.sym.as_ref()).starts_with(&generated(&[CLASS, ""])))
+    })
+}
+/// Whether the module constant `name` is the binding of the class `class`
+/// ([`class_binding`]); both may carry their module tag.
+pub(crate) fn is_class_binding(name: &str, class: &str) -> bool {
+    super::untagged(name) == class_binding(&super::untagged(class))
+}
+/// The name segment of [`class_binding`] (a reserved word: no class has
+/// this name).
+const CLASS: &str = "class";
+
+/// `const __vartaDecl$class$C: boolean = true;` after the class's static
+/// elements: `module_constants::check` flags it when code may reach the
+/// class earlier, and every reference to the class outside its body then
+/// tests the flag (`lower::class_bindings`). An unflagged one folds away.
+fn class_binding_declaration(class: &str, span: Span) -> ast::Decl {
+    ast::Decl::Var(Box::new(ast::VarDecl {
+        span,
+        ctxt: Default::default(),
+        kind: ast::VarDeclKind::Const,
+        declare: false,
+        decls: vec![ast::VarDeclarator {
+            span,
+            name: ast::Pat::Ident(ast::BindingIdent {
+                id: ast::Ident::new_no_ctxt(class_binding(class).into(), span),
+                type_ann: Some(Box::new(ast::TsTypeAnn {
+                    span,
+                    type_ann: Box::new(ast::TsType::TsKeywordType(ast::TsKeywordType {
+                        span,
+                        kind: ast::TsKeywordTypeKind::TsBooleanKeyword,
+                    })),
+                })),
+            }),
+            init: Some(Box::new(ast::Expr::Lit(ast::Lit::Bool(ast::Bool {
+                span,
+                value: true,
+            })))),
+            definite: false,
+        }],
+    }))
+}
+
+/// The module-level class whose static element the module variable `name`
+/// is (a static field or block, `generated(&[class, …])`), among `classes`;
+/// names may carry their module tag.
+pub(crate) fn static_owner<'a>(
+    name: &str,
+    classes: impl IntoIterator<Item = &'a str>,
+) -> Option<&'a str> {
+    let name = super::untagged(name);
+    classes.into_iter().find(|class| {
+        name.strip_prefix(&generated(&[&super::untagged(class)]))
+            .is_some_and(|rest| rest.starts_with(super::SEPARATOR))
+    })
 }
 
 /// `static { … }` as the module variable

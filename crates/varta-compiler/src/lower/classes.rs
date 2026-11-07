@@ -176,6 +176,17 @@ pub(crate) struct Classes {
     ready: bool,
     /// Instance member bodies to lower: (function index, class, member).
     pending_members: VecDeque<generic_classes::PendingMember>,
+    /// V38 (`module_evaluation`): the class whose static element (a module
+    /// variable of `desugar::statics`) is being lowered, inside its body.
+    pub(super) static_owner: Option<u32>,
+    /// The module variables of static elements, by class (`class_bindings`).
+    pub(super) static_elements: BTreeMap<String, u32>,
+    /// The classes by the module constant of their binding
+    /// (`desugar::class_binding`).
+    pub(super) class_bindings: BTreeMap<String, u32>,
+    /// The initialization flag slots of class bindings that code may reach
+    /// early, by class (`class_bindings`).
+    pub(super) class_flags: BTreeMap<u32, u32>,
 }
 /// The type name under which the merged interface of class `class` is
 /// declared (v38 `web_bytes`): no identifier can spell it, and diagnostics

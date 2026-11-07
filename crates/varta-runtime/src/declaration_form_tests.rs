@@ -117,6 +117,11 @@ const CASES: &[(&str, &str, &str)] = &[
         include_str!("declaration_form_cases/module_tdz.expected"),
     ),
     (
+        "class_tdz",
+        include_str!("declaration_form_cases/class_tdz.ts"),
+        include_str!("declaration_form_cases/class_tdz.expected"),
+    ),
+    (
         "early_reads",
         include_str!("declaration_form_cases/early_reads.ts"),
         include_str!("declaration_form_cases/early_reads.expected"),
@@ -281,6 +286,7 @@ fn module_evaluation_and_static_blocks_match_node() {
 fn module_temporal_dead_zone_matches_node() {
     matches_node("module_tdz");
     matches_node("early_reads");
+    matches_node("class_tdz");
     for (source, diagnostic) in [
         (
             "const a = b; const b = 1; export function main(): void { console.log(String(a)); }",
@@ -293,6 +299,10 @@ fn module_temporal_dead_zone_matches_node() {
         (
             "export function main(): void { console.log(String(x)); const x = 1; }",
             "binding used before initialization: x (TS2448)",
+        ),
+        (
+            "const w = new Widget(); class Widget {} export function main(): void { console.log(String(w instanceof Widget)); }",
+            "class Widget used before its declaration (TS2449)",
         ),
     ] {
         refused(V38, source, diagnostic);

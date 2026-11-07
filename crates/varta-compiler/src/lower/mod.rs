@@ -405,6 +405,7 @@ mod bitwise;
 mod builtin_methods;
 mod byte_values;
 mod callback_inference;
+mod class_bindings;
 mod class_holes;
 mod class_values;
 pub(crate) mod classes;

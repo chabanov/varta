@@ -29,7 +29,9 @@ mod rewrite;
 mod scope;
 mod statics;
 
-pub(crate) use statics::{getter_key, receiver_key, unshared_key};
+pub(crate) use statics::{
+    class_binding, getter_key, is_class_binding, receiver_key, static_owner, unshared_key,
+};
 
 use crate::CompilerError;
 use crate::modules::{Dependency, Export};
@@ -82,6 +84,18 @@ pub(crate) fn is_static_field(name: &str, class: &str) -> bool {
 const MODULE_HASH_DIGITS: usize = 16;
 /// The leading segment character of a module tag ([`tag`]).
 const MODULE_TAG: char = 'm';
+
+/// The module variable that marks the module-level class `class` of the
+/// module `source` initialized (`statics::class_binding`), as [`tag`]
+/// names it; `class` may carry its module tag.
+pub(crate) fn module_class_binding(class: &str, source: &Source) -> String {
+    let name = class_binding(&untagged(class));
+    let rest = name.strip_prefix(PREFIX).unwrap_or(&name);
+    format!(
+        "{PREFIX}{SEPARATOR}{MODULE_TAG}{}{rest}",
+        module_hash(source)
+    )
+}
 
 /// A generated name without the module tag that [`tag`] inserts.
 fn untagged(name: &str) -> String {
@@ -283,19 +297,16 @@ fn module_hash(source: &Source) -> String {
     format!("{hash:0width$x}", width = MODULE_HASH_DIGITS)
 }
 
-/// Whether a module item declares an enum, a namespace or a class with
-/// static members.
+/// Whether a module item declares an enum, a namespace or a class (whose
+/// static members and binding `statics::lower_class` lowers).
 fn declares(item: &ast::ModuleItem) -> bool {
-    match declaration(item) {
-        Some((ast::Decl::TsEnum(_) | ast::Decl::TsModule(_), _)) => true,
-        Some((ast::Decl::Class(class), _)) => class.class.body.iter().any(|member| {
-            matches!(member, ast::ClassMember::ClassProp(p) if p.is_static)
-                || matches!(member, ast::ClassMember::AutoAccessor(a) if a.is_static)
-                || matches!(member, ast::ClassMember::Method(m) if m.is_static)
-                || matches!(member, ast::ClassMember::StaticBlock(_))
-        }),
-        _ => false,
-    }
+    matches!(
+        declaration(item),
+        Some((
+            ast::Decl::TsEnum(_) | ast::Decl::TsModule(_) | ast::Decl::Class(_),
+            _
+        ))
+    )
 }
 
 /// The declaration of a module item and whether it is exported.

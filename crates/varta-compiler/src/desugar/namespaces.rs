@@ -150,7 +150,10 @@ pub(super) fn lower(module: &mut ast::Module, source: &Source) -> Result<Exports
                     body.push(rewrite::item_with(item, source, &[&frame], &context, None)?);
                     for variable in variables {
                         let variable = rewrite::item_with(
-                            item_of(variable, exported, span),
+                            {
+                                let exported = exported && !statics::is_binding(&variable);
+                                item_of(variable, exported, span)
+                            },
                             source,
                             &[&frame],
                             &context,
@@ -264,7 +267,10 @@ fn hoisted_statics(
             lowered.push(rewrite::item_with(item, source, &[&frame], &context, None)?);
             for variable in variables {
                 lowered.push(rewrite::item_with(
-                    item_of(variable, exported, span),
+                    {
+                        let exported = exported && !statics::is_binding(&variable);
+                        item_of(variable, exported, span)
+                    },
                     source,
                     &[&frame],
                     &context,

@@ -142,6 +142,33 @@ pub(super) fn link_module(
     } else {
         chunks(&declared)
     };
+    // V38: the static elements of the module's classes, by module
+    // variable (`class_bindings`).
+    if types.profile.declaration_forms() {
+        let classes = module_classes(&unit.ast);
+        for class in &classes {
+            if let Some(id) = named::class(types, class) {
+                let binding = crate::desugar::module_class_binding(class, source);
+                types.classes.class_bindings.insert(binding, id);
+            }
+        }
+        for var in &declared {
+            for declarator in &var.decls {
+                if let ast::Pat::Ident(id) = &declarator.name
+                    && let Some(class) = crate::desugar::static_owner(
+                        id.id.sym.as_ref(),
+                        classes.iter().map(String::as_str),
+                    )
+                    && let Some(class) = named::class(types, class)
+                {
+                    types
+                        .classes
+                        .static_elements
+                        .insert(id.id.sym.to_string(), class);
+                }
+            }
+        }
+    }
     let mut registered = false;
     for chunk in chunks {
         let index = *next;
@@ -446,6 +473,24 @@ fn check(
         }
     }
     let classes = module_classes(module);
+    // V38: a class is a binding initialized after its static elements
+    // (`desugar::class_binding`); a reference to it stands for that binding.
+    let class_bindings: BTreeMap<String, String> = classes
+        .iter()
+        .map(|class| {
+            (
+                class.clone(),
+                crate::desugar::module_class_binding(class, source),
+            )
+        })
+        .filter(|(_, binding)| names.contains(binding))
+        .collect();
+    let bound = |found: BTreeSet<String>| -> BTreeSet<String> {
+        found
+            .into_iter()
+            .map(|name| class_bindings.get(&name).cloned().unwrap_or(name))
+            .collect()
+    };
     let mut early = Early::default();
     let mut ready: BTreeSet<String> = imported.keys().cloned().collect();
     for var in declared {
@@ -476,21 +521,27 @@ fn check(
                 continue;
             }
             // V38 (`module_evaluation`): a later binding read while the
-            // initializer is evaluated is TypeScript's TS2448; a later `var`
-            // reads `undefined` (a checked read, below).
-            if let Some(name) = module_evaluation::immediate(value)
+            // initializer is evaluated is TypeScript's TS2448 (a class's
+            // TS2449; its own static elements are inside its body); a later
+            // `var` reads `undefined` (a checked read, below).
+            let owner = crate::desugar::static_owner(
+                binding.id.sym.as_ref(),
+                classes.iter().map(String::as_str),
+            );
+            let inside = owner.and_then(|class| class_bindings.get(class));
+            if let Some(name) = bound(module_evaluation::immediate(value))
                 .into_iter()
-                .find(|name| pending(name) && !hoisted.contains(name))
+                .find(|name| pending(name) && !hoisted.contains(name) && Some(name) != inside)
             {
                 let shown = crate::desugar::display_name(&name);
-                return Err(source.locate(
-                    invalid(format!(
-                        "binding used before initialization: {shown} (TS2448)"
-                    )),
-                    value.span(),
-                ));
+                let message = if class_bindings.values().any(|binding| *binding == name) {
+                    format!("class {shown} used before its declaration (TS2449)")
+                } else {
+                    format!("binding used before initialization: {shown} (TS2448)")
+                };
+                return Err(source.locate(invalid(message), value.span()));
             }
-            for name in module_evaluation::mentioned(value)
+            for name in bound(module_evaluation::mentioned(value))
                 .into_iter()
                 .filter(|name| pending(name))
             {
@@ -502,7 +553,7 @@ fn check(
             // field or a `var` reads `undefined` instead ([`Early::hoisted`]).
             if module_evaluation::effectful(value) {
                 early.flagged.extend(
-                    module_evaluation::reachable(module, value)
+                    bound(module_evaluation::reachable(module, value))
                         .into_iter()
                         .filter(|name| pending(name)),
                 );
@@ -558,6 +609,22 @@ pub(super) fn has_early_bindings(
             _ => None,
         })
         .collect();
+    // A class stands for its binding (`check`).
+    let class_bindings: BTreeMap<String, String> = module_classes(module)
+        .into_iter()
+        .filter_map(|class| {
+            let binding = names
+                .iter()
+                .find(|name| crate::desugar::is_class_binding(name, &class))?;
+            Some((class, binding.clone()))
+        })
+        .collect();
+    let bound = |found: BTreeSet<String>| -> BTreeSet<String> {
+        found
+            .into_iter()
+            .map(|name| class_bindings.get(&name).cloned().unwrap_or(name))
+            .collect()
+    };
     let mut ready = BTreeSet::new();
     for declarator in declared.iter().flat_map(|var| &var.decls) {
         let ast::Pat::Ident(binding) = &declarator.name else {
@@ -565,9 +632,11 @@ pub(super) fn has_early_bindings(
         };
         if let Some(value) = declarator.init.as_deref() {
             let pending = |name: &String| names.contains(name) && !ready.contains(name);
-            if module_evaluation::mentioned(value).iter().any(pending)
+            if bound(module_evaluation::mentioned(value))
+                .iter()
+                .any(pending)
                 || module_evaluation::effectful(value)
-                    && module_evaluation::reachable(module, value)
+                    && bound(module_evaluation::reachable(module, value))
                         .iter()
                         .any(pending)
             {
@@ -720,6 +789,12 @@ fn fold(value: &Expr, folded: &BTreeMap<u32, Value>) -> Option<Value> {
 }
 
 impl Lower<'_> {
+    /// Record the flag of a class binding (`class_bindings`).
+    fn class_flag(&mut self, name: &str, flag: u32) {
+        if let Some(class) = self.types.classes.class_bindings.get(name).copied() {
+            self.types.classes.class_flags.insert(class, flag);
+        }
+    }
     /// Reserve the root slots and initialization flags of the module
     /// bindings that function values of earlier initializers mention (v38
     /// `module_evaluation`). Their types come from their annotations or the
@@ -772,6 +847,7 @@ impl Lower<'_> {
                 }
                 let (index, flag) = (*stored, *stored + 1);
                 *stored += 2;
+                self.class_flag(name, flag);
                 self.types.module_flags.insert(
                     index,
                     ir::ModuleFlag {
@@ -857,7 +933,24 @@ impl Lower<'_> {
         }
         let mut locals = Scope::new();
         for var in &declared {
-            for (declarator, statement) in var.decls.iter().zip(self.variables(var)?) {
+            // V38: a static element of a class is lowered inside the class
+            // body, where the class is initialized (`class_bindings`).
+            let owner = var
+                .decls
+                .first()
+                .and_then(|declarator| match &declarator.name {
+                    ast::Pat::Ident(id) => self
+                        .types
+                        .classes
+                        .static_elements
+                        .get(id.id.sym.as_ref())
+                        .copied(),
+                    _ => None,
+                });
+            let outer = std::mem::replace(&mut self.types.classes.static_owner, owner);
+            let statements = self.variables(var);
+            self.types.classes.static_owner = outer;
+            for (declarator, statement) in var.decls.iter().zip(statements?) {
                 let ast::Pat::Ident(name) = &declarator.name else {
                     return Err(invalid("missing module constant binding"));
                 };
@@ -950,6 +1043,7 @@ impl Lower<'_> {
                         *stored += 1;
                         let shown = crate::desugar::display_name(name.id.sym.as_ref()).to_owned();
                         let hoisted = early.hoisted.contains(name.id.sym.as_ref());
+                        self.class_flag(name.id.sym.as_ref(), flag);
                         self.types.module_flags.insert(
                             index,
                             ir::ModuleFlag {

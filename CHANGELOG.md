@@ -9,7 +9,10 @@
   refused at compile time); a write before the definition defines it. A
   temporal-dead-zone access throws an instance of the new `ReferenceError`
   class (an `Error` subclass of typed guest code, with `EvalError`), so
-  `instanceof ReferenceError` holds. Static fields are read through class
+  `instanceof ReferenceError` holds. Code that reaches a module-level
+  class before the class (with its static elements) is defined throws
+  `ReferenceError`, as in JavaScript (before: it constructed silently).
+  Static fields are read through class
   values (`v.x`), and generic overload signatures of methods are
   instantiated per call. The expression lowering keeps a smaller native
   stack frame per nesting level.

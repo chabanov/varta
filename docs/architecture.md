@@ -12536,9 +12536,21 @@ before its definition: undefined is not a value of its type T`) at that
 read, where Node would continue with `undefined`; a write before the
 definition stores the value and marks the binding defined, and the
 definition later overwrites it, as in JavaScript. Other modules cannot reach this module's bindings early, since
-imports are acyclic and initialized first. A module-level class reached
-before its declaration still constructs (JavaScript throws there; the
-class binding has no flag yet). A module variable whose type is
+imports are acyclic and initialized first. A module-level class is a
+binding too (2026-11-07): it is initialized after the class is defined,
+its static elements included, so code outside the class body that reaches
+it earlier throws `ReferenceError` (`Cannot access 'C' before
+initialization`), also a function that a static initializer of the class
+calls; code lexically inside the class sees it initialized. The class's
+binding is the generated module constant `__vartaDecl$class$C` (`true`)
+after its static elements (`desugar::class_binding`), flagged by the same
+analysis, where naming the class reaches the constant; when it is flagged,
+every reference to the class outside its body tests the flag first
+(`lower::class_bindings`): `new C(…)`, `C.m(…)`, `C.x` read or written, `C`
+as a value and `x instanceof C` (tested before `x` is evaluated, where
+JavaScript evaluates `x` first). A direct reference before the declaration
+while an initializer is evaluated is refused (`class C used before its
+declaration (TS2449)`). An unflagged binding folds away. A module variable whose type is
 `undefined` or `null` alone is refused (it has no boxed form).
 
 **Evaluation order and top-level `await`** (2026-11-06, K9 C, owner

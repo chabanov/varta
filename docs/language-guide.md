@@ -4895,7 +4895,8 @@ Run it with the timer grant (`"capabilities": { "time": { "timer": true } }`).
 A closure may capture a `let`/`const` or a nested function before its
 declaration; reading or assigning it through the closure before the
 declaration ran throws an error whose `name` is `"ReferenceError"`, as in
-Node (`instanceof ReferenceError` is not available yet: test `e.name`). The
+Node (`instanceof ReferenceError` is not available in v37: test `e.name`;
+v38 throws a `ReferenceError` instance). The
 binding needs a type that is known at the capture: an annotation, an arrow
 or function whose parameters and result are annotated (or whose block body
 returns nothing), or a literal. A read in the same function before the
@@ -5930,21 +5931,24 @@ own `const`, like a class declared inside a function (neither may capture the
 function's locals).
 
 Classes are values: a parameter of type `typeof Shape` holds `Shape` or any
-subclass, and `new`, static methods and `name` act on the class it holds.
-Overload signatures may be generic; each call infers their type arguments.
+subclass, and `new`, static methods, static fields and `name` act on the
+class it holds. Overload signatures of functions and methods may be generic;
+each call infers their type arguments.
 
 ```ts
 abstract class Shape {
   constructor(public size: number) {}
   abstract area(): number;
   static describe(): string { return 'shape'; }
+  static sides: number = 0;
 }
 class Square extends Shape {
   area(): number { return this.size * this.size; }
   static describe(): string { return 'square'; }
+  static sides: number = 4;
 }
 function build(kind: typeof Shape, size: number): string {
-  return kind.name + ' ' + kind.describe(); // `new kind(size)` needs a concrete class
+  return kind.name + ' ' + kind.describe() + kind.sides; // `new kind(size)` needs a concrete class
 }
 function make(kind: typeof Square, size: number): Square { return new kind(size); }
 
@@ -5954,7 +5958,7 @@ function first(value: unknown): unknown {
   return typeof value === 'string' ? value.charAt(0) : Array.isArray(value) ? value[0] : undefined;
 }
 export function main(): void {
-  console.log(build(Square, 2) + ' ' + String(make(Square, 3).area())); // Square square 9
+  console.log(build(Square, 2) + ' ' + String(make(Square, 3).area())); // Square square4 9
   console.log(String(first([3, 4])) + first('hey')); // 3h
 }
 ```
@@ -5968,7 +5972,7 @@ declaration throws a `ReferenceError`, as in JavaScript:
 function limits(): number[] { return LIMITS; }
 function measure(): string {
   try { return String(limits().length); }
-  catch (e) { return e instanceof Error ? e.message : 'other'; }
+  catch (e) { return e instanceof ReferenceError ? e.message : 'other'; }
 }
 const early = measure(); // Cannot access 'LIMITS' before initialization
 const LIMITS: number[] = [3, 4];
@@ -5976,7 +5980,12 @@ const late = measure();  // 2
 ```
 
 Only a read while an initializer itself is evaluated (`const a = b; const b
-= 1;`) is a compile error, as in tsc (TS2448). Enums and namespaces are also
+= 1;`) is a compile error, as in tsc (TS2448). A class is initialized after
+its static fields and blocks: code outside the class that reaches it earlier
+throws a `ReferenceError` too. A `var` or a static field read before its
+definition is `undefined`, as in JavaScript, when its type admits
+`undefined`; otherwise the read throws a `TypeError`, since the value is not
+of the declared type. Enums and namespaces are also
 objects: `Object.keys(Color)` lists `"0"`, `"1"`, …, then the member names,
 and a namespace passes as a value of type `typeof NS`. A class with an index
 signature `[key: string]: T` keeps undeclared members of its instances as own

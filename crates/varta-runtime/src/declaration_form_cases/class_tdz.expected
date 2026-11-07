@@ -1,0 +1,2 @@
+Cannot access 'Widget' before initialization | ReferenceError | ReferenceError | Cannot access 'Widget' before initialization
+ReferenceError | widget widget 2 Widget

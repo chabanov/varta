@@ -4151,7 +4151,11 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   in both paths. `module_constants::has_early_bindings` must agree with
   `check`, since `lower::reference_errors` loads the errors prelude whose
   `ReferenceError` the flag test throws (`tdz::reference_error`; v37
-  keeps the Error-root instance). Reserve the initializer
+  keeps the Error-root instance). A class name stands for its binding
+  constant (`desugar::class_binding`) in `check` and
+  `has_early_bindings` alike; `lower::class_bindings` tests a flagged one
+  at references outside the class body, and a static element is lowered
+  with `Classes::static_owner` set so its own class takes no test. Reserve the initializer
   index for effectful chunks, and never let `prune::unread_constants` drop
   an initializer that calls code. Top-level `await` is the K9 C stream's
   (`top_level_await`, under `expression_forms`).
