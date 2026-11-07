@@ -4026,6 +4026,79 @@ Contract: [architecture.md](architecture.md#standard-library-standard_library).
   `aggregate-error` and the new cases of `json-stringify`, `date`,
   `string-builtins` and `math`.
 
+### Type level (`type_level`)
+
+Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
+
+- Gate every admission on `type_level()`; v37 and earlier keep their bytes and
+  diagnostics. The only entry from `keyword_type` is `type_level::evaluate`,
+  right after the type-parameter and declared-name checks; it returns `None`
+  for forms the earlier rules own. New type-level logic goes into
+  `lower/type_level/`, not into shared files.
+- Evaluate over resolved `Type`s only: bind parameters with
+  `generics::with_frame` (or `with_bindings`) and lower bodies with
+  `keyword_type`. Never keep an unevaluated type expression or a type
+  parameter past lowering. Evaluate only the selected branch of a
+  conditional type. Every evaluation step that may recurse goes through
+  `nested` (bound `MAX_TYPE_DEPTH`); recursive generic aliases go through
+  `enter_recursive`/`push_instantiation`/`pop_instantiation` in
+  `named::instantiate`, never by relaxing `NamedTypes::resolving` for the
+  same instantiation.
+- `type_level::extends` is the one TypeScript assignability relation for
+  conditional types, constraints (`generics::satisfies`), predicates,
+  `satisfies` and `Exclude`/`Extract`. It decides types only; a value
+  conversion still goes through `unions::widen`/`subtyping::coerce`.
+- Distribution uses `split` (union members, literal-set values, `true |
+  false`), never `unions::members` alone.
+- A construct type is a `FunctionType` with `construct` set (`constructors::
+  variant`); its value is a closure, invoked only by `construct_value`. A
+  class becomes such a value only through `class_constructor_value`.
+- Tuples: `TupleType::rest` is the trailing rest element; every reader of
+  `TupleType::elements` must also consider `rest` (relation, destructuring,
+  collections, mapped tuples). The empty tuple is admitted under v38 only.
+- Type predicates are recorded per function index by `note_signature`
+  (top-level functions and generic instances; generic call sites map their
+  span to the instance index in `note_call`). A predicate narrows only a
+  direct identifier argument. Reads of a predicate-narrowed reference member
+  go through `predicate_read` (`checked_narrow`): never read a
+  predicate-narrowed binding by an unchecked unbox or retag.
+- Polymorphic `this`: `member_signature` records the method; every return
+  must be `this`, so retyping the result to the receiver's class
+  (`polymorphic_this`, `class_receiver`) stays layout-safe.
+- Literal inference: `declaration_type` gives an unannotated `const` of a
+  constant literal its singleton type and records it as widening;
+  `let`/`var` from a literal or a widening binding erases. `as const` lowers
+  against `const_type`. The class scanner's hole types
+  (`lower::class_holes`) see these literal types; a template literal's own
+  type stays `string`.
+- Step 2 (2026-11-06): `FunctionType::overloads` marks an overloaded
+  type (`type_level::overloads`); calls go through `overloaded_call`, which
+  selects the overload statically and narrows the merged result with
+  `checked_narrow`. Never give a plain function type an overload set, and
+  never convert a value to an overloaded type unless its signature is the
+  merged one. `TupleType::trailing` holds elements after the rest element:
+  every reader of `elements`/`rest` must also consider it (literals,
+  element reads, relation, `infer`, mapped tuples, utilities, collections).
+- `typeof` of a local reads the per-statement snapshot that
+  `enter_local_types`/`leave_local_types` (in `stmt::statement`) maintain;
+  a declaration whose annotation queries a local resolves its annotation in
+  `variables`, not `predeclare`. Named declarations being resolved never
+  read the snapshot (`named::resolving_declaration`).
+- Class subtyping in containers (`type_level::containers`): a `B[]` to
+  `A[]` conversion is a shallow `ArraySlice` copy (an array literal is
+  retyped); a union-of-classes array to an ancestor array builds a new
+  array of unboxed elements (`class_union_array`, in `expr_lowered` before
+  `widen`). Never alias an array under a wider element type.
+- Predicate narrowing of a class instance to a subclass reads through
+  `checked_downcast` (descriptor test, `TypeError`), of `unknown` to an
+  object type through `assert_value`; `this is T` predicates are recorded per
+  (declaring class, method) by `member_signature`.
+- Tests: `varta-runtime` `type_level_tests` with the Node 24 logs of
+  `type_level_cases` (each also rejected by v37), the deviation test
+  `checked_predicates_and_copied_array_views_deviate_from_node`, the compiler's
+  `composed_class_names_follow_the_checker_types` scanner test, and the
+  nine `typescript_handbook` conformance rows.
+
 ### Bytes held by unknown (`byte_values`)
 
 Contract: [architecture.md](architecture.md#bytes-held-by-unknown-byte_values).

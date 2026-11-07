@@ -7692,6 +7692,22 @@ predicate should keep its `TypeError` (Node continues with the wrong type)
 and whether branded primitives (`string & { __brand: … }`) may be admitted
 as their primitive.
 
+**K9 A step 2 (2026-11-06).** Owner decisions: a lying predicate keeps its
+`TypeError` (an intentional deviation, like checked `as`); branded
+primitives are their primitive; `typeof` of locals is supported. Admitted
+in the same selector: branded primitives, `typeof` of locals, overloads and
+function intersections, generic call signatures, `this` in object types,
+`keyof`/mapped/utility types over classes, arrays, tuples and primitives,
+pattern template types (as `string`), `infer` through declared generics,
+union patterns and optional elements, elements after a rest element,
+subclass/`unknown`/`this is T` predicate narrowing, and class subtyping in
+containers (track D's finding; `B[]` to `A[]` copies, a second intentional
+deviation). Still refused: callable objects with properties, overloads with
+type parameters or rest parameters, generic construct signatures,
+`unique symbol` (track D's Symbol values). Evidence: five more Node-pinned
+`type_level_cases`, the deviation test, a second language-guide example and
+conformance 155 → 160 passing of 160 → 165 cases.
+
 **Release readiness** additionally needs, after K9 and K8 merge: the release
 profile frozen (v38 becomes a released profile; later admissions go to a new
 one), the macOS arm64 and web distributions built and verified from a clean

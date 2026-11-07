@@ -55,6 +55,7 @@ fn extends_depth(source: Type, target: Type, types: &ir::ValueTypes, depth: usiz
                 .elements
                 .iter()
                 .chain(tuple.rest.iter())
+                .chain(tuple.trailing.iter())
                 .all(|member| extends_depth(*member, element, types, depth))
         }
         (Type::Array(a), Type::Array(b)) => extends_depth(
@@ -123,6 +124,27 @@ fn object_kind(ty: Type) -> bool {
 fn tuples(a: u32, b: u32, types: &ir::ValueTypes, depth: usize) -> bool {
     let source = &types.tuples[a as usize];
     let target = &types.tuples[b as usize];
+    // Tuples with trailing elements relate position by position only when
+    // both have the same leading and trailing arity.
+    if !source.trailing.is_empty() || !target.trailing.is_empty() {
+        return source.elements.len() == target.elements.len()
+            && source.required == target.required
+            && source.trailing.len() == target.trailing.len()
+            && source.rest.is_some() == target.rest.is_some()
+            && source
+                .elements
+                .iter()
+                .chain(source.rest.iter())
+                .chain(source.trailing.iter())
+                .zip(
+                    target
+                        .elements
+                        .iter()
+                        .chain(target.rest.iter())
+                        .chain(target.trailing.iter()),
+                )
+                .all(|(own, wanted)| extends_depth(*own, *wanted, types, depth));
+    }
     // Every length the source admits must be one the target admits.
     if source.required < target.required
         || source.rest.is_some() && target.rest.is_none()

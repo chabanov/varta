@@ -101,8 +101,11 @@ pub(super) fn matches(
             lit: ast::TsLit::Tpl(template),
             ..
         }) => template_types::matches(template, ty, bindings, types),
+        ast::TsType::TsUnionOrIntersectionType(ast::TsUnionOrIntersectionType::TsUnionType(
+            union,
+        )) => union_pattern(union, ty, bindings, types),
         ast::TsType::TsUnionOrIntersectionType(_) => Err(unsupported(
-            "infer inside a union or intersection pattern (the matched member is ambiguous)",
+            "infer inside an intersection pattern (the matched part of each member is ambiguous)",
         )),
         _ => Err(unsupported("infer in this position of an extends pattern")),
     }
@@ -167,24 +170,48 @@ fn tuple_pattern(
         matches!(&*element.ty, ast::TsType::TsRestType(_))
             || matches!(&element.label, Some(ast::Pat::Rest(_)))
     });
-    let open_source = source.rest.is_some() || source.required < source.elements.len();
     let Some(rest_at) = rest_at else {
-        if open_source {
-            return Err(unsupported(
-                "infer over a tuple with optional or rest elements against a fixed tuple pattern",
-            ));
+        if source.rest.is_some() {
+            return Ok(false);
         }
         if pattern.elem_types.len() != source.elements.len() {
             return Ok(false);
         }
-        for (element, ty) in pattern.elem_types.iter().zip(source.elements.iter()) {
-            if !matches(&element.ty, *ty, bindings, types)? {
+        for (index, (element, ty)) in pattern
+            .elem_types
+            .iter()
+            .zip(source.elements.iter())
+            .enumerate()
+        {
+            let optional_source = index >= source.required;
+            // `(infer X)?` / `x?: infer X` against an optional element binds
+            // its declared type (without the `undefined` of absence).
+            let (element_pattern, optional_pattern) = match &*element.ty {
+                ast::TsType::TsOptionalType(optional) => (&*optional.type_ann, true),
+                other => (
+                    other,
+                    matches!(&element.label, Some(ast::Pat::Ident(id)) if id.id.optional),
+                ),
+            };
+            if optional_source && !optional_pattern {
+                return Ok(false);
+            }
+            let ty = if optional_source {
+                tuple_types::strip_undefined(*ty, types)?
+            } else {
+                *ty
+            };
+            if !matches(element_pattern, ty, bindings, types)? {
                 return Ok(false);
             }
         }
         return Ok(true);
     };
+
     let suffix = pattern.elem_types.len() - rest_at - 1;
+    if !source.trailing.is_empty() {
+        return trailing_pattern(pattern, &source, (rest_at, suffix), bindings, types);
+    }
     if source.required < source.elements.len() || source.rest.is_some() && suffix > 0 {
         return Err(unsupported(
             "infer over a tuple with optional elements, or a rest-element suffix pattern over an open tuple",
@@ -234,9 +261,7 @@ fn reference_pattern(
         .as_ref()
         .map_or(&[][..], |p| &p.params[..]);
     if named::declared(types, name) {
-        return Err(unsupported(&format!(
-            "infer inside the type arguments of {name} (a declared generic type is matched structurally: write its shape as an object type pattern)"
-        )));
+        return declared_pattern(name, params, ty, bindings, types);
     }
     match (name, params) {
         ("Array" | "ReadonlyArray", [element]) => element_of(element, ty, bindings, types),
@@ -388,4 +413,162 @@ fn object_pattern(
         }
     }
     Ok(true)
+}
+
+/// `infer U | undefined` (and other unions with one inferring member): the
+/// members of the check type assignable to the other pattern members are
+/// removed and the inferring member matches the rest.
+fn union_pattern(
+    union: &ast::TsUnionType,
+    ty: Type,
+    bindings: &mut generics::Frame,
+    types: &mut ir::ValueTypes,
+) -> Result<bool> {
+    let (inferring, plain): (Vec<_>, Vec<_>) =
+        union.types.iter().partition(|member| has_infer(member));
+    let [inferring] = inferring[..] else {
+        return Err(unsupported(
+            "union pattern with several inferring members (the matched member is ambiguous)",
+        ));
+    };
+    let mut fixed = Vec::new();
+    for member in plain {
+        fixed.push(with_bindings(member, bindings, types)?);
+    }
+    let rest: Vec<Type> = split(ty, types)
+        .into_iter()
+        .filter(|member| !fixed.iter().any(|fixed| extends(*member, *fixed, types)))
+        .collect();
+    let rest = union_of(rest, types)?;
+    matches(inferring, rest, bindings, types)
+}
+
+/// `Box<infer U>` for a declared generic type: its declaration body, with
+/// every type parameter as an inference position, is matched against the
+/// check type; each type argument pattern then matches what its parameter
+/// bound (`unknown` when the body does not use it).
+fn declared_pattern(
+    name: &str,
+    params: &[Box<ast::TsType>],
+    ty: Type,
+    bindings: &mut generics::Frame,
+    types: &mut ir::ValueTypes,
+) -> Result<bool> {
+    let Some((module, declaration, bodies)) = named::generic_declaration(types, name) else {
+        return Err(unsupported(&format!(
+            "infer inside the type arguments of {name}, which is not a generic interface or alias"
+        )));
+    };
+    let names: Vec<String> = declaration
+        .params
+        .iter()
+        .map(|param| param.name.sym.to_string())
+        .collect();
+    if params.len() > names.len() {
+        return Ok(false);
+    }
+    let caller = named::current(types);
+    named::enter(types, module);
+    let mut inferred = generics::Frame::new();
+    let mut matched = Ok(true);
+    for body in &bodies {
+        let pattern = inferable(body, &names);
+        matched = matches(&pattern, ty, &mut inferred, types);
+        if !matches!(matched, Ok(true)) {
+            break;
+        }
+    }
+    named::enter(types, caller);
+    if !matched? {
+        return Ok(false);
+    }
+    for (param, pattern) in names.iter().zip(params) {
+        let bound = inferred
+            .get(&inferable_name(param))
+            .copied()
+            .unwrap_or(Type::Unknown);
+        if !matches(pattern, bound, bindings, types)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The inference name standing for type parameter `name` in a declaration
+/// body (`#` cannot start a source identifier).
+fn inferable_name(name: &str) -> String {
+    format!("#{name}")
+}
+
+/// `body` with every reference to one of `names` replaced by `infer #name`.
+fn inferable(body: &ast::TsType, names: &[String]) -> ast::TsType {
+    use swc_ecma_visit::{VisitMut, VisitMutWith};
+    struct Replace<'a>(&'a [String]);
+    impl VisitMut for Replace<'_> {
+        fn visit_mut_ts_type(&mut self, ty: &mut ast::TsType) {
+            if let ast::TsType::TsTypeRef(reference) = ty
+                && reference.type_params.is_none()
+                && let ast::TsEntityName::Ident(id) = &reference.type_name
+                && self.0.iter().any(|name| *name == id.sym.as_ref())
+            {
+                *ty = ast::TsType::TsInferType(ast::TsInferType {
+                    span: reference.span,
+                    type_param: ast::TsTypeParam {
+                        span: reference.span,
+                        name: ast::Ident::new(
+                            inferable_name(id.sym.as_ref()).into(),
+                            id.span,
+                            Default::default(),
+                        ),
+                        is_in: false,
+                        is_out: false,
+                        is_const: false,
+                        constraint: None,
+                        default: None,
+                    },
+                });
+                return;
+            }
+            ty.visit_mut_children_with(self);
+        }
+    }
+    let mut body = body.clone();
+    body.visit_mut_with(&mut Replace(names));
+    body
+}
+
+/// A rest pattern against a tuple with trailing elements (`[...string[],
+/// number]`): the pattern's prefix must be the tuple's leading elements and
+/// its suffix the trailing ones; the rest binds `[...R[]]`.
+fn trailing_pattern(
+    pattern: &ast::TsTupleType,
+    source: &ir::TupleType,
+    (rest_at, suffix): (usize, usize),
+    bindings: &mut generics::Frame,
+    types: &mut ir::ValueTypes,
+) -> Result<bool> {
+    if rest_at != source.elements.len() || suffix != source.trailing.len() {
+        return Err(unsupported(
+            "infer over a tuple with trailing elements by a pattern of another shape",
+        ));
+    }
+    for (element, ty) in pattern.elem_types[..rest_at].iter().zip(&source.elements) {
+        if !matches(&element.ty, *ty, bindings, types)? {
+            return Ok(false);
+        }
+    }
+    for (element, ty) in pattern.elem_types[rest_at + 1..]
+        .iter()
+        .zip(&source.trailing)
+    {
+        if !matches(&element.ty, *ty, bindings, types)? {
+            return Ok(false);
+        }
+    }
+    let middle = tuple_types::tuple_of(Vec::new(), 0, source.rest, types)?;
+    let rest_pattern = match &*pattern.elem_types[rest_at].ty {
+        ast::TsType::TsRestType(rest) => &*rest.type_ann,
+        other => other,
+    };
+    matches(rest_pattern, middle, bindings, types)
 }

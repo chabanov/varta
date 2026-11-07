@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- V38 K9 type level, step 2 (owner decisions): branded primitives
+  (`string & { __brand: … }` is the primitive), `typeof` of local bindings,
+  overloaded call/construct signatures and function intersections (calls
+  select the overload statically), generic call signatures with inference,
+  `this` in interfaces and object type aliases, `keyof`, indexed access and
+  mapped/utility types over class instances, arrays, tuples and primitives,
+  pattern template types as `string`, `infer` through declared generics,
+  union patterns and optional elements, tuple elements after a rest element,
+  predicates narrowing to subclasses, from `unknown` to object types and
+  `this is T`, and class subtyping in every container (`B[]` as `A[]` is a
+  copy). Intentional deviations from Node: a lying predicate throws
+  `TypeError` at the narrowed read, and a copied array view does not alias.
+  Callable objects with properties stay refused. Conformance: 160 passed, 5
+  known unsupported of 165 (new row `ts-class-subtyping`).
 - K8 T2 font-relative units: the style engine computes font sizes and line
   heights, so `em`, `lh` and `rlh` work in every property on both hosts;
   registered length values compute to absolute lengths before they inherit;

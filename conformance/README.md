@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 95 feature rows and 160 cases:
-155 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 96 feature rows and 165 cases:
+160 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -407,6 +407,20 @@ named, optional, rest and variadic tuple elements (`ts-tuples.ts`); and
 literal inference and widening (`ts-literals.ts`). Every expected output is
 Node.js v24.20.0's. These cases exercise type-level evaluation at compile
 time; they do not establish tsc's complete assignability or inference.
+
+The K9 A step-2 review (2026-11-06) adds the `ts-class-subtyping` row with
+`ts-containers.ts` (subclass instances in arrays, tuples, records, `Map`/`Set`
+values and unions, `B[]` and `(B | C)[]` as `A[]`) and four cases on existing
+rows: `ts-brands-and-queries.ts` (branded primitives, `typeof` of locals,
+`keyof`/indexed access/`Partial` over a class and `keyof` of a tuple),
+`ts-narrowing-more.ts` (subclass, `unknown`-to-object and `this is T`
+predicates), `ts-inference-more.ts` (`infer` through a declared generic, a
+union pattern and an optional element; elements after a rest element) and
+`ts-signatures-more.ts` (overloads, function intersections, generic call
+signatures, `this` in object types, pattern template types). Their output
+is Node.js v24.20.0's; the two intentional deviations (a lying predicate's
+`TypeError`, the copy of a `B[]` viewed as `A[]`) are pinned by runtime tests,
+not inventory cases.
 
 The K9 D standard-library review (2026-11-06, selector `standard_library`)
 adds five feature rows with seven passing cases and four cases on existing

@@ -48,6 +48,11 @@ pub(super) fn enter(types: &mut ir::ValueTypes, module: usize) {
 pub(super) fn current(types: &ir::ValueTypes) -> usize {
     types.named.current
 }
+/// Whether a named declaration is being resolved (v38 `type_level`: its
+/// body sees module values only, never a function's locals).
+pub(super) fn resolving_declaration(types: &ir::ValueTypes) -> bool {
+    !types.named.resolving.is_empty()
+}
 /// The source of the module whose annotations are being lowered, once linked.
 pub(super) fn current_source(types: &ir::ValueTypes) -> Option<Source> {
     types.named.sources.get(&types.named.current).cloned()

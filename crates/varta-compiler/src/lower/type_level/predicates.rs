@@ -13,6 +13,10 @@
 //! applied (the binding keeps its type).
 use super::*;
 
+/// The `TypeError` message of a read whose predicate lied (an intentional
+/// deviation from Node, which continues with the mistyped value).
+const PREDICATE_MISMATCH: &str = "value does not have the type its type predicate asserted";
+
 #[derive(Clone)]
 pub(super) struct Predicate {
     /// The guarded parameter position; `None` for `this`.
@@ -68,7 +72,11 @@ pub(super) fn note(
         Some(annotation) => Some(keyword_type(&annotation.type_ann, types)?),
         None => None,
     };
+    // Class hierarchies are linked after signatures: a class predicate's
+    // relation to its parameter is checked by the narrowing instead.
     if let (Some(at), Some(ty)) = (parameter, ty)
+        && !involves_class(ty, types)
+        && !involves_class(signature.params[at], types)
         && !extends(ty, signature.params[at], types)
         && !extends(signature.params[at], ty, types)
         && !unions::members(signature.params[at], types)
@@ -92,6 +100,42 @@ pub(super) fn note(
     Ok(())
 }
 
+fn involves_class(ty: Type, types: &ir::ValueTypes) -> bool {
+    unions::members(ty, types)
+        .iter()
+        .any(|member| matches!(member, Type::Class(_)))
+}
+
+/// Record a `this is T` method predicate (`isDog(): this is Dog`).
+pub(super) fn note_method(
+    (class, name): (u32, &str),
+    function: &ast::Function,
+    types: &mut ir::ValueTypes,
+) -> Result<()> {
+    let Some(annotation) = &function.return_type else {
+        return Ok(());
+    };
+    let ast::TsType::TsTypePredicate(predicate) = &*annotation.type_ann else {
+        return Ok(());
+    };
+    if predicate.asserts {
+        return Err(unsupported(
+            "asserts this assertion method (call-statement narrowing of a receiver)",
+        ));
+    }
+    if !matches!(predicate.param_name, ast::TsThisTypeOrIdent::TsThisType(_)) {
+        return Ok(());
+    }
+    if let Some(target) = &predicate.type_ann {
+        let ty = keyword_type(&target.type_ann, types)?;
+        types
+            .type_level
+            .this_predicates
+            .insert((class, name.to_owned()), ty);
+    }
+    Ok(())
+}
+
 /// What a predicate keeps of `current` (`positive`) or excludes from it.
 fn narrowed(
     current: Type,
@@ -110,9 +154,18 @@ fn narrowed(
                 | Type::Null
                 | Type::Undefined
         );
-        return primitive
-            .then(|| unknown::refine(references::Guard::Exact(target), positive, types))
-            .flatten();
+        if primitive {
+            return unknown::refine(references::Guard::Exact(target), positive, types);
+        }
+        // An object type: reads assert it (`predicate_read`).
+        return positive.then(|| vec![target]);
+    }
+    // A class instance narrowed to a subclass: reads test the descriptor.
+    if let (Type::Class(own), Type::Class(sub)) = (current, target)
+        && own != sub
+        && types.classes.descends(sub, own)
+    {
+        return positive.then(|| vec![target]);
     }
     let members = unions::members(current, types);
     if members.len() <= 1 {
@@ -147,6 +200,29 @@ impl Lower<'_> {
         let ast::Callee::Expr(callee) = &call.callee else {
             return None;
         };
+        // `x.isDog()` of a `this is Dog` method narrows `x`.
+        if let ast::Expr::Member(member) = stmt::unparen(callee)
+            && let ast::MemberProp::Ident(method) = &member.prop
+            && let Some(class) = self.class_receiver(&member.obj, 0)
+            && let Some(found) = self
+                .types
+                .classes
+                .get(class)
+                .methods
+                .get(method.sym.as_ref())
+            && let Some(ty) = self
+                .types
+                .type_level
+                .this_predicates
+                .get(&(found.owner, method.sym.to_string()))
+        {
+            let predicate = Predicate {
+                parameter: None,
+                ty: Some(*ty),
+                asserts: false,
+            };
+            return Some((predicate, call));
+        }
         let index = match stmt::unparen(callee) {
             ast::Expr::Ident(id) if self.binding(id.sym.as_ref()).is_err() => {
                 match self.functions.get(id.sym.as_ref()) {
@@ -208,16 +284,21 @@ impl Lower<'_> {
         call: &ast::CallExpr,
         yes: bool,
     ) -> Result<()> {
-        let Some(at) = predicate.parameter else {
-            return Ok(());
+        let guarded = match predicate.parameter {
+            Some(at) => match call.args.get(at) {
+                Some(argument) if argument.spread.is_none() => &*argument.expr,
+                _ => return Ok(()),
+            },
+            // `this is T`: the receiver of the method call.
+            None => match &call.callee {
+                ast::Callee::Expr(callee) => match stmt::unparen(callee) {
+                    ast::Expr::Member(member) => &*member.obj,
+                    _ => return Ok(()),
+                },
+                _ => return Ok(()),
+            },
         };
-        let Some(argument) = call.args.get(at) else {
-            return Ok(());
-        };
-        if argument.spread.is_some() {
-            return Ok(());
-        }
-        let ast::Expr::Ident(id) = stmt::unparen(&argument.expr) else {
+        let ast::Expr::Ident(id) = stmt::unparen(guarded) else {
             return Ok(());
         };
         let name = id.sym.to_string();
@@ -262,16 +343,73 @@ impl Lower<'_> {
 
     /// A read of a predicate-narrowed binding: its member tested at run time.
     pub(in crate::lower) fn predicate_read(&mut self, local: Expr, narrow: Type) -> Result<Expr> {
+        let span = local.span;
+        if local.ty == Type::Unknown {
+            // An `unknown` value narrowed to an object type: the checked
+            // assertion of `x as T`.
+            let name = subtyping::describe(narrow, self.types);
+            return self.assert_value(local, narrow, &name, PREDICATE_MISMATCH, span);
+        }
+        if let (Type::Class(_), Type::Class(class)) = (local.ty, narrow) {
+            return self.checked_downcast(local, class);
+        }
         if !local.ty.is_cell() {
             return Ok(Expr {
                 ty: narrow,
                 ..local
             });
         }
-        self.checked_narrow(
-            local,
-            narrow,
-            "value does not have the type its type predicate asserted",
-        )
+        self.checked_narrow(local, narrow, PREDICATE_MISMATCH)
+    }
+
+    /// A class instance read as its subclass `class`: its descriptor is
+    /// tested, and a `TypeError` is thrown when it is another class.
+    fn checked_downcast(&mut self, local: Expr, class: u32) -> Result<Expr> {
+        let span = local.span;
+        let saved = self.hidden(local.ty);
+        let held = |ty: Type| Expr {
+            span,
+            ty,
+            kind: E::Local(saved),
+        };
+        let test = self.class_test(held(local.ty), class, span)?;
+        let error = self.array_error(
+            varta_common::value::ErrorClass::TypeError,
+            PREDICATE_MISMATCH,
+            span,
+        )?;
+        let narrow = Type::Class(class);
+        let output = self.hidden(narrow);
+        let marker = self.hidden(Type::Number);
+        let source = local.ty;
+        Ok(Expr {
+            span,
+            ty: narrow,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![saved],
+                body: vec![
+                    S::Init(saved, local),
+                    S::If(
+                        Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::Not(Box::new(test)),
+                        },
+                        vec![S::Throw(error)],
+                        Vec::new(),
+                    ),
+                    S::Init(
+                        output,
+                        Expr {
+                            span,
+                            ty: narrow,
+                            kind: E::Reinterpret(Box::new(held(source))),
+                        },
+                    ),
+                ],
+            },
+        })
     }
 }

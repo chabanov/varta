@@ -137,14 +137,12 @@ fn distribute(
     union_of(results, types)
 }
 
-fn object_fields(ty: Type, what: &str, types: &ir::ValueTypes) -> Result<Vec<RecordField>> {
+fn object_fields(ty: Type, what: &str, types: &mut ir::ValueTypes) -> Result<Vec<RecordField>> {
     match ty {
         Type::Record(id) if types.records[id as usize].class.is_none() => {
             Ok(types.records[id as usize].fields.clone())
         }
-        Type::Class(_) => Err(unsupported(&format!(
-            "{what} of a class instance type (its methods and inherited members are properties)"
-        ))),
+        Type::Class(class) => objects::class_members(class, types),
         other => Err(unsupported(&format!(
             "{what} of {}",
             subtyping::describe(other, types)
@@ -164,7 +162,11 @@ fn partial(ty: Type, types: &mut ir::ValueTypes) -> Result<Type> {
                 Some(rest) => Some(tuple_types::union_with_undefined(rest, types)?),
                 None => None,
             };
-            tuples::intern_rest(elements, 0, rest, tuple.readonly, types)
+            let mut trailing = Vec::new();
+            for element in tuple.trailing {
+                trailing.push(tuple_types::union_with_undefined(element, types)?);
+            }
+            tuples::intern_tuple(elements, 0, (rest, trailing), tuple.readonly, types)
         }
         Type::Array(id) => {
             let element = tuple_types::union_with_undefined(types.arrays[id as usize], types)?;
@@ -195,7 +197,13 @@ fn required(ty: Type, types: &mut ir::ValueTypes) -> Result<Type> {
                 });
             }
             let count = elements.len();
-            tuples::intern_rest(elements, count, tuple.rest, tuple.readonly, types)
+            tuples::intern_tuple(
+                elements,
+                count,
+                (tuple.rest, tuple.trailing),
+                tuple.readonly,
+                types,
+            )
         }
         Type::Array(_) => Ok(ty),
         other if is_primitive(other) => Ok(other),
