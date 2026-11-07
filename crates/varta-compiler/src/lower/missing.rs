@@ -206,6 +206,11 @@ impl Lower<'_> {
         match value.ty {
             Type::Error | Type::NativeError(_) => Err(unsupported("Error property mutation")),
             Type::Record(_) => self.record_field(member, value, false),
+            // V38: a match array's elements and `length` (`full_regexp`).
+            Type::Class(_) if self.match_elements_place(member, value.ty) => {
+                let values = self.match_array_values(value)?;
+                self.array_member(member, values, false)
+            }
             Type::Class(_) => self.class_member(member, value, false),
             Type::Array(_) => self.array_member(member, value, false),
             _ => Err(unsupported(

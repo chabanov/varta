@@ -110,3 +110,46 @@ pub(crate) fn constructed(pattern: &str, flags: &str, full: bool) -> Result<RegE
     regexp.source = String::from_utf16_lossy(&shared::escape_source(&units));
     Ok(regexp)
 }
+
+/// Whether every capturing group of `/pattern/flags` takes part in each of
+/// its matches (v38 `split` then types its parts `string`); `None` when the
+/// pattern does not compile.
+pub(crate) fn captures_always_take_part(pattern: &str, flags: &str) -> Option<bool> {
+    let flag_units: Vec<u16> = flags.encode_utf16().collect();
+    let flags = Flags::parse(&flag_units, true).ok()?;
+    let units: Vec<u16> = pattern.encode_utf16().collect();
+    let tree = parse::parse(&units, flags, true).ok()?;
+    Some(!optional_captures(&tree.node, false))
+}
+
+/// Whether a capturing group inside `node` may not take part in a match:
+/// one in an alternative, under a quantifier that may run zero times, or in
+/// a negative lookaround (`optional`: the context already may skip it).
+fn optional_captures(node: &parse::Node, optional: bool) -> bool {
+    use parse::Node;
+    match node {
+        Node::Group(inner, index) => {
+            (index.is_some() && optional) || optional_captures(inner, optional)
+        }
+        Node::Alternation(nodes) => nodes.iter().any(|inner| optional_captures(inner, true)),
+        Node::Repeat {
+            node: inner,
+            min,
+            max,
+            ..
+        } => optional_captures(inner, optional || *min == 0 || *max == Some(0)),
+        Node::Look {
+            negative,
+            node: inner,
+            ..
+        } => optional_captures(inner, optional || *negative),
+        Node::Modified(_, inner) => optional_captures(inner, optional),
+        Node::Concat(nodes) => nodes.iter().any(|inner| optional_captures(inner, optional)),
+        Node::Empty
+        | Node::Char(_)
+        | Node::Class { .. }
+        | Node::Dot
+        | Node::Assert(_)
+        | Node::Backref(_) => false,
+    }
+}

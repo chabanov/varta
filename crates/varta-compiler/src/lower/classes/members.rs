@@ -383,6 +383,15 @@ impl Lower<'_> {
         };
         self.class_functions()?;
         let name = self.member_key(&member.prop)?;
+        // V38: a match array's `length` and other array members are its
+        // elements' (`full_regexp`).
+        if read && self.match_elements_member(value.ty, &name) {
+            return self.on_match_elements(
+                value,
+                |receiver| crate::lower::regexp::member_on(member, receiver),
+                None,
+            );
+        }
         let Some((slot, field)) = self.types.classes.field(class, &name) else {
             let method = self.types.classes.get(class).methods.get(&name).cloned();
             return match method {
@@ -478,6 +487,14 @@ impl Lower<'_> {
         let name = self.member_key(&member.prop)?;
         if name == error_classes::TO_STRING && self.types.classes.is_error(class) {
             return self.class_error_to_string(call, value);
+        }
+        // V38: a match array's array methods are its elements' (`full_regexp`).
+        if self.match_elements_member(value.ty, &name) {
+            return self.on_match_elements(
+                value,
+                |receiver| crate::lower::regexp::call_on(call, receiver),
+                expected,
+            );
         }
         if let Some(method) = self
             .types

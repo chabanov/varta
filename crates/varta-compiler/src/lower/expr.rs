@@ -1274,6 +1274,8 @@ impl Lower<'_> {
                     .source
                     .locate(collections::opaque("JSON.stringify"), value.span));
             }
+            // V38: a match array serializes as the array of its elements.
+            let value = self.match_array_values(value)?;
             let value = self.physical_array(value)?;
             if value.ty.profile_kind(self.types.profile).is_none()
                 || value.ty == Type::BigInt && !self.types.profile.bigint_values()

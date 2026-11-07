@@ -23,12 +23,21 @@ pub(super) const STRING_METHODS: [&str; 5] =
 const COMPILE_INTRINSIC: &str = "varta.regexp.compile";
 /// The split limit when none is given (2^32 - 1).
 const NO_LIMIT: f64 = u32::MAX as f64;
-/// Prelude fields of a match array: element 0 and every element.
-const FIRST: &str = "first";
+/// The prelude field of a match array that holds its elements, and (v37)
+/// the field that holds element 0.
 const VALUES: &str = "values";
+const FIRST: &str = "first";
+/// The hidden binding of a match array's elements while one of its array
+/// members is lowered; no source identifier can spell it.
+const ELEMENTS_BINDING: &str = "#match";
+/// The own data properties of a v38 match array; every other member is an
+/// array member of its elements.
+const OWN_MEMBERS: [&str; 4] = ["index", "input", "groups", "indices"];
 /// The match-array parameter of a synthesized replacer adapter; no source
 /// identifier can spell it.
 const MATCH_PARAMETER: &str = "%match";
+/// The arguments parameter of a synthesized v38 run-time replacer adapter.
+const ARGUMENTS_PARAMETER: &str = "%arguments";
 /// Positions of the group count and names among `RegExp.compiled`'s
 /// arguments.
 const NAMES_ARGUMENT: usize = 5;
@@ -181,15 +190,18 @@ impl Lower<'_> {
         }
         Ok(value)
     }
-    /// `match[key]`: element 0 is always a string, other elements are
-    /// `string | undefined` (a group that did not take part, or no element).
+    /// `match[key]`: element 0 (the whole match, which always took part) is
+    /// a string (v38: read live, as the elements may change), other elements
+    /// are `string | undefined` (a group that did not take part, or no
+    /// element).
     pub(super) fn match_element(
         &mut self,
         member: &ast::MemberExpr,
         value: Expr,
         key: &ast::Expr,
     ) -> Result<Expr> {
-        if matches!(stmt::unparen(key), ast::Expr::Lit(ast::Lit::Num(n)) if n.value == 0.0) {
+        let zero = matches!(stmt::unparen(key), ast::Expr::Lit(ast::Lit::Num(n)) if n.value == 0.0);
+        if zero && !self.types.profile.full_regexp() {
             return Ok(Expr {
                 span: member.span,
                 ..self.match_field(value, FIRST)?
@@ -200,7 +212,131 @@ impl Lower<'_> {
             return Err(CompilerError::Internal("missing match array values".into()));
         };
         let element = self.types.arrays[id as usize];
-        self.maybe_index(member, values, key, element)
+        let read = self.maybe_index(member, values, key, element)?;
+        if zero {
+            // TypeScript types element 0 as present; only a program that
+            // removed it reads `undefined`, which fails the assertion.
+            return self.non_null_value(read, member.span);
+        }
+        Ok(read)
+    }
+    /// V38: `Array.isArray(value)` when `value` may be a match array (an
+    /// array in JavaScript); `None` otherwise. `value` is evaluated once.
+    pub(super) fn match_array_test(
+        &mut self,
+        value: &Expr,
+        span: swc_common::Span,
+    ) -> Option<Expr> {
+        if !self.types.profile.full_regexp() {
+            return None;
+        }
+        let boolean = |kind| Expr {
+            span,
+            ty: Type::Boolean,
+            kind,
+        };
+        if self.match_array(value.ty) {
+            return Some(boolean(E::Sequence(
+                Box::new(value.clone()),
+                Box::new(boolean(E::Integer(1))),
+            )));
+        }
+        let matches: Vec<Type> = unions::members(value.ty, self.types)
+            .into_iter()
+            .filter(|ty| self.match_array(*ty))
+            .collect();
+        if !value.ty.is_cell() || matches.is_empty() {
+            return None;
+        }
+        let saved = self.hidden(value.ty);
+        let local = || Expr {
+            span,
+            ty: value.ty,
+            kind: E::Local(saved),
+        };
+        let mut test = boolean(E::Host(
+            self.types
+                .profile
+                .host_operation(varta_common::HostOperation::ValueIsArray),
+            vec![local()],
+        ));
+        for member in matches {
+            test = boolean(E::Conditional(
+                Box::new(boolean(E::IsUnionMember(Box::new(local()), member))),
+                Box::new(boolean(E::Integer(1))),
+                Box::new(test),
+            ));
+        }
+        let output = self.hidden(Type::Boolean);
+        let marker = self.hidden(Type::Number);
+        Some(boolean(E::ValueBlock {
+            output,
+            marker,
+            roots: vec![saved],
+            body: vec![S::Init(saved, value.clone()), S::Init(output, test)],
+        }))
+    }
+    /// V38: whether `member` of a match array of type `ty` writes its
+    /// elements: an element or `length`, not one of its own properties.
+    pub(super) fn match_elements_place(&self, member: &ast::MemberExpr, ty: Type) -> bool {
+        let own = matches!(&member.prop, ast::MemberProp::Ident(name)
+            if OWN_MEMBERS.contains(&name.sym.as_ref()));
+        self.match_elements(ty) && !own
+    }
+    /// V38: whether `ty` is a match array whose array members a program
+    /// module reaches through its elements (the prelude reads its fields).
+    fn match_elements(&self, ty: Type) -> bool {
+        self.types.profile.full_regexp()
+            && !engine::is_prelude_source(self.source)
+            && self.match_array(ty)
+    }
+    /// V38: whether `name` is a member of a match array's elements rather
+    /// than of the match array itself.
+    pub(super) fn match_elements_member(&self, ty: Type, name: &str) -> bool {
+        self.match_elements(ty) && !OWN_MEMBERS.contains(&name)
+    }
+    /// V38: a member read or member call of the match array `value` lowered
+    /// on its elements: they bind to a hidden binding, and `rewrite` builds
+    /// the expression with that binding in place of the receiver.
+    pub(super) fn on_match_elements(
+        &mut self,
+        value: Expr,
+        rewrite: impl FnOnce(ast::Expr) -> ast::Expr,
+        expected: Option<Type>,
+    ) -> Result<Expr> {
+        let span = value.span;
+        let values = self.match_field(value, VALUES)?;
+        let ty = values.ty;
+        let name = format!("{ELEMENTS_BINDING}{}", self.next);
+        self.scopes.push(std::collections::BTreeMap::new());
+        let lowered = self.declare(&name, Some(ty), true, false).and_then(|()| {
+            let slot = self.binding(&name)?.slot;
+            let rewritten = rewrite(ast::Expr::Ident(ident(&name, span)));
+            Ok((slot, self.expr_expected(&rewritten, expected)?))
+        });
+        self.scopes.pop();
+        let (slot, result) = lowered?;
+        let result = if result.ty == Type::Void {
+            Expr {
+                span,
+                ty: Type::Undefined,
+                kind: E::Undefined(Box::new(result)),
+            }
+        } else {
+            result
+        };
+        let output = self.hidden(result.ty);
+        let marker = self.hidden(Type::Number);
+        Ok(Expr {
+            span: result.span,
+            ty: result.ty,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![slot, output],
+                body: vec![S::Init(slot, values), S::Init(output, result)],
+            },
+        })
     }
 
     /// A call of the prelude's private static `RegExp.name`.
@@ -445,6 +581,16 @@ impl Lower<'_> {
                 let argument = &*call.args[1].expr;
                 if self.callback_argument(argument) {
                     let groups = self.static_groups(&pattern);
+                    // V38: a replacer of a pattern the compiler cannot see,
+                    // or with a rest parameter, takes the arguments as
+                    // String.prototype.replace computes them at run time.
+                    if self.types.profile.full_regexp()
+                        && (groups.is_none() || rest_parameter(argument))
+                    {
+                        let replacer = self.dynamic_replacer(argument)?;
+                        let target = if all { "replaceAllCall" } else { "replaceCall" };
+                        return self.regexp_static(target, vec![receiver, pattern, replacer], span);
+                    }
                     let replacer = self.regexp_replacer(argument, groups)?;
                     let target = if all { "replaceAllWith" } else { "replaceWith" };
                     return self.regexp_static(target, vec![receiver, pattern, replacer], span);
@@ -495,7 +641,24 @@ impl Lower<'_> {
             }
             None => number(span, NO_LIMIT),
         };
-        self.regexp_static("split", vec![receiver, separator, limit], span)
+        // V38: a separator whose groups may not take part splits into
+        // `(string | undefined)[]`; one written in place whose groups always
+        // take part (or that has none) into `string[]`.
+        let target = if !self.types.profile.full_regexp()
+            || call
+                .args
+                .first()
+                .and_then(|arg| static_pattern(&arg.expr))
+                .and_then(|(pattern, flags)| {
+                    crate::regexp::captures_always_take_part(&pattern, &flags)
+                })
+                .unwrap_or(false)
+        {
+            "split"
+        } else {
+            "splitParts"
+        };
+        self.regexp_static(target, vec![receiver, separator, limit], span)
             .map(Ok)
     }
     fn static_parameter(&self, name: &str, position: usize) -> Result<Type> {
@@ -542,6 +705,137 @@ impl Lower<'_> {
             }
             _ => None,
         }
+    }
+    /// V38: a replacer adapted to `(args: unknown[]) => string`, where `args`
+    /// are the arguments String.prototype.replace passes (the match, every
+    /// capture, the position, the input and, with named groups, the groups
+    /// object), counted at run time. Each parameter is a constant checked
+    /// against its annotation (`as`: a `TypeError` when the argument does
+    /// not fit), `unknown` without one (`string` for the match); a rest
+    /// parameter takes the remaining arguments as `unknown[]`.
+    fn dynamic_replacer(&mut self, callback: &ast::Expr) -> Result<Expr> {
+        let span = callback.span();
+        let context = self.static_parameter("replaceCall", 2)?;
+        let (params, body, return_type) = match stmt::unparen(callback) {
+            ast::Expr::Arrow(arrow)
+                if !arrow.is_async && !arrow.is_generator && arrow.type_params.is_none() =>
+            {
+                let body = match &*arrow.body {
+                    ast::ArrowFunctionBody::FunctionBody(block) => block.clone(),
+                    ast::ArrowFunctionBody::Expr(value) => ast::FunctionBody {
+                        span,
+                        stmts: vec![ast::Stmt::Return(ast::ReturnStmt {
+                            span,
+                            arg: Some(value.clone()),
+                        })],
+                    },
+                };
+                (arrow.params.clone(), body, arrow.return_type.clone())
+            }
+            ast::Expr::Fn(function)
+                if !function.function.is_async
+                    && !function.function.is_generator
+                    && function.function.type_params.is_none()
+                    && function.ident.is_none() =>
+            {
+                let body = function.function.body.clone().ok_or_else(|| {
+                    self.source
+                        .locate(unsupported("replacer function without a body"), span)
+                })?;
+                let params = function
+                    .function
+                    .params
+                    .iter()
+                    .map(|param| param.pat.clone());
+                (
+                    params.collect(),
+                    body,
+                    function.function.return_type.clone(),
+                )
+            }
+            ast::Expr::Ident(id) => {
+                let body = self.dynamic_replacer_call(callback, id)?;
+                (Vec::new(), body, None)
+            }
+            _ => {
+                return Err(self.source.locate(
+                    unsupported(
+                        "RegExp replacer other than a function literal or a function binding",
+                    ),
+                    span,
+                ));
+            }
+        };
+        let mut stmts = Vec::new();
+        for (position, param) in params.iter().enumerate() {
+            let declaration = dynamic_parameter(param, position, span)
+                .map_err(|e| self.source.locate(e, param.span()))?;
+            stmts.push(declaration);
+        }
+        stmts.extend(body.stmts);
+        let adapter = ast::Expr::Arrow(ast::ArrowExpr {
+            span,
+            ctxt: Default::default(),
+            params: vec![ast::Pat::Ident(ast::BindingIdent {
+                id: ident(ARGUMENTS_PARAMETER, span),
+                type_ann: None,
+            })],
+            body: Box::new(ast::ArrowFunctionBody::FunctionBody(ast::FunctionBody {
+                span: body.span,
+                stmts,
+            })),
+            is_async: false,
+            is_generator: false,
+            type_params: None,
+            return_type,
+        });
+        self.expr_expected(&adapter, Some(context))
+    }
+    /// The body of a run-time replacer adapter for a function binding: a
+    /// call with each argument checked against the parameter's type.
+    fn dynamic_replacer_call(
+        &mut self,
+        callback: &ast::Expr,
+        id: &ast::Ident,
+    ) -> Result<ast::FunctionBody> {
+        let span = callback.span();
+        let value = self.expr(callback)?;
+        let Type::Function(function) = value.ty else {
+            return Err(self.source.locate(
+                type_error(format!("replacer must be a function, found {}", value.ty)),
+                span,
+            ));
+        };
+        let params = self.types.functions[function as usize].params.clone();
+        let mut args = Vec::new();
+        for (position, param) in params.into_iter().enumerate() {
+            let annotation = type_annotation(param, self.types, span).ok_or_else(|| {
+                self.source.locate(
+                    unsupported(&format!(
+                        "replacer parameter of type {param} for a RegExp that is not written in place"
+                    )),
+                    span,
+                )
+            })?;
+            args.push(ast::ExprOrSpread {
+                spread: None,
+                expr: Box::new(checked_argument(position, Some(annotation), span)),
+            });
+        }
+        let call = ast::Expr::Call(ast::CallExpr {
+            span,
+            ctxt: Default::default(),
+            callee: ast::Callee::Expr(Box::new(ast::Expr::Ident(id.clone()))),
+            args,
+            type_args: None,
+        });
+        Ok(ast::FunctionBody {
+            span,
+            stmts: vec![ast::Stmt::Return(ast::ReturnStmt {
+                span,
+                arg: Some(Box::new(call)),
+            })],
+        })
     }
     /// A replacer adapted to `(match: RegExpExecArray) => string`: its
     /// parameters become constants read from the match array in the order
@@ -710,6 +1004,51 @@ impl Lower<'_> {
     }
 }
 
+/// `call` (of a member) with `receiver` as the member's object.
+pub(super) fn call_on(call: &ast::CallExpr, receiver: ast::Expr) -> ast::Expr {
+    let callee = match &call.callee {
+        ast::Callee::Expr(callee) => match stmt::unparen(callee) {
+            ast::Expr::Member(member) => ast::Callee::Expr(Box::new(member_on(member, receiver))),
+            _ => call.callee.clone(),
+        },
+        other => other.clone(),
+    };
+    ast::Expr::Call(ast::CallExpr {
+        callee,
+        ..call.clone()
+    })
+}
+/// `member` with `receiver` as its object.
+pub(super) fn member_on(member: &ast::MemberExpr, receiver: ast::Expr) -> ast::Expr {
+    ast::Expr::Member(ast::MemberExpr {
+        obj: Box::new(receiver),
+        ..member.clone()
+    })
+}
+
+/// The pattern and flags of a regular expression written in place: a
+/// literal, or `new RegExp` with constant arguments.
+fn static_pattern(expression: &ast::Expr) -> Option<(String, String)> {
+    match stmt::unparen(expression) {
+        ast::Expr::Lit(ast::Lit::Regex(regex)) => {
+            Some((regex.exp.to_string(), regex.flags.to_string()))
+        }
+        ast::Expr::New(new) if matches!(&*new.callee, ast::Expr::Ident(id) if id.sym == REGEXP_CLASS) =>
+        {
+            let args = new.args.as_deref().unwrap_or_default();
+            if args.len() > 2 || args.iter().any(|arg| arg.spread.is_some()) {
+                return None;
+            }
+            let text = |index: usize| match args.get(index) {
+                None => Some(String::new()),
+                Some(arg) => constant_text(&arg.expr),
+            };
+            Some((text(0)?, text(1)?))
+        }
+        _ => None,
+    }
+}
+
 fn ident(name: &str, span: swc_common::Span) -> ast::Ident {
     ast::Ident {
         span,
@@ -772,6 +1111,173 @@ fn replacer_source(
         p if p == count + 3 && named => Some((field("groups"), false)),
         _ => None,
     }
+}
+
+/// Whether a replacer function literal has a rest parameter.
+fn rest_parameter(callback: &ast::Expr) -> bool {
+    match stmt::unparen(callback) {
+        ast::Expr::Arrow(arrow) => arrow
+            .params
+            .iter()
+            .any(|param| matches!(param, ast::Pat::Rest(_))),
+        ast::Expr::Fn(function) => function
+            .function
+            .params
+            .iter()
+            .any(|param| matches!(param.pat, ast::Pat::Rest(_))),
+        _ => false,
+    }
+}
+
+fn number_literal(value: usize, span: swc_common::Span) -> ast::Expr {
+    ast::Expr::Lit(ast::Lit::Num(ast::Number {
+        span,
+        value: value as f64,
+        raw: None,
+    }))
+}
+
+fn keyword(kind: ast::TsKeywordTypeKind, span: swc_common::Span) -> ast::TsType {
+    ast::TsType::TsKeywordType(ast::TsKeywordType { span, kind })
+}
+
+/// The run-time replacer argument at `position`, checked against
+/// `annotation` (`as`) when there is one.
+fn checked_argument(
+    position: usize,
+    annotation: Option<Box<ast::TsType>>,
+    span: swc_common::Span,
+) -> ast::Expr {
+    let argument = ast::Expr::Member(ast::MemberExpr {
+        span,
+        obj: Box::new(ast::Expr::Ident(ident(ARGUMENTS_PARAMETER, span))),
+        prop: ast::MemberProp::Computed(ast::ComputedPropName {
+            span,
+            expr: Box::new(number_literal(position, span)),
+        }),
+    });
+    match annotation {
+        Some(annotation) => ast::Expr::TsAs(ast::TsAsExpr {
+            span,
+            expr: Box::new(argument),
+            type_ann: annotation,
+        }),
+        None => argument,
+    }
+}
+
+/// The constant of a run-time replacer parameter at `position`: checked
+/// against its annotation (the match is a `string`), `unknown` without
+/// one, and a rest parameter as the remaining arguments.
+fn dynamic_parameter(
+    param: &ast::Pat,
+    position: usize,
+    span: swc_common::Span,
+) -> Result<ast::Stmt> {
+    match param {
+        ast::Pat::Ident(binding) => {
+            let annotation = binding
+                .type_ann
+                .as_ref()
+                .map(|annotation| annotation.type_ann.clone())
+                .or_else(|| {
+                    (position == 0)
+                        .then(|| Box::new(keyword(ast::TsKeywordTypeKind::TsStringKeyword, span)))
+                });
+            Ok(constant_declaration(
+                binding.clone(),
+                checked_argument(position, annotation, span),
+                span,
+            ))
+        }
+        ast::Pat::Rest(rest) => {
+            let ast::Pat::Ident(binding) = &*rest.arg else {
+                return Err(unsupported(
+                    "RegExp replacer rest parameter other than an identifier",
+                ));
+            };
+            let slice = ast::Expr::Call(ast::CallExpr {
+                span,
+                ctxt: Default::default(),
+                callee: ast::Callee::Expr(Box::new(ast::Expr::Member(ast::MemberExpr {
+                    span,
+                    obj: Box::new(ast::Expr::Ident(ident(ARGUMENTS_PARAMETER, span))),
+                    prop: ast::MemberProp::Ident(ast::IdentName {
+                        span,
+                        sym: "slice".into(),
+                    }),
+                }))),
+                args: vec![ast::ExprOrSpread {
+                    spread: None,
+                    expr: Box::new(number_literal(position, span)),
+                }],
+                type_args: None,
+            });
+            let mut binding = binding.clone();
+            if binding.type_ann.is_none() {
+                binding.type_ann = rest.type_ann.clone();
+            }
+            Ok(constant_declaration(binding, slice, span))
+        }
+        _ => Err(unsupported(
+            "RegExp replacer parameter other than a plain identifier",
+        )),
+    }
+}
+
+/// The annotation of a replacer parameter of type `ty`: primitives, their
+/// unions and `unknown`; `None` for other types.
+fn type_annotation(
+    ty: Type,
+    types: &crate::ir::ValueTypes,
+    span: swc_common::Span,
+) -> Option<Box<ast::TsType>> {
+    use ast::TsKeywordTypeKind as K;
+    let single = |ty: Type| {
+        Some(Box::new(keyword(
+            match ty {
+                Type::String => K::TsStringKeyword,
+                Type::Float64 => K::TsNumberKeyword,
+                Type::Boolean => K::TsBooleanKeyword,
+                Type::Undefined => K::TsUndefinedKeyword,
+                Type::Null => K::TsNullKeyword,
+                Type::Unknown => K::TsUnknownKeyword,
+                _ => return None,
+            },
+            span,
+        )))
+    };
+    let members = unions::members(ty, types);
+    if members.len() <= 1 {
+        return single(ty);
+    }
+    let types = members
+        .into_iter()
+        .map(single)
+        .collect::<Option<Vec<_>>>()?;
+    Some(Box::new(ast::TsType::TsUnionOrIntersectionType(
+        ast::TsUnionOrIntersectionType::TsUnionType(ast::TsUnionType { span, types }),
+    )))
+}
+
+/// `const <binding> = <init>;`.
+fn constant_declaration(
+    binding: ast::BindingIdent,
+    init: ast::Expr,
+    span: swc_common::Span,
+) -> ast::Stmt {
+    ast::Stmt::Decl(ast::Decl::Var(Box::new(ast::VarDecl {
+        span,
+        ctxt: Default::default(),
+        kind: ast::VarDeclKind::Const,
+        declare: false,
+        decls: vec![ast::VarDeclarator {
+            span,
+            name: ast::Pat::Ident(binding),
+            init: Some(Box::new(init)),
+            definite: false,
+        }],
+    })))
 }
 
 /// `const <parameter> = <init>;` for one replacer parameter.

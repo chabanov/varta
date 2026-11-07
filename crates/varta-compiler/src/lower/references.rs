@@ -184,6 +184,10 @@ impl Lower<'_> {
             return Err(invalid("Array.isArray expects one value"));
         }
         let value = self.expr(&call.args[0].expr)?;
+        // V38: match arrays are arrays (`full_regexp`).
+        if let Some(test) = self.match_array_test(&value, call.span) {
+            return Ok(test);
+        }
         let kind = if value.ty.is_cell() {
             E::Host(
                 self.types.profile.host_operation(Host::ValueIsArray),

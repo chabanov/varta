@@ -14,8 +14,6 @@
 
 const NOT_GLOBAL_MATCH_ALL = 'String.prototype.matchAll called with a non-global RegExp argument';
 const NOT_GLOBAL_REPLACE_ALL = 'replaceAll must be called with a global RegExp';
-const SPLIT_UNDEFINED =
-  'RegExp split capture group did not participate (Varta types split results as string[])';
 const DOLLAR = 36;
 const AMPERSAND = 38;
 const BACKTICK = 96;
@@ -353,12 +351,15 @@ function limitOf(limit: number): number {
   return limit >>> 0;
 }
 
-// The match indices of a `d` match: element 0 and every element are
-// `[start, end]` pairs (`undefined` for a group that did not take part).
+// Match arrays are arrays (ES2025 §22.2.7.2): the compiler reads and writes
+// their elements, `length` and every Array method on `values`, the elements
+// array, so `index`, `input`, `groups` and `indices` are their own data
+// properties. Element 0 of a match always took part.
+
+// The match indices of a `d` match: every element is a `[start, end]` pair
+// (`undefined` for a group that did not take part).
 export class RegExpIndicesArray {
-  readonly groups: Record<string, [number, number] | undefined> | undefined;
-  readonly length: number;
-  private readonly first: [number, number];
+  groups: Record<string, [number, number] | undefined> | undefined;
   private readonly values: ([number, number] | undefined)[];
 
   constructor(
@@ -366,27 +367,15 @@ export class RegExpIndicesArray {
     groups: Record<string, [number, number] | undefined> | undefined,
   ) {
     this.groups = groups;
-    this.length = values.length;
-    // Element 0 (the whole match) always took part.
-    let first: [number, number] = [0, 0];
-    const head = values[0];
-    if (head !== undefined) {
-      first = head;
-    }
-    this.first = first;
     this.values = values;
   }
 }
 
 export class RegExpExecArray {
-  readonly index: number;
-  readonly input: string;
-  readonly groups: Record<string, string | undefined> | undefined;
-  readonly indices: RegExpIndicesArray | undefined;
-  readonly length: number;
-  // Element 0, always a string, and every element (the compiler reads
-  // `match[0]` from `first` and other elements from `values`).
-  private readonly first: string;
+  index: number;
+  input: string;
+  groups: Record<string, string | undefined> | undefined;
+  indices: RegExpIndicesArray | undefined;
   private readonly values: (string | undefined)[];
 
   constructor(
@@ -400,19 +389,15 @@ export class RegExpExecArray {
     this.input = input;
     this.groups = groups;
     this.indices = indices;
-    this.length = values.length;
-    this.first = values[0] ?? '';
     this.values = values;
   }
 }
 
 export class RegExpMatchArray {
-  readonly index: number | undefined;
-  readonly input: string | undefined;
-  readonly groups: Record<string, string | undefined> | undefined;
-  readonly indices: RegExpIndicesArray | undefined;
-  readonly length: number;
-  private readonly first: string;
+  index: number | undefined;
+  input: string | undefined;
+  groups: Record<string, string | undefined> | undefined;
+  indices: RegExpIndicesArray | undefined;
   private readonly values: (string | undefined)[];
 
   constructor(
@@ -426,8 +411,6 @@ export class RegExpMatchArray {
     this.input = input;
     this.groups = groups;
     this.indices = indices;
-    this.length = values.length;
-    this.first = values[0] ?? '';
     this.values = values;
   }
 }
@@ -687,36 +670,30 @@ export class RegExp {
     return found.length === 0 ? null : new RegExpMatchArray(undefined, undefined, found, undefined, undefined);
   }
 
-  // String.prototype.matchAll: every match of a copy of the regex that
-  // starts at the original's `lastIndex`, as a fresh array.
-  private static matchAll(input: string, regexp: RegExp): RegExpExecArray[] {
+  // String.prototype.matchAll (§22.1.3.14, §22.2.6.9): a RegExp String
+  // Iterator over a copy of the regex that starts at the original's
+  // `lastIndex`; each step runs one match.
+  private static matchAll(input: string, regexp: RegExp): Generator<RegExpExecArray, void, undefined> {
     if (!regexp.global) {
       throw new TypeError(NOT_GLOBAL_MATCH_ALL);
     }
     const copy = regexp.copy();
     copy.lastIndex = regexp.lastIndex;
-    const found: RegExpExecArray[] = [];
+    return RegExp.iterate(copy, input);
+  }
+
+  // %RegExpStringIteratorPrototype%.next (§22.2.9.2.1) of a global regex.
+  private static *iterate(regexp: RegExp, input: string): Generator<RegExpExecArray, void, undefined> {
     for (;;) {
-      const caps = copy.run(input, false);
-      if (caps.length === 0) {
-        break;
+      const match = regexp.exec(input);
+      if (match === null) {
+        return;
       }
-      const start = varta.regexp.slot(caps, 0);
-      const values = captures(caps, input, copy.count);
-      found.push(
-        new RegExpExecArray(
-          start,
-          input,
-          values,
-          groupsOf(values, copy.names, copy.count),
-          copy.indicesFor(caps),
-        ),
-      );
-      if (varta.regexp.slot(caps, 1) === start) {
-        copy.lastIndex = advance(input, copy.lastIndex, copy.full());
+      if (match.index === regexp.lastIndex) {
+        regexp.lastIndex = advance(input, regexp.lastIndex, regexp.full());
       }
+      yield match;
     }
-    return found;
   }
 
   // The matcher results String.prototype.replace replaces: one, or all
@@ -799,6 +776,39 @@ export class RegExp {
     return result + input.slice(next);
   }
 
+  // String.prototype.replace with a replacer that takes the arguments
+  // computed at run time (§22.2.6.11 step 14.k): the match, every capture,
+  // the position, the input and, with named groups, the groups object.
+  private static replaceCall(
+    input: string,
+    regexp: RegExp,
+    replacer: (args: unknown[]) => string,
+  ): string {
+    return RegExp.replaceWith(input, regexp, (match: RegExpExecArray): string => {
+      const args: unknown[] = [];
+      for (const value of match) {
+        args.push(value);
+      }
+      args.push(match.index);
+      args.push(input);
+      if (regexp.names.length > 0) {
+        args.push(match.groups);
+      }
+      return replacer(args);
+    });
+  }
+
+  private static replaceAllCall(
+    input: string,
+    regexp: RegExp,
+    replacer: (args: unknown[]) => string,
+  ): string {
+    if (!regexp.global) {
+      throw new TypeError(NOT_GLOBAL_REPLACE_ALL);
+    }
+    return RegExp.replaceCall(input, regexp, replacer);
+  }
+
   private static replaceAll(input: string, regexp: RegExp, replacement: string): string {
     if (!regexp.global) {
       throw new TypeError(NOT_GLOBAL_REPLACE_ALL);
@@ -817,12 +827,23 @@ export class RegExp {
     return RegExp.replaceWith(input, regexp, replacer);
   }
 
-  // String.prototype.split with a regex separator. Matching resumes from
-  // each position like the sticky splitter of @@split; captures are spliced
-  // into the result.
+  // String.prototype.split with a regex separator whose groups always take
+  // part (the compiler selects it): every part is a string.
   private static split(input: string, regexp: RegExp, limit: number): string[] {
-    const lim = limitOf(limit);
     const parts: string[] = [];
+    for (const part of RegExp.splitParts(input, regexp, limit)) {
+      parts.push(part ?? '');
+    }
+    return parts;
+  }
+
+  // String.prototype.split with a regex separator (§22.2.6.14). Matching
+  // resumes from each position like the sticky splitter of @@split; the
+  // captures are spliced into the result, `undefined` for a group that did
+  // not take part.
+  private static splitParts(input: string, regexp: RegExp, limit: number): (string | undefined)[] {
+    const lim = limitOf(limit);
+    const parts: (string | undefined)[] = [];
     if (lim === 0) {
       return parts;
     }
@@ -860,11 +881,7 @@ export class RegExp {
       }
       p = end;
       for (let group = 1; group < regexp.count; group++) {
-        const start = varta.regexp.slot(caps, 2 * group);
-        if (start < 0) {
-          throw new TypeError(SPLIT_UNDEFINED);
-        }
-        parts.push(input.slice(start, varta.regexp.slot(caps, 2 * group + 1)));
+        parts.push(capture(caps, input, group));
         if (parts.length === lim) {
           return parts;
         }

@@ -121,6 +121,11 @@ impl Lower<'_> {
                 {
                     return true;
                 }
+                // V38 (`full_regexp`): `text.matchAll(regexp)` is a RegExp
+                // String Iterator.
+                if method == "matchAll" && self.types.profile.full_regexp() {
+                    return true;
+                }
                 if ITERATOR_RESULTS.contains(&method) {
                     return self.iterator_receiver(&member.obj, depth + 1);
                 }
