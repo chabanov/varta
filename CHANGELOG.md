@@ -89,8 +89,8 @@
   subclasses; `this`-using static methods inherited across modules run with
   the calling subclass as `this` (before, silently with the declaring
   class); generic overload signatures of functions infer their type
-  arguments per call. Conformance (with K9 C): 194 passed, 5 known
-  unsupported of 199.
+  arguments per call. Conformance (with K9 C and D3): 205 passed, 5 known
+  unsupported of 210.
 - V38 K9 type level, step 2 (owner decisions): branded primitives
   (`string & { __brand: … }` is the primitive), `typeof` of local bindings,
   overloaded call/construct signatures and function intersections (calls
