@@ -8047,6 +8047,37 @@ same day ([contract](architecture.md#view-css-engine-k8-t2-and-t3)).
 - **Tailwind acceptance:** unchanged at 70.4% of 588 uses; no verdict of the
   corpus's 312 application candidates changed (it uses none of these units).
 
+#### K8 T2 S4, first part: mapped and transform properties (2026-11-06)
+
+- **Mapped properties** (`varta_common::view::mapped`): CSS Logical 1 §4
+  flow-relative padding, margin and inset properties in the subset's one
+  writing mode, `inset` and `flex` expand when a sheet is parsed into the
+  physical longhands, each at the declaration's place in the cascade; with
+  `var()` each longhand keeps the whole value and its part
+  (`Name::Mapped`) and is split after substitution. The native renderer's
+  ordered geometry walk and the engine's cascade both take the parts, so
+  `padding-left` and `padding-inline` win over each other by cascade order
+  on both hosts; the bridge only ever sees physical longhands.
+- **New properties** (registry codes 81–84): `translate`, `scale`,
+  `transform-origin` (lowered to two lengths or percentages) and
+  `letter-spacing`. Native: the effective transform list is `translate`,
+  `scale`, `transform` around the origin (Transforms 2 §6.1), and the
+  shaper adds letter spacing. Not animated natively yet: transitions of
+  `translate` and `scale` (Chrome animates them; final states agree).
+- **Evidence.** Corpus: 18 new cases decided identically by the Wasm module,
+  the native session and the renderer and the Node view model. Chrome
+  oracle: scenes `logical-and-mapped`, `individual-transforms` and
+  `letter-spacing` (text in a packaged face, transparent so the box widths
+  carry the spacing), `bridge` 739 and `platform` 727 checks at 1x, 1.25x
+  and 2x.
+- **Tailwind acceptance** (the corpus's 312 application candidates, the
+  distinct-candidate measure; the 588-use weighting needs the scratch
+  inventory, which is not in the tree): 203 → 228 (65.1% → 73.1%).
+  Remaining S4 items, each needing native layout or paint work: per-side
+  border longhands (`border-b`), `overflow-x`/`-y`, `visibility`,
+  `text-transform`, `inline-block`, `inline-flex`, `fit-content`, `sticky`,
+  `-webkit-box` line clamping, `rotate`.
+
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
 Goal: the native HTTP server runs at current standards, secure and fast enough

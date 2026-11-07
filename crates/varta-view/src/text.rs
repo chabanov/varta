@@ -135,6 +135,9 @@ pub(crate) struct TextOptions {
     pub line_height: Option<LineHeight>,
     pub weight: f32,
     pub italic: bool,
+    /// The used `letter-spacing` in CSS pixels (CSS Text 3 §8.2), added
+    /// after every typographic character unit.
+    pub letter_spacing: f32,
     pub white_space: WhiteSpaceMode,
     pub break_anywhere: bool,
     pub source: TextSource,
@@ -856,6 +859,7 @@ impl TextMeasurer {
                 line_height: None,
                 weight: 400.0,
                 italic: false,
+                letter_spacing: 0.0,
                 white_space: WhiteSpaceMode::Normal,
                 break_anywhere: false,
                 source: TextSource::General,
@@ -884,6 +888,7 @@ impl TextMeasurer {
                 line_height: None,
                 weight: 400.0,
                 italic: false,
+                letter_spacing: 0.0,
                 white_space: WhiteSpaceMode::Normal,
                 break_anywhere: false,
                 source: TextSource::General,
@@ -1233,6 +1238,7 @@ impl TextMeasurer {
         } else {
             FontStyle::Normal
         }));
+        builder.push_default(StyleProperty::LetterSpacing(options.letter_spacing));
         if !options.white_space.wraps() {
             builder.push_default(StyleProperty::TextWrapMode(TextWrapMode::NoWrap));
         }
@@ -1277,6 +1283,10 @@ impl TextMeasurer {
             );
             builder.push(
                 StyleProperty::LineHeight(style.line_height.unwrap_or_default()),
+                range.clone(),
+            );
+            builder.push(
+                StyleProperty::LetterSpacing(style.letter_spacing),
                 range.clone(),
             );
             builder.push(
@@ -1855,6 +1865,7 @@ mod tests {
                 line_height: None,
                 weight: 400.0,
                 italic: false,
+                letter_spacing: 0.0,
                 white_space: WhiteSpaceMode::NoWrap,
                 break_anywhere: false,
                 source: TextSource::General,
@@ -2112,6 +2123,7 @@ mod tests {
                         line_height: None,
                         weight: 400.0,
                         italic: false,
+                        letter_spacing: 0.0,
                         white_space: WhiteSpaceMode::NoWrap,
                         break_anywhere: false,
                         source: TextSource::General,

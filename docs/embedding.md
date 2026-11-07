@@ -3384,6 +3384,10 @@ not imply complete CSS rendering or typography acceptance.
 | 78 | `aspect-ratio` | `auto \|\| [<number> [/ <number>]?]` | positive ratio terms |
 | 79 | `vertical-align` | `baseline \| sub \| super \| text-top \| text-bottom \| middle \| top \| bottom \| <length-percentage>` | inline-level boxes |
 | 80 | `image-orientation` | `from-image \| none` | inherited |
+| 81 | `translate` | `none \| <length-percentage> <length-percentage>?` | — |
+| 82 | `scale` | `none \| <number> <number>?` | positive factors |
+| 83 | `transform-origin` | `<length-percentage> <length-percentage>` | — |
+| 84 | `letter-spacing` | `normal \| <length>` | inherited |
 <!-- generated:view-css-properties:end -->
 
 **Events.**

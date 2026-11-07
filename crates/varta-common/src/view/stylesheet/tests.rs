@@ -270,6 +270,57 @@ fn violations_carry_utf8_byte_offsets() {
     assert_eq!(error("x{} .a{background:\\75 rl(x)}").offset, 18);
 }
 
+/// CSS Logical 1 §4 in the horizontal left-to-right writing mode, `inset`
+/// and `flex`: each longhand declared at the mapped declaration's place.
+#[test]
+fn mapped_properties_declare_their_physical_longhands() {
+    let declarations = |text: &str| parse(text).unwrap()[0].declarations.clone();
+    let error = |text: &str| parse(text).unwrap_err();
+    let property =
+        |property: CssProperty, value: &str| (Name::Property(property), value.to_owned());
+    assert_eq!(
+        declarations(
+            ".a { padding-left: 9px; padding-inline: 1px 2px; margin-block: auto; inset: 0 }"
+        ),
+        vec![
+            property(CssProperty::PaddingLeft, "9px"),
+            property(CssProperty::PaddingLeft, "1px"),
+            property(CssProperty::PaddingRight, "2px"),
+            property(CssProperty::MarginTop, "auto"),
+            property(CssProperty::MarginBottom, "auto"),
+            property(CssProperty::Top, "0"),
+            property(CssProperty::Right, "0"),
+            property(CssProperty::Bottom, "0"),
+            property(CssProperty::Left, "0"),
+        ]
+    );
+    assert_eq!(
+        declarations(".a { flex: 1; margin-inline-end: -4px }"),
+        vec![
+            property(CssProperty::FlexGrow, "1"),
+            property(CssProperty::FlexShrink, "1"),
+            property(CssProperty::FlexBasis, "0%"),
+            property(CssProperty::MarginRight, "-4px"),
+        ]
+    );
+    let pending = declarations(".a { padding-block: var(--spacing) }");
+    assert_eq!(pending.len(), 2);
+    assert!(matches!(
+        &pending[1],
+        (Name::Mapped(CssProperty::PaddingBottom, part), value)
+            if part.index == 1 && value == "var(--spacing)"
+    ));
+    assert_eq!(
+        error(".a { padding-inline: -1px }").violation,
+        Violation::Declaration
+    );
+    assert_eq!(
+        error(".a { flex: 1 2 3 4 }").violation,
+        Violation::Declaration
+    );
+    assert!(parse("@supports (padding-inline: 1px) { .a { color: red } }").is_ok());
+}
+
 #[test]
 fn pointer_pseudo_classes_are_independent_and_can_combine_with_disabled() {
     let rules =

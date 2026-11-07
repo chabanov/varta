@@ -743,6 +743,262 @@
       0
     ]
   },
+  "s4-flex-auto-none": {
+    "computed": {
+      "flex-basis": "auto",
+      "flex-grow": "0",
+      "flex-shrink": "0"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-flex-basis": {
+    "computed": {
+      "flex-basis": "10px",
+      "flex-grow": "2",
+      "flex-shrink": "0"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-flex-invalid": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s4-flex-one": {
+    "computed": {
+      "flex-basis": "0%",
+      "flex-grow": "1",
+      "flex-shrink": "1"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-inset": {
+    "computed": {
+      "bottom": "3px",
+      "left": "2px",
+      "position": "absolute",
+      "right": "2px",
+      "top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-inset-logical": {
+    "computed": {
+      "left": "5%",
+      "position": "absolute",
+      "right": "5%",
+      "top": "2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-letter-spacing": {
+    "computed": {
+      "letter-spacing": "-0.5px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-letter-spacing-inline": {
+    "computed": {
+      "color": "#000",
+      "letter-spacing": "0.1rem",
+      "translate": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-logical-order": {
+    "computed": {
+      "margin-left": "1px",
+      "margin-right": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-logical-padding": {
+    "computed": {
+      "padding-bottom": "3px",
+      "padding-left": "1px",
+      "padding-right": "2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-logical-var": {
+    "computed": {
+      "margin-bottom": "auto",
+      "margin-top": "0.25rem",
+      "padding-left": "8px",
+      "padding-right": "8px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-logical-var-invalid": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-logical-var-pair": {
+    "computed": {
+      "padding-left": "4px",
+      "padding-right": "6px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-origin-keywords": {
+    "computed": {
+      "transform-origin": "100% 0%"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-origin-mixed": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s4-scale-percent": {
+    "computed": {
+      "scale": "0.95 0.95"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-scale-zero": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s4-translate": {
+    "computed": {
+      "translate": "4px 50%"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
   "supports": {
     "computed": {
       "color": "#333"
@@ -1298,7 +1554,12 @@
     ]
   },
   "tailwind-app-133": {
-    "computed": {},
+    "computed": {
+      "bottom": "0px",
+      "left": "0px",
+      "right": "0px",
+      "top": "0px"
+    },
     "statuses": [
       0,
       0,
@@ -1306,7 +1567,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-134": {
@@ -1518,7 +1781,10 @@
     ]
   },
   "tailwind-app-147": {
-    "computed": {},
+    "computed": {
+      "padding-left": "32px",
+      "padding-right": "32px"
+    },
     "statuses": [
       0,
       0,
@@ -1526,7 +1792,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-148": {
@@ -1880,7 +2148,10 @@
     ]
   },
   "tailwind-app-169": {
-    "computed": {},
+    "computed": {
+      "margin-left": "auto",
+      "margin-right": "auto"
+    },
     "statuses": [
       0,
       0,
@@ -1888,7 +2159,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-17": {
@@ -1948,7 +2221,9 @@
     ]
   },
   "tailwind-app-173": {
-    "computed": {},
+    "computed": {
+      "transform-origin": "100% 0"
+    },
     "statuses": [
       0,
       0,
@@ -1956,7 +2231,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-174": {
@@ -2257,7 +2534,10 @@
     ]
   },
   "tailwind-app-192": {
-    "computed": {},
+    "computed": {
+      "padding-left": "8px",
+      "padding-right": "8px"
+    },
     "statuses": [
       0,
       0,
@@ -2265,11 +2545,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-193": {
-    "computed": {},
+    "computed": {
+      "padding-left": "10px",
+      "padding-right": "10px"
+    },
     "statuses": [
       0,
       0,
@@ -2277,11 +2562,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-194": {
-    "computed": {},
+    "computed": {
+      "padding-left": "12px",
+      "padding-right": "12px"
+    },
     "statuses": [
       0,
       0,
@@ -2289,11 +2579,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-195": {
-    "computed": {},
+    "computed": {
+      "padding-left": "16px",
+      "padding-right": "16px"
+    },
     "statuses": [
       0,
       0,
@@ -2301,11 +2596,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-196": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "2px",
+      "padding-top": "2px"
+    },
     "statuses": [
       0,
       0,
@@ -2313,11 +2613,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-197": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "0.25rem",
+      "padding-top": "0.25rem"
+    },
     "statuses": [
       0,
       0,
@@ -2325,11 +2630,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-198": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "6px",
+      "padding-top": "6px"
+    },
     "statuses": [
       0,
       0,
@@ -2337,11 +2647,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-199": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "8px",
+      "padding-top": "8px"
+    },
     "statuses": [
       0,
       0,
@@ -2349,7 +2664,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-2": {
@@ -2377,7 +2694,10 @@
     ]
   },
   "tailwind-app-200": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "12px",
+      "padding-top": "12px"
+    },
     "statuses": [
       0,
       0,
@@ -2385,11 +2705,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-201": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "20px",
+      "padding-top": "20px"
+    },
     "statuses": [
       0,
       0,
@@ -2397,11 +2722,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-202": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "32px",
+      "padding-top": "32px"
+    },
     "statuses": [
       0,
       0,
@@ -2409,7 +2739,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-203": {
@@ -2727,7 +3059,9 @@
     ]
   },
   "tailwind-app-222": {
-    "computed": {},
+    "computed": {
+      "scale": "0.95 0.95"
+    },
     "statuses": [
       0,
       0,
@@ -2735,7 +3069,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-223": {
@@ -3153,7 +3489,10 @@
     ]
   },
   "tailwind-app-248": {
-    "computed": {},
+    "computed": {
+      "margin-left": "0px",
+      "margin-right": "0px"
+    },
     "statuses": [
       0,
       0,
@@ -3161,11 +3500,16 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-249": {
-    "computed": {},
+    "computed": {
+      "margin-bottom": "32px",
+      "margin-top": "32px"
+    },
     "statuses": [
       0,
       0,
@@ -3173,7 +3517,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-25": {
@@ -3225,7 +3571,10 @@
     ]
   },
   "tailwind-app-252": {
-    "computed": {},
+    "computed": {
+      "padding-left": "24px",
+      "padding-right": "24px"
+    },
     "statuses": [
       0,
       0,
@@ -3233,7 +3582,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-253": {
@@ -3943,7 +4294,9 @@
     ]
   },
   "tailwind-app-294": {
-    "computed": {},
+    "computed": {
+      "letter-spacing": "-0.4px"
+    },
     "statuses": [
       0,
       0,
@@ -3951,11 +4304,15 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-295": {
-    "computed": {},
+    "computed": {
+      "letter-spacing": "0.4px"
+    },
     "statuses": [
       0,
       0,
@@ -3963,7 +4320,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-296": {
@@ -4103,7 +4462,9 @@
     ]
   },
   "tailwind-app-302": {
-    "computed": {},
+    "computed": {
+      "translate": "0 8px"
+    },
     "statuses": [
       0,
       0,
@@ -4111,7 +4472,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-303": {
@@ -5019,7 +5382,11 @@
     ]
   },
   "tailwind-app-81": {
-    "computed": {},
+    "computed": {
+      "flex-basis": "0%",
+      "flex-grow": "1",
+      "flex-shrink": "1"
+    },
     "statuses": [
       0,
       0,
@@ -5027,11 +5394,17 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-82": {
-    "computed": {},
+    "computed": {
+      "flex-basis": "auto",
+      "flex-grow": "1",
+      "flex-shrink": "1"
+    },
     "statuses": [
       0,
       0,
@@ -5039,7 +5412,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-83": {
@@ -5059,7 +5434,11 @@
     ]
   },
   "tailwind-app-84": {
-    "computed": {},
+    "computed": {
+      "flex-basis": "auto",
+      "flex-grow": "0",
+      "flex-shrink": "0"
+    },
     "statuses": [
       0,
       0,
@@ -5067,7 +5446,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-85": {

@@ -51,6 +51,9 @@ const {width,height}=oracle.viewport;
 const MAX_MEAN_RGB_DELTA=2; // Same bound as the native/GPU scene probes.
 const MAX_CENTRE_RGB_DELTA=1; // One 8-bit rounding step inside a fill.
 const BOX_TOLERANCE=0.02;
+// Text node ids of the scenes (`native_css_engine_probe::TEXT_IDS`): only
+// element boxes are compared.
+const TEXT_IDS=1000;
 let checks=0;
 const report=[];
 try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engine`,async call=>{
@@ -88,7 +91,9 @@ try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engin
       const host=document.createElement('div');host.style.width='${width}px';host.style.height='${height}px';document.body.append(host);
       const app=globalThis.app=bridge.createViewDom({viewEngine,container:host,interactive:false,...(faces.length?{fonts,fontFaces}:{})});
       const ops=[{name:'stylesheet',sheet:1,text:${JSON.stringify(fixture.sheet)}}];let next=2;
-      const build=(parent,list)=>{for(const n of list){const id=next++;ops.push({name:'create_element',node:id,tag:'div'},{name:'set_class',node:id,text:n.class},{name:'insert',parent,node:id,before:0});build(id,n.children);}};
+      const texts=${JSON.stringify(fixture.texts??[])};let textId=${TEXT_IDS};
+      const build=(parent,list)=>{for(const n of list){const id=next++;ops.push({name:'create_element',node:id,tag:'div'},{name:'set_class',node:id,text:n.class},{name:'insert',parent,node:id,before:0});build(id,n.children);
+        for(const [owner,text] of texts)if(owner===n.class){const node=textId++;ops.push({name:'create_text',node,text},{name:'insert',parent:id,node,before:0});}}};
       build(1,${JSON.stringify(fixture.nodes)});
       app.apply(codec.encodeViewBatch(ops));
       await new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done)));
@@ -102,7 +107,9 @@ try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engin
       const style=document.createElement('style');style.textContent=${JSON.stringify(sheet)};shadow.append(style);
       const root=document.createElement('div');root.setAttribute('data-l0-root','');root.style.cssText=${JSON.stringify(registry.view.defaults.rootStyle)};shadow.append(root);
       let next=2;const nodes=new Map();
-      const build=(parent,list)=>{for(const n of list){const e=document.createElement('div');e.className=n.class;nodes.set(next++,e);parent.append(e);build(e,n.children);}};
+      const texts=${JSON.stringify(fixture.texts??[])};
+      const build=(parent,list)=>{for(const n of list){const e=document.createElement('div');e.className=n.class;nodes.set(next++,e);parent.append(e);build(e,n.children);
+        for(const [owner,text] of texts)if(owner===n.class)e.append(document.createTextNode(text));}};
       build(root,${JSON.stringify(fixture.nodes)});
       return Object.fromEntries([...nodes].map(([id,e])=>{const r=e.getBoundingClientRect();return [id,{x:r.x,y:r.y,width:r.width,height:r.height}];}));
     })()`);

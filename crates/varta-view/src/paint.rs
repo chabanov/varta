@@ -3416,6 +3416,7 @@ mod flow_text_tests {
             line_height: None,
             weight: style::NORMAL_FONT_WEIGHT,
             italic: false,
+            letter_spacing: 0.0,
             white_space: WhiteSpaceMode::Pre,
             break_anywhere: false,
             source: TextSource::General,

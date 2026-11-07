@@ -44,7 +44,13 @@ struct Scene {
     reduced_motion: bool,
     deviation: Option<&'static str>,
     fonts: &'static [Face],
+    /// Text children: every element with this class gets this text.
+    texts: &'static [(&'static str, &'static str)],
 }
+
+/// The first id of text nodes, apart from the elements whose boxes are
+/// compared.
+const TEXT_IDS: u32 = 1000;
 
 /// A packaged face: its family, its file (relative to the workspace) and
 /// its `FontFace` weight descriptor.
@@ -84,6 +90,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "layers",
@@ -92,6 +99,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "registered-properties",
@@ -100,6 +108,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "theme-colours",
@@ -116,6 +125,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "colour-functions",
@@ -140,6 +150,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "out-of-gamut",
@@ -157,6 +168,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: Some("CSS Color 4 §14.2 gamut mapping natively; Chrome clips per channel"),
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "math-and-units",
@@ -176,6 +188,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "media-features",
@@ -191,6 +204,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "reduced-motion",
@@ -199,6 +213,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: true,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "comments-and-escapes",
@@ -207,6 +222,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "css-wide-keywords",
@@ -225,6 +241,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "importance",
@@ -243,6 +260,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "conditional-rules",
@@ -261,6 +279,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "named-colours-and-mixes",
@@ -281,6 +300,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "multi-colour-mixes",
@@ -294,6 +314,7 @@ const SCENES: &[Scene] = &[
             "CSS Color 5 §3 mixes one or more colours; Chrome mixes exactly two and drops the declaration",
         ),
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "font-relative-units",
@@ -310,6 +331,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "percentage-length-math",
@@ -326,6 +348,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "platform-font-units",
@@ -347,6 +370,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "font-metric-references",
@@ -363,6 +387,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        texts: &[],
     },
     Scene {
         name: "packaged-font-units",
@@ -382,8 +407,88 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: METRIC_FACES,
+        texts: &[],
+    },
+    Scene {
+        name: "logical-and-mapped",
+        sheet: ":root { --pair: 6px 2px } .r { position: relative; width: 320px; height: 200px } .a { position: absolute; left: 0; top: 0; padding-inline: 4px 10px; padding-block: 2px; margin-inline: 3px; width: 20px; height: 10px; background-color: #c00 } .b { position: absolute; inset: 40px 200px 120px 30px; background-color: #0a0 } .c { position: absolute; top: 100px; inset-inline: 10px 250px; height: 8px; background-color: #00c } .d { position: absolute; left: 100px; top: 0; padding-inline: var(--pair); padding-block-start: calc(1rem * 0.5); margin-block-end: 4px; width: 10px; height: 10px; background-color: #cc0 } .e { position: absolute; left: 150px; top: 0; padding-left: 9px; padding-inline-start: 1px; width: 10px; height: 10px; background-color: #0cc } .f { position: absolute; left: 0; top: 150px; width: 300px; display: flex } .f1 { flex: 1; height: 10px; background-color: #c0c } .f2 { flex: 2 1 20px; height: 10px; background-color: #888 } .f3 { flex: none; width: 30px; height: 10px; background-color: #c60 } .g { position: absolute; top: 120px; left: 200px; width: 40px; height: 10px; margin-inline-start: auto; inset-block-end: auto; background-color: #06c }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
+                Node("e", &[]),
+                Node("f", &[Node("f1", &[]), Node("f2", &[]), Node("f3", &[])]),
+                Node("g", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "individual-transforms",
+        sheet: ".r { position: relative; width: 320px; height: 200px } .t { position: absolute; left: 10px; top: 10px; width: 40px; height: 20px; translate: 10px 50%; background-color: #c00 } .s { position: absolute; left: 100px; top: 10px; width: 40px; height: 40px; scale: 50%; transform-origin: top right; background-color: #0a0 } .u { position: absolute; left: 200px; top: 10px; width: 40px; height: 40px; translate: -4px 2px; scale: 1.5 0.5; transform: translateX(3px); background-color: #00c } .v { position: absolute; left: 10px; top: 100px; width: 60px; height: 30px; --x: 8px; translate: var(--x); scale: 1 1.25; transform-origin: 0 100%; background-color: #cc0 } .w { position: absolute; left: 120px; top: 100px; width: 40px; height: 40px; scale: 0.75; transform-origin: left; background-color: #0cc }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("t", &[]),
+                Node("s", &[]),
+                Node("u", &[]),
+                Node("v", &[]),
+                Node("w", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "letter-spacing",
+        sheet: ".r { display: flex; flex-direction: column; align-items: flex-start; font-family: \"Varta Metrics\"; font-size: 20px; line-height: 30px; color: transparent } .a { letter-spacing: 3px; background-color: #fcc } .b { letter-spacing: -0.1em; background-color: #cfc } .c { letter-spacing: 0.25rem; font-size: 10px; background-color: #ccf } .d { background-color: #ffc } .e { letter-spacing: normal; background-color: #cff }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("e", &[]),
+                Node("d", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: METRIC_FACES,
+        texts: &[
+            ("a", "AHx 0A"),
+            ("b", "AHx 0A"),
+            ("c", "AH"),
+            ("e", "x0"),
+            ("d", "AHx 0A"),
+        ],
     },
 ];
+
+/// A text measurer over the scene's packaged faces.
+fn font_measurer(scene: &Scene) -> Result<varta_view::TextMeasurer, Box<dyn std::error::Error>> {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let fonts = scene
+        .fonts
+        .iter()
+        .map(|Face(family, file, _)| {
+            Ok(varta_view::TextFont {
+                data: std::fs::read(format!("{root}/{file}"))?,
+                family: (*family).to_owned(),
+                aliases: Vec::new(),
+            })
+        })
+        .collect::<Result<Vec<_>, std::io::Error>>()?;
+    Ok(varta_view::TextMeasurer::new_with_packaged_fonts(fonts)?)
+}
 
 /// The view's fonts: the scene's packaged faces, the platform for the rest.
 fn font_set(scene: &Scene) -> Result<FontSet, Box<dyn std::error::Error>> {
@@ -397,7 +502,12 @@ fn font_set(scene: &Scene) -> Result<FontSet, Box<dyn std::error::Error>> {
     Ok(set)
 }
 
-fn append(batch: &mut B, parent: u32, nodes: &[Node], next: &mut u32) {
+fn append(
+    batch: &mut B,
+    parent: u32,
+    (nodes, texts): (&[Node], &[(&str, &str)]),
+    (next, text_id): (&mut u32, &mut u32),
+) {
     for Node(class, children) in nodes {
         let id = *next;
         *next += 1;
@@ -405,7 +515,11 @@ fn append(batch: &mut B, parent: u32, nodes: &[Node], next: &mut u32) {
             .create_element(id, Tag::Div)
             .set_class(id, class)
             .insert(parent, id, 0);
-        append(batch, id, children, next);
+        append(batch, id, (children, texts), (&mut *next, &mut *text_id));
+        for (_, text) in texts.iter().filter(|(owner, _)| owner == class) {
+            batch.create_text(*text_id, text).insert(id, *text_id, 0);
+            *text_id += 1;
+        }
     }
 }
 
@@ -420,9 +534,20 @@ fn tree(nodes: &[Node]) -> serde_json::Value {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scale: f32 = std::env::args().nth(1).map_or(Ok(1.0), |arg| arg.parse())?;
-    let mut renderer = Renderer::new(None, 16.0)?;
     let mut cases = Vec::new();
     for scene in SCENES {
+        // A scene with text lays it out and draws it with its own faces.
+        let mut measurer = match &scene.texts {
+            [] => None,
+            _ => Some(font_measurer(scene)?),
+        };
+        let mut renderer = Renderer::new(
+            match &scene.texts {
+                [] => None,
+                _ => Some(font_measurer(scene)?),
+            },
+            16.0,
+        )?;
         let mut environment = Environment {
             width: f64::from(WIDTH),
             height: f64::from(HEIGHT),
@@ -434,17 +559,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         view.set_environment(environment)?;
         let mut batch = B::new();
         batch.stylesheet(1, scene.sheet);
-        let mut next = 2;
-        append(&mut batch, 1, scene.nodes, &mut next);
+        let (mut next, mut text_id) = (2, TEXT_IDS);
+        append(
+            &mut batch,
+            1,
+            (scene.nodes, scene.texts),
+            (&mut next, &mut text_id),
+        );
         view.commit(&batch.finish(), false, &mut Denied)
             .map_err(|error| {
                 let parsed = varta_common::view::stylesheet::parse(scene.sheet);
                 format!("{}: {error:?} {parsed:?}", scene.name)
             })?;
-        let boxes = view
-            .layout_boxes(WIDTH as f32, HEIGHT as f32)?
+        let boxes = match measurer.as_mut() {
+            Some(measurer) => {
+                view.layout_boxes_with_text(WIDTH as f32, HEIGHT as f32, measurer, 16.0)?
+            }
+            None => view.layout_boxes(WIDTH as f32, HEIGHT as f32)?,
+        };
+        let boxes = boxes
             .into_iter()
-            .filter(|(id, _)| *id != 1)
+            .filter(|(id, _)| *id != 1 && *id < TEXT_IDS)
             .map(|(id, r)| {
                 (
                     id.to_string(),
@@ -461,6 +596,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "nodes": tree(scene.nodes),
             "reducedMotion": scene.reduced_motion,
             "deviation": scene.deviation,
+            "texts": scene.texts,
             "fonts": scene.fonts.iter().map(|Face(family, file, weight)| serde_json::json!({"family": family, "file": file, "weight": weight})).collect::<Vec<_>>(),
             "boxes": boxes,
             "computed": view.snapshot()["tree"],

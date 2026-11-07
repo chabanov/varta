@@ -15,6 +15,7 @@ fn options() -> TextOptions {
         line_height: Some(LineHeight::Absolute(24.0)),
         weight: 400.0,
         italic: false,
+        letter_spacing: 0.0,
         white_space: WhiteSpaceMode::Normal,
         break_anywhere: false,
         source: TextSource::General,

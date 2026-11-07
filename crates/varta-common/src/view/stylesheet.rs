@@ -34,6 +34,27 @@ pub const MAX_REGISTERED_PROPERTIES: usize = 512;
 pub enum Name {
     Property(CssProperty),
     Custom(String),
+    /// A longhand of a mapped property (`super::mapped`) whose value has
+    /// `var()`: the whole value, split at computed-value time.
+    Mapped(CssProperty, super::mapped::Part),
+}
+impl Name {
+    /// The property this declaration declares, if it is not custom.
+    #[must_use]
+    pub fn property(&self) -> Option<CssProperty> {
+        match self {
+            Self::Property(property) | Self::Mapped(property, _) => Some(*property),
+            Self::Custom(_) => None,
+        }
+    }
+    /// The mapped part, for a pending mapped longhand.
+    #[must_use]
+    pub fn part(&self) -> Option<super::mapped::Part> {
+        match self {
+            Self::Mapped(_, part) => Some(*part),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -776,20 +797,22 @@ impl Parser<'_> {
         for (name, first, last, is_important) in self.declarations(open + 1, close)? {
             let offset = self.declaration_offset(first);
             let value = self.value_text(first, last);
-            let entry = declaration(&name, &value)
-                .map_err(|violation| StylesheetError { violation, offset })?;
-            self.node()?;
-            self.charge(
-                entry.1.len()
-                    + match &entry.0 {
-                        Name::Custom(name) => name.len(),
-                        Name::Property(_) => 0,
-                    },
-            )?;
-            if is_important {
-                important.push(entry);
-            } else {
-                declarations.push(entry);
+            for entry in declaration(&name, &value)
+                .map_err(|violation| StylesheetError { violation, offset })?
+            {
+                self.node()?;
+                self.charge(
+                    entry.1.len()
+                        + match &entry.0 {
+                            Name::Custom(name) => name.len(),
+                            Name::Property(_) | Name::Mapped(..) => 0,
+                        },
+                )?;
+                if is_important {
+                    important.push(entry);
+                } else {
+                    declarations.push(entry);
+                }
             }
         }
         let layer =
@@ -970,13 +993,51 @@ pub fn parse_syntax(definition: &str) -> Option<Syntax> {
     Some(Syntax::Grammar(components.join(" | ")))
 }
 
-/// A declaration of a style rule: its checked name and stored value.
-fn declaration(name: &str, value: &str) -> Result<(Name, String), Violation> {
+/// The declarations of a style rule's declaration: its checked name and
+/// stored value, or for a mapped property one per longhand.
+pub(crate) fn declaration(name: &str, value: &str) -> Result<Vec<(Name, String)>, Violation> {
     if let Some(custom) = name.strip_prefix("--") {
         return (css::ident(custom) && css::custom_value(value))
-            .then(|| (Name::Custom(custom.into()), value.into()))
+            .then(|| vec![(Name::Custom(custom.into()), value.into())])
             .ok_or(Violation::Declaration);
     }
+    if let Some(mapped) = super::mapped::Mapped::parse(name) {
+        return mapped_declarations(mapped, value);
+    }
+    property_declaration(name, value).map(|entry| vec![entry])
+}
+
+/// The longhand declarations of a mapped property: each component checked
+/// as its longhand's value, or with `var()` the whole value pending.
+fn mapped_declarations(
+    mapped: super::mapped::Mapped,
+    value: &str,
+) -> Result<Vec<(Name, String)>, Violation> {
+    let targets = mapped.targets();
+    if css::contains_variable(value) {
+        css::check(targets[0], value).map_err(|_| Violation::Declaration)?;
+        return Ok(targets
+            .iter()
+            .enumerate()
+            .map(|(index, target)| {
+                let part = super::mapped::Part {
+                    source: mapped,
+                    index,
+                };
+                (Name::Mapped(*target, part), value.into())
+            })
+            .collect());
+    }
+    let components = mapped.components(value).ok_or(Violation::Declaration)?;
+    targets
+        .iter()
+        .zip(components)
+        .map(|(target, component)| property_declaration(target.name(), &component))
+        .collect()
+}
+
+/// A declaration of a registered property.
+fn property_declaration(name: &str, value: &str) -> Result<(Name, String), Violation> {
     let property = CssProperty::ALL
         .iter()
         .copied()

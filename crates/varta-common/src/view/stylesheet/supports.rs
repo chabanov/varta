@@ -3,7 +3,7 @@
 //! declaration is supported when the engine admits it, a selector when it is
 //! in the selector subset. A `<general-enclosed>` is false.
 use super::super::syntax::{self, Spanned, Token};
-use super::super::{CssProperty, PSEUDO_CLASSES, css};
+use super::super::{PSEUDO_CLASSES, css};
 #[allow(unused_imports)]
 use crate::view::prelude::*;
 
@@ -143,13 +143,7 @@ fn declaration(tokens: &[Spanned]) -> bool {
         return false;
     }
     let value = syntax::serialize(trimmed(&tokens[colon + 1..]));
-    if let Some(custom) = name.strip_prefix("--") {
-        return css::ident(custom) && css::custom_value(&value);
-    }
-    CssProperty::ALL
-        .iter()
-        .find(|property| property.name().eq_ignore_ascii_case(name))
-        .is_some_and(|property| css::check(*property, &value).is_ok())
+    super::declaration(name, &value).is_ok()
 }
 
 /// `selector( … )`: a compound selector of the subset.

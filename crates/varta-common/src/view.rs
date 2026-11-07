@@ -82,6 +82,7 @@ pub mod css;
 pub mod expansion;
 pub mod fonts;
 pub mod images;
+pub mod mapped;
 pub mod stylesheet;
 pub mod syntax;
 
@@ -384,6 +385,10 @@ coded! {
         AspectRatio = 78 => "aspect-ratio",
         VerticalAlign = 79 => "vertical-align",
         ImageOrientation = 80 => "image-orientation",
+        Translate = 81 => "translate",
+        Scale = 82 => "scale",
+        TransformOrigin = 83 => "transform-origin",
+        LetterSpacing = 84 => "letter-spacing",
     }
 }
 
@@ -1125,6 +1130,10 @@ impl CssProperty {
                 "baseline | sub | super | text-top | text-bottom | middle | top | bottom | <length-percentage>"
             }
             Self::ImageOrientation => "from-image | none",
+            Self::Translate => "none | <length-percentage> <length-percentage>?",
+            Self::Scale => "none | <number> <number>?",
+            Self::TransformOrigin => "<length-percentage> <length-percentage>",
+            Self::LetterSpacing => "normal | <length>",
         }
     }
 }
@@ -1151,6 +1160,8 @@ impl CssProperty {
             Self::AspectRatio => Some("positive ratio terms"),
             Self::VerticalAlign => Some("inline-level boxes"),
             Self::ImageOrientation => Some("inherited"),
+            Self::Scale => Some("positive factors"),
+            Self::LetterSpacing => Some("inherited"),
             _ => None,
         }
     }
@@ -1616,6 +1627,10 @@ mod tests {
             P::AspectRatio => &["auto", "16 / 9", "2", "auto 4 / 3"],
             P::VerticalAlign => &["middle", "text-top", "-2px", "10%"],
             P::ImageOrientation => &["none", "from-image"],
+            P::Translate => &["none", "4px", "10% -2px"],
+            P::Scale => &["none", "0.95", "1 2"],
+            P::TransformOrigin => &["0 0", "100% 50%", "4px 10%"],
+            P::LetterSpacing => &["normal", "0.4px", "-1px"],
         }
     }
 

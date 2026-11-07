@@ -11769,6 +11769,30 @@ export const registry = freeze({
         "grammar": "from-image | none",
         "name": "image-orientation",
         "note": "inherited"
+      },
+      {
+        "code": 81,
+        "grammar": "none | <length-percentage> <length-percentage>?",
+        "name": "translate",
+        "note": null
+      },
+      {
+        "code": 82,
+        "grammar": "none | <number> <number>?",
+        "name": "scale",
+        "note": "positive factors"
+      },
+      {
+        "code": 83,
+        "grammar": "<length-percentage> <length-percentage>",
+        "name": "transform-origin",
+        "note": null
+      },
+      {
+        "code": 84,
+        "grammar": "normal | <length>",
+        "name": "letter-spacing",
+        "note": "inherited"
       }
     ],
     "cssTypes": {

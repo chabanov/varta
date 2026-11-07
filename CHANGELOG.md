@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- K8 T2 S4 (first part), layout and text properties: CSS Logical 1
+  `padding-`/`margin-`/`inset-` `inline`/`block` properties (with
+  `-start`/`-end`), `inset` and `flex` map onto physical longhands at their
+  place in the cascade (with `var()`, split after substitution); new
+  properties `translate`, `scale`, `transform-origin` and `letter-spacing`,
+  rendered natively (effective transform `translate`, `scale`, `transform`
+  around the origin; shaper letter spacing). Chrome comparison: three new
+  scenes pass at 1x, 1.25x and 2x. Tailwind application candidates
+  accepted: 203 to 228 of 312.
 - K8 T2 font-metric units: `ex`, `cap`, `ch`, `ic`, `rex`, `rcap`, `rch`,
   `ric`, `lh` under `line-height: normal` and `rlh` resolve from the
   element's first available font on both hosts. The style engine selects

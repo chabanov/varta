@@ -3330,6 +3330,163 @@
      "calc(1lh + 1cap)"
     ]
    ]
+  },
+  {
+   "name": "s4-logical-padding",
+   "sheet": ".a { padding-left: 9px; padding-inline: 1px 2px; padding-block-end: 3px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-logical-var",
+   "sheet": ":root { --s: 0.25rem } .a { padding-inline: calc(var(--s) * 2); margin-block: var(--s) auto }",
+   "classes": [
+    "",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-logical-var-pair",
+   "sheet": ":root { --pair: 4px 6px } .a { padding-inline: var(--pair) }",
+   "classes": [
+    "",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-logical-var-invalid",
+   "sheet": ":root { --three: 1px 2px 3px } .a { padding-left: 5px } .a { padding-inline: var(--three) }",
+   "classes": [
+    "",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-logical-order",
+   "sheet": ".a { margin-inline-start: 4px } .b { margin-left: 8px } .a.b { margin-inline: 1px }",
+   "classes": [
+    "a b"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-inset",
+   "sheet": ".a { position: absolute; inset: 1px 2px 3px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-inset-logical",
+   "sheet": ".a { position: absolute; inset-inline: 5%; inset-block-start: 2px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-flex-one",
+   "sheet": ".a { flex: 1 }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-flex-auto-none",
+   "sheet": ".a { flex: auto } .a.a { flex: none }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-flex-basis",
+   "sheet": ".a { flex: 2 0 10px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-flex-invalid",
+   "sheet": ".a { flex: 1 2 3 4 }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-translate",
+   "sheet": ".a { translate: 4px 50% }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-scale-percent",
+   "sheet": ".a { --tw-scale-x: 95%; scale: var(--tw-scale-x) var(--tw-scale-x) }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-scale-zero",
+   "sheet": ".a { scale: 0 }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-origin-keywords",
+   "sheet": ".a { transform-origin: top right }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-origin-mixed",
+   "sheet": ".a { transform-origin: calc(10% + 1px) top }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-letter-spacing",
+   "sheet": ".p { font-size: 20px } .a { letter-spacing: -0.025em }",
+   "classes": [
+    "p",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-letter-spacing-inline",
+   "sheet": ".a { color: #000 }",
+   "classes": [
+    "a"
+   ],
+   "style": [
+    [
+     "letter-spacing",
+     "0.1rem"
+    ],
+    [
+     "translate",
+     "1px"
+    ]
+   ]
   }
  ]
 }

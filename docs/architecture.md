@@ -15095,8 +15095,37 @@ oracle, not the definition.
   `position: sticky`, intrinsic sizes, `overflow: scroll | clip`,
   `white-space: pre-line | break-spaces`, `text-align: justify`, border
   styles other than `solid`).
-- **Not yet admitted:** `@keyframes`, `@container`, nesting, and the
-  selector, layout and paint stages S4–S8.
+- **Layout and text properties (S4).** Mapped properties are expanded
+  when a stylesheet is parsed (`view::mapped`): the flow-relative box
+  properties of CSS Logical 1 §4 (`padding-`, `margin-` and `inset-`
+  `inline`/`block` with their `-start`/`-end` forms) in the subset's only
+  writing mode (`horizontal-tb`, `ltr`: inline start left, block start
+  top), `inset` (Positioned Layout 3 §3.1, the box rule) and `flex`
+  (Flexbox 1 §7.1: `none`, `auto`, factors with omitted factors 1 and an
+  omitted basis `0%`, Chrome's computed form of the specification's 0).
+  Each mapped declaration declares its physical longhands at its own place
+  in the cascade, so a mapped property and its physical longhand win over
+  each other by the ordinary order (Logical 1 §4). A value with `var()`
+  gives every longhand the whole value and its part, split after
+  substitution (Variables 1 §3.1, pending-substitution values); a split
+  that fails is invalid at computed-value time. Mapped properties are
+  stylesheet-only: the engine's computed values, the native renderer and
+  the browser bridge see only physical longhands. New properties:
+  `translate` and `scale` (Transforms 2 §4, two-dimensional; `scale`
+  percentages compute to numbers; the renderer takes positive factors
+  only), `transform-origin` (Transforms 1 §5, keywords and two
+  length-percentages, lowered to `<x> <y>` lengths or percentages; a sum of
+  a length and a percentage is refused as unrenderable) and
+  `letter-spacing` (Text 3 §8.2, `normal | <length>`, inherited, absolute
+  at computed-value time). Natively the effective transform is the
+  `translate`, then `scale`, then `transform` list (Transforms 2 §6.1)
+  around the `transform-origin`; letter spacing is added after every
+  typographic character unit by the shaper.
+- **Not yet admitted:** `@keyframes`, `@container`, nesting, the rest of
+  S4 (per-side border longhands, `overflow-x`/`-y`, `visibility`,
+  `text-transform`, `rotate`, and the display types and sizes native
+  layout lacks: `inline-block`, `inline-flex`, `fit-content`, `sticky`),
+  and the selector and paint stages S5–S8.
 
 **Browser bridge (K8 T3).** The official browser host runs the engine as
 `view-engine.wasm`: `varta-style-wasm`, a `wasm32` shim of `varta-style`

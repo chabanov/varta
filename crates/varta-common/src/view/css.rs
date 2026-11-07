@@ -779,6 +779,13 @@ pub fn forbidden(text: &str) -> bool {
 pub fn grammar(property: CssProperty) -> &'static str {
     use CssProperty as P;
     match property {
+        // CSS Transforms 2 §4: two-dimensional `scale` takes numbers and
+        // percentages (the third, z component is outside the 2D renderer).
+        P::Scale => "none | [<number> | <percentage>] [<number> | <percentage>]?",
+        // CSS Transforms 1 §5: `transform-origin` in two dimensions.
+        P::TransformOrigin => {
+            "left | center | right | top | bottom | <length-percentage> | [left | center | right | <length-percentage>] [top | center | bottom | <length-percentage>] | [top | center | bottom] [left | center | right]"
+        }
         // CSS Fonts 4 §2.2: `<font-weight-absolute>`; numbers in [1, 1000].
         P::FontWeight => "normal | bold | <number>",
         // CSS Color 4 §11.2: `<alpha-value>`.
@@ -991,6 +998,12 @@ fn literal_notes(property: CssProperty, tokens: &[V], mode: Mode) -> bool {
                 _ => false,
             },
             (CssProperty::FontWeight, V::Num { value, .. }) => (1.0..=1000.0).contains(value),
+            // The renderer maps boxes through positive scale factors only.
+            (CssProperty::Scale, V::Num { value, unit, .. }) => match (unit, mode) {
+                (NumUnit::Percent | NumUnit::None, Mode::Engine) => value.is_finite(),
+                (NumUnit::None, Mode::Host | Mode::Lowered) => value.is_finite() && *value > 0.0,
+                _ => false,
+            },
             (CssProperty::TransitionProperty, V::Ident(word)) => {
                 (tokens.len() == 1 || !word.eq_ignore_ascii_case("none"))
                     && !CSS_WIDE_KEYWORDS
@@ -1230,6 +1243,8 @@ fn lower_math(
     } else if kind == Type::of(Base::Percent) {
         if property == CssProperty::Opacity {
             format_number((value / 100.0).clamp(0.0, 1.0))
+        } else if property == CssProperty::Scale {
+            format_number(value / 100.0)
         } else {
             format!("{}%", format_number(value))
         }
@@ -1365,6 +1380,10 @@ fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<
         NumUnit::Percent if property == CssProperty::Opacity => {
             Some(format_number((value / 100.0).clamp(0.0, 1.0)))
         }
+        // Transforms 2 §4: a `scale` percentage is the number it stands for.
+        NumUnit::Percent if property == CssProperty::Scale => {
+            Some(format_number(clamp_magnitude(value / 100.0)))
+        }
         NumUnit::None if property == CssProperty::Opacity => {
             Some(format_number(value.clamp(0.0, 1.0)))
         }
@@ -1421,6 +1440,52 @@ fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<
     }
 }
 
+/// The keywords of `transform-origin` and `object-position`-like positions
+/// (CSS Transforms 1 §5): the offset they stand for and whether they name
+/// the vertical axis (`Some(true)`), the horizontal one (`Some(false)`) or
+/// either (`center`, `None`).
+const ORIGIN_KEYWORDS: [(&str, &str, Option<bool>); 5] = [
+    ("left", "0%", Some(false)),
+    ("right", "100%", Some(false)),
+    ("top", "0%", Some(true)),
+    ("bottom", "100%", Some(true)),
+    ("center", "50%", None),
+];
+
+/// `transform-origin` as `<x> <y>`, each `px` or a percentage of the box;
+/// `None` for a sum of a length and a percentage (the renderer resolves
+/// none) or a value outside the 2D grammar.
+fn lower_origin(value: &str, context: &Context) -> Option<String> {
+    let parts = super::mapped::split(value)?;
+    let keyword = |part: &str| {
+        ORIGIN_KEYWORDS
+            .iter()
+            .find(|(name, _, _)| part.eq_ignore_ascii_case(name))
+            .map(|(_, offset, vertical)| (*offset, *vertical))
+    };
+    let length = |part: &str| {
+        let lowered = lower(CssProperty::Left, part, context)?;
+        (!lowered.contains('(') && lowered != "auto").then_some(lowered)
+    };
+    let offset = |part: &str| {
+        keyword(part)
+            .map(|(offset, _)| offset.to_owned())
+            .or_else(|| length(part))
+    };
+    let vertical = |part: &str| keyword(part).and_then(|(_, vertical)| vertical);
+    let (x, y) = match parts.as_slice() {
+        [single] if vertical(single) == Some(true) => ("50%".to_owned(), offset(single)?),
+        [single] => (offset(single)?, "50%".to_owned()),
+        // A vertical keyword first, or a horizontal one second, swaps them.
+        [a, b] if vertical(a) == Some(true) || vertical(b) == Some(false) => {
+            (offset(b)?, offset(a)?)
+        }
+        [a, b] => (offset(a)?, offset(b)?),
+        _ => return None,
+    };
+    Some(join(&[x, y]))
+}
+
 /// Lower a valid engine value of `property` (after `var()` substitution) to
 /// the host grammar the native renderer's consumers read: math functions
 /// are evaluated (CSS Values 4 §10.10) with lengths in `px` and the results
@@ -1430,6 +1495,9 @@ fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<
 /// render the value. A value already in the host grammar is returned as is.
 #[must_use]
 pub fn lower(property: CssProperty, value: &str, context: &Context) -> Option<String> {
+    if property == CssProperty::TransformOrigin {
+        return lower_origin(value, context);
+    }
     let tokens = lex_value(value)?;
     let target = grammar(property);
     if matches_tokens(target, &tokens, Mode::Host) && literal_notes(property, &tokens, Mode::Host) {
@@ -1791,6 +1859,67 @@ mod font_tests {
             ..Context::NOMINAL
         };
         assert_eq!(super::lower(CssProperty::Width, "2em", &bare), None);
+    }
+}
+
+#[cfg(test)]
+mod transform_property_tests {
+    use super::*;
+
+    /// CSS Transforms 2 §4 and Transforms 1 §5 in two dimensions.
+    #[test]
+    fn individual_transforms_and_origins_lower_for_the_renderer() {
+        let lower = |property, value| lower(property, value, &Context::NOMINAL);
+        assert_eq!(
+            lower(CssProperty::Scale, "95% 95%").as_deref(),
+            Some("0.95 0.95")
+        );
+        assert_eq!(
+            lower(CssProperty::Scale, "calc(50% * 3)").as_deref(),
+            Some("1.5")
+        );
+        assert_eq!(check(CssProperty::Scale, "0"), Err(Refusal::Unrenderable));
+        assert_eq!(check(CssProperty::Scale, "1 2 3"), Err(Refusal::Invalid));
+        assert_eq!(
+            lower(CssProperty::Translate, "1rem 50%").as_deref(),
+            Some("1rem 50%")
+        );
+        assert_eq!(
+            check(CssProperty::Translate, "calc(50% + 1px)"),
+            Err(Refusal::Unrenderable)
+        );
+        assert_eq!(
+            lower(CssProperty::TransformOrigin, "top right").as_deref(),
+            Some("100% 0%")
+        );
+        assert_eq!(
+            lower(CssProperty::TransformOrigin, "100% 0").as_deref(),
+            Some("100% 0")
+        );
+        assert_eq!(
+            lower(CssProperty::TransformOrigin, "left").as_deref(),
+            Some("0% 50%")
+        );
+        assert_eq!(
+            lower(CssProperty::TransformOrigin, "bottom").as_deref(),
+            Some("50% 100%")
+        );
+        assert_eq!(
+            lower(CssProperty::TransformOrigin, "1rem center").as_deref(),
+            Some("1rem 50%")
+        );
+        assert_eq!(
+            check(CssProperty::TransformOrigin, "top 50%"),
+            Err(Refusal::Invalid)
+        );
+        assert_eq!(
+            check(CssProperty::TransformOrigin, "calc(10% + 1px) top"),
+            Err(Refusal::Unrenderable)
+        );
+        assert_eq!(
+            lower(CssProperty::LetterSpacing, "-0.025em").as_deref(),
+            Some("-0.4px")
+        );
     }
 }
 

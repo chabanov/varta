@@ -103,6 +103,14 @@ pub enum SheetError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BudgetExceeded;
 
+/// The winning declaration of one property: its value and, for a mapped
+/// longhand whose value has `var()`, its part (`varta_common::view::mapped`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Winner<'a> {
+    pub value: &'a str,
+    pub part: Option<varta_common::view::mapped::Part>,
+}
+
 /// One declaration of the cascade.
 #[derive(Debug, Clone, Copy)]
 pub struct Declared<'a> {
@@ -183,6 +191,8 @@ pub fn inherited(property: CssProperty) -> bool {
             | P::Cursor
             // CSS Images 3 §5.1 and §5.2.
             | P::ImageOrientation
+            // CSS Text 3 §8.2.
+            | P::LetterSpacing
             | P::ImageRendering
     )
 }
@@ -456,7 +466,7 @@ impl Styles {
         document: &'a impl Document,
         id: u32,
         media: &Media,
-    ) -> BTreeMap<CssProperty, &'a str> {
+    ) -> BTreeMap<CssProperty, Winner<'a>> {
         let cascade = self.cascade(document, id, media);
         let inline = document.element(id).map(|element| element.style);
         let mut out = BTreeMap::new();
@@ -473,25 +483,35 @@ impl Styles {
         cascade: &Cascade<'a>,
         inline: Option<&'a BTreeMap<CssProperty, String>>,
         property: CssProperty,
-    ) -> Option<&'a str> {
+    ) -> Option<Winner<'a>> {
         // Candidates in descending precedence, with the layer of each rule
         // declaration (inline values are element-attached, outside layers).
-        let mut candidates: Vec<(Option<usize>, &'a str)> = Vec::new();
-        for declared in cascade.important.iter().rev() {
-            if declared.name == &Name::Property(property) {
-                candidates.push((Some(declared.layer), declared.value));
-            }
-        }
+        // A mapped longhand declares its physical property (Logical 1 §4).
+        let mut candidates: Vec<(Option<usize>, Winner<'a>)> = Vec::new();
+        let rule = |declared: &Declared<'a>| {
+            (declared.name.property() == Some(property)).then(|| {
+                (
+                    Some(declared.layer),
+                    Winner {
+                        value: declared.value,
+                        part: declared.name.part(),
+                    },
+                )
+            })
+        };
+        candidates.extend(cascade.important.iter().rev().filter_map(rule));
         if let Some(value) = inline.and_then(|inline| inline.get(&property)) {
-            candidates.push((None, value.as_str()));
+            candidates.push((
+                None,
+                Winner {
+                    value: value.as_str(),
+                    part: None,
+                },
+            ));
         }
-        for declared in cascade.normal.iter().rev() {
-            if declared.name == &Name::Property(property) {
-                candidates.push((Some(declared.layer), declared.value));
-            }
-        }
+        candidates.extend(cascade.normal.iter().rev().filter_map(rule));
         let mut at = 0;
-        while let Some((layer, value)) = candidates.get(at) {
+        while let Some((layer, Winner { value, .. })) = candidates.get(at) {
             match wide(value) {
                 Some(Wide::Revert) => return None,
                 Some(Wide::RevertLayer) => {
@@ -505,7 +525,7 @@ impl Styles {
                         at += 1;
                     }
                 }
-                _ => return Some(value),
+                _ => return Some(candidates[at].1),
             }
         }
         None
@@ -599,15 +619,21 @@ impl Styles {
         (id, environment): (u32, &Environment),
         (scope, font): (&mut Option<Scope<'a>>, &mut LazyFont<'_>),
         property: CssProperty,
-        raw: &str,
+        raw: Winner<'_>,
         validate: &impl Fn(CssProperty, &str) -> bool,
     ) -> Option<Computed> {
-        let substituted = if css::contains_variable(raw) {
+        let substituted = if css::contains_variable(raw.value) {
             scope
                 .get_or_insert_with(|| self.scope(document, id, environment))
-                .substitute(raw)?
+                .substitute(raw.value)?
         } else {
-            raw.to_owned()
+            raw.value.to_owned()
+        };
+        // A mapped longhand's component of the substituted value (Variables
+        // 1 §3.1: the pending-substitution value of a shorthand).
+        let substituted = match raw.part {
+            Some(part) => part.source.component(&substituted, part.index)?,
+            None => substituted,
         };
         match wide(&substituted) {
             Some(Wide::Initial) => return Some(Computed::Initial),
@@ -779,7 +805,7 @@ impl Styles {
                     for (name, value) in &self.sheets[&sheet].index.expansion[index] {
                         match name {
                             Name::Custom(name) => custom.entry(name).or_default().push(value),
-                            Name::Property(property) => {
+                            Name::Property(property) | Name::Mapped(property, _) => {
                                 properties.entry(*property).or_default().push(value);
                             }
                         }
