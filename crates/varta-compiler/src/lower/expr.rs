@@ -476,10 +476,6 @@ impl Lower<'_> {
             }
             ast::Expr::Bin(binary) if binary.op == ast::BinaryOp::InstanceOf => {
                 if let Some(class) = self.class_callee(&binary.right) {
-                    // V38 (`symbol_values`): `static [Symbol.hasInstance]`.
-                    if let Some(test) = self.has_instance(binary, class)? {
-                        return Ok(test);
-                    }
                     return self.class_instance_of(binary, class);
                 }
                 if let Some(test) = self.collection_instance_of(binary)? {
