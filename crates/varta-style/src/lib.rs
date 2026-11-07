@@ -26,6 +26,7 @@ pub mod font;
 pub mod fonts;
 mod forms;
 pub mod index;
+pub mod pseudo;
 pub mod selectors;
 pub mod session;
 mod shorthands;
@@ -43,7 +44,9 @@ use varta_common::view::{
 
 pub use forms::valid_float;
 pub use index::{CascadeIndex, LayerRanks, RuleCost, RuleIndex};
+pub use pseudo::{PSEUDO_NODE, WithPseudo};
 pub use variables::{Registered, Scope};
+pub use varta_common::view::stylesheet::selector::PseudoElement;
 
 /// What the cascade reads of one element.
 #[derive(Debug, Clone, Copy)]
@@ -91,6 +94,16 @@ pub trait Document {
     /// field's bad input, the user validity of `:user-valid`).
     fn state(&self, _id: u32) -> ElementState {
         ElementState::default()
+    }
+    /// For a node that is a pseudo-element's box (CSS Pseudo-Elements 4
+    /// §4.1, §2.3: a child of its originating element in the box tree),
+    /// the originating element and the pseudo-element. Its cascade takes
+    /// the rules that select that pseudo-element of the originating
+    /// element; it has no inline style, and its parent is the originating
+    /// element, from which it inherits. Such a node is never one of
+    /// [`Document::children`], so selectors never see it.
+    fn pseudo(&self, _id: u32) -> Option<(u32, PseudoElement)> {
+        None
     }
 }
 
@@ -260,6 +273,12 @@ pub fn inherited(property: CssProperty) -> bool {
             | P::Visibility
             | P::TextTransform
             | P::PointerEvents
+            // CSS Fonts 4 §7.2, §7.3; CSS Lists 3 §3.
+            | P::FontFeatureSettings
+            | P::FontVariationSettings
+            | P::ListStyleType
+            | P::ListStylePosition
+            | P::ListStyleImage
     )
 }
 
@@ -397,20 +416,30 @@ impl Styles {
         Ok(())
     }
 
-    /// The matching declarations of `id` (Cascade 5 §6.1).
+    /// The matching declarations of `id` (Cascade 5 §6.1); for a
+    /// pseudo-element's box ([`Document::pseudo`]), the declarations of the
+    /// rules that select that pseudo-element of its originating element.
     #[must_use]
     pub fn cascade<'a>(&'a self, document: &impl Document, id: u32, media: &Media) -> Cascade<'a> {
-        let Some(element) = document.element(id) else {
+        let (subject, pseudo) = match document.pseudo(id) {
+            Some((origin, kind)) => (origin, Some(kind)),
+            None => (id, None),
+        };
+        let Some(element) = document.element(subject) else {
             return Cascade::default();
         };
+        if pseudo.is_some_and(|kind| !self.index.selects(kind)) {
+            return Cascade::default();
+        }
         let classes: BTreeSet<&str> = element.class.split_ascii_whitespace().collect();
         let ranks = self.index.ranks(media);
         let mut normal = Vec::new();
         let mut important = Vec::new();
-        for (sheet, index) in self.index.candidates(id == ROOT_NODE, &classes) {
+        for (sheet, index) in self.index.candidates(subject == ROOT_NODE, &classes) {
             let rule = &self.sheets[&sheet].rules[index];
             if rule.applies(media)
-                && let Some(specificity) = selectors::matching(document, id, &rule.selectors, None)
+                && let Some(specificity) =
+                    selectors::matching(document, subject, &rule.selectors, pseudo)
             {
                 let layer = ranks.rank(sheet, rule.layer);
                 if rule.important {
@@ -513,7 +542,11 @@ impl Styles {
         media: &Media,
     ) -> BTreeMap<CssProperty, Winner<'a>> {
         let cascade = self.cascade(document, id, media);
-        let inline = document.element(id).map(|element| element.style);
+        // A pseudo-element has no inline style.
+        let inline = document
+            .element(id)
+            .filter(|_| document.pseudo(id).is_none())
+            .map(|element| element.style);
         let mut out = BTreeMap::new();
         for property in CssProperty::ALL.iter().copied() {
             if let Some(value) = Self::winner(&cascade, inline, property) {
@@ -719,6 +752,31 @@ impl Styles {
             context.font = font.get();
         }
         css::lower(property, &substituted, &context).map(Computed::Value)
+    }
+
+    /// Whether any admitted rule selects pseudo-element `kind`.
+    #[must_use]
+    pub fn selects(&self, kind: PseudoElement) -> bool {
+        self.index.selects(kind)
+    }
+
+    /// The computed values of pseudo-element `kind` of element `origin`
+    /// (see [`Styles::computed`]), for a host whose tree has no node for
+    /// its box ([`WithPseudo`]). Empty when no rule selects `kind`.
+    #[must_use]
+    pub fn pseudo_computed(
+        &self,
+        document: &impl Document,
+        origin: u32,
+        kind: PseudoElement,
+        environment: &Environment,
+        validate: impl Fn(CssProperty, &str) -> bool,
+    ) -> BTreeMap<CssProperty, Computed> {
+        if !self.selects(kind) || document.element(origin).is_none() {
+            return BTreeMap::new();
+        }
+        let with = WithPseudo::new(document, origin, kind);
+        self.computed(&with, PSEUDO_NODE, environment, validate)
     }
 
     /// Whether any rule declares a transition duration or delay.

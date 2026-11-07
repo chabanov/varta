@@ -88,7 +88,7 @@ pub(crate) struct Element {
     pub open: bool,
 }
 impl Element {
-    fn new(tag: Tag) -> Self {
+    pub(crate) fn new(tag: Tag) -> Self {
         Self {
             tag,
             attributes: BTreeMap::new(),
@@ -224,6 +224,9 @@ pub(crate) struct Node {
     pub content: Content,
     pub parent: Option<u32>,
     pub children: Vec<u32>,
+    /// A box the renderer generated for a pseudo-element
+    /// ([`crate::generated`]); `None` for the guest's nodes.
+    pub generated: Option<crate::generated::Generated>,
 }
 
 /// A host-side consequence of an applied batch, performed after the swap.
@@ -283,6 +286,7 @@ impl Default for Tree {
             content: Content::Element(Element::new(Tag::Div)),
             parent: None,
             children: Vec::new(),
+            generated: None,
         };
         Self {
             render_reads: crate::render::ReadCache::default(),
@@ -853,12 +857,15 @@ impl Tree {
         out
     }
 
-    /// Apply a decoded batch to this (copied) tree.
+    /// Apply a decoded batch to this (copied) tree: to the guest's nodes
+    /// alone, without the generated boxes, which the next style change
+    /// event regenerates.
     pub(crate) fn apply(
         &mut self,
         operations: &[Operation],
         context: &mut Context<'_>,
     ) -> Result<Vec<Effect>, ViewError> {
+        self.strip_generated();
         let mut apply = Apply {
             tree: self,
             context,
@@ -1186,6 +1193,9 @@ impl Apply<'_, '_, '_> {
         if id == NO_NODE || self.tree.nodes.contains_key(&id) {
             return Err(self.fail(Violation::DuplicateNode(id)));
         }
+        if crate::generated::generated_id(id) {
+            return Err(self.fail(Violation::GeneratedNode(id)));
+        }
         if self.tree.nodes.len() >= DRAFT_MAX_LIVE_NODES {
             return Err(self.fail(Violation::TooManyNodes));
         }
@@ -1196,6 +1206,7 @@ impl Apply<'_, '_, '_> {
                 content,
                 parent: None,
                 children: Vec::new(),
+                generated: None,
             },
         );
         Ok(())
@@ -1867,15 +1878,19 @@ impl varta_style::Document for Tree {
         self.nodes.get(&id).and_then(|node| node.parent)
     }
     fn children(&self, id: u32) -> &[u32] {
-        self.nodes
-            .get(&id)
-            .map_or(&[], |node| node.children.as_slice())
+        self.document_children(id)
     }
     fn top_level(&self) -> Vec<u32> {
         self.nodes
             .iter()
-            .filter_map(|(id, node)| node.parent.is_none().then_some(*id))
+            .filter_map(|(id, node)| {
+                (node.parent.is_none() && node.generated.is_none()).then_some(*id)
+            })
             .collect()
+    }
+    fn pseudo(&self, id: u32) -> Option<(u32, varta_style::PseudoElement)> {
+        let node = self.nodes.get(&id)?;
+        Some((node.parent?, node.generated.as_ref()?.kind))
     }
     fn focused(&self, id: u32) -> bool {
         self.focus == Some(id)

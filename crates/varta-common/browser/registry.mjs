@@ -11955,6 +11955,48 @@ export const registry = freeze({
         "grammar": "content-box | border-box",
         "name": "box-sizing",
         "note": null
+      },
+      {
+        "code": 108,
+        "grammar": "normal | none | <string>+",
+        "name": "content",
+        "note": "`::before` and `::after`; elements take `normal` and `none`"
+      },
+      {
+        "code": 109,
+        "grammar": "normal | [<string> [<integer> | on | off]?]#",
+        "name": "font-feature-settings",
+        "note": "inherited; four-character OpenType tags; nonnegative feature values"
+      },
+      {
+        "code": 110,
+        "grammar": "normal | [<string> <number>]#",
+        "name": "font-variation-settings",
+        "note": "inherited; four-character OpenType tags; nonnegative feature values"
+      },
+      {
+        "code": 111,
+        "grammar": "disc | circle | square | decimal | none",
+        "name": "list-style-type",
+        "note": "inherited; list items"
+      },
+      {
+        "code": 112,
+        "grammar": "outside",
+        "name": "list-style-position",
+        "note": "inherited; list items"
+      },
+      {
+        "code": 113,
+        "grammar": "none",
+        "name": "list-style-image",
+        "note": "inherited; list items"
+      },
+      {
+        "code": 114,
+        "grammar": "none | auto | button | textfield | menulist-button | searchfield | textarea | checkbox | radio | menulist | listbox | meter | progress-bar",
+        "name": "appearance",
+        "note": null
       }
     ],
     "cssTypes": {
@@ -11985,6 +12027,17 @@ export const registry = freeze({
       "monospaceTags": [
         "pre",
         "code"
+      ],
+      "pseudoElements": [
+        "before",
+        "after",
+        "placeholder",
+        "marker",
+        "selection",
+        "backdrop",
+        "file-selector-button",
+        "first-line",
+        "first-letter"
       ],
       "rootSelector": "[data-l0-root]",
       "rootStyle": "display: block; height: 100%"
@@ -13593,6 +13646,7 @@ export const registry = freeze({
         "key",
         "value"
       ],
+      "firstGeneratedNode": 2147483648,
       "noNode": 0,
       "operationHeaderBytes": 4,
       "root": 1,

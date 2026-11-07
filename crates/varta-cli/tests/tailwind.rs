@@ -1,8 +1,8 @@
 //! K8 T1: build-time Tailwind stylesheets. The project's `tailwind.entry`
 //! is compiled from the program's class tokens and served as the text of the
 //! entry's text resource, which the program applies with `View.stylesheet`.
-//! End-to-end application of full Tailwind output waits for the T2 engine
-//! grammar; those checks assert the precise first T2 violation today.
+//! Full Tailwind output, Preflight included, applies through the T2
+//! engine.
 use std::{
     fs,
     path::PathBuf,
@@ -160,46 +160,6 @@ export function main(): void {
     );
 }
 
-/// The full `@import "tailwindcss"` stylesheet (layers, `@property`,
-/// theme variables, Preflight, escaped class selectors) is generated and
-/// stored, but the engine's selector subset rejects it. Since the first
-/// part of T2 S5 (complex selectors, `:root, :host`) landed, its first
-/// violation is Preflight's pseudo-elements (`::after`, `::before`,
-/// `::backdrop`): since the second part they parse, and the engine refuses
-/// the first one the renderers do not draw yet, the rest of S5. This asserts
-/// that precise violation (it moves as T2 stages land); afterwards
-/// `full_tailwind_application_applies_after_t2` takes over.
-#[test]
-fn full_tailwind_output_waits_for_t2_sheet_structure() {
-    let project = Project::new(
-        r#"import css from "./app.css" with { type: "text" };
-export function main(): void {
-  View.stylesheet(1, css);
-  const card = "p-4";
-  View.mount(<p className={card}>x</p>);
-}"#,
-        "@import \"tailwindcss\";\n",
-    );
-    let diagnostic = project.diagnostic();
-    assert_eq!(diagnostic["code"], "type_error", "{diagnostic}");
-    assert!(
-        diagnostic["file"].as_str().unwrap().ends_with("app.css"),
-        "{diagnostic}"
-    );
-    assert!(
-        diagnostic["message"].as_str().unwrap().starts_with(
-            "invalid stylesheet for View.stylesheet: a pseudo-element the renderers do not draw yet"
-        ),
-        "{diagnostic}"
-    );
-    assert_eq!(
-        diagnostic["snippet"]["text"],
-        "  *, ::after, ::before, ::backdrop, ::file-selector-button {",
-        "{diagnostic}"
-    );
-    assert_eq!(diagnostic["range"]["start"]["column"], 6, "{diagnostic}");
-}
-
 /// Static Tailwind class tokens such as `w-1/2` follow the HTML class
 /// model (T2 stage S1), and their escaped selectors and math (S3) apply.
 #[test]
@@ -219,19 +179,17 @@ export function main(): void {
 }
 
 /// The end-to-end goal of K8: ordinary TSX with Tailwind classes, no
-/// hand-written CSS. T2 stages S1 (class tokens), S2 (`@property`), S3
-/// (`calc`, `oklch`, `color-mix`), `!important` and the first part of S5
-/// (complex selectors) have landed; it still needs Preflight's
-/// pseudo-elements and attribute selectors (the rest of S5) at least; run
-/// with `--ignored` once they land.
+/// hand-written CSS. The full `@import "tailwindcss"` stylesheet (layers,
+/// `@property`, theme variables, the whole of Preflight with its
+/// pseudo-elements, the rules CSS error handling drops and the element
+/// types outside the view, escaped class selectors) is admitted and applied.
 #[test]
-#[ignore = "waits for the rest of T2 stage S5 (pseudo-elements, attributes) of the stylesheet engine"]
-fn full_tailwind_application_applies_after_t2() {
+fn full_tailwind_application_applies() {
     let project = Project::new(
         r#"import css from "./app.css" with { type: "text" };
 export function main(): void {
   View.stylesheet(1, css);
-  View.mount(<main className="mx-auto max-w-md p-4"><button class="rounded-lg bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">Save</button></main>);
+  View.mount(<main className="mx-auto max-w-md p-4"><button class="relative rounded-lg bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-indigo-300">Save</button><input class="block placeholder:text-gray-400" placeholder="Name" /></main>);
 }"#,
         "@import \"tailwindcss\";\n",
     );

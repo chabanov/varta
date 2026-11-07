@@ -178,6 +178,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
       switch (op.name) {
         case "create_element": case "create_text":
           if (!op.node || next.has(op.node)) fail("duplicate node");
+          if (op.node >= W.firstGeneratedNode) fail("generated node id");
           if (next.size >= V.limits.nodes) fail("node budget");
           next.set(op.node, op.name === "create_element" ? element(op.tag) : textNode(op.text));
           engineCall(engine.create(op.node, op.name === "create_element" ? tags.get(op.tag).code : null), "unknown node");

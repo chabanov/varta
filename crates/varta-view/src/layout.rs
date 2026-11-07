@@ -1147,6 +1147,16 @@ pub(crate) fn resolve_text(
         if let Some(value) = declared(CssProperty::TextAlign) {
             align = TextAlign::parse(value).ok_or(LayoutError::Unsupported(ancestor))?;
         }
+        // CSS Fonts 4 §7.2, §7.3: the shaper takes no author feature or
+        // variation settings yet; `normal` is the default shaping.
+        for property in [
+            CssProperty::FontFeatureSettings,
+            CssProperty::FontVariationSettings,
+        ] {
+            if declared(property).is_some_and(|value| value != "normal") {
+                return Err(LayoutError::Unsupported(ancestor));
+            }
+        }
         if let Some(value) = declared(CssProperty::LetterSpacing) {
             // CSS Text 3 §8.2: `normal` is zero.
             letter_spacing = match value.as_str() {
@@ -1342,6 +1352,11 @@ fn build_one(
                     | CssProperty::OverflowWrap
                     | CssProperty::TextAlign
                     | CssProperty::TextTransform
+                    | CssProperty::FontFeatureSettings
+                    | CssProperty::FontVariationSettings
+                    | CssProperty::ListStyleType
+                    | CssProperty::ListStylePosition
+                    | CssProperty::ListStyleImage
             ) && !paint_only(*property)
         }) {
             return Err(LayoutError::Unsupported(id));
@@ -1681,6 +1696,24 @@ fn build_one(
                             .length(&value, false)
                             .ok_or(LayoutError::Unsupported(id))?
                     }
+                }
+                // A generated box's content (`crate::generated`); an
+                // element's own content replacement (CSS Content 3 §2) is
+                // not rendered.
+                CssProperty::Content
+                    if tree.generated(id).is_some()
+                        || matches!(value.as_str(), "normal" | "none") => {}
+                // Inherited by text (`resolve_text`) and list items
+                // (`crate::list`).
+                CssProperty::FontFeatureSettings
+                | CssProperty::FontVariationSettings
+                | CssProperty::ListStyleType
+                | CssProperty::ListStylePosition
+                | CssProperty::ListStyleImage => {}
+                // CSS UI 4 §7.1: a control's native appearance
+                // (`style::themed`).
+                CssProperty::Appearance => {
+                    style::appearance(element, &value).ok_or(LayoutError::Unsupported(id))?;
                 }
                 // CSS Box Sizing 3 §4.1: which box `width` and `height` size.
                 CssProperty::BoxSizing => {

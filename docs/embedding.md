@@ -3151,6 +3151,7 @@ not imply complete CSS rendering or typography acceptance.
 | Event export (v38) | `varta.view_abi.event` (i32) → () |
 | Root node id | 1 |
 | "No node" id | 0 |
+| First generated node id (guest ids are below it) | 2147483648 |
 | Batch header bytes | 8 |
 | Operation header bytes | 4 |
 | String alignment bytes | 4 |
@@ -3412,6 +3413,13 @@ not imply complete CSS rendering or typography acceptance.
 | 105 | `pointer-events` | `auto \| none` | inherited |
 | 106 | `user-select` | `auto \| text \| none \| contain \| all` | — |
 | 107 | `box-sizing` | `content-box \| border-box` | — |
+| 108 | `content` | `normal \| none \| <string>+` | `::before` and `::after`; elements take `normal` and `none` |
+| 109 | `font-feature-settings` | `normal \| [<string> [<integer> \| on \| off]?]#` | inherited; four-character OpenType tags; nonnegative feature values |
+| 110 | `font-variation-settings` | `normal \| [<string> <number>]#` | inherited; four-character OpenType tags; nonnegative feature values |
+| 111 | `list-style-type` | `disc \| circle \| square \| decimal \| none` | inherited; list items |
+| 112 | `list-style-position` | `outside` | inherited; list items |
+| 113 | `list-style-image` | `none` | inherited; list items |
+| 114 | `appearance` | `none \| auto \| button \| textfield \| menulist-button \| searchfield \| textarea \| checkbox \| radio \| menulist \| listbox \| meter \| progress-bar` | — |
 <!-- generated:view-css-properties:end -->
 
 **Events.**

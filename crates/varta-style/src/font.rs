@@ -38,14 +38,29 @@ pub const BOLD_WEIGHT: f64 = 700.0;
 const MIN_FONT_WEIGHT: f64 = 1.0;
 const MAX_FONT_WEIGHT: f64 = 1000.0;
 
+/// The heaviest and lightest weights of the CSS Fonts 4 §2.2.1 table.
+const BLACK_WEIGHT: f64 = 900.0;
+const THIN_WEIGHT: f64 = 100.0;
+
 /// The `bolder` weight of an inherited weight (CSS Fonts 4 §2.2.1 table).
 #[must_use]
 pub fn bolder(inherited: f64) -> f64 {
     match inherited {
         weight if weight < 350.0 => NORMAL_WEIGHT,
         weight if weight < 550.0 => BOLD_WEIGHT,
-        weight if weight < 900.0 => 900.0,
+        weight if weight < 900.0 => BLACK_WEIGHT,
         weight => weight,
+    }
+}
+
+/// The `lighter` weight of an inherited weight (CSS Fonts 4 §2.2.1 table).
+#[must_use]
+pub fn lighter(inherited: f64) -> f64 {
+    match inherited {
+        weight if weight < 100.0 => weight,
+        weight if weight < 550.0 => THIN_WEIGHT,
+        weight if weight < 750.0 => NORMAL_WEIGHT,
+        _ => BOLD_WEIGHT,
     }
 }
 
@@ -413,6 +428,9 @@ impl Styles {
             font.weight = match value.as_str() {
                 "normal" => NORMAL_WEIGHT,
                 "bold" => BOLD_WEIGHT,
+                // §2.2.1: relative to the parent element's weight.
+                "bolder" => bolder(parent.weight),
+                "lighter" => lighter(parent.weight),
                 number => number
                     .parse::<f64>()
                     .ok()

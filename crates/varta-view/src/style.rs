@@ -742,11 +742,53 @@ pub(crate) fn pointer_target(tree: &crate::tree::Tree, env: &Environment, id: u3
 }
 
 /// Whether a control with these cascaded author properties keeps Chrome's
-/// native theme (none of [`THEME_BREAKING`] is declared).
+/// native theme: none of [`THEME_BREAKING`] is declared and its
+/// `appearance` is not `none` (CSS UI 4 §7.1).
 pub(crate) fn themed(properties: &BTreeMap<varta_common::view::CssProperty, String>) -> bool {
     !THEME_BREAKING
         .iter()
         .any(|property| properties.contains_key(property))
+        && properties
+            .get(&varta_common::view::CssProperty::Appearance)
+            .is_none_or(|value| value != APPEARANCE_NONE)
+}
+
+/// `appearance: none`.
+const APPEARANCE_NONE: &str = "none";
+/// `auto` and the `<compat-auto>` values, which behave as `auto` (CSS UI 4
+/// §7.1.1).
+const APPEARANCE_AUTO: &[&str] = &[
+    "auto",
+    "button",
+    "searchfield",
+    "textarea",
+    "checkbox",
+    "radio",
+    "menulist",
+    "listbox",
+    "meter",
+    "progress-bar",
+];
+
+/// Whether the renderer draws `element` with this computed `appearance`
+/// (CSS UI 4 §7.1): `auto` and the `<compat-auto>` values keep its native
+/// appearance; `none` draws a button or text field as a CSS box only, as a
+/// declared border or background does (`themed`). A checkbox, radio,
+/// select or progress bar without its native appearance and the
+/// `<compat-special>` values are not drawn yet.
+pub(crate) fn appearance(element: &crate::tree::Element, value: &str) -> Option<()> {
+    if value == "inherit" || APPEARANCE_AUTO.contains(&value) {
+        return Some(());
+    }
+    if value != APPEARANCE_NONE {
+        return None;
+    }
+    match ControlKind::of(element) {
+        None | Some(ControlKind::Button | ControlKind::TextField | ControlKind::Textarea) => {
+            (element.tag != varta_common::view::Tag::Progress).then_some(())
+        }
+        Some(_) => None,
+    }
 }
 
 #[cfg(test)]

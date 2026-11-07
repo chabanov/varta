@@ -108,6 +108,11 @@ pub const EVENT_EXPORT_PARAMS: [HostScalar; 1] = [HostScalar::I32];
 pub const ROOT_NODE: u32 = 1;
 /// "No node" in `insert`'s `before` operand (append).
 pub const NO_NODE: u32 = 0;
+/// The first node id a host reserves for the boxes it generates (the
+/// `::before` and `::after` boxes of CSS Pseudo-Elements 4 §4.1 and their
+/// text): a guest creates nodes with ids in `1..DRAFT_FIRST_GENERATED_NODE`
+/// only, so no guest node can collide with a generated one.
+pub const DRAFT_FIRST_GENERATED_NODE: u32 = 0x8000_0000;
 
 /// Batch header: `version: u16`, `flags: u16`, `op_count: u32`.
 pub const BATCH_HEADER_BYTES: usize = 8;
@@ -412,6 +417,13 @@ coded! {
         PointerEvents = 105 => "pointer-events",
         UserSelect = 106 => "user-select",
         BoxSizing = 107 => "box-sizing",
+        Content = 108 => "content",
+        FontFeatureSettings = 109 => "font-feature-settings",
+        FontVariationSettings = 110 => "font-variation-settings",
+        ListStyleType = 111 => "list-style-type",
+        ListStylePosition = 112 => "list-style-position",
+        ListStyleImage = 113 => "list-style-image",
+        Appearance = 114 => "appearance",
     }
 }
 
@@ -1182,6 +1194,15 @@ impl CssProperty {
             Self::PointerEvents => "auto | none",
             Self::UserSelect => "auto | text | none | contain | all",
             Self::BoxSizing => "content-box | border-box",
+            Self::Content => "normal | none | <string>+",
+            Self::FontFeatureSettings => "normal | [<string> [<integer> | on | off]?]#",
+            Self::FontVariationSettings => "normal | [<string> <number>]#",
+            Self::ListStyleType => "disc | circle | square | decimal | none",
+            Self::ListStylePosition => "outside",
+            Self::ListStyleImage => "none",
+            Self::Appearance => {
+                "none | auto | button | textfield | menulist-button | searchfield | textarea | checkbox | radio | menulist | listbox | meter | progress-bar"
+            }
         }
     }
 }
@@ -1219,6 +1240,13 @@ impl CssProperty {
             | Self::BorderBottomRightRadius
             | Self::BorderBottomLeftRadius => Some("nonnegative; horizontal then vertical radius"),
             Self::Visibility | Self::TextTransform | Self::PointerEvents => Some("inherited"),
+            Self::Content => Some("`::before` and `::after`; elements take `normal` and `none`"),
+            Self::FontFeatureSettings | Self::FontVariationSettings => {
+                Some("inherited; four-character OpenType tags; nonnegative feature values")
+            }
+            Self::ListStyleType | Self::ListStylePosition | Self::ListStyleImage => {
+                Some("inherited; list items")
+            }
             _ => None,
         }
     }
@@ -1701,6 +1729,13 @@ mod tests {
             P::PointerEvents => &["none", "auto"],
             P::UserSelect => &["none", "all"],
             P::BoxSizing => &["border-box", "content-box"],
+            P::Content => &["\"\"", "none", "\"a\" \"b\""],
+            P::FontFeatureSettings => &["normal", "\"liga\" 0", "\"tnum\", \"ss01\" on"],
+            P::FontVariationSettings => &["normal", "\"wght\" 450, \"opsz\" 12"],
+            P::ListStyleType => &["none", "decimal"],
+            P::ListStylePosition => &["outside"],
+            P::ListStyleImage => &["none"],
+            P::Appearance => &["none", "auto", "button"],
         }
     }
 

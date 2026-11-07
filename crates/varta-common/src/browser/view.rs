@@ -49,6 +49,7 @@ pub(super) fn registry() -> Value {
     });
     let wire = json!({
         "version":v::DRAFT_VERSION,"root":v::ROOT_NODE,"noNode":v::NO_NODE,
+        "firstGeneratedNode":v::DRAFT_FIRST_GENERATED_NODE,
         "batchHeaderBytes":v::BATCH_HEADER_BYTES,"operationHeaderBytes":v::OPERATION_HEADER_BYTES,
         "alignment":v::STRING_ALIGNMENT,"eventHeaderBytes":v::EVENT_HEADER_BYTES,"eventStrings":v::EVENT_STRINGS,
         "eventFields":v::EVENT_FIELDS.iter().map(|field|json!({"name":field.name,"offset":field.offset,"type":field.ty.name()})).collect::<Vec<_>>(),
@@ -60,6 +61,7 @@ pub(super) fn registry() -> Value {
     let defaults = json!({"rootSelector":v::ROOT_SELECTOR_IN_BROWSER,"rootStyle":v::ROOT_BASE_STYLE,
         "dialogBackdrop":v::DIALOG_BACKDROP,"dialogBackground":v::DIALOG_BACKGROUND,"dialogText":v::DIALOG_TEXT,
         "monospaceTags":v::fonts::UA_MONOSPACE_TAGS.iter().map(|tag|tag.name()).collect::<Vec<_>>(),
+        "pseudoElements":v::stylesheet::selector::PseudoElement::ALL.iter().map(|element|element.name()).collect::<Vec<_>>(),
         "controlFontTags":v::fonts::CONTROL_FONT_TAGS.iter().map(|tag|tag.name()).collect::<Vec<_>>()});
     json!({
         "limits":limits,"wire":wire,"filters":filters,"defaults":defaults,

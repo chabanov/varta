@@ -26,7 +26,20 @@ use super::{CssProperty, CssValue, FORBIDDEN_CSS, FORBIDDEN_STYLE_VALUE, syntax}
 use crate::view::prelude::*;
 
 pub mod color;
+mod known;
 pub mod math;
+
+/// Whether a published specification defines the property `name` (ASCII
+/// case-insensitively): the engine refuses a defined property it has not
+/// implemented and drops one no specification defines (CSS Syntax 3
+/// §5.4.4, CSS 2 §4.2), as a user agent drops what it does not know.
+#[must_use]
+pub fn known_property(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    known::KNOWN_PROPERTIES
+        .binary_search(&lower.as_str())
+        .is_ok()
+}
 
 /// Tokens of one property value (placeholder budget, like the `DRAFT_*`
 /// limits): every subset grammar needs far fewer.
@@ -55,6 +68,39 @@ pub const FORBIDDEN_FUNCTIONS: &[&str] = &[
     "element",
     "-moz-element",
 ];
+/// `color-mix()`, whose computed value keeps `currentcolor` (Color 5 §3).
+const COLOR_MIX: &str = "color-mix";
+/// The keyword of the current color (Color 4 §6.4).
+const CURRENT_COLOR: &str = "currentcolor";
+
+/// The used colour of a computed colour that mixes `currentcolor`: every
+/// `currentcolor` replaced by `current` (an `rgba()` text) and the result
+/// lowered to the host grammar (Color 4 §6.4: resolved at used-value time).
+#[must_use]
+pub fn resolve_current_color(value: &str, current: &str) -> Option<String> {
+    let mut text = String::with_capacity(value.len());
+    for spanned in syntax::tokenize(value) {
+        match &spanned.token {
+            syntax::Token::Ident(word) if word.eq_ignore_ascii_case(CURRENT_COLOR) => {
+                text.push_str(current);
+            }
+            _ => text.push_str(&value[spanned.start..spanned.end]),
+        }
+    }
+    lower(CssProperty::Color, &text, &Context::NOMINAL)
+}
+
+/// Whether a computed colour mixes `currentcolor` (see
+/// [`resolve_current_color`]).
+#[must_use]
+pub fn mixes_current_color(value: &str) -> bool {
+    value.len() > COLOR_MIX.len()
+        && value[..COLOR_MIX.len()].eq_ignore_ascii_case(COLOR_MIX)
+        && syntax::tokenize(value).iter().any(|spanned| {
+            matches!(&spanned.token, syntax::Token::Ident(word) if word.eq_ignore_ascii_case(CURRENT_COLOR))
+        })
+}
+
 /// The magnitude to which an infinite or overlarge lowered length or number
 /// is clamped (CSS Values 4 §10.12 leaves the finite range to the UA); it is
 /// the native renderer's length range.
@@ -660,6 +706,15 @@ fn ends(grammar: &G, tokens: &[V], at: usize, mode: Mode) -> Vec<usize> {
             {
                 out.push(end);
             }
+            // A lowered colour that mixes `currentcolor` keeps its
+            // `color-mix()` (see [`resolve_current_color`]).
+            if mode == Mode::Lowered
+                && name == "<color>"
+                && matches!(tokens.get(at), Some(V::Function(found)) if found == COLOR_MIX)
+                && let Some((color::Parsed::Current, end)) = color::parse(tokens, at)
+            {
+                out.push(end);
+            }
             out
         }
         G::Function(name, inner) => {
@@ -786,8 +841,13 @@ pub fn grammar(property: CssProperty) -> &'static str {
         P::TransformOrigin => {
             "left | center | right | top | bottom | <length-percentage> | [left | center | right | <length-percentage>] [top | center | bottom | <length-percentage>] | [top | center | bottom] [left | center | right]"
         }
-        // CSS Fonts 4 §2.2: `<font-weight-absolute>`; numbers in [1, 1000].
-        P::FontWeight => "normal | bold | <number>",
+        // CSS Fonts 4 §2.2: `<font-weight-absolute>` (numbers in [1,
+        // 1000]) and the relative weights of §2.2.1.
+        P::FontWeight => "normal | bold | bolder | lighter | <number>",
+        // CSS Content 3 §2: strings, with alternative text after `/`.
+        P::Content => "normal | none | <string>+ [/ <string>+]?",
+        // CSS Lists 3 §3.3: the counter styles the renderer draws.
+        P::ListStyleType => "disc | circle | square | decimal | none",
         // CSS Color 4 §11.2: `<alpha-value>`.
         P::Opacity => "<number> | <percentage>",
         // CSS Text 3 §3: `pre` is the user-agent default of `pre` elements.
@@ -853,6 +913,14 @@ fn unrendered(property: CssProperty) -> Option<&'static str> {
         }
         P::WhiteSpace => "pre-line | break-spaces",
         P::TextAlign => "justify | match-parent",
+        // CSS Content 3 §2: quotes and counters (CSS Lists 3 §4).
+        P::Content => {
+            "[<string> | open-quote | close-quote | no-open-quote | no-close-quote | counter(<custom-ident>) | counter(<custom-ident>, <custom-ident>) | counters(<custom-ident>, <string>) | counters(<custom-ident>, <string>, <custom-ident>)]+ [/ [<string> | counter(<custom-ident>) | counter(<custom-ident>, <custom-ident>) | counters(<custom-ident>, <string>) | counters(<custom-ident>, <string>, <custom-ident>)]+]?"
+        }
+        // CSS Lists 3 §3.3 and Counter Styles 3: other counter styles and
+        // string markers.
+        P::ListStyleType => "<custom-ident> | <string>",
+        P::ListStylePosition => "inside",
         P::BorderStyle | P::OutlineStyle => {
             "[none | hidden | dotted | dashed | solid | double | groove | ridge | inset | outset]{1,4}"
         }
@@ -871,9 +939,9 @@ fn unrendered(property: CssProperty) -> Option<&'static str> {
 pub enum Refusal {
     /// Outside the property's grammar (or the specification).
     Invalid,
-    /// Valid CSS the native renderer cannot render yet (for example `ch`
-    /// without font metrics, a sum of a percentage and a length, or
-    /// `currentcolor` inside `color-mix()`).
+    /// Valid CSS the native renderer cannot render yet (for example `cap`
+    /// without font metrics, or a sum of a percentage and a length outside
+    /// box geometry).
     Unrenderable,
 }
 
@@ -1053,6 +1121,13 @@ fn literal_notes(property: CssProperty, tokens: &[V], mode: Mode) -> bool {
                 _ => false,
             },
             (CssProperty::FontWeight, V::Num { value, .. }) => (1.0..=1000.0).contains(value),
+            // Fonts 4 §7.2 and §7.3: four-character tags of U+20–U+7E;
+            // feature values are nonnegative integers.
+            (
+                CssProperty::FontFeatureSettings | CssProperty::FontVariationSettings,
+                V::Str(tag),
+            ) => opentype_tag(tag),
+            (CssProperty::FontFeatureSettings, V::Num { value, .. }) => *value >= 0.0,
             // The renderer maps boxes through positive scale factors only.
             (CssProperty::Scale, V::Num { value, unit, .. }) => match (unit, mode) {
                 (NumUnit::Percent | NumUnit::None, Mode::Engine) => value.is_finite(),
@@ -1076,6 +1151,11 @@ fn literal_notes(property: CssProperty, tokens: &[V], mode: Mode) -> bool {
         }
     }
     property != CssProperty::FontFamily || !tokens.iter().any(|token| matches!(token, V::Ident(word) if CSS_WIDE_KEYWORDS.iter().any(|k| word.eq_ignore_ascii_case(k))))
+}
+
+/// An OpenType tag (Fonts 4 §7.2): exactly four characters of U+20–U+7E.
+fn opentype_tag(tag: &str) -> bool {
+    tag.len() == 4 && tag.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
 }
 
 /// CSS Easing 1: the x coordinates of `cubic-bezier()` lie in [0, 1]; a
@@ -1597,10 +1677,19 @@ pub fn lower(property: CssProperty, value: &str, context: &Context) -> Option<St
         };
         if colour {
             let (parsed, end) = color::parse(&tokens, at)?;
-            let color::Parsed::Color(color) = parsed else {
-                return None;
-            };
-            parts.push(color::to_legacy(color));
+            match parsed {
+                color::Parsed::Color(color) => parts.push(color::to_legacy(color)),
+                // Color 4 §6.4 and Color 5 §3: a mix with `currentcolor`
+                // keeps it in its computed value and resolves at used-value
+                // time ([`resolve_current_color`]).
+                color::Parsed::Current if matches!(&tokens[at], V::Function(name) if name.eq_ignore_ascii_case(COLOR_MIX)) =>
+                {
+                    parts.push(join(
+                        &tokens[at..end].iter().map(token_text).collect::<Vec<_>>(),
+                    ));
+                }
+                _ => return None,
+            }
             at = end;
             continue;
         }
@@ -1703,6 +1792,35 @@ mod tests {
         assert!(class_list(" sm:flex  hover:bg-x/50 "));
     }
 
+    /// Color 4 §6.4, Color 5 §3: a mix with `currentcolor` computes to
+    /// itself (its other colours lowered) and resolves at used-value time.
+    #[test]
+    fn mixes_with_currentcolor_resolve_at_used_value_time() {
+        let mixed = "color-mix(in oklab, currentcolor 50%, transparent)";
+        assert_eq!(check(CssProperty::Color, mixed), Ok(()));
+        assert_eq!(
+            lower(
+                CssProperty::BackgroundColor,
+                "color-mix(in srgb, CurrentColor, Red)",
+                &Context::NOMINAL
+            )
+            .as_deref(),
+            Some("color-mix(in srgb, currentcolor, red)")
+        );
+        let lowered = lower(CssProperty::Color, mixed, &Context::NOMINAL).unwrap();
+        assert!(mixes_current_color(&lowered));
+        assert!(!mixes_current_color("rgba(0, 0, 0, 0.5)"));
+        assert_eq!(
+            resolve_current_color(&lowered, "rgba(255, 0, 0, 1)").as_deref(),
+            lower(
+                CssProperty::Color,
+                "color-mix(in oklab, rgba(255, 0, 0, 1) 50%, transparent)",
+                &Context::NOMINAL
+            )
+            .as_deref()
+        );
+    }
+
     #[test]
     fn engine_values_follow_values_4_and_color_4() {
         use CssProperty as P;
@@ -1753,11 +1871,6 @@ mod tests {
             (P::Width, "calc(1px + 1)", Refusal::Invalid),
             (P::BorderRadius, "calc(100% - 1rem)", Refusal::Unrenderable),
             (P::Width, "round(1px, 2px)", Refusal::Invalid),
-            (
-                P::Color,
-                "color-mix(in oklab, currentcolor 50%, transparent)",
-                Refusal::Unrenderable,
-            ),
             (P::Color, "notacolor", Refusal::Invalid),
             (P::Opacity, "150%x", Refusal::Invalid),
             (P::FontWeight, "1001", Refusal::Invalid),
@@ -1773,6 +1886,12 @@ mod tests {
                 Refusal::Invalid,
             ),
             (P::Display, "inline-block", Refusal::Unrenderable),
+            (P::Content, "counter(x)", Refusal::Unrenderable),
+            (P::Content, "\"a\" / 1", Refusal::Invalid),
+            (P::FontFeatureSettings, "\"lig\" 1", Refusal::Invalid),
+            (P::FontFeatureSettings, "\"liga\" -1", Refusal::Invalid),
+            (P::ListStyleType, "lower-roman", Refusal::Unrenderable),
+            (P::ListStylePosition, "inside", Refusal::Unrenderable),
             (P::Display, "inline-blocks", Refusal::Invalid),
             (P::Position, "sticky", Refusal::Unrenderable),
             (P::Width, "fit-content", Refusal::Unrenderable),

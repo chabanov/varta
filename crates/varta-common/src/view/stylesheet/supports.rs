@@ -143,7 +143,7 @@ fn declaration(tokens: &[Spanned]) -> bool {
         return false;
     }
     let value = syntax::serialize(trimmed(&tokens[colon + 1..]));
-    super::declaration(name, &value).is_ok()
+    super::declaration(name, &value).is_ok_and(|declared| !declared.is_empty())
 }
 
 /// `selector( … )`: a compound selector of the subset.
@@ -155,7 +155,11 @@ fn compound_selector(tokens: &[Spanned]) -> bool {
         list.len() == 1
             && list[0]
                 .pseudo_element
-                .is_none_or(super::selector::PseudoElement::rendered)
+                // Unknown `-webkit-` pseudo-elements are valid but not
+                // supported (Selectors 4 Appendix B).
+                .is_none_or(|element| {
+                    element.rendered() && element != super::selector::PseudoElement::UnknownWebkit
+                })
     })
 }
 
@@ -200,7 +204,11 @@ mod tests {
         assert_eq!(holds("selector(.a:hover)"), Ok(true));
         assert_eq!(holds("selector(.a > .b)"), Ok(true));
         assert_eq!(holds("selector(.a, .b)"), Ok(false));
-        assert_eq!(holds("selector(.a::after)"), Ok(false));
+        assert_eq!(holds("selector(.a::after)"), Ok(true));
+        assert_eq!(holds("selector(.a::marker)"), Ok(false));
+        assert_eq!(holds("selector(::-webkit-search-decoration)"), Ok(false));
+        assert_eq!(holds("(tab-size: 4)"), Ok(false));
+        assert_eq!(holds("(-webkit-tap-highlight-color: red)"), Ok(false));
         assert_eq!(holds("selector(::file-selector-button)"), Ok(true));
         assert_eq!(holds("selector(.a::frob)"), Ok(false));
         assert_eq!(holds("font-tech(color-COLRv1)"), Ok(false));

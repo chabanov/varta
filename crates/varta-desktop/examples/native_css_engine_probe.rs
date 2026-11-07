@@ -821,6 +821,39 @@ const SCENES: &[Scene] = &[
         elements: &[],
         texts: &[],
     },
+    // CSS Pseudo-Elements 4 §4.1: generated `::before`/`::after` boxes
+    // (Tailwind's `after:` underline, block boxes), `content: none`, no
+    // `content`, `display: none`, a registered `--tw-content`, and
+    // Preflight's error handling (rules and declarations CSS drops).
+    Scene {
+        name: "generated-boxes",
+        sheet: "@property --tw-content { syntax: \"*\"; initial-value: \"\"; inherits: false } \
+            :-moz-focusring { outline: auto } hr, abbr { color: #f00 } ::-webkit-search-decoration { -webkit-appearance: none } \
+            *, ::after, ::before, ::backdrop, ::file-selector-button { box-sizing: border-box; margin: 0; padding: 0; border: 0 solid } \
+            .r { display: flex; flex-direction: column; align-items: flex-start; gap: 16px; padding: 8px } \
+            .a { position: relative; width: 120px; height: 24px; background-color: #ddd; -webkit-tap-highlight-color: red } \
+            .a::after { content: var(--tw-content); position: absolute; left: 0; bottom: calc(0.25rem * -1); width: 100%; height: 4px; background-color: oklch(51.1% 0.262 276.966) } \
+            .b { width: 80px; background-color: #eee } \
+            .b::before { content: \"\"; display: block; width: 50%; height: 10px; background-color: #c60 } \
+            .b::after { content: \"\"; display: block; height: 6px; background-color: #093; border-top: 2px solid #000 } \
+            .c { width: 40px; height: 12px; background-color: #ccc } .c::after { content: none; display: block; height: 20px; background-color: #f00 } \
+            .c::before { display: block; height: 20px; background-color: #f00 } \
+            .d { width: 40px; height: 12px; background-color: #bbb } .d::after { content: \"\"; display: none; height: 20px; background-color: #f00 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        elements: &[],
+        texts: &[],
+    },
 ];
 
 /// A text measurer over the scene's packaged faces.

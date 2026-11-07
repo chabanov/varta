@@ -58,6 +58,7 @@ test("the browser view model decides the cross-host corpus as the native rendere
     accepted++;
     view.engine.environment(WIDTH, HEIGHT, ROOT_FONT, ROOT_FONT, 0);
     assert.deepEqual(Object.fromEntries(view.engine.computed(parent)), record.computed, `${item.name}: computed values`);
+    if (item.pseudo) assert.deepEqual(Object.fromEntries(view.engine.computedPseudo(parent, item.pseudo)), record.pseudo, `${item.name}: ::${item.pseudo} values`);
   }
   assert(accepted > 200 && refused > 20, `${accepted} accepted, ${refused} refused`);
 });
@@ -87,7 +88,7 @@ test("refusals happen before any effect and keep the committed engine state", ()
   const model = createViewModel({ viewEngine });
   model.commit(encodeViewBatch([{ name: "create_element", node: 2, tag: "div" }, { name: "insert", parent: 1, node: 2, before: 0 }, { name: "set_class", node: 2, text: "sm:flex" }, { name: "stylesheet", sheet: 1, text: ".sm\\:flex { color: oklch(0.5 0.1 10) }" }]));
   const before = Object.fromEntries(model.engine.computed(2));
-  assert.throws(() => model.commit(encodeViewBatch([{ name: "stylesheet", sheet: 1, text: ".sm\\:flex { color: #fff }" }, { name: "stylesheet", sheet: 2, text: "#1b {}" }])), /stylesheet value/);
+  assert.throws(() => model.commit(encodeViewBatch([{ name: "stylesheet", sheet: 1, text: ".sm\\:flex { color: #fff }" }, { name: "stylesheet", sheet: 2, text: ".b:popover-open {}" }])), /stylesheet value/);
   assert.deepEqual(Object.fromEntries(model.engine.computed(2)), before);
   assert.throws(() => model.commit(encodeViewBatch([{ name: "set_class", node: 2, text: "a\u0001" }])), /class value/);
   assert.throws(() => model.commit(encodeViewBatch([{ name: "set_style", node: 2, property: "border-radius", text: "calc(100% - 1rem)" }])), /style value/);

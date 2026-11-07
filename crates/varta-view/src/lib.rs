@@ -21,6 +21,7 @@ mod accessibility;
 mod calc;
 mod drawing;
 mod events;
+mod generated;
 mod geometry;
 mod glyph_raster;
 mod image;
@@ -158,6 +159,8 @@ pub enum Violation {
     UnknownNode(u32),
     #[error("node id {0} is zero or already live")]
     DuplicateNode(u32),
+    #[error("node id {0} is reserved for the boxes the renderer generates")]
+    GeneratedNode(u32),
     #[error("node {0} is a text node")]
     NotAnElement(u32),
     #[error("node {0} is not a text node")]
@@ -444,6 +447,7 @@ impl View {
     /// One style change event at the current animation clock: start, keep,
     /// reverse or cancel transitions ([`transition`]).
     fn restyle(&mut self) {
+        self.tree.regenerate(&self.environment);
         transition::Animations::restyle(&mut self.tree, &self.environment);
     }
 

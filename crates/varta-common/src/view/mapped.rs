@@ -71,6 +71,12 @@ pub enum Mapped {
     BorderEndStartRadius,
     BorderEndEndRadius,
     WebkitUserSelect,
+    /// `font` (CSS Fonts 4 §2.8).
+    Font,
+    /// `list-style` (CSS Lists 3 §3.5).
+    ListStyle,
+    /// The legacy name alias `-webkit-appearance` (CSS UI 4 §7.1).
+    WebkitAppearance,
 }
 
 /// One longhand of a mapped declaration whose value has `var()`: the mapped
@@ -95,12 +101,17 @@ enum Spread {
     /// The whole value for every longhand (a side's `border` shorthand, a
     /// corner's radii, a legacy alias).
     Whole,
+    /// `font`: style, weight, size, line height and family, and the
+    /// reset-only feature and variation settings.
+    Font,
+    /// `list-style`: type, position and image in any order.
+    ListStyle,
 }
 
 use CssProperty as P;
 
 impl Mapped {
-    pub const ALL: [Self; 49] = [
+    pub const ALL: [Self; 52] = [
         Self::PaddingInline,
         Self::PaddingBlock,
         Self::PaddingInlineStart,
@@ -150,6 +161,9 @@ impl Mapped {
         Self::BorderEndStartRadius,
         Self::BorderEndEndRadius,
         Self::WebkitUserSelect,
+        Self::Font,
+        Self::ListStyle,
+        Self::WebkitAppearance,
     ];
 
     /// The property name.
@@ -181,6 +195,15 @@ impl Mapped {
         const INLINE_INSETS: &[CssProperty] = &[P::Left, P::Right];
         const BLOCK_INSETS: &[CssProperty] = &[P::Top, P::Bottom];
         const FLEX: &[CssProperty] = &[P::FlexGrow, P::FlexShrink, P::FlexBasis];
+        const FONT: &[CssProperty] = &[
+            P::FontStyle,
+            P::FontWeight,
+            P::FontSize,
+            P::LineHeight,
+            P::FontFamily,
+            P::FontFeatureSettings,
+            P::FontVariationSettings,
+        ];
         match self {
             Self::PaddingInline => ("padding-inline", Spread::Pair, INLINE_PADDING),
             Self::PaddingBlock => ("padding-block", Spread::Pair, BLOCK_PADDING),
@@ -330,6 +353,13 @@ impl Mapped {
                 &[P::BorderBottomRightRadius],
             ),
             Self::WebkitUserSelect => ("-webkit-user-select", Spread::Whole, &[P::UserSelect]),
+            Self::Font => ("font", Spread::Font, FONT),
+            Self::ListStyle => (
+                "list-style",
+                Spread::ListStyle,
+                &[P::ListStyleType, P::ListStylePosition, P::ListStyleImage],
+            ),
+            Self::WebkitAppearance => ("-webkit-appearance", Spread::Whole, &[P::Appearance]),
         }
     }
 
@@ -360,6 +390,8 @@ impl Mapped {
             (Spread::Box, [a, b, c]) => Some(vec![a.clone(), b.clone(), c.clone(), b.clone()]),
             (Spread::Box, [a, b, c, d]) => Some(vec![a.clone(), b.clone(), c.clone(), d.clone()]),
             (Spread::Flex, parts) => flex(parts),
+            (Spread::Font, _) => font(value),
+            (Spread::ListStyle, parts) => list_style(parts),
             _ => None,
         }
     }
@@ -424,6 +456,188 @@ fn flex(parts: &[String]) -> Option<Vec<String>> {
             .map_or(OMITTED_FACTOR, |factor| factor.as_str()),
         basis.first().map_or(OMITTED_BASIS, |basis| basis.as_str()),
     )
+}
+
+/// The keywords of `font`'s optional prefix (Fonts 4 §2.8): `normal` sets
+/// nothing of its own; the style, weight and the CSS 2 variant and CSS 3
+/// width keywords the renderer draws (`normal` only for the last two).
+const FONT_STYLES: &[&str] = &["italic", "oblique"];
+const FONT_WEIGHTS: &[&str] = &["bold", "bolder", "lighter"];
+/// The absolute and relative `font-size` keywords (Fonts 4 §2.5).
+const FONT_SIZE_KEYWORDS: &[&str] = &[
+    "xx-small",
+    "x-small",
+    "small",
+    "medium",
+    "large",
+    "x-large",
+    "xx-large",
+    "xxx-large",
+    "larger",
+    "smaller",
+];
+/// The reset-only longhands' initial values (§2.8: reset by the shorthand).
+const FONT_RESET: &str = "normal";
+
+/// `font`'s longhands (style, weight, size, line height, family, feature
+/// settings, variation settings): `[<'font-style'> || <font-variant-css2>
+/// || <'font-weight'> || <font-width-css3>]? <'font-size'> [/
+/// <'line-height'>]? <'font-family'>#`. System font keywords and other
+/// variant or width keywords are not expanded (`None`).
+fn font(value: &str) -> Option<Vec<String>> {
+    let tokens = syntax::tokenize(value);
+    let meaningful: Vec<usize> = (0..tokens.len())
+        .filter(|index| tokens[*index].token != Token::Whitespace)
+        .collect();
+    let mut style = None;
+    let mut weight = None;
+    let mut at = 0;
+    // The prefix: at most four keywords or a weight number.
+    while let Some(index) = meaningful.get(at).copied() {
+        let token = &tokens[index].token;
+        let keyword = match token {
+            Token::Ident(word) => Some(word.to_ascii_lowercase()),
+            _ => None,
+        };
+        let next_is_size = meaningful.get(at + 1).is_some();
+        match (token, keyword.as_deref()) {
+            (_, Some("normal")) => {}
+            (_, Some(word)) if FONT_STYLES.contains(&word) && style.is_none() => {
+                style = Some(word.to_owned());
+            }
+            (_, Some(word)) if FONT_WEIGHTS.contains(&word) && weight.is_none() => {
+                weight = Some(word.to_owned());
+            }
+            (Token::Number(number), _) if weight.is_none() && next_is_size => {
+                weight = Some(number.repr.clone());
+            }
+            _ => break,
+        }
+        at += 1;
+        if at > 4 {
+            return None;
+        }
+    }
+    // The size: a length, percentage, keyword or math function, then an
+    // optional `/ <'line-height'>`, then the family list.
+    let size_start = *meaningful.get(at)?;
+    let size_end = match &tokens[size_start].token {
+        Token::Dimension(..) | Token::Percentage(_) | Token::Number(_) => size_start + 1,
+        Token::Ident(word) if FONT_SIZE_KEYWORDS.contains(&word.to_ascii_lowercase().as_str()) => {
+            size_start + 1
+        }
+        Token::Function(_) => block_end(&tokens, size_start)? + 1,
+        _ => return None,
+    };
+    let text = |from: usize, to: usize| -> String {
+        value[tokens[from].start..tokens[to - 1].end].to_owned()
+    };
+    let size = text(size_start, size_end);
+    let mut cursor = size_end;
+    let skip = |cursor: &mut usize| {
+        while tokens
+            .get(*cursor)
+            .is_some_and(|t| t.token == Token::Whitespace)
+        {
+            *cursor += 1;
+        }
+    };
+    skip(&mut cursor);
+    let mut line_height = FONT_RESET.to_owned();
+    if tokens.get(cursor).map(|t| &t.token) == Some(&Token::Delim('/')) {
+        cursor += 1;
+        skip(&mut cursor);
+        let start = cursor;
+        let end = match &tokens.get(start)?.token {
+            Token::Function(_) => block_end(&tokens, start)? + 1,
+            _ => start + 1,
+        };
+        line_height = text(start, end);
+        cursor = end;
+        skip(&mut cursor);
+    }
+    if cursor >= tokens.len() {
+        return None;
+    }
+    let family = text(cursor, tokens.len()).trim_end().to_owned();
+    Some(vec![
+        style.unwrap_or_else(|| FONT_RESET.to_owned()),
+        weight.unwrap_or_else(|| FONT_RESET.to_owned()),
+        size,
+        line_height,
+        family,
+        FONT_RESET.to_owned(),
+        FONT_RESET.to_owned(),
+    ])
+}
+
+/// The index of the `)` closing the function or block opened at `open`.
+fn block_end(tokens: &[syntax::Spanned], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, spanned) in tokens.iter().enumerate().skip(open) {
+        match spanned.token {
+            Token::Function(_) | Token::OpenParen => depth += 1,
+            Token::CloseParen => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The `list-style-position` keywords (CSS Lists 3 §3.4).
+const LIST_POSITIONS: &[&str] = &["inside", "outside"];
+const LIST_NONE: &str = "none";
+/// The initial values of the three longhands.
+const LIST_INITIAL: [&str; 3] = ["disc", "outside", "none"];
+
+/// `list-style`'s longhands (type, position, image): `<'list-style-position'>
+/// || <'list-style-image'> || <'list-style-type'>`, where `none` sets
+/// whichever of the image and type is otherwise unset (Lists 3 §3.5).
+fn list_style(parts: &[String]) -> Option<Vec<String>> {
+    let mut kind = None;
+    let mut position = None;
+    let mut image = None;
+    let mut nones = 0usize;
+    for part in parts {
+        let lower = part.to_ascii_lowercase();
+        if LIST_POSITIONS.contains(&lower.as_str()) {
+            if position.replace(part.clone()).is_some() {
+                return None;
+            }
+        } else if lower == LIST_NONE {
+            nones += 1;
+        } else if part.ends_with(')') && !lower.starts_with("symbols(") {
+            if image.replace(part.clone()).is_some() {
+                return None;
+            }
+        } else if kind.replace(part.clone()).is_some() {
+            return None;
+        }
+    }
+    let none = || LIST_NONE.to_owned();
+    match (nones, kind.is_some(), image.is_some()) {
+        (0, ..) => {}
+        (1, false, _) => kind = Some(none()),
+        (1, true, false) => image = Some(none()),
+        (2, false, false) => {
+            kind = Some(none());
+            image = Some(none());
+        }
+        _ => return None,
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(vec![
+        kind.unwrap_or_else(|| LIST_INITIAL[0].to_owned()),
+        position.unwrap_or_else(|| LIST_INITIAL[1].to_owned()),
+        image.unwrap_or_else(|| LIST_INITIAL[2].to_owned()),
+    ])
 }
 
 /// The top-level components of a value: whitespace-separated, functions
@@ -525,6 +739,71 @@ mod tests {
             Some(Mapped::WebkitUserSelect)
         );
         assert_eq!(parts(Mapped::BorderInline, ""), None);
+    }
+
+    /// Fonts 4 §2.8: the shorthand's set and reset-only longhands.
+    #[test]
+    fn font_sets_and_resets_its_longhands() {
+        assert_eq!(parts(Mapped::Font, "inherit"), texts(&["inherit"; 7]));
+        assert_eq!(
+            parts(
+                Mapped::Font,
+                "italic bold 12px/1.5 \"Helvetica Neue\", serif"
+            ),
+            texts(&[
+                "italic",
+                "bold",
+                "12px",
+                "1.5",
+                "\"Helvetica Neue\", serif",
+                "normal",
+                "normal"
+            ])
+        );
+        assert_eq!(
+            parts(Mapped::Font, "600 calc(1rem + 2px) / 20px monospace"),
+            texts(&[
+                "normal",
+                "600",
+                "calc(1rem + 2px)",
+                "20px",
+                "monospace",
+                "normal",
+                "normal"
+            ])
+        );
+        assert_eq!(
+            parts(Mapped::Font, "normal 1em serif"),
+            texts(&[
+                "normal", "normal", "1em", "normal", "serif", "normal", "normal"
+            ])
+        );
+        assert_eq!(parts(Mapped::Font, "12px"), None);
+        assert_eq!(parts(Mapped::Font, "caption"), None);
+    }
+
+    /// Lists 3 §3.5: `none` sets whichever of the image and type is unset.
+    #[test]
+    fn list_style_resolves_none() {
+        assert_eq!(
+            parts(Mapped::ListStyle, "none"),
+            texts(&["none", "outside", "none"])
+        );
+        assert_eq!(
+            parts(Mapped::ListStyle, "square inside"),
+            texts(&["square", "inside", "none"])
+        );
+        assert_eq!(
+            parts(Mapped::ListStyle, "none none"),
+            texts(&["none", "outside", "none"])
+        );
+        assert_eq!(
+            parts(Mapped::ListStyle, "disc none"),
+            texts(&["disc", "outside", "none"])
+        );
+        assert_eq!(parts(Mapped::ListStyle, "none none none"), None);
+        assert_eq!(parts(Mapped::ListStyle, "inside outside"), None);
+        assert_eq!(parts(Mapped::WebkitAppearance, "none"), texts(&["none"]));
     }
 
     /// Flexbox 1 §7.1.1 and the shorthand's grammar.
