@@ -24,6 +24,20 @@ function named(): string {
     return e instanceof ReferenceError ? 'ReferenceError' : 'other';
   }
 }
+// `x instanceof C` evaluates `x` before testing `C`.
+const order: string[] = [];
+function note(step: string): void {
+  order.push(step);
+}
+function test(): string {
+  const obj: unknown = 1;
+  try {
+    return String((note('x'), obj) instanceof Widget);
+  } catch (e) {
+    return (e instanceof ReferenceError ? 'ReferenceError' : 'other') + ' after ' + order.join(',');
+  }
+}
+const earlyTest = test();
 const early = make();
 const earlyCount = count();
 const earlyName = named();
@@ -39,5 +53,6 @@ class Widget {
 const late = make();
 export function main(): void {
   console.log(early + ' | ' + earlyCount + ' | ' + earlyName + ' | ' + Registry.first);
+  console.log(earlyTest + ' | ' + test());
   console.log(Widget.seen + ' | ' + late + ' ' + Widget.own.kind() + ' ' + count() + ' ' + named());
 }

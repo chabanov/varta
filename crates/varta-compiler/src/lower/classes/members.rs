@@ -924,6 +924,17 @@ impl Lower<'_> {
         binary: &ast::BinExpr,
         class: u32,
     ) -> Result<Expr> {
+        // V38 (`module_evaluation`): a class code may reach early is tested
+        // after the left operand.
+        if let Some(check) = self.class_flag_check(class, binary.right.span())? {
+            return self.class_instance_after_left(binary, check, |this, binary| {
+                this.class_instance_test(binary, class)
+            });
+        }
+        self.class_instance_test(binary, class)
+    }
+    /// `class_instance_of` once the class is known to be initialized.
+    fn class_instance_test(&mut self, binary: &ast::BinExpr, class: u32) -> Result<Expr> {
         // V38 (`symbol_values`): `static [Symbol.hasInstance]`. Checked here,
         // not in `expr_lowered`, to keep that frame small for deeply nested
         // expressions (`exit_flow_tests` depth limit).
