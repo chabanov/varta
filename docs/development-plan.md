@@ -8681,7 +8681,14 @@ features not implemented yet.
   them, the placeholder's mixed color, the backdrop, `list-style: none`.
   The end-to-end Tailwind test (`full_tailwind_application_applies`) runs:
   the full `@import "tailwindcss"` stylesheet with Preflight checks and
-  runs. Chrome oracle: new scene `generated-boxes`.
+  runs. Chrome oracle: new scene `generated-boxes` (Tailwind's `after:`
+  bar, block `::before`/`::after`, `content: none`, no `content`, `display:
+  none`, Preflight's reset and dropped rules): `bridge` 1279 and `platform`
+  1267 checks pass at 1x, 1.25x and 2x, the bridge through its generated
+  CSSOM rules. Found by the oracle: Preflight's `*` rule reaches the view
+  root, which natively admitted only font properties; the root now admits
+  `box-sizing`, border styles and colors and zero margins, padding and
+  border widths (they change nothing on a box filling the viewport).
 - **Tailwind acceptance:** 275 → 287 of 312 candidates (92.0%): the nine
   `after:` utilities, `backdrop:`, `placeholder:`, `appearance-none`.
 - **Open.** `::marker`, `::selection`, `::first-line`, `::first-letter`;

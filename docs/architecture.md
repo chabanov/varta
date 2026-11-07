@@ -16131,7 +16131,10 @@ oracle, not the definition.
   keep a control's native look, `none` draws a button or text field as a
   CSS box (as a declared border or background does), and is refused at
   layout for checkboxes, radios, selects and progress bars, as are the
-  `<compat-special>` values. `currentcolor` inside `color-mix()` (Color 5
+  `<compat-special>` values. Natively the view root, which fills the
+  viewport, admits Preflight's universal reset: `box-sizing`, border styles
+  and colors, and margins, padding and border widths that are zero.
+  `currentcolor` inside `color-mix()` (Color 5
   §3) is admitted: its computed value keeps the mix with `currentcolor`
   and its other colours lowered, the renderer resolves it at used-value
   time against the element's color (in `color`, the parent's), and the

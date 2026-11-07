@@ -201,3 +201,16 @@ fn list_style_none_removes_markers() {
         }
     }
 }
+
+/// Preflight's universal rule reaches the root, which fills the viewport:
+/// zero margins, padding and borders change nothing there; others are
+/// still refused.
+#[test]
+fn preflight_box_reset_applies_to_the_root() {
+    let reset = "*, ::after, ::before, ::backdrop, ::file-selector-button { box-sizing: border-box; margin: 0; padding: 0; border: 0 solid } .a { width: 10px; height: 10px; background-color: #00f }";
+    let frame = Frame::new(&view(reset, &[(2, 1, "a")]), 20, 20);
+    assert_eq!(frame.pixel(5, 5), BLUE);
+    let padded = view(":root { padding: 4px }", &[]);
+    let mut renderer = Renderer::new(None, 16.0).unwrap();
+    assert!(renderer.render(&padded, 20, 20, 1.0).is_err());
+}

@@ -332,6 +332,60 @@ fn factor(value: &str) -> Option<f32> {
     (number.is_finite() && (0.0..=1000.0).contains(&number)).then_some(number)
 }
 
+/// Whether a computed box property of the root changes nothing on a box
+/// that fills the viewport: `box-sizing`, border styles and colors, and
+/// margins, padding and border widths that are all zero.
+fn root_inert(property: CssProperty, value: &str) -> bool {
+    use CssProperty as P;
+    let zero = || {
+        value.split_ascii_whitespace().all(|part| {
+            part.trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%')
+                .parse::<f64>()
+                .is_ok_and(|number| number == 0.0)
+                || matches!(
+                    part,
+                    "none" | "hidden" | "solid" | "currentcolor" | "transparent"
+                )
+                || part.starts_with('#')
+                || part.starts_with("rgb")
+        })
+    };
+    match property {
+        P::BoxSizing
+        | P::BorderStyle
+        | P::BorderTopStyle
+        | P::BorderRightStyle
+        | P::BorderBottomStyle
+        | P::BorderLeftStyle
+        | P::BorderColor
+        | P::BorderTopColor
+        | P::BorderRightColor
+        | P::BorderBottomColor
+        | P::BorderLeftColor => true,
+        P::Margin
+        | P::MarginTop
+        | P::MarginRight
+        | P::MarginBottom
+        | P::MarginLeft
+        | P::Padding
+        | P::PaddingTop
+        | P::PaddingRight
+        | P::PaddingBottom
+        | P::PaddingLeft
+        | P::BorderWidth
+        | P::BorderTopWidth
+        | P::BorderRightWidth
+        | P::BorderBottomWidth
+        | P::BorderLeftWidth
+        | P::Border
+        | P::BorderTop
+        | P::BorderRight
+        | P::BorderBottom
+        | P::BorderLeft => zero(),
+        _ => false,
+    }
+}
+
 /// Properties that affect paint, stacking or its animation, but not the
 /// border-box geometry this API returns. They are still retained by the regular view snapshot.
 fn paint_only(property: CssProperty) -> bool {
@@ -1340,24 +1394,29 @@ fn build_one(
         .then(|| style::ControlKind::of(element))
         .flatten();
     if id == ROOT_NODE {
-        if tree.computed_read(id, env).keys().any(|property| {
-            !matches!(
-                property,
-                CssProperty::FontSize
-                    | CssProperty::LineHeight
-                    | CssProperty::FontFamily
-                    | CssProperty::FontWeight
-                    | CssProperty::FontStyle
-                    | CssProperty::WhiteSpace
-                    | CssProperty::OverflowWrap
-                    | CssProperty::TextAlign
-                    | CssProperty::TextTransform
-                    | CssProperty::FontFeatureSettings
-                    | CssProperty::FontVariationSettings
-                    | CssProperty::ListStyleType
-                    | CssProperty::ListStylePosition
-                    | CssProperty::ListStyleImage
-            ) && !paint_only(*property)
+        // The root fills the viewport; box properties that change nothing
+        // there (Preflight's `*` rule: `box-sizing`, zero margins, padding
+        // and border widths, any border style or color) are admitted.
+        if tree.computed_read(id, env).iter().any(|(property, value)| {
+            !root_inert(*property, value)
+                && !matches!(
+                    property,
+                    CssProperty::FontSize
+                        | CssProperty::LineHeight
+                        | CssProperty::FontFamily
+                        | CssProperty::FontWeight
+                        | CssProperty::FontStyle
+                        | CssProperty::WhiteSpace
+                        | CssProperty::OverflowWrap
+                        | CssProperty::TextAlign
+                        | CssProperty::TextTransform
+                        | CssProperty::FontFeatureSettings
+                        | CssProperty::FontVariationSettings
+                        | CssProperty::ListStyleType
+                        | CssProperty::ListStylePosition
+                        | CssProperty::ListStyleImage
+                )
+                && !paint_only(*property)
         }) {
             return Err(LayoutError::Unsupported(id));
         }
