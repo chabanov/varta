@@ -65,6 +65,8 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("layout_dictionaries"),
     case!("method_spreads"),
     case!("assign_literals"),
+    case!("accessor_layout_spreads"),
+    case!("layout_respreads"),
     case!("generator_closures"),
     case!("async_generator_closures"),
     case!("accessor_optional_spreads"),
@@ -211,6 +213,11 @@ fn layout_spreads_and_rests_match_node() {
     matches_node("layout_dictionaries");
     // `Object.assign` into a fresh object literal is the spread literal.
     matches_node("assign_literals");
+    // Into a literal with accessors: the widened object keeps them.
+    matches_node("accessor_layout_spreads");
+    // A spread of a value that may hold a widened layout copies its extra
+    // properties too.
+    matches_node("layout_respreads");
 }
 
 /// Methods that use `this` see receivers of other layouts: a spread copy,

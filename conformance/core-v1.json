@@ -3849,6 +3849,29 @@
       }
     },
     {
+      "id": "accessor-layout-spreads",
+      "feature": "object-literal-accessors",
+      "path": "cases/accessor-layout-spreads.ts",
+      "sha256": "991c06ec14b9de252773a2b794bcdb64e60ebf724dfc28423598082e024a6c7b",
+      "stdout": [
+        "varta log: twice,b,a,c,label",
+        "varta log: {\"twice\":4,\"b\":1,\"a\":2,\"c\":\"x\",\"label\":\"wide\"}",
+        "varta log: 4 2",
+        "varta log: twice,a,b,label {\"twice\":10,\"a\":5,\"b\":6,\"label\":\"plain\"}",
+        "varta log: 3",
+        "varta log: 13",
+        "varta log: {\"b\":1,\"a\":2,\"c\":\"x\",\"total\":13}",
+        "varta log: b",
+        "varta log: a",
+        "varta log: c",
+        "varta log: total",
+        "varta log: Cannot set property twice of #<Object> which has only a getter"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "computed-property-keys",
       "feature": "computed-property-keys",
       "path": "cases/computed-property-keys.ts",

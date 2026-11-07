@@ -10400,9 +10400,15 @@ such members.
   type), and a value outside it (a property the view does not declare)
   throws `TypeError: own property value is not of the dictionary's value
   type` where it is read (checked reads at TypeScript unsoundness; Node
-  copies it). Refused by name for now: layout spreads into literals with
-  accessors, and `Object.assign` onto an existing object (pending overflow
-  own properties). `Object.values`/`entries` of a view list the actual object's
+  copies it). Into a literal with accessors, the copy's other properties
+  widen the object at the spread's position into a layout that keeps the
+  accessor fields, viewed as the literal's type with those properties, so
+  its getters and setters keep working. A widened layout is a view source
+  of the types it is viewed as, so the copies of those types are written
+  again until no new layout appears (a spread of a value that may hold a
+  widened object copies its extra properties). Refused by name for now:
+  `Object.assign` onto an existing object (pending overflow own
+  properties). `Object.values`/`entries` of a view list the actual object's
   own values with checked reads (intentional deviation (4) of the type
   level), and `Object.assign` into a fresh object literal is that spread
   literal.
@@ -11861,10 +11867,12 @@ Node 24 is the reference for every output below.
     object takes the members' key order. An optional member of a spread is
     copied only where its source has it (until a certain definition, the
     property is optional in the object's shape).
+  - A spread of a view of other layouts copies the object's own properties
+    by its run-time layout (`layout_spreads`), widening the object with
+    accessors.
   - Refused by name: a setter without a getter, a `this` parameter of a
     setter, accessors in a context that is not a closed object type, a
-    spread of a class instance (or of a value of a view of other layouts)
-    into a literal with accessors, a class with an index signature whose fields may
+    spread of a class instance into a literal with accessors, a class with an index signature whose fields may
     hold such an object reaching a host, and (until the console notation
     shows accessors) logging a value that may hold one.
 - **Computed keys.** `{ [k]: v }` with a constant key — a string or number

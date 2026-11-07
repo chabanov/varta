@@ -114,10 +114,14 @@ impl Lower<'_> {
         let mut optional_names: Vec<String> = Vec::new();
         let mut pending: Vec<(String, Expr, u32, u32, u32)> = Vec::new();
         let mut ordered: Vec<String> = Vec::new();
+        // V38 (`layout_spreads`): the copies of spreads of views of other
+        // layouts, by their hidden slot and view shape.
+        let mut layouts: Vec<(u32, u32)> = Vec::new();
         for prop in &object.props {
             let prop = match prop {
                 ast::PropOrSpread::Prop(prop) => prop,
                 ast::PropOrSpread::Spread(spread) => {
+                    let dynamic = self.layout_spread(&spread.expr);
                     let value = self.expr(&spread.expr)?;
                     let Type::Record(shape) = value.ty else {
                         return Err(self.source.locate(
@@ -138,18 +142,38 @@ impl Lower<'_> {
                             spread.expr.span(),
                         ));
                     }
-                    if self.types.profile.sdk_paths() {
+                    if self.types.profile.sdk_paths() && !dynamic && !self.types.layouts.exact {
                         self.types.subtyping.note_key_copy(
                             shape,
-                            subtyping::KeyCopy::Spread,
+                            if self.types.profile.expression_forms() {
+                                subtyping::KeyCopy::LayoutSpread
+                            } else {
+                                subtyping::KeyCopy::Spread
+                            },
                             self.source,
                             spread.expr.span(),
                         );
                     }
+                    // A layout spread copies the object first (its getters
+                    // run in its own-key order); the literal reads the copy
+                    // and gains the copy's other properties (`layout_widen`).
+                    let value = if dynamic {
+                        self.layout_copy(value, shape, Vec::new())?
+                    } else {
+                        value
+                    };
                     let slot = self.hidden(value.ty);
                     roots.push(slot);
                     prelude.push(S::Init(slot, value));
-                    let (reads, locals) = self.read_in_key_order(slot, shape, &[], span)?;
+                    if dynamic {
+                        layouts.push((slot, shape));
+                    }
+                    // The spread site is noted above; its key read is not
+                    // another key copy.
+                    let exact = std::mem::replace(&mut self.types.layouts.exact, true);
+                    let read = self.read_in_key_order(slot, shape, &[], span);
+                    self.types.layouts.exact = exact;
+                    let (reads, locals) = read?;
                     roots.extend(locals.iter().copied());
                     prelude.extend(reads);
                     members.push(super::record_spread::Member::Spread(slot, shape, None));
@@ -512,6 +536,10 @@ impl Lower<'_> {
             }
         }
         prelude.extend(self.spread_order(output, shape, &members, span)?);
+        if !layouts.is_empty() {
+            let widened = self.accessor_widen(output, physical, &members, &layouts, span)?;
+            prelude.push(S::Set(output, widened));
+        }
         let marker = self.hidden(Type::Number);
         Ok(Expr {
             span,
@@ -527,6 +555,45 @@ impl Lower<'_> {
                 },
             })),
         })
+    }
+
+    /// The object with accessors in local `output` (of physical shape
+    /// `physical`) with the other own properties of its layout spreads'
+    /// copies at their spreads (v38 `layout_spreads`): its widened layouts
+    /// keep the accessor fields and are objects with accessors of the same
+    /// type.
+    fn accessor_widen(
+        &mut self,
+        output: u32,
+        physical: Type,
+        members: &[super::record_spread::Member],
+        layouts: &[(u32, u32)],
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        use super::layout_spreads::Part;
+        let parts = members
+            .iter()
+            .map(|member| match member {
+                super::record_spread::Member::Value(name) => Part::Value(name.clone()),
+                super::record_spread::Member::Spread(slot, shape, _) => {
+                    match layouts.iter().position(|(copy, _)| copy == slot) {
+                        Some(index) => Part::Layout(index),
+                        None => Part::Static(
+                            self.types.records[*shape as usize]
+                                .fields
+                                .iter()
+                                .map(|field| field.name.clone())
+                                .collect(),
+                        ),
+                    }
+                }
+            })
+            .collect();
+        let copies = layouts
+            .iter()
+            .map(|(copy, shape)| (local_value(span, *copy, Type::Record(*shape)), *shape, None))
+            .collect();
+        self.layout_widen(local_value(span, output, physical), copies, parts)
     }
 
     /// The closure of an accessor body: an arrow whose `this` is the hidden

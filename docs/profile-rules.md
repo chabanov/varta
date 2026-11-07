@@ -4093,7 +4093,14 @@ Contract: [architecture.md](architecture.md#expression-forms-expression_forms).
   block (the widen runs inside the literal's block). A new reader of own
   keys of a view must dispatch on the layout as the JSON walk does
   (`wider_layouts`). Optional fields of merged spread results include
-  `undefined`.
+  `undefined`. A widened layout is a view source of the shapes it is
+  viewed as: `finish` writes a copy again when its shape's view sources
+  changed after it was written, and a widen again when a copy it reads
+  changed its layouts, up to `MAX_LAYOUT_ROUNDS`. Never read
+  `view_sources` once and assume no later synthesized body adds one. A
+  widened object with accessors keeps its accessor fields
+  (`intern_accessors`) and is viewed as its type with the extra
+  properties (`Receivers::widen`), with the same getter-only errors.
 - Receivers (`object_methods::loose_receivers`): `this_methods` and
   `callers` are recorded while lowering; every caller type that may hold a
   method becomes a view source of the method's type before

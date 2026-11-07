@@ -69,6 +69,21 @@ impl Receivers {
     pub(crate) fn logical(&self, shape: u32) -> Option<u32> {
         self.logical.get(&shape).copied()
     }
+    /// Note the physical shape `wide` of an object with accessors widened
+    /// from `shape` (v38 `layout_spreads`): viewed as the same type, with
+    /// the same getter-only properties.
+    pub(crate) fn widen(&mut self, shape: u32, wide: u32, logical: u32) {
+        self.logical.insert(wide, logical);
+        let read_only: Vec<(String, Expr)> = self
+            .read_only
+            .iter()
+            .filter(|((owner, _), _)| *owner == shape)
+            .map(|((_, name), error)| (name.clone(), error.clone()))
+            .collect();
+        for (name, error) in read_only {
+            self.read_only.insert((wide, name), error);
+        }
+    }
     /// Whether the program has an object literal with a getter or setter.
     pub(crate) fn has_accessors(&self) -> bool {
         self.accessors

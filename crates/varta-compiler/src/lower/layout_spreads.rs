@@ -26,6 +26,11 @@
 //! turn, which a further pass may need.
 use super::object_accessors::local_value;
 use super::*;
+use std::collections::BTreeSet;
+
+/// The rounds of `finish` that write copies and widens again for the view
+/// sources the previous round created.
+const MAX_LAYOUT_ROUNDS: usize = 16;
 
 /// One member of a literal with a layout spread, for the widened key order.
 #[derive(Clone)]
@@ -604,10 +609,31 @@ impl Lower<'_> {
         }
         let mut wide = fields.to_vec();
         wide.extend(extras.iter().map(|(field, ..)| field.clone()));
-        let wide_ty = records::intern(wide, self.types)?;
+        // An object with accessors (`object_accessors`) widens into an
+        // object with the same accessors, viewed as the same type.
+        let logical = self.types.receivers.logical(widen.result);
+        let wide_ty = match logical {
+            Some(_) => records::intern_accessors(wide, self.types)?,
+            None => records::intern(wide, self.types)?,
+        };
         let Type::Record(wide_id) = wide_ty else {
             return Err(CompilerError::Internal("widened layout".into()));
         };
+        if let Some(logical) = logical {
+            // Viewed as its type with the extra properties, so readers that
+            // read such an object through its type see them too.
+            let mut viewed = self.types.records[logical as usize].fields.clone();
+            for (field, ..) in &extras {
+                if !viewed.iter().any(|known| known.name == field.name) {
+                    viewed.push(field.clone());
+                }
+            }
+            let Type::Record(viewed) = records::intern(viewed, self.types)? else {
+                return Err(CompilerError::Internal("widened accessor type".into()));
+            };
+            self.types.subtyping.note_view(wide_ty, viewed);
+            self.types.receivers.widen(widen.result, wide_id, viewed);
+        }
         let wide = self.types.records[wide_id as usize].fields.clone();
         let slot_of = |name: &str| {
             wide.iter()
@@ -913,7 +939,12 @@ pub(super) fn finish(
     let functions_map = BTreeMap::new();
     let mut effects = BTreeMap::new();
     types.layouts.exact = true;
-    loop {
+    // The view sources each written copy was written for: a widened layout
+    // written later is a view source of the shapes it is viewed as, so
+    // their copies are written again (and the widens over those copies),
+    // until no new layout appears.
+    let mut written: BTreeMap<(u32, Vec<String>), BTreeSet<u32>> = BTreeMap::new();
+    for _ in 0..MAX_LAYOUT_ROUNDS {
         let copies: Vec<((u32, Vec<String>), usize)> = types
             .layouts
             .copies
@@ -922,6 +953,10 @@ pub(super) fn finish(
             .map(|(key, (index, _))| (key.clone(), *index))
             .collect();
         for ((shape, excluded), index) in &copies {
+            written.insert(
+                (*shape, excluded.clone()),
+                types.subtyping.view_sources(*shape).into_iter().collect(),
+            );
             let (function, layouts) = {
                 let mut lower = Lower::root(
                     &source,
@@ -944,7 +979,15 @@ pub(super) fn finish(
                 .copies
                 .insert((*shape, excluded.clone()), (*index, true));
             if excluded.is_empty() {
+                let changed = types.layouts.copy_shapes.get(shape) != Some(&layouts);
                 types.layouts.copy_shapes.insert(*shape, layouts);
+                if changed {
+                    for widen in &mut types.layouts.widens {
+                        if widen.copies.iter().any(|(copied, _)| copied == shape) {
+                            widen.written = false;
+                        }
+                    }
+                }
             }
         }
         let widens: Vec<Widen> = types
@@ -955,7 +998,8 @@ pub(super) fn finish(
             .cloned()
             .collect();
         if copies.is_empty() && widens.is_empty() {
-            break;
+            types.layouts.exact = false;
+            return Ok(());
         }
         for widen in widens {
             let function = {
@@ -993,7 +1037,17 @@ pub(super) fn finish(
                 entry.written = true;
             }
         }
+        for (key, sources) in &written {
+            let current: BTreeSet<u32> = types.subtyping.view_sources(key.0).into_iter().collect();
+            if current != *sources
+                && let Some((_, done)) = types.layouts.copies.get_mut(key)
+            {
+                *done = false;
+            }
+        }
     }
-    types.layouts.exact = false;
-    Ok(())
+    Err(source.locate(
+        invalid("layout spread copies and widened layouts do not settle"),
+        span,
+    ))
 }
