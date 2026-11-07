@@ -107,6 +107,9 @@ trait Driver {
     fn charge(&mut self) -> u32;
     fn environment(&mut self, flags: u32);
     fn computed(&mut self, id: u32) -> Vec<u8>;
+    /// The computed values of pseudo-element `kind` (its index in
+    /// `PseudoElement::ALL`) of element `id`.
+    fn computed_pseudo(&mut self, id: u32, kind: u32) -> Vec<u8>;
 }
 
 impl Driver for Session {
@@ -156,6 +159,10 @@ impl Driver for Session {
     }
     fn computed(&mut self, id: u32) -> Vec<u8> {
         session::encode_computed(&Session::computed(self, id))
+    }
+    fn computed_pseudo(&mut self, id: u32, kind: u32) -> Vec<u8> {
+        let kind = varta_style::PseudoElement::ALL[kind as usize];
+        session::encode_computed(&Session::computed_pseudo(self, id, kind))
     }
 }
 
@@ -330,6 +337,19 @@ impl Driver for Wasm {
             .func::<u32, u32>("view_engine_computed")
             .call(&mut self.store, id)
             .unwrap();
+        self.output(length)
+    }
+    fn computed_pseudo(&mut self, id: u32, kind: u32) -> Vec<u8> {
+        let length = self
+            .func::<(u32, u32), u32>("view_engine_computed_pseudo")
+            .call(&mut self.store, (id, kind))
+            .unwrap();
+        self.output(length)
+    }
+}
+impl Wasm {
+    /// The output buffer's first `length` bytes.
+    fn output(&mut self, length: u32) -> Vec<u8> {
         let at = self.call0("view_engine_output");
         let memory = self.instance.get_memory(&mut self.store, "memory").unwrap();
         let mut bytes = vec![0; length as usize];
@@ -341,8 +361,11 @@ impl Driver for Wasm {
 /// One corpus case: a chain of elements (each a `div` unless `tags`
 /// names another tag) with their classes, attributes (`[index, name,
 /// value]`), field values (`[index, value]`) and checked inputs
-/// (`[index]`), the stylesheet and the deepest element's inline values.
+/// (`[index]`), the stylesheet and the deepest element's inline values;
+/// with `pseudo`, that pseudo-element of the deepest element is computed
+/// too.
 struct Case {
+    pseudo: Option<varta_style::PseudoElement>,
     name: String,
     sheet: String,
     classes: Vec<String>,
@@ -359,6 +382,12 @@ fn corpus() -> Vec<Case> {
         .unwrap()
         .iter()
         .map(|case| Case {
+            pseudo: case["pseudo"].as_str().map(|name| {
+                *varta_style::PseudoElement::ALL
+                    .iter()
+                    .find(|kind| kind.name() == name)
+                    .unwrap()
+            }),
             name: case["name"].as_str().unwrap().into(),
             sheet: case["sheet"].as_str().unwrap().into(),
             classes: case["classes"]
@@ -441,6 +470,7 @@ fn element(index: usize) -> u32 {
 struct Verdict {
     statuses: Vec<u32>,
     computed: Vec<u8>,
+    pseudo: Vec<u8>,
 }
 
 fn run(driver: &mut impl Driver, case: &Case) -> Verdict {
@@ -500,12 +530,24 @@ fn run(driver: &mut impl Driver, case: &Case) -> Verdict {
         return Verdict {
             statuses,
             computed: Vec::new(),
+            pseudo: Vec::new(),
         };
     }
     statuses.push(driver.commit());
     driver.environment(0);
     let computed = driver.computed(target);
-    Verdict { statuses, computed }
+    let pseudo = case.pseudo.map_or_else(Vec::new, |kind| {
+        let index = varta_style::PseudoElement::ALL
+            .iter()
+            .position(|other| *other == kind)
+            .unwrap();
+        driver.computed_pseudo(target, u32::try_from(index).unwrap())
+    });
+    Verdict {
+        statuses,
+        computed,
+        pseudo,
+    }
 }
 
 /// The computed values of an encoded record.
@@ -627,10 +669,11 @@ fn browser_and_native_decide_the_corpus_identically() {
         } else {
             refused += 1;
         }
-        record.insert(
-            case.name.clone(),
-            serde_json::json!({"statuses": browser.statuses, "computed": computed}),
-        );
+        let mut entry = serde_json::json!({"statuses": browser.statuses, "computed": computed});
+        if case.pseudo.is_some() && ok {
+            entry["pseudo"] = serde_json::json!(decode(&browser.pseudo));
+        }
+        record.insert(case.name.clone(), entry);
     }
     assert!(
         accepted > 200 && refused > 20,

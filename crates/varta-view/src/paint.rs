@@ -93,6 +93,9 @@ pub struct FrameMetadata {
     /// Elements that are never a pointer target (`pointer-events: none` or
     /// not visible, CSS UI 4 §5.1): hit testing passes through their regions.
     untargetable: std::collections::BTreeSet<u32>,
+    /// The originating element of each generated pseudo-element box and its
+    /// text: a hit on them targets that element (Pseudo-Elements 4 §4.1).
+    owners: BTreeMap<u32, u32>,
 }
 
 /// The four cursor values admitted by the checked CSS subset.
@@ -180,6 +183,7 @@ impl FrameMetadata {
             && self.scroll_sources == other.scroll_sources
             && self.overlay_scrollbars == other.overlay_scrollbars
             && self.untargetable == other.untargetable
+            && self.owners == other.owners
     }
     #[must_use]
     pub fn cursor_at(&self, x: f32, y: f32) -> PointerCursor {
@@ -381,7 +385,7 @@ impl FrameMetadata {
                         .hit_clips
                         .get(&index)
                         .is_none_or(|clip| clip.contains(x, y)))
-                .then_some(*id)
+                .then(|| self.owners.get(id).copied().unwrap_or(*id))
             })
     }
 
@@ -953,7 +957,17 @@ fn current_color(tree: &Tree, env: &Environment, id: u32) -> Option<Color> {
         if let Some(value) = value
             && value != "currentcolor"
         {
-            return color(value);
+            // Color 4 §6.4: `currentcolor` in `color` is the inherited color.
+            return if varta_common::view::css::mixes_current_color(value) {
+                let parent = tree.nodes.get(&ancestor).and_then(|node| node.parent);
+                let inherited = match parent {
+                    Some(parent) => current_color(tree, env, parent)?,
+                    None => Color::BLACK,
+                };
+                mixed_color(value, inherited)
+            } else {
+                color(value)
+            };
         }
         if ancestor != ROOT_NODE
             && let Some(element) = tree.element(ancestor)
@@ -967,6 +981,170 @@ fn current_color(tree: &Tree, env: &Environment, id: u32) -> Option<Color> {
         }
     }
     Some(Color::BLACK)
+}
+
+/// A computed color that mixes `currentcolor`, with `current` as it (Color
+/// 4 §6.4: resolved at used-value time).
+fn mixed_color(value: &str, current: Color) -> Option<Color> {
+    let current = current.to_color_u8();
+    let text = format!(
+        "rgba({}, {}, {}, {})",
+        current.red(),
+        current.green(),
+        current.blue(),
+        f64::from(current.alpha()) / f64::from(u8::MAX)
+    );
+    color(&varta_common::view::css::resolve_current_color(
+        value, &text,
+    )?)
+}
+
+/// The used color of a computed color value of element `id`:
+/// `currentcolor` and mixes with it resolve against its `color`.
+fn used_color(tree: &Tree, env: &Environment, id: u32, value: &str) -> Option<Color> {
+    if value == "currentcolor" {
+        current_color(tree, env, id)
+    } else if varta_common::view::css::mixes_current_color(value) {
+        mixed_color(value, current_color(tree, env, id)?)
+    } else {
+        color(value)
+    }
+}
+
+/// The light and dark `CanvasText`, the initial `color` (CSS Color 4 §6.2).
+const CANVAS_TEXT: [&str; 2] = ["#000000", "#ffffff"];
+
+/// The properties a field's `::placeholder` renders natively (CSS
+/// Pseudo-Elements 4 §3.3): its text color and opacity; any other declared
+/// value is refused rather than ignored.
+const PLACEHOLDER_PROPERTIES: [CssProperty; 2] = [CssProperty::Color, CssProperty::Opacity];
+
+/// The color and opacity of a field's `::placeholder` text: its author
+/// `color` (inheriting the field's `field` color, which `currentcolor`
+/// names, Color 4 §6.4), else the user agent's placeholder color; its
+/// `opacity` multiplies the alpha.
+fn placeholder_color(
+    tree: &Tree,
+    env: &Environment,
+    id: u32,
+    field: Color,
+) -> Result<Color, PaintError> {
+    let values = tree.pseudo_values(id, varta_style::PseudoElement::Placeholder, env);
+    if values
+        .keys()
+        .any(|property| !PLACEHOLDER_PROPERTIES.contains(property))
+    {
+        return Err(PaintError::Unsupported(id));
+    }
+    let mut used = match values.get(&CssProperty::Color) {
+        None => theme::PLACEHOLDER.color(),
+        Some(varta_style::Computed::Inherit) => field,
+        Some(varta_style::Computed::Initial) => {
+            color(CANVAS_TEXT[usize::from(env.dark)]).ok_or(PaintError::Unsupported(id))?
+        }
+        Some(varta_style::Computed::Value(value)) if value == "currentcolor" => field,
+        Some(varta_style::Computed::Value(value)) => {
+            if varta_common::view::css::mixes_current_color(value) {
+                mixed_color(value, field)
+            } else {
+                color(value)
+            }
+            .ok_or(PaintError::Unsupported(id))?
+        }
+    };
+    if let Some(varta_style::Computed::Value(opacity)) = values.get(&CssProperty::Opacity) {
+        let opacity: f32 = opacity.parse().map_err(|_| PaintError::Unsupported(id))?;
+        used.apply_opacity(opacity.clamp(0.0, 1.0));
+    }
+    Ok(used)
+}
+
+/// The used background color and opacity of a modal dialog's `::backdrop`
+/// (CSS Position 4 §3.2): the author's, else the user agent's
+/// translucent backdrop. The backdrop is a fixed box covering the viewport;
+/// declarations that change nothing there (`box-sizing`, padding, zero
+/// margins and border widths) are admitted, any other is refused.
+fn backdrop_color(tree: &Tree, env: &Environment, dialog: u32) -> Result<Color, PaintError> {
+    use CssProperty as P;
+    let values = tree.pseudo_values(dialog, varta_style::PseudoElement::Backdrop, env);
+    let user_agent = || color(varta_common::view::DIALOG_BACKDROP[usize::from(env.dark)]);
+    let mut used = user_agent().ok_or(PaintError::Unsupported(dialog))?;
+    for (property, value) in &values {
+        let text = value.text();
+        let inert = match property {
+            P::BoxSizing
+            | P::Padding
+            | P::PaddingTop
+            | P::PaddingRight
+            | P::PaddingBottom
+            | P::PaddingLeft
+            | P::BorderStyle
+            | P::BorderTopStyle
+            | P::BorderRightStyle
+            | P::BorderBottomStyle
+            | P::BorderLeftStyle
+            | P::BorderColor
+            | P::BorderTopColor
+            | P::BorderRightColor
+            | P::BorderBottomColor
+            | P::BorderLeftColor
+            | P::BackgroundColor
+            | P::Opacity => true,
+            P::Margin
+            | P::MarginTop
+            | P::MarginRight
+            | P::MarginBottom
+            | P::MarginLeft
+            | P::BorderWidth
+            | P::BorderTopWidth
+            | P::BorderRightWidth
+            | P::BorderBottomWidth
+            | P::BorderLeftWidth
+            | P::Border
+            | P::BorderTop
+            | P::BorderRight
+            | P::BorderBottom
+            | P::BorderLeft => zero_edges(text),
+            _ => false,
+        };
+        if !inert {
+            return Err(PaintError::Unsupported(dialog));
+        }
+    }
+    match values.get(&P::BackgroundColor) {
+        None => {}
+        Some(varta_style::Computed::Initial) => used = Color::TRANSPARENT,
+        // `background-color` does not inherit; the dialog's own value.
+        Some(varta_style::Computed::Inherit) => {
+            used = match tree.computed_property(dialog, env, P::BackgroundColor) {
+                Some(value) => used_color(tree, env, dialog, &value),
+                None => color(varta_common::view::DIALOG_BACKGROUND[usize::from(env.dark)]),
+            }
+            .ok_or(PaintError::Unsupported(dialog))?;
+        }
+        Some(varta_style::Computed::Value(value)) => {
+            used = used_color(tree, env, dialog, value).ok_or(PaintError::Unsupported(dialog))?;
+        }
+    }
+    if let Some(varta_style::Computed::Value(opacity)) = values.get(&P::Opacity) {
+        let opacity: f32 = opacity
+            .parse()
+            .map_err(|_| PaintError::Unsupported(dialog))?;
+        used.apply_opacity(opacity.clamp(0.0, 1.0));
+    }
+    Ok(used)
+}
+
+/// Whether a margin, border width or border shorthand value has no width:
+/// its lengths are all zero (`none`, `hidden` and colors aside).
+fn zero_edges(value: &str) -> bool {
+    value.split_ascii_whitespace().all(|part| {
+        part.starts_with(|c: char| !c.is_ascii_digit() && c != '-' && c != '.')
+            || part
+                .trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%')
+                .parse::<f64>()
+                .is_ok_and(|number| number == 0.0)
+    })
 }
 
 // Extract the color token from a border shorthand, preserving spaces inside rgb().
@@ -1044,6 +1222,7 @@ fn border_colors(
         .element(id)
         .ok_or(PaintError::Unsupported(id))?
         .border_color_inline
+        .values
     {
         set(&mut values, *property, Some(raw), &[side]);
     }
@@ -1062,12 +1241,7 @@ fn border_colors(
         if width == 0.0 {
             continue;
         }
-        let next = if value == "currentcolor" {
-            current_color(tree, env, id)
-        } else {
-            color(&value)
-        }
-        .ok_or(PaintError::Unsupported(id))?;
+        let next = used_color(tree, env, id, &value).ok_or(PaintError::Unsupported(id))?;
         result[index] = next;
     }
     Ok(Some(result))
@@ -1156,12 +1330,7 @@ fn outline_color(
                 raw
             }
         });
-    if raw_color == "currentcolor" {
-        current_color(tree, env, id)
-    } else {
-        color(raw_color)
-    }
-    .ok_or(PaintError::Unsupported(id))
+    used_color(tree, env, id, raw_color).ok_or(PaintError::Unsupported(id))
 }
 
 fn outline(
@@ -2344,7 +2513,8 @@ fn paint_input(
             scrollbars: None,
             transform: None,
         };
-        let style = underline::Style::resolve(tree, env, id, true, theme::PLACEHOLDER.color())?;
+        let placeholder_color = placeholder_color(tree, env, id, color)?;
+        let style = underline::Style::resolve(tree, env, id, true, placeholder_color)?;
         paint_shaped(
             pixmap,
             &placeholder_layout,
@@ -2801,8 +2971,7 @@ fn rasterize_inner_scoped(
             // takes every pointer that does not land on the dialog itself.
             pixmap.active_clip = None;
             let viewport = geometry[&ROOT_NODE].rect;
-            let backdrop = color(varta_common::view::DIALOG_BACKDROP[usize::from(env.dark)])
-                .ok_or(PaintError::Unsupported(id))?;
+            let backdrop = backdrop_color(tree, &env, id)?;
             if let Some(rect) =
                 Rect::from_xywh(viewport.x, viewport.y, viewport.width, viewport.height)
             {
@@ -3273,14 +3442,7 @@ fn rasterize_inner_scoped(
             )?;
         } else if let Some(color) = properties
             .get(&CssProperty::BackgroundColor)
-            .map(|value| {
-                if value == "currentcolor" {
-                    current_color(tree, &env, id)
-                } else {
-                    color(value)
-                }
-                .ok_or(PaintError::Unsupported(id))
-            })
+            .map(|value| used_color(tree, &env, id, value).ok_or(PaintError::Unsupported(id)))
             .transpose()?
             .or_else(|| control.and_then(theme::background))
             .or_else(|| {
@@ -3404,6 +3566,12 @@ fn rasterize_inner_scoped(
         .copied()
         .filter(|id| tree.element(*id).is_some() && !style::pointer_target(tree, &env, *id))
         .collect();
+    let owners = geometry
+        .keys()
+        .copied()
+        .filter(|id| crate::generated::generated_id(*id))
+        .map(|id| (id, tree.originating(id)))
+        .collect();
     let pixels = pixmap.finish(scene)?;
     Ok(RasterImage {
         pixels,
@@ -3426,6 +3594,7 @@ fn rasterize_inner_scoped(
             scroll_layout: layout::visual(tree, geometry),
             overlay_scrollbars: overlay_frames,
             untargetable,
+            owners,
         },
     })
 }

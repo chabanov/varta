@@ -68,8 +68,9 @@ pub fn project_flex_blockification(snapshot: &mut Value) {
 fn node_tree(tree: &Tree, environment: &Environment) -> Value {
     let mut built = std::collections::BTreeMap::new();
     for id in tree.document_order().into_iter().rev() {
-        let children = tree.nodes[&id]
-            .children
+        // Generated pseudo-element boxes are not in the document.
+        let children = tree
+            .document_children(id)
             .iter()
             .filter_map(|child| built.remove(child))
             .collect();
@@ -106,6 +107,9 @@ fn node(tree: &Tree, id: u32, environment: &Environment, children: Vec<Value>) -
                             .collect(),
                     ),
                 );
+            }
+            if !element.data.values.is_empty() {
+                out.insert("data".into(), json!(element.data.values));
             }
             if !element.class.is_empty() {
                 out.insert("class".into(), json!(element.class));
@@ -153,7 +157,7 @@ fn node(tree: &Tree, id: u32, environment: &Environment, children: Vec<Value>) -
                     ),
                 );
             }
-            if !entry.children.is_empty() {
+            if !tree.document_children(id).is_empty() {
                 out.insert("children".into(), Value::Array(children));
             }
             Value::Object(out)

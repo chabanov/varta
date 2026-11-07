@@ -67,6 +67,15 @@ fn display_none(tree: &Tree, env: &Environment, id: u32) -> bool {
         .is_some_and(|value| value == "none")
 }
 
+/// The nearest declared `list-style-type` of `id` or an ancestor (it
+/// inherits, CSS Lists 3 §3.3), if any.
+fn declared_type(tree: &Tree, env: &Environment, id: u32) -> Option<String> {
+    tree.path(id).into_iter().find_map(|ancestor| {
+        tree.computed_property(ancestor, env, CssProperty::ListStyleType)
+            .filter(|value| value != crate::style::INHERIT)
+    })
+}
+
 /// The list context a node inherits from its ancestors.
 #[derive(Clone, Copy, Default)]
 struct ListContext {
@@ -124,11 +133,27 @@ fn items(
                     _ => MarkerStyle::Disc,
                 },
             };
-            found.push(Item {
-                id,
-                style,
-                depth: context.depth + 1,
-            });
+            // CSS Lists 3 §3.3: an inherited `list-style-type` replaces the
+            // user-agent counter style; `none` draws no marker.
+            let style = match declared_type(tree, env, id).as_deref() {
+                None => Some(style),
+                Some("none") => None,
+                Some("disc") => Some(MarkerStyle::Disc),
+                Some("circle") => Some(MarkerStyle::Circle),
+                Some("square") => Some(MarkerStyle::Square),
+                Some("decimal") => match ordinals.get(&id) {
+                    Some(ordinal) => Some(MarkerStyle::Decimal(*ordinal)),
+                    None => return Err(LayoutError::Unsupported(id)),
+                },
+                Some(_) => return Err(LayoutError::Unsupported(id)),
+            };
+            if let Some(style) = style {
+                found.push(Item {
+                    id,
+                    style,
+                    depth: context.depth + 1,
+                });
+            }
         }
         let mut inner = ListContext {
             depth: context.depth + 1,

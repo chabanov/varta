@@ -295,11 +295,20 @@ pub(crate) fn inline_tag(tag: Tag) -> bool {
         Tag::Span | Tag::Strong | Tag::Em | Tag::Code | Tag::A | Tag::Br | Tag::Label
     )
 }
+/// Whether an inline-level box's display is blockified (CSS Display 3
+/// §2.7): a flex or grid item, or an absolutely positioned box (CSS 2
+/// §9.7).
 pub(crate) fn blockified(tree: &Tree, env: &Environment, id: u32) -> bool {
-    tree.nodes[&id].parent.is_some_and(|parent| {
-        tree.computed_property(parent, env, P::Display)
-            .is_some_and(|d| matches!(d.as_str(), "flex" | "grid"))
-    })
+    out_of_flow(tree, env, id)
+        || tree.nodes[&id].parent.is_some_and(|parent| {
+            tree.computed_property(parent, env, P::Display)
+                .is_some_and(|d| matches!(d.as_str(), "flex" | "grid"))
+        })
+}
+/// Whether `id` is absolutely positioned (`absolute` or `fixed`).
+fn out_of_flow(tree: &Tree, env: &Environment, id: u32) -> bool {
+    tree.computed_property(id, env, P::Position)
+        .is_some_and(|position| matches!(position.as_str(), "absolute" | "fixed"))
 }
 fn is_inline(tree: &Tree, env: &Environment, id: u32) -> bool {
     match &tree.nodes[&id].content {
@@ -308,6 +317,8 @@ fn is_inline(tree: &Tree, env: &Environment, id: u32) -> bool {
         Content::Element(e) if e.tag == Tag::Img => {
             layout::replaced::inline(tree, env, id) && !layout::replaced::alone(tree, env, id)
         }
+        // An absolutely positioned box is blockified and out of the line.
+        Content::Element(_) if out_of_flow(tree, env, id) => false,
         Content::Element(e) => match tree.computed_property(id, env, P::Display).as_deref() {
             Some("none") => true,
             Some("inline") => {
@@ -404,6 +415,19 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<layout::InlineSpa
             P::TextTransform | P::Visibility | P::PointerEvents | P::UserSelect => true,
             // A non-replaced inline box has no `width` or `height` to size.
             P::BoxSizing => true,
+            // A generated box's content (`crate::generated`); an element's
+            // own content replacement is not rendered.
+            P::Content => {
+                tree.generated(id).is_some() || matches!(value.as_str(), "normal" | "none")
+            }
+            // Inherited by text (`layout::resolve_text`) and list items.
+            P::FontFeatureSettings
+            | P::FontVariationSettings
+            | P::ListStyleType
+            | P::ListStylePosition
+            | P::ListStyleImage => true,
+            // `appearance` has no effect on a non-replaced inline box.
+            P::Appearance => true,
             P::Outline | P::OutlineWidth | P::OutlineStyle | P::OutlineColor | P::OutlineOffset => {
                 true
             }

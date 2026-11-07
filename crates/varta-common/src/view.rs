@@ -108,6 +108,11 @@ pub const EVENT_EXPORT_PARAMS: [HostScalar; 1] = [HostScalar::I32];
 pub const ROOT_NODE: u32 = 1;
 /// "No node" in `insert`'s `before` operand (append).
 pub const NO_NODE: u32 = 0;
+/// The first node id a host reserves for the boxes it generates (the
+/// `::before` and `::after` boxes of CSS Pseudo-Elements 4 §4.1 and their
+/// text): a guest creates nodes with ids in `1..DRAFT_FIRST_GENERATED_NODE`
+/// only, so no guest node can collide with a generated one.
+pub const DRAFT_FIRST_GENERATED_NODE: u32 = 0x8000_0000;
 
 /// Batch header: `version: u16`, `flags: u16`, `op_count: u32`.
 pub const BATCH_HEADER_BYTES: usize = 8;
@@ -124,6 +129,32 @@ pub const DRAFT_MAX_LIVE_NODES: usize = 64 * 1024;
 pub const DRAFT_MAX_TREE_DEPTH: usize = 512;
 pub const DRAFT_MAX_LIVE_LISTENERS: usize = 8 * 1024;
 pub const DRAFT_MAX_VALUE_BYTES: usize = 64 * 1024;
+/// The longest custom data attribute name (`set_data`), in bytes.
+pub const DRAFT_MAX_DATA_NAME_BYTES: usize = 64;
+/// Custom data attributes of one element at most.
+pub const DRAFT_MAX_DATA_ATTRIBUTES: usize = 32;
+/// The prefix of an HTML custom data attribute name.
+pub const DATA_ATTRIBUTE_PREFIX: &str = "data-";
+
+/// Whether `name` is a custom data attribute name of the view (HTML
+/// §3.2.6.6: `data-` and at least one character, XML-compatible, no ASCII
+/// upper alphas), within [`DRAFT_MAX_DATA_NAME_BYTES`]. The view admits
+/// the subset `data-[a-z0-9._-]+`, which is always valid HTML and
+/// serializes without escapes; any other name is refused, never altered.
+#[must_use]
+pub fn data_attribute_name(name: &str) -> bool {
+    name.len() <= DRAFT_MAX_DATA_NAME_BYTES
+        && name
+            .strip_prefix(DATA_ATTRIBUTE_PREFIX)
+            .is_some_and(|rest| {
+                !rest.is_empty()
+                    && rest.bytes().all(|byte| {
+                        byte.is_ascii_lowercase()
+                            || byte.is_ascii_digit()
+                            || matches!(byte, b'.' | b'_' | b'-')
+                    })
+            })
+}
 /// Guest text payload plus live-value reservations, independent of local edits.
 pub const DRAFT_MAX_RETAINED_TEXT_BYTES: usize = 8 * 1024 * 1024;
 /// A validated UTF-16 code unit needs at most three UTF-8 bytes.
@@ -207,6 +238,8 @@ coded! {
         Stylesheet = 16 => "stylesheet",
         SetTitle = 17 => "set_title",
         CopyText = 18 => "copy_text",
+        SetData = 19 => "set_data",
+        RemoveData = 20 => "remove_data",
     }
 }
 
@@ -412,6 +445,13 @@ coded! {
         PointerEvents = 105 => "pointer-events",
         UserSelect = 106 => "user-select",
         BoxSizing = 107 => "box-sizing",
+        Content = 108 => "content",
+        FontFeatureSettings = 109 => "font-feature-settings",
+        FontVariationSettings = 110 => "font-variation-settings",
+        ListStyleType = 111 => "list-style-type",
+        ListStylePosition = 112 => "list-style-position",
+        ListStyleImage = 113 => "list-style-image",
+        Appearance = 114 => "appearance",
     }
 }
 
@@ -526,6 +566,9 @@ pub enum Operand {
     RequiredModifiers,
     /// `u32` modifier bits (within [`MODIFIER_MASK`]) that must all be released.
     ForbiddenModifiers,
+    /// UTF-16LE string: an HTML custom data attribute name
+    /// ([`data_attribute_name`]).
+    DataName,
 }
 impl Operand {
     #[must_use]
@@ -549,7 +592,7 @@ impl Operand {
             | Self::RequiredModifiers
             | Self::ForbiddenModifiers => "u32",
             Self::Argument => "f64",
-            Self::Text => "string",
+            Self::Text | Self::DataName => "string",
         }
     }
     #[must_use]
@@ -574,6 +617,7 @@ impl Operand {
             Self::Request => "request",
             Self::RequiredModifiers => "required_modifiers",
             Self::ForbiddenModifiers => "forbidden_modifiers",
+            Self::DataName => "data_name",
         }
     }
 }
@@ -607,6 +651,8 @@ impl Opcode {
             Self::Stylesheet => &[O::Sheet, O::Text],
             Self::SetTitle => &[O::Text],
             Self::CopyText => &[O::Request, O::Text],
+            Self::SetData => &[O::Node, O::DataName, O::Text],
+            Self::RemoveData => &[O::Node, O::DataName],
         }
     }
 }
@@ -1182,6 +1228,15 @@ impl CssProperty {
             Self::PointerEvents => "auto | none",
             Self::UserSelect => "auto | text | none | contain | all",
             Self::BoxSizing => "content-box | border-box",
+            Self::Content => "normal | none | <string>+",
+            Self::FontFeatureSettings => "normal | [<string> [<integer> | on | off]?]#",
+            Self::FontVariationSettings => "normal | [<string> <number>]#",
+            Self::ListStyleType => "disc | circle | square | decimal | none",
+            Self::ListStylePosition => "outside",
+            Self::ListStyleImage => "none",
+            Self::Appearance => {
+                "none | auto | button | textfield | menulist-button | searchfield | textarea | checkbox | radio | menulist | listbox | meter | progress-bar"
+            }
         }
     }
 }
@@ -1219,6 +1274,13 @@ impl CssProperty {
             | Self::BorderBottomRightRadius
             | Self::BorderBottomLeftRadius => Some("nonnegative; horizontal then vertical radius"),
             Self::Visibility | Self::TextTransform | Self::PointerEvents => Some("inherited"),
+            Self::Content => Some("`::before` and `::after`; elements take `normal` and `none`"),
+            Self::FontFeatureSettings | Self::FontVariationSettings => {
+                Some("inherited; four-character OpenType tags; nonnegative feature values")
+            }
+            Self::ListStyleType | Self::ListStylePosition | Self::ListStyleImage => {
+                Some("inherited; list items")
+            }
             _ => None,
         }
     }
@@ -1701,6 +1763,13 @@ mod tests {
             P::PointerEvents => &["none", "auto"],
             P::UserSelect => &["none", "all"],
             P::BoxSizing => &["border-box", "content-box"],
+            P::Content => &["\"\"", "none", "\"a\" \"b\""],
+            P::FontFeatureSettings => &["normal", "\"liga\" 0", "\"tnum\", \"ss01\" on"],
+            P::FontVariationSettings => &["normal", "\"wght\" 450, \"opsz\" 12"],
+            P::ListStyleType => &["none", "decimal"],
+            P::ListStylePosition => &["outside"],
+            P::ListStyleImage => &["none"],
+            P::Appearance => &["none", "auto", "button"],
         }
     }
 

@@ -61,10 +61,24 @@ pub(crate) struct OutlineStyle {
     pub values: BTreeMap<CssProperty, (CssProperty, String)>,
 }
 
+/// Last inline writer for each border color, including shorthand resets.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct BorderColorStyle {
+    pub values: BTreeMap<u8, (CssProperty, String)>,
+}
+
+/// An element's custom data attributes (`set_data`), by name.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct DataAttributes {
+    pub values: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Element {
     pub tag: Tag,
     pub attributes: BTreeMap<Attribute, String>,
+    /// Custom data attributes (`set_data`), by name.
+    pub data: Box<DataAttributes>,
     pub class: String,
     pub style: BTreeMap<CssProperty, String>,
     /// CSSOM-like last writer for each geometry longhand, kept separately so
@@ -72,8 +86,7 @@ pub(crate) struct Element {
     pub layout_inline: BTreeMap<CssProperty, (CssProperty, String, usize)>,
     /// Last inline writer for each border side and component (width/style).
     pub border_inline: BTreeMap<(u8, bool), (CssProperty, String)>,
-    /// Last inline writer for each border color, including shorthand resets.
-    pub border_color_inline: BTreeMap<u8, (CssProperty, String)>,
+    pub border_color_inline: Box<BorderColorStyle>,
     pub outline_inline: Box<OutlineStyle>,
     pub listeners: Vec<Listener>,
     /// The live value of `input`, `textarea` and `select` (`set_value`).
@@ -88,15 +101,16 @@ pub(crate) struct Element {
     pub open: bool,
 }
 impl Element {
-    fn new(tag: Tag) -> Self {
+    pub(crate) fn new(tag: Tag) -> Self {
         Self {
             tag,
             attributes: BTreeMap::new(),
+            data: Box::default(),
             class: String::new(),
             style: BTreeMap::new(),
             layout_inline: BTreeMap::new(),
             border_inline: BTreeMap::new(),
-            border_color_inline: BTreeMap::new(),
+            border_color_inline: Box::default(),
             outline_inline: Box::default(),
             listeners: Vec::new(),
             value: String::new(),
@@ -224,6 +238,9 @@ pub(crate) struct Node {
     pub content: Content,
     pub parent: Option<u32>,
     pub children: Vec<u32>,
+    /// A box the renderer generated for a pseudo-element
+    /// ([`crate::generated`]); `None` for the guest's nodes.
+    pub generated: Option<crate::generated::Generated>,
 }
 
 /// A host-side consequence of an applied batch, performed after the swap.
@@ -283,6 +300,7 @@ impl Default for Tree {
             content: Content::Element(Element::new(Tag::Div)),
             parent: None,
             children: Vec::new(),
+            generated: None,
         };
         Self {
             render_reads: crate::render::ReadCache::default(),
@@ -372,6 +390,9 @@ impl Tree {
                     charge(element.class.len())?;
                     for text in element.attributes.values().chain(element.style.values()) {
                         charge(text.len())?;
+                    }
+                    for (name, text) in &element.data.values {
+                        charge(name.len() + text.len())?;
                     }
                     if element.editor.value_reserved {
                         charge(DRAFT_FIELD_VALUE_RESERVATION_BYTES)?;
@@ -853,12 +874,15 @@ impl Tree {
         out
     }
 
-    /// Apply a decoded batch to this (copied) tree.
+    /// Apply a decoded batch to this (copied) tree: to the guest's nodes
+    /// alone, without the generated boxes, which the next style change
+    /// event regenerates.
     pub(crate) fn apply(
         &mut self,
         operations: &[Operation],
         context: &mut Context<'_>,
     ) -> Result<Vec<Effect>, ViewError> {
+        self.strip_generated();
         let mut apply = Apply {
             tree: self,
             context,
@@ -1102,6 +1126,7 @@ impl Apply<'_, '_, '_> {
                 for side in border_color_sides(*property) {
                     element
                         .border_color_inline
+                        .values
                         .insert(*side, (*property, stored.clone()));
                 }
                 for component in outline_components(*property) {
@@ -1127,7 +1152,7 @@ impl Apply<'_, '_, '_> {
                     element.border_inline.remove(&component);
                 }
                 for side in border_color_sides(*property) {
-                    element.border_color_inline.remove(side);
+                    element.border_color_inline.values.remove(side);
                 }
                 for component in outline_components(*property) {
                     element.outline_inline.values.remove(component);
@@ -1160,6 +1185,30 @@ impl Apply<'_, '_, '_> {
             Opcode::SetChecked => self.set_checked(node, operation),
             Opcode::Command => self.command(node, operation),
             Opcode::Stylesheet => self.stylesheet(node, operation.text()),
+            Opcode::SetData => {
+                let name = operation.data_name();
+                if !varta_common::view::data_attribute_name(name) {
+                    return Err(self.fail(Violation::InvalidDataName));
+                }
+                let (name, value) = (name.to_owned(), operation.text().to_owned());
+                let element = self.element(node)?;
+                if !element.data.values.contains_key(&name)
+                    && element.data.values.len() >= varta_common::view::DRAFT_MAX_DATA_ATTRIBUTES
+                {
+                    return Err(self.fail(Violation::TooManyDataAttributes));
+                }
+                element.data.values.insert(name, value);
+                Ok(())
+            }
+            Opcode::RemoveData => {
+                let name = operation.data_name();
+                if !varta_common::view::data_attribute_name(name) {
+                    return Err(self.fail(Violation::InvalidDataName));
+                }
+                let name = name.to_owned();
+                self.element(node)?.data.values.remove(&name);
+                Ok(())
+            }
             Opcode::SetTitle => {
                 self.tree.title = operation.text().into();
                 Ok(())
@@ -1186,6 +1235,9 @@ impl Apply<'_, '_, '_> {
         if id == NO_NODE || self.tree.nodes.contains_key(&id) {
             return Err(self.fail(Violation::DuplicateNode(id)));
         }
+        if crate::generated::generated_id(id) {
+            return Err(self.fail(Violation::GeneratedNode(id)));
+        }
         if self.tree.nodes.len() >= DRAFT_MAX_LIVE_NODES {
             return Err(self.fail(Violation::TooManyNodes));
         }
@@ -1196,6 +1248,7 @@ impl Apply<'_, '_, '_> {
                 content,
                 parent: None,
                 children: Vec::new(),
+                generated: None,
             },
         );
         Ok(())
@@ -1867,15 +1920,19 @@ impl varta_style::Document for Tree {
         self.nodes.get(&id).and_then(|node| node.parent)
     }
     fn children(&self, id: u32) -> &[u32] {
-        self.nodes
-            .get(&id)
-            .map_or(&[], |node| node.children.as_slice())
+        self.document_children(id)
     }
     fn top_level(&self) -> Vec<u32> {
         self.nodes
             .iter()
-            .filter_map(|(id, node)| node.parent.is_none().then_some(*id))
+            .filter_map(|(id, node)| {
+                (node.parent.is_none() && node.generated.is_none()).then_some(*id)
+            })
             .collect()
+    }
+    fn pseudo(&self, id: u32) -> Option<(u32, varta_style::PseudoElement)> {
+        let node = self.nodes.get(&id)?;
+        Some((node.parent?, node.generated.as_ref()?.kind))
     }
     fn focused(&self, id: u32) -> bool {
         self.focus == Some(id)
@@ -1887,6 +1944,13 @@ impl varta_style::Document for Tree {
         self.pointer_contains(self.active.as_ref(), id)
     }
     fn attribute(&self, id: u32, name: &str) -> Option<&str> {
+        if name.starts_with(varta_common::view::DATA_ATTRIBUTE_PREFIX) {
+            return Tree::element(self, id)?
+                .data
+                .values
+                .get(name)
+                .map(String::as_str);
+        }
         let attribute = Attribute::ALL
             .iter()
             .copied()

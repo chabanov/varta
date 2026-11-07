@@ -4,6 +4,15 @@ import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
 import { createViewModel, imageCandidateNames } from "./view-model.mjs";
 import { readMediaInputs, MEDIA_INPUT_QUERIES, ENGINE_INPUTS, ENGINE_STATES } from "./view-engine.mjs";
 
+/** The pseudo-elements the renderers draw, which the bridge styles with one
+ * generated rule per element (CSS Pseudo-Elements 4); the engine decides
+ * their values. */
+const RENDERED_PSEUDO_ELEMENTS = new Set(["before", "after", "placeholder", "backdrop"]);
+/** The attribute that names an element in its generated pseudo-element
+ * rules: the bridge's own, never a guest attribute (the view protocol has
+ * no attribute of this name). */
+const PSEUDO_ATTRIBUTE = "varta-pseudo";
+
 const V = registry.view, W = V.wire, F = V.filters;
 const field = Object.fromEntries(W.eventFields.map((entry) => [entry.name, entry]));
 const eventKinds = new Map(V.events.map((entry) => [entry.name, entry]));
@@ -71,7 +80,11 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
   base.replaceSync(`:host { all: initial; display: block; } ${D.rootSelector} { ${D.rootStyle}; } ${fonts.rules(D)} button, input, textarea, select { box-sizing: border-box; margin: 0; } textarea { resize: none; } dialog { border: none; padding: 0; background-color: ${D.dialogBackground[0]}; color: ${D.dialogText[0]}; } dialog::backdrop { background-color: ${D.dialogBackdrop[0]}; } @media (prefers-color-scheme: dark) { dialog { background-color: ${D.dialogBackground[1]}; color: ${D.dialogText[1]}; } dialog::backdrop { background-color: ${D.dialogBackdrop[1]}; } }`);
   const nodes = new Map([[W.root, root]]), ids = new WeakMap([[root, W.root]]), ownedAssets = new Map(assets);
   let applying = false, closed = false;
-  shadow.adoptedStyleSheets = [base];
+  // Pseudo-elements take no inline style: each styled one gets a rule of
+  // its own, keyed by the element's id, whose declarations are set
+  // through the CSSOM from the engine's computed values.
+  const pseudoSheet = new Sheet(), pseudoRules = new Map();
+  shadow.adoptedStyleSheets = [base, pseudoSheet];
   // Every element's style is the view style engine's computed value, set
   // inline; guest stylesheets never reach the platform cascade. The engine's
   // inputs are recorded here: the viewport, the media preferences and the
@@ -109,6 +122,41 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
       }
       applied.set(element, values);
     }
+    restylePseudoElements();
+  }
+  /** Mirror the engine's computed values of every selected, rendered
+   * pseudo-element into its rule, removing the rules of those that have
+   * none any more. */
+  function restylePseudoElements() {
+    const kinds = engine.pseudoElements().filter((kind) => RENDERED_PSEUDO_ELEMENTS.has(kind)), live = new Set();
+    for (const [id, element] of nodes) {
+      if (element.nodeType !== 1) continue;
+      for (const kind of kinds) {
+        const values = engine.computedPseudo(id, kind);
+        if (values.size === 0) continue;
+        const key = `${id}::${kind}`;
+        live.add(key);
+        let entry = pseudoRules.get(key);
+        if (entry === undefined || entry.element !== element) {
+          if (entry !== undefined) removePseudoRule(entry.rule);
+          element.setAttribute(PSEUDO_ATTRIBUTE, String(id));
+          const index = pseudoSheet.insertRule(`[${PSEUDO_ATTRIBUTE}="${id}"]::${kind} {}`, pseudoSheet.cssRules.length);
+          entry = { element, rule: pseudoSheet.cssRules[index], values: new Map() };
+          pseudoRules.set(key, entry);
+        }
+        for (const property of entry.values.keys()) if (!values.has(property)) entry.rule.style.removeProperty(property);
+        for (const [property, value] of values) {
+          if (entry.values.get(property) === value) continue;
+          entry.rule.style.setProperty(property, property === "font-family" && value !== "inherit" ? fonts.value(value) : value);
+        }
+        entry.values = values;
+      }
+    }
+    for (const [key, entry] of pseudoRules) if (!live.has(key)) { removePseudoRule(entry.rule); pseudoRules.delete(key); }
+  }
+  function removePseudoRule(rule) {
+    const rules = pseudoSheet.cssRules;
+    for (let index = 0; index < rules.length; index++) if (rules[index] === rule) { pseudoSheet.deleteRule(index); return; }
   }
   let frame;
   const schedule = () => { if (!closed && frame === undefined) frame = window.requestAnimationFrame(() => { frame = undefined; try { restyle(); } catch (error) { onError(error); } }); };
@@ -191,6 +239,8 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
           case "set_text": node.data = op.text; break;
           case "set_attribute": node.setAttribute(op.attribute, op.attribute === "src" || op.attribute === "srcset" ? resolved.get(i) : op.attribute === "href" ? "#" : op.text); break;
           case "remove_attribute": node.removeAttribute(op.attribute); break;
+          case "set_data": node.setAttribute(op.data_name, op.text); break;
+          case "remove_data": node.removeAttribute(op.data_name); break;
           case "set_class": node.className = op.text; break;
           case "insert": nodes.get(op.parent).insertBefore(node, op.before === W.noNode ? null : nodes.get(op.before)); break;
           case "remove": { const stack = [node]; while (stack.length) { const removed = stack.pop(); for (const child of removed.childNodes) stack.push(child); nodes.delete(ids.get(removed)); ids.delete(removed); } node.remove(); break; }
@@ -232,7 +282,7 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
   }
   return { apply, snapshot: () => model.snapshot(), complete: (id) => model.complete(id),
     freeze() { if(closed)return;closed=true;root.inert=true;unobserve();mountedContainers.delete(container);for(const [kind,listener,capture] of handlers)shadow.removeEventListener(kind,listener,{capture}); },
-    close() { if (closed) return; closed = true;unobserve();mountedContainers.delete(container); for (const [kind, listener, capture] of handlers) shadow.removeEventListener(kind, listener, { capture }); root.replaceChildren(); nodes.clear(); ownedAssets.clear(); model.close(); shadow.adoptedStyleSheets = []; },
+    close() { if (closed) return; closed = true;unobserve();mountedContainers.delete(container); for (const [kind, listener, capture] of handlers) shadow.removeEventListener(kind, listener, { capture }); root.replaceChildren(); nodes.clear(); ownedAssets.clear(); model.close(); pseudoRules.clear(); shadow.adoptedStyleSheets = []; },
     // Explicit inspection seam for host tests. The guest receives no DOM handle.
     inspectNode(id) { return nodes.get(id); },
   };

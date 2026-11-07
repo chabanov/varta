@@ -8,10 +8,14 @@
 //! rules whose selectors are the subset's complex selectors ([`selector`]:
 //! Selectors 4 combinators, type, class and pseudo-class selectors), `@media` (Media
 //! Queries 4/5, see [`media`]), `@layer` statements and blocks (Cascade 5
-//! §6.4) and `@property` (Properties and Values API 1 §3). Anything else is
-//! a violation: the subset fails closed instead of dropping what it does not
-//! admit. Forbidden constructs are found on decoded tokens, so no escape can
-//! hide them.
+//! §6.4) and `@property` (Properties and Values API 1 §3). What CSS error
+//! handling drops is dropped: a style rule whose selector list is invalid
+//! (Selectors 4 §3.9), a declaration of a property no specification defines
+//! (CSS Syntax 3 §5.4.4); a rule that can match no element of the view
+//! applies to nothing. Anything valid the subset has not implemented is a
+//! violation: the subset fails closed instead of ignoring it. Forbidden
+//! constructs are found on decoded tokens, so no escape can hide them, in
+//! dropped rules too.
 use super::{CssProperty, css, syntax};
 #[allow(unused_imports)]
 use crate::view::prelude::*;
@@ -179,12 +183,16 @@ pub enum Violation {
         "invalid @media query (media types all/screen/print; features width, height, orientation, prefers-color-scheme, prefers-reduced-motion, prefers-contrast, forced-colors, hover, any-hover, pointer, any-pointer)"
     )]
     Media,
-    #[error("a pseudo-element the renderers do not draw yet (admitted: `::file-selector-button`)")]
-    PseudoElement,
-    #[error("invalid declaration: unknown property or value outside the subset grammar")]
-    Declaration,
     #[error(
-        "the value is valid CSS that the native renderer cannot render yet (for example `em` outside `font-size`, `ch`/`lh`, a sum of a percentage and a length, or `currentcolor` inside `color-mix()`)"
+        "a pseudo-element the renderers do not draw yet (admitted: `::before`, `::after`, `::placeholder`, `::backdrop`, `::file-selector-button`)"
+    )]
+    PseudoElement,
+    #[error("invalid declaration: a value outside the subset grammar")]
+    Declaration,
+    #[error("a property the specifications define that the view does not implement yet")]
+    UnsupportedProperty,
+    #[error(
+        "the value is valid CSS that the native renderer cannot render yet (for example a sum of a percentage and a length outside box geometry, `display: inline-block`, or a counter in `content`)"
     )]
     Unrenderable,
     #[error("`font-family` names the CSS-wide keyword `{0}`, which the subset does not admit")]
@@ -723,6 +731,10 @@ impl Parser<'_> {
             || self.fail_at(self.tokens.len(), Violation::Unterminated),
             Ok,
         )?;
+        let Some(selectors) = selectors else {
+            self.at = close + 1;
+            return Ok(());
+        };
         let mut declarations = Vec::new();
         let mut important = Vec::new();
         for (name, first, last, is_important) in self.declarations(open + 1, close)? {
@@ -787,8 +799,10 @@ impl Parser<'_> {
     }
     /// One compound selector of tokens `start..end` (Selectors 4 §3.1, the
     /// subset: class selectors and pseudo-classes, or `:root` alone).
-    /// The selector list of a style rule's prelude (`start..end`).
-    fn selectors(&mut self, start: usize, end: usize) -> Parsed<Vec<Selector>> {
+    /// The selector list of a style rule's prelude (`start..end`), or `None`
+    /// when the rule is dropped: its list is invalid, or it can match no
+    /// element of the view.
+    fn selectors(&mut self, start: usize, end: usize) -> Parsed<Option<Vec<Selector>>> {
         let mut first = start;
         let mut last = end;
         while first < last && self.tokens[first].token == Token::Whitespace {
@@ -797,12 +811,23 @@ impl Parser<'_> {
         while last > first && self.tokens[last - 1].token == Token::Whitespace {
             last -= 1;
         }
-        let selectors = selector::parse_list(&self.tokens[first..last], self.text)
-            .or_else(|failure| self.fail_at(first + failure, Violation::Selector))?;
+        let selectors = match selector::parse_list(&self.tokens[first..last], self.text) {
+            Ok(selectors) => selectors,
+            // Selectors 4 §3.9, CSS Syntax 3 §9: a style rule whose selector
+            // list is invalid is dropped.
+            Err(error) if error.kind == selector::FailureKind::Invalid => return Ok(None),
+            Err(error) => return self.fail_at(first + error.at, Violation::Selector),
+        };
+        // A rule none of whose selectors can match an element of the view
+        // applies to nothing (`Selector::can_match`).
+        if !selectors.iter().any(Selector::can_match) {
+            return Ok(None);
+        }
         if let Some(item) = selectors.iter().position(|selector| {
-            selector
-                .pseudo_element
-                .is_some_and(|element| !element.rendered())
+            selector.can_match()
+                && selector
+                    .pseudo_element
+                    .is_some_and(|element| !element.rendered())
         }) {
             // The offending selector's first token: after `item` top-level
             // commas and the whitespace that follows them.
@@ -827,7 +852,7 @@ impl Parser<'_> {
             let work = selector_work(parsed);
             self.charge(work)?;
         }
-        Ok(selectors)
+        Ok(Some(selectors))
     }
 }
 
@@ -936,7 +961,9 @@ pub fn parse_syntax(definition: &str) -> Option<Syntax> {
 }
 
 /// The declarations of a style rule's declaration: its checked name and
-/// stored value, or for a mapped property one per longhand.
+/// stored value, or for a mapped property one per longhand; none for a
+/// property no specification defines, which is dropped (CSS Syntax 3
+/// §5.4.4, CSS 2 §4.2).
 pub(crate) fn declaration(name: &str, value: &str) -> Result<Vec<(Name, String)>, Violation> {
     if let Some(custom) = name.strip_prefix("--") {
         return (css::ident(custom) && css::custom_value(value))
@@ -945,6 +972,16 @@ pub(crate) fn declaration(name: &str, value: &str) -> Result<Vec<(Name, String)>
     }
     if let Some(mapped) = super::mapped::Mapped::parse(name) {
         return mapped_declarations(mapped, value);
+    }
+    if !CssProperty::ALL
+        .iter()
+        .any(|property| property.name().eq_ignore_ascii_case(name))
+    {
+        return if css::known_property(name) {
+            Err(Violation::UnsupportedProperty)
+        } else {
+            Ok(Vec::new())
+        };
     }
     property_declaration(name, value).map(|entry| vec![entry])
 }
