@@ -32,9 +32,9 @@ their current limitations and the evidence behind this checkpoint.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last recorded successful full gate | Merged `main` with the K9 A TypeScript type level on top of the first K9 D standard library stream, the K8 CSS engine and Wasm bridge, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **4327 Rust tests passed, 0 failures, 25 ignored; 185 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-175014-3nwe44o_/report.json`. Linux CI and other platforms not run |
+| Last recorded successful full gate | Merged `main` with the K8 CSS engine's font sizes, font-relative units and layout-time `calc` on top of the K9 A TypeScript type level, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **4333 Rust tests passed, 0 failures, 25 ignored; 185 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-192642-e303l5b8/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **158 passed, 4 known unsupported out of 162** after the K9 A type-level and K9 D2 symbol cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **178 passed, 4 known unsupported out of 182** after the K9 A, B, D and D2 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -44,6 +44,118 @@ their current limitations and the evidence behind this checkpoint.
 | GPU and games | Optional wgpu/Vello UI backend and shared bounded scenes are implemented; `w3-gpu-color-fields` is merged (`ff45daa`), so distinct border colors can stay on GPU. Recorded Metal Debug/Release probes cover that implementation; direct GPU opacity groups, real-window/performance acceptance and other devices remain open. P13b guest graphics and P13c typed 3D ports remain planned; no guest GPU API or unmodified Three.js support is claimed. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
+
+### K9 B — declarations and classes — 2026-11-06
+
+Owner decisions for the first release (2026-11-06): the whole TypeScript
+language except untyped code, to the published standards, with Node 24 as the
+runtime oracle and tsc 5.x as the type-system reference. Track B covers
+TypeScript's declaration forms and the remaining class forms, under the v38
+selector `declaration_forms()` ([contract](architecture.md#declarations-and-classes-declaration_forms),
+[rules](profile-rules.md#declarations-and-classes-declaration_forms)). No host
+ABI, value layout, frame catalog or scheduler change; v37 keeps rejecting
+every form.
+
+Admitted: numeric, string, heterogeneous and `const` enums (constant member
+expressions, literal-union enum types, reverse mapping, widening of mutable
+bindings to the enum type); namespaces (nested, dotted, exported across
+modules and import aliases) with declaration merging into namespaces,
+functions, classes and enums; abstract classes, methods, getters and fields;
+function, method, static and constructor overloads; setters, getter/setter
+pairs and `accessor` fields; static fields as module variables with
+`private`/`protected`/`readonly` checks, `this` in static methods resolved
+through the called subclass; class expressions bound by `const` and classes
+declared inside functions; parameter-property defaults; `declare`,
+`override` and multiple `implements` (already admitted, now pinned).
+Enums, namespaces, statics, class expressions and overload signatures are
+lowered before scanning (`crate::desugar`); class forms are a pre-layout
+rewrite (`classes::forms`), setter assignments go through
+`classes::accessors` and overload resolution through `lower::overloads`.
+
+Probe cases of the K9 brief (`k9/cases`, `cases2`): `a19_enum`,
+`a20_const_enum`, `a21_string_enum`, `a22_namespace`, `a23_abstract`,
+`a26_getset`, `a27_static`, `a28_overloads` and `a69_class_expression` now
+compile and print Node's output (with `a24_implements`, `a25_private`,
+`b8_static_method` and `b9_getter_only`, which already did); `a42_decorator`
+stays refused (below). The whole brief corpus goes from 43 to 53 compiling
+programs of 89.
+
+Evidence: `varta-runtime` `declaration_form_tests` (nine Node-pinned
+programs, local classes, the multi-module test, collector stress builds, 32 refusals with
+TypeScript's error codes where tsc rejects too, and the v37 rejections), the
+CLI smoke `v38_declaration_forms_run_in_dev_and_artifacts` (dev, both
+artifacts, both binaries) and the conformance inventory: eight feature rows
+under the `typescript_handbook` origin and ECMAScript class sections, nine
+passing cases and two known gaps, and the `class-instance` gap promoted
+(145 passed, 6 known unsupported of 151). Fuel goldens unchanged (no
+existing program changes bytes). Full gate on macOS arm64, 2026-11-06, on
+the commit that adds the stream: **4023 Rust tests passed, 0 failures, 21
+ignored; 218 browser Node tests passed**; conformance baseline matched
+(`target/verification/20261106-163846-0mggblrz/report.json`). Linux CI and
+other platforms not run.
+
+Owner decisions of 2026-11-06 (whole language; module evaluation per
+ECMAScript; match tsc for enum assignability; close the smaller gaps)
+were followed by a second increment: module evaluation with effects
+(selector `module_evaluation()`, [contract](architecture.md#module-evaluation-module_evaluation)):
+initializers that call code, static blocks and effectful static
+initializers at the class's position, with a compile-time
+temporal-dead-zone check over the module's reachable code; `super` in
+static code; re-exports of enums, namespaces and classes with statics
+(generated names tagged by module path); static fields of classes in
+namespaces; writes of imported static fields through exported setters. The
+conformance `static-block` gap passes. Then: non-const enums and namespaces
+as values through generated objects (`Object.keys(E)`, `typeof E`, `keyof
+typeof E`), tsc 5 enum assignability (`number` to numeric enums, nominal
+string enums, `E[k]` kept `string | undefined` by owner decision), and
+class index signatures (a hidden dictionary field, TS2411 checks).
+
+Still open, with the reason:
+
+- **Standard decorators.** A decorator receives the class (a class value)
+  or a member's function value with a context object
+  (`ClassMethodDecoratorContext` and its family, `addInitializer`,
+  `metadata`) and may replace it. Classes are not values yet, and a
+  replaced method must dispatch through a per-class function slot whose
+  initial value reaches the class's private members from module code.
+  Proposed design: class values as a compile-time-known class identity
+  (an `i32` descriptor) with `new`, static calls and `name` dispatched over
+  the closed set of subclasses; decorated methods as private originals plus
+  a module-variable function slot initialized by the decorator call during
+  module evaluation, with access checks admitting code lexically inside the
+  class; the context objects as a typed prelude. No legacy
+  `experimentalDecorators`.
+- **Generic overload signatures**: selecting one needs speculative type
+  argument inference per candidate signature.
+- **A `this`-using static method inherited across modules**: the copy into
+  the subclass needs the declaring module's private names; with class
+  values it becomes a dispatch over the receiver class.
+
+Earlier state, superseded by the increment above where it says so:
+
+- **Static blocks, effectful static initializers and decorators.** All three
+  run code when a class is defined. Module initializers are a pure,
+  call-free subset by rule ("admitting calls … needs a new evaluation-order
+  design and initialization on tool/HTTP entries first"); class-definition
+  effects need that design (ordered initializer functions at each class's
+  position, their budget and their re-run per HTTP request store or tool
+  invocation). Decorators additionally need class objects as values
+  (class decorators receive and may replace the class) and the
+  `ClassMethodDecoratorContext` family of prelude types. Refused by name.
+  Legacy `experimentalDecorators` are not proposed.
+- **Enum and namespace objects as values** (`Object.keys(E)`, passing `E`,
+  `keyof typeof E`): need a frozen record value per enum and track A's
+  `typeof`/`keyof` type queries.
+- **Class index signatures** (`[key: string]: T` in a class): class
+  instances would need dictionary storage beside their slots.
+- **Smaller gaps**: a re-export (`export { E } from`) forwards an enum's
+  type but not its generated declarations; static fields of a class inside a
+  namespace; writes to imported static fields (imported module variables are
+  read-only); `super` in static methods; a `this`-using static method
+  inherited across modules; generic overload signatures; `E[k]` is typed
+  `string | undefined` where tsc says `string` (kept by owner decision as the
+  `noUncheckedIndexedAccess` reading); enum assignability (closed: tsc 5
+  rules since the second increment).
 
 ### Native images — 2026-11-06
 
@@ -3474,7 +3586,8 @@ The selectors are registered; the table records what each stream admits.
 | `strict_members()` | Strict members: undeclared member access rejected, per-union member limits from the registry, discriminant dispatch, exhaustive discriminant switches | Implemented ([contract](architecture.md#strict-members-and-wide-unions-strict_members)): `property X is not declared by Owner` for every static access form; `union_members`/`json_union_members` in `ProgramLimits` (frozen 16/7, v38 the entity bound); one discriminant lookup and a flat literal chain (about 55 fuel per member before the match, 9 after); flat or balanced lowering above 16 members; exhaustive `switch` over `x.kind` and nested paths with a diagnostic naming unhandled members. Pending: `varta dev --profile-fuel` of programs with checked conversions fails (`value ABI helpers cannot call host imports`), pre-existing |
 | `file_roots()` | Virtual file roots (wave 2): `fs.*` paths and grants are virtual paths `/<root>/...`; the configuration names roots inside the project, the host policy maps them for packaged runs | Implemented ([contract](architecture.md#virtual-file-roots-file_roots)): `fs.roots` in the configuration pinned no-follow at load, manifest `fsRoots` names (host ABI 34), host-policy `fsRoots` mapping pinned at startup, canonical virtual paths with whole-component matching against request and ceiling, no-follow reads below the root descriptor; run, application, view, HTTP request stores and tool invocation. V1–v37 keep host paths |
 | `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Iterable<T>` value annotations (`Array.from` with a map function: `standard_library()`) |
-| `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decision: host time-zone grant; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
+| `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag, host time-zone grant; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
+| `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results. No ABI, value-layout or host change. Pending (owner decision): static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
 | `symbol_values()` | K9 D2 Symbol values (2026-11-06): value18 tag 16, registry, well-known symbols | Implemented ([contract](architecture.md#symbol-values-symbol_values), [record](#k9-d2-value-layout-and-collector--2026-11-06)); symbol-keyed properties pending |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module
@@ -7723,6 +7836,22 @@ predicate should keep its `TypeError` (Node continues with the wrong type)
 and whether branded primitives (`string & { __brand: … }`) may be admitted
 as their primitive.
 
+**K9 A step 2 (2026-11-06).** Owner decisions: a lying predicate keeps its
+`TypeError` (an intentional deviation, like checked `as`); branded
+primitives are their primitive; `typeof` of locals is supported. Admitted
+in the same selector: branded primitives, `typeof` of locals, overloads and
+function intersections, generic call signatures, `this` in object types,
+`keyof`/mapped/utility types over classes, arrays, tuples and primitives,
+pattern template types (as `string`), `infer` through declared generics,
+union patterns and optional elements, elements after a rest element,
+subclass/`unknown`/`this is T` predicate narrowing, and class subtyping in
+containers (track D's finding; `B[]` to `A[]` copies, a second intentional
+deviation). Still refused: callable objects with properties, overloads with
+type parameters or rest parameters, generic construct signatures,
+`unique symbol` (track D's Symbol values). Evidence: five more Node-pinned
+`type_level_cases`, the deviation test, a second language-guide example and
+conformance 155 → 160 passing of 160 → 165 cases.
+
 **Release readiness** additionally needs, after K9 and K8 merge: the release
 profile frozen (v38 becomes a released profile; later admissions go to a new
 one), the macOS arm64 and web distributions built and verified from a clean
@@ -7962,6 +8091,61 @@ sections is [view CSS engine](architecture.md#view-css-engine-k8-t2-and-t3).
   59 distinct), logical properties (S4), shadows (S6) and the values native
   layout lacks (`inline-flex`, `inline-block`, `sticky`, `fit-content`,
   `-webkit-box`).
+
+#### K8 T2 items (2) and (5): font-relative units and layout-time math (2026-11-06)
+
+Owner decision of the same day: (2) and (5) are required by the standards.
+
+- The style engine computes font sizes and line heights (`varta_style::font`:
+  the user-agent font rows, Blink's monospace and minimum-size rules, moved
+  from the native renderer), so `em`, `lh` and `rlh` resolve in every
+  property on both hosts, and registered length values compute at the
+  declaring element before they inherit (Properties and Values API 1 §2.4).
+  The browser host passes its `medium` size (the `all: initial` shadow host)
+  and whether a packaged face names `monospace`; the engine receives each
+  element's tag.
+- Sums of lengths and percentages resolve at layout (Values 4 §10.10) for
+  sizes, margins, padding, gaps, the flex basis, insets and
+  `vertical-align`, through a recorded Taffy 0.15.1 patch that lets the
+  high-level tree resolve calc handles (an index, never a pointer).
+- Chrome oracle: two new scenes (font-relative units with a registered
+  length, percentage-and-length math), `bridge` 503 and `platform` 491
+  checks pass at 1x, 1.25x and 2x with no new deviation.
+- **Dependency record: Taffy 0.15.1 vendored with a patch** (the dependency
+  rule of CLAUDE.md §5, as for the Parley patch). Why: upstream's `calc`
+  feature stores a `calc()` length as an opaque handle and asks the layout
+  tree to resolve it, but the high-level `TaffyTree` that native layout uses
+  hard-codes the answer zero, so no Taffy user above the low-level traits
+  can resolve `calc()`. Alternatives rejected: reimplementing Taffy's tree
+  over its low-level layout traits (a second copy of `TaffyTree` and its
+  cache, view and rounding code), and refusing sums of lengths and
+  percentages (they are required by CSS Values 4 §10.10 and the owner
+  decision). Change: one upstream file, `src/tree/taffy_tree.rs`, gains a
+  `calc_resolver` field and `TaffyTree::set_calc_resolver`; without a
+  resolver the tree answers zero as upstream. No dependency version changes;
+  the lockfile changes only Taffy's source selection (registry to
+  `vendor/taffy`), and the `calc` feature is enabled for `varta-view`.
+  Provenance: the checksum-pinned crates.io archive (SHA-256 in
+  `vendor/taffy/VARTA-PATCH.md`); a recursive comparison with the unpacked
+  release finds only the patched file, the two patch records and the
+  dropped `Cargo.lock`/`.cargo_vcs_info.json`. Safety: the handle Varta
+  passes is a table index made with `ptr::without_provenance`, never a
+  pointer, and neither Taffy nor Varta dereferences it, so no `unsafe` is
+  added to workspace code. Removal criterion: upstream exposing a resolver
+  for `TaffyTree` (or Varta moving to the low-level API), after which the
+  vendored copy is dropped and the lockfile returns to the registry source.
+- Remaining for (2): `ex`, `ch`, `cap`, `ic` (and root forms), `lh` with
+  `line-height: normal` and `rlh` need the metrics of the first available
+  font. Owner decision (2026-11-06), "fonts plus host": the shared engine
+  reads the first available font's metrics from packaged font bytes with
+  read-fonts (one implementation for both hosts); for system and generic
+  families the host supplies them (natively through CoreText, as the emoji
+  platform metrics are read; on the web the bridge only measures through
+  browser APIs and passes the numbers into Wasm, with no metric logic in
+  JavaScript); the Values 4 fallbacks apply only when no metrics are
+  available at all; the goal is Chrome's values with no recorded deviation
+  for system fonts. Sums with percentages in `border-radius`, `transform`,
+  `object-position` and grid tracks wait for those consumers.
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 

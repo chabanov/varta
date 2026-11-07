@@ -1,0 +1,7 @@
+["0","1","10","Red","Green","Blue"]
+["UP","DOWN"]
+[["0","No"],["No",0],["Yes","YES"]]
+UP/DOWN
+10 Red
+{"0":"Red","1":"Green","10":"Blue","Red":0,"Green":1,"Blue":10}
+DOWN

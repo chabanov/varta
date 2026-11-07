@@ -17136,6 +17136,55 @@ fn v38_standard_library_runs_in_dev_and_artifacts() {
 }
 
 #[test]
+fn v38_declaration_forms_run_in_dev_and_artifacts() {
+    let source = "import {Kind, Units, Shape, Square} from './shapes.ts';\
+         function describe(shape:Shape):string;\
+         function describe(kind:Kind):string;\
+         function describe(value:Shape|Kind):string{return typeof value==='string'?value:value.kind+' '+Units.cm(value.size());}\
+         export function main():void{const s=new Square(3);console.log(describe(s)+' '+describe(Kind.Circle)+' '+String(Shape.made));}";
+    let shapes = "export enum Kind{Circle='circle',Square='square'}\
+         export namespace Units{export const scale=2;export function cm(n:number):string{return String(n*scale)+'cm';}}\
+         export abstract class Shape{static made=0;constructor(){Shape.made++;}abstract get kind():Kind;abstract size():number;}\
+         export class Square extends Shape{constructor(private side:number){super();}get kind():Kind{return Kind.Square;}size():number{return this.side*this.side;}}";
+    let project = RegressionProject::new(source, serde_json::json!({}));
+    fs::write(project.0.join("src/shapes.ts"), shapes).unwrap();
+    project.language_profile("checked-f64-utf16-v38");
+    // Node 24 prints the same line for the tsc 5.9 emit.
+    let expected = ["varta log: square 18cm circle 1"];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+    project.language_profile("checked-f64-utf16-v37");
+    let rejected = project.command(&["dev"]);
+    assert!(!rejected.status.success());
+    let text = combined(&rejected);
+    assert!(text.contains("top-level declaration"), "{text}");
+    assert!(!text.contains("varta log:"), "{text}");
+}
+
+#[test]
 fn linked_intrinsics_v38_run_identically_through_dev_build_single_and_both_binaries() {
     use varta_common::HostOperation;
     const PROFILE: &str = "checked-f64-utf16-v38";

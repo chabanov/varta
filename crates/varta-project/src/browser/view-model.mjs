@@ -173,7 +173,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if (!op.node || next.has(op.node)) fail("duplicate node");
           if (next.size >= V.limits.nodes) fail("node budget");
           next.set(op.node, op.name === "create_element" ? element(op.tag) : textNode(op.text));
-          engineCall(engine.create(op.node, op.name === "create_element"), "unknown node"); break;
+          engineCall(engine.create(op.node, op.name === "create_element" ? tags.get(op.tag).code : null), "unknown node"); break;
         case "set_text": { const node = live(op.node); if (node.kind !== "text") fail("not a text"); node.text = op.text; node.textBytes=selectionTextBytes(op.text); syncSelectFor(next,op.node); break; }
         case "set_attribute": {
           const node = asElement(op.node), rule = attributes.get(op.attribute);

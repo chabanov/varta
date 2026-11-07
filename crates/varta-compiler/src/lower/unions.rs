@@ -323,6 +323,9 @@ pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes)
     {
         return Ok(Expr { ty, ..value });
     }
+    // An array of class instances as an array of an ancestor class (v38
+    // `type_level`): a shallow copy, so no alias sees the wider element type.
+    let value = type_level::covariant_array(value, expected, types);
     // A wider record or class instance viewed as a record shape (v38).
     let value = subtyping::coerce(value, expected, types)?;
     let Some(ty @ (Type::Union(id) | Type::ReferenceUnion(id))) = expected else {

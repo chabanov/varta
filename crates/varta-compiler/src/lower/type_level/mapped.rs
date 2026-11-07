@@ -69,9 +69,13 @@ fn homomorphic(
             let keys = objects::keys(source, types)?;
             map_keys(mapped, key, value, keys, None, types)
         }
-        Type::Class(_) => Err(unsupported(
-            "mapped type over a class instance type (its methods and inherited members are keys)",
-        )),
+        // A class instance maps its public members (fields, getters and
+        // methods) like an object type with those properties.
+        Type::Class(class) => {
+            let fields = objects::class_members(class, types)?;
+            let record = records::intern(fields, types)?;
+            homomorphic(mapped, key, value, record, types)
+        }
         other if is_primitive(other) => Ok(other),
         other => Err(unsupported(&format!(
             "mapped type over {}",
@@ -256,10 +260,14 @@ fn tuple(
         Some(_) => Some(bound(key, types.number(), value, types)?),
         None => None,
     };
+    let mut trailing = Vec::new();
+    for _ in &tuple.trailing {
+        trailing.push(bound(key, types.number(), value, types)?);
+    }
     let readonly = match mapped.readonly {
         Some(ast::TruePlusMinus::Minus) => false,
         Some(_) => true,
         None => tuple.readonly,
     };
-    tuples::intern_rest(elements, required, rest, readonly, types)
+    tuples::intern_tuple(elements, required, (rest, trailing), readonly, types)
 }

@@ -207,3 +207,88 @@ fn named_optional_rest_and_variadic_tuples() {
         &["Ada Bob(42) 1 2", "10 5 1 4", "1 true z 3", "p:2 0"],
     );
 }
+
+#[test]
+fn language_guide_second_type_level_example() {
+    case(
+        include_str!("type_level_cases/guide_more.ts"),
+        &["u1 4 5 4 3"],
+    );
+}
+
+#[test]
+fn class_subtyping_in_containers() {
+    case(
+        include_str!("type_level_cases/containers.ts"),
+        &["BA BB BB", "B 1 C", "BBB", "B BC BC B"],
+    );
+}
+
+#[test]
+fn branded_primitives_local_type_queries_and_class_keys() {
+    case(
+        include_str!("type_level_cases/brands_and_queries.ts"),
+        &[
+            "U1 6 2",
+            "total 7 4",
+            "describe doubled 9 undefined length 1 custom ada:5",
+        ],
+    );
+}
+
+#[test]
+fn subclass_unknown_and_this_predicates_narrow_with_checked_reads() {
+    case(
+        include_str!("type_level_cases/narrowing_more.ts"),
+        &["rex woof", "rex woof", "3", "TypeError"],
+    );
+}
+
+#[test]
+fn infer_through_declarations_unions_and_optional_and_trailing_elements() {
+    case(
+        include_str!("type_level_cases/inference_more.ts"),
+        &["boxed 4 5 2 3 7", "1:1", "3:2"],
+    );
+}
+
+#[test]
+fn overloads_generic_signatures_object_this_and_pattern_templates() {
+    case(
+        include_str!("type_level_cases/signatures_more.ts"),
+        &["a 2", "2 s 2", "root 1", "onClickX"],
+    );
+}
+
+/// Intentional deviations from Node (recorded in the type-level contract):
+/// a lying type predicate throws `TypeError` at the narrowed read, where
+/// Node continues with the mistyped value; and a `B[]` converted to `A[]`
+/// is a copy, so a push through the wider alias is not seen by the other.
+#[test]
+fn checked_predicates_and_copied_array_views_deviate_from_node() {
+    let lying = r#"class Animal { name: string = "tom"; }
+class Dog extends Animal { tag: string = "dog"; }
+function lies(animal: Animal): animal is Dog { return animal.name.length > 0; }
+export function main(): void {
+  const tom: Animal = new Animal();
+  try {
+    if (lies(tom)) {
+      console.log(String(tom.tag));
+    }
+  } catch (error) {
+    console.log(error instanceof TypeError ? "TypeError" : "other");
+  }
+}"#;
+    // Node prints `undefined`.
+    assert_eq!(run(lying), logs(&["TypeError"]));
+    let alias = r#"class A { n: number = 1; }
+class B extends A {}
+export function main(): void {
+  const bs: B[] = [new B()];
+  const all: A[] = bs;
+  all.push(new A());
+  console.log(`${bs.length} ${all.length}`);
+}"#;
+    // Node prints `2 2`.
+    assert_eq!(run(alias), logs(&["1 2"]));
+}

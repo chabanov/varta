@@ -52,7 +52,7 @@ impl Driver for Session {
         Session::abort(self);
     }
     fn create(&mut self, id: u32) -> u32 {
-        Session::create(self, id, true)
+        Session::create(self, id, Some(Tag::Div))
     }
     fn insert(&mut self, parent: u32, child: u32) -> u32 {
         Session::insert(self, parent, child, 0)
@@ -70,7 +70,12 @@ impl Driver for Session {
         Session::charge(self)
     }
     fn environment(&mut self, flags: u32) {
-        self.set_environment(session::environment(WIDTH, HEIGHT, ROOT_FONT, flags));
+        self.set_environment(session::environment(
+            (WIDTH, HEIGHT),
+            ROOT_FONT,
+            ROOT_FONT,
+            flags,
+        ));
     }
     fn computed(&mut self, id: u32) -> Vec<u8> {
         session::encode_computed(&Session::computed(self, id))
@@ -128,7 +133,7 @@ impl Driver for Wasm {
     }
     fn create(&mut self, id: u32) -> u32 {
         self.func::<(u32, u32), u32>("view_engine_create")
-            .call(&mut self.store, (id, 1))
+            .call(&mut self.store, (id, u32::from(Tag::Div.code())))
             .unwrap()
     }
     fn insert(&mut self, parent: u32, child: u32) -> u32 {
@@ -158,8 +163,11 @@ impl Driver for Wasm {
         self.call0("view_engine_charge")
     }
     fn environment(&mut self, flags: u32) {
-        self.func::<(f64, f64, f64, u32), ()>("view_engine_environment")
-            .call(&mut self.store, (WIDTH, HEIGHT, ROOT_FONT, flags))
+        self.func::<(f64, f64, f64, f64, u32), ()>("view_engine_environment")
+            .call(
+                &mut self.store,
+                (WIDTH, HEIGHT, ROOT_FONT, ROOT_FONT, flags),
+            )
             .unwrap();
     }
     fn computed(&mut self, id: u32) -> Vec<u8> {
@@ -343,7 +351,12 @@ fn browser_and_native_decide_the_corpus_identically() {
         // A fresh session per case, as a fresh view starts.
         let browser = run(&mut Wasm::new(&engine, &module), &case);
         let shared = run(
-            &mut Session::new(session::environment(WIDTH, HEIGHT, ROOT_FONT, 0)),
+            &mut Session::new(session::environment(
+                (WIDTH, HEIGHT),
+                ROOT_FONT,
+                ROOT_FONT,
+                0,
+            )),
             &case,
         );
         assert_eq!(

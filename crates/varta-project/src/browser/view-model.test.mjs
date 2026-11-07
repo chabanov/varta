@@ -8,11 +8,12 @@ import { encodeViewEvent } from "./view-dom.mjs";
 import { createViewEngine, ENGINE_STATUS } from "./view-engine.mjs";
 
 // The style engine's verdict on one value or stylesheet, in a fresh session.
-const engineStyle = (property, value) => { const e = createViewEngine(viewEngine); e.begin(); e.create(2, true); e.insert(1, 2, 0); return e.setStyle(2, property, value); };
+const engineStyle = (property, value) => { const e = createViewEngine(viewEngine); e.begin(); e.create(2, DIV); e.insert(1, 2, 0); return e.setStyle(2, property, value); };
 const engineSheet = (text) => { const e = createViewEngine(viewEngine); e.begin(); return e.stylesheet(1, text); };
 
 import { viewEngine } from "./view-engine.node.mjs";
 const V = registry.view;
+const DIV = V.tags.find((row) => row.name === "div").code;
 const batch = (...ops) => encodeViewBatch(ops);
 const create = (node, tag = "div") => ({ name: "create_element", node, tag });
 const attribute = (node, text) => ({ name: "set_attribute", node, attribute: "id", text });

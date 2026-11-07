@@ -3980,6 +3980,75 @@ Contract: [architecture.md](architecture.md#iteration-protocol-iteration_protoco
   `v38_iteration_protocol_runs_in_dev_and_artifacts` and the conformance
   feature `iteration-protocol`.
 
+### Declarations and classes (`declaration_forms`)
+
+Contract: [architecture.md](architecture.md#declarations-and-classes-declaration_forms).
+
+- Gate every admission on `declaration_forms()`; v37 keeps its diagnostics
+  for each form (`v37_keeps_rejecting_declaration_forms`). Only v38 parses
+  `@` (`parse::parse_module_with`).
+- Enums, namespaces, static fields, class expressions and function overload
+  signatures are lowered in `crate::desugar` before the module is scanned
+  (`modules::Builder::visit`), never in the type checker. Generated names
+  start with `desugar::PREFIX` (program identifiers may not) and their last
+  segment is the declared name; anything shown at run time goes through
+  `desugar::display_name` (class names in `classes::register`).
+- Rewriting is scope-aware (`desugar::rewrite`, `desugar::scope`): a name a
+  local scope binds shadows every frame. A new syntax form that binds names
+  must be added to `scope` and to the `Rewriter` scope pushes, and a new
+  expression position that can reference a namespace member must be
+  rewritten there (identifier, member chain, shorthand property, assignment
+  target, type reference, `typeof`, heritage).
+- Imported enums and namespaces are rewritten after the dependencies load
+  (`desugar::imports`) through `Unit::declarations`; the generated names
+  they use are added as import bindings, and a namespace without a value
+  loses its binding. A re-export of an enum or namespace forwards only the
+  enum type (the generated names are not re-exported).
+- Enum values are compile-time constants (`desugar::constants`, ECMAScript
+  number semantics); never emit an enum object. A non-constant key of a
+  numeric enum calls the generated reverse-mapping function, typed
+  `string | undefined`.
+- Static fields and static blocks are module variables declared after their
+  class (a block is an arrow called by the initializer) and follow every
+  module-constant rule; their effects are module evaluation (below). `this`
+  in static code is the class; an inherited static method that uses `this`
+  or `super` is copied into the subclasses that reach it, and `super.m()`
+  of a `this`-using method calls a private copy keyed by `statics::
+  super_key` (`statics::lower_class`). Classes hoisted from namespaces get
+  a second statics pass (`namespaces::hoisted_statics`).
+- Generated names are tagged with the module path hash (`desugar::tag`)
+  after every phase-1 transform; re-exports forward symbols and generated
+  names in `desugar::forward`. Writes to imported static fields go through
+  the exported setter (`Rewriter::imported_write`); never make imported
+  module variables assignable.
+- Class index signatures (`classes::index_signatures`): the hidden
+  dictionary field `INDEX_FIELD` (a private name no source spells); every
+  member access path calls `Lower::class_index` before choosing record,
+  class or dictionary lowering, and a new member-access path must too.
+- Module evaluation (`module_evaluation`, `lower::module_evaluation`): an
+  initializer may run code. Keep the compile-time temporal-dead-zone check
+  (`reachable` over-approximates: names reach whole declarations, classes
+  their instance members, `C.m` a static method) in `module_constants::
+  check`, reserve the initializer index for effectful chunks, and never let
+  `prune::unread_constants` drop an initializer that calls code. Top-level
+  `await` stays refused.
+- Class forms are a pre-layout rewrite (`classes::forms`, after
+  `private_names` and `parameter_properties`): setters become methods named
+  `forms::setter_key` (no string key can spell it), abstract members get an
+  unreachable throwing body and are recorded in `Class::forms`, overload
+  signatures are removed and recorded. Assignments reach setters only
+  through `classes::accessors` (statement, value, compound, update; logical
+  assignment refused); a new member-assignment path must call it first.
+- Overloads (`lower::overloads`): resolution by declaration order with
+  `arguments::accepts`, literal arguments retyped against literal
+  parameters, arguments bound to the hidden implementation and the result
+  checked with `assert_value`. Keyed by implementation function index for
+  functions and by (declaring class, key, static) for methods.
+- Tests: `varta-runtime` `declaration_form_tests` (the
+  `declaration_form_cases/*.expected` files are Node 24.20.0 output of the
+  tsc 5.9.3 emit; the collector stress builds must print the same, and the
+  multi-module test pins imported enums, namespaces and statics), the
+  conformance feature `declarations-and-classes`.
 ### Standard library (`standard_library`)
 
 Contract: [architecture.md](architecture.md#standard-library-standard_library).
@@ -4026,6 +4095,79 @@ Contract: [architecture.md](architecture.md#standard-library-standard_library).
   `array-copying-methods`, `iterator-helpers`, `set-methods`, `grouping`,
   `aggregate-error` and the new cases of `json-stringify`, `date`,
   `string-builtins` and `math`.
+
+### Type level (`type_level`)
+
+Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
+
+- Gate every admission on `type_level()`; v37 and earlier keep their bytes and
+  diagnostics. The only entry from `keyword_type` is `type_level::evaluate`,
+  right after the type-parameter and declared-name checks; it returns `None`
+  for forms the earlier rules own. New type-level logic goes into
+  `lower/type_level/`, not into shared files.
+- Evaluate over resolved `Type`s only: bind parameters with
+  `generics::with_frame` (or `with_bindings`) and lower bodies with
+  `keyword_type`. Never keep an unevaluated type expression or a type
+  parameter past lowering. Evaluate only the selected branch of a
+  conditional type. Every evaluation step that may recurse goes through
+  `nested` (bound `MAX_TYPE_DEPTH`); recursive generic aliases go through
+  `enter_recursive`/`push_instantiation`/`pop_instantiation` in
+  `named::instantiate`, never by relaxing `NamedTypes::resolving` for the
+  same instantiation.
+- `type_level::extends` is the one TypeScript assignability relation for
+  conditional types, constraints (`generics::satisfies`), predicates,
+  `satisfies` and `Exclude`/`Extract`. It decides types only; a value
+  conversion still goes through `unions::widen`/`subtyping::coerce`.
+- Distribution uses `split` (union members, literal-set values, `true |
+  false`), never `unions::members` alone.
+- A construct type is a `FunctionType` with `construct` set (`constructors::
+  variant`); its value is a closure, invoked only by `construct_value`. A
+  class becomes such a value only through `class_constructor_value`.
+- Tuples: `TupleType::rest` is the trailing rest element; every reader of
+  `TupleType::elements` must also consider `rest` (relation, destructuring,
+  collections, mapped tuples). The empty tuple is admitted under v38 only.
+- Type predicates are recorded per function index by `note_signature`
+  (top-level functions and generic instances; generic call sites map their
+  span to the instance index in `note_call`). A predicate narrows only a
+  direct identifier argument. Reads of a predicate-narrowed reference member
+  go through `predicate_read` (`checked_narrow`): never read a
+  predicate-narrowed binding by an unchecked unbox or retag.
+- Polymorphic `this`: `member_signature` records the method; every return
+  must be `this`, so retyping the result to the receiver's class
+  (`polymorphic_this`, `class_receiver`) stays layout-safe.
+- Literal inference: `declaration_type` gives an unannotated `const` of a
+  constant literal its singleton type and records it as widening;
+  `let`/`var` from a literal or a widening binding erases. `as const` lowers
+  against `const_type`. The class scanner's hole types
+  (`lower::class_holes`) see these literal types; a template literal's own
+  type stays `string`.
+- Step 2 (2026-11-06): `FunctionType::overloads` marks an overloaded
+  type (`type_level::overloads`); calls go through `overloaded_call`, which
+  selects the overload statically and narrows the merged result with
+  `checked_narrow`. Never give a plain function type an overload set, and
+  never convert a value to an overloaded type unless its signature is the
+  merged one. `TupleType::trailing` holds elements after the rest element:
+  every reader of `elements`/`rest` must also consider it (literals,
+  element reads, relation, `infer`, mapped tuples, utilities, collections).
+- `typeof` of a local reads the per-statement snapshot that
+  `enter_local_types`/`leave_local_types` (in `stmt::statement`) maintain;
+  a declaration whose annotation queries a local resolves its annotation in
+  `variables`, not `predeclare`. Named declarations being resolved never
+  read the snapshot (`named::resolving_declaration`).
+- Class subtyping in containers (`type_level::containers`): a `B[]` to
+  `A[]` conversion is a shallow `ArraySlice` copy (an array literal is
+  retyped); a union-of-classes array to an ancestor array builds a new
+  array of unboxed elements (`class_union_array`, in `expr_lowered` before
+  `widen`). Never alias an array under a wider element type.
+- Predicate narrowing of a class instance to a subclass reads through
+  `checked_downcast` (descriptor test, `TypeError`), of `unknown` to an
+  object type through `assert_value`; `this is T` predicates are recorded per
+  (declaring class, method) by `member_signature`.
+- Tests: `varta-runtime` `type_level_tests` with the Node 24 logs of
+  `type_level_cases` (each also rejected by v37), the deviation test
+  `checked_predicates_and_copied_array_views_deviate_from_node`, the compiler's
+  `composed_class_names_follow_the_checker_types` scanner test, and the
+  nine `typescript_handbook` conformance rows.
 
 ### Bytes held by unknown (`byte_values`)
 

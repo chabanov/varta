@@ -2650,10 +2650,20 @@ fn rasterize_inner_scoped(
     cache: Option<(&mut Scene, &mut Glyphs)>,
 ) -> Result<RasterImage, PaintError> {
     validate_dimensions(width, height, scale)?;
+    // Paint lowers values with the same font base as layout (the measurer's
+    // medium size), so `em` agrees between them.
+    let font =
+        text_input
+            .as_ref()
+            .map_or(env.font, |(measurer, size)| varta_style::font::FontBase {
+                medium: f64::from(*size),
+                fixed_monospace: measurer.fixed_monospace(),
+            });
     let env = Environment {
         width: f64::from(width) / f64::from(scale),
         height: f64::from(height) / f64::from(scale),
         device_pixel_ratio: f64::from(scale),
+        font,
         ..*env
     };
     let units = Units::new(&env).ok_or(layout::LayoutError::RootFont)?;

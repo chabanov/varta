@@ -725,6 +725,7 @@ pub(crate) fn inline_spacing(
             let value = match value.expand() {
                 E::Length(value) => Some(LengthPercentage::length(value)),
                 E::Percent(value) => Some(LengthPercentage::percent(value)),
+                E::Calc(handle) => Some(LengthPercentage::calc(handle)),
                 E::Auto => None,
             };
             spacing.margin[side] = fixed(horizontal(value))?;
@@ -761,6 +762,8 @@ fn horizontal(value: Option<LengthPercentage>) -> Option<f32> {
     match value.expand() {
         taffy::style::ExpandedLengthPercentage::Length(value) => Some(value),
         taffy::style::ExpandedLengthPercentage::Percent(value) => (value == 0.0).then_some(0.0),
+        // A `calc()` with a percentage needs the width too.
+        taffy::style::ExpandedLengthPercentage::Calc(_) => None,
     }
 }
 
@@ -958,79 +961,68 @@ pub(crate) fn text_style(
 /// The range of numeric font weights (CSS Fonts 4 §2.2).
 const MIN_FONT_WEIGHT: f32 = 1.0;
 const MAX_FONT_WEIGHT: f32 = 1000.0;
-/// Admitted computed font sizes in CSS pixels.
-const MIN_FONT_SIZE: f32 = 0.01;
-const MAX_FONT_SIZE: f32 = 4096.0;
-/// The denominator of a CSS percentage.
-const PERCENT: f32 = 100.0;
 
-/// Chrome's minimum logical font size in CSS pixels, observed in headless
-/// Chrome 156 with a fresh profile (Blink's `MinimumLogicalFontSize` setting).
-pub(crate) const MINIMUM_LOGICAL_FONT_SIZE: f32 = 9.0;
-
-/// Apply an author `font-size`: a percentage scales the inherited size and
-/// keeps its absolute flag; `px` and `rem` lengths are absolute.
-fn author_font_size(size: &mut style::FontSize, units: Units, value: &str) -> Option<()> {
-    if let Some(number) = value.strip_suffix('%') {
-        let number: f32 = number.parse().ok()?;
-        size.scale(number / PERCENT);
-    } else {
-        size.absolute(units.pixels(value, false)?);
-    }
-    Some(())
-}
-
-/// Blink's `GetComputedSizeFromSpecifiedSize` at page zoom 1: a size derived
-/// from the `medium` keyword, user-agent scales or percentages, without an
-/// absolute length on the path, computes to at least
-/// [`MINIMUM_LOGICAL_FONT_SIZE`]. Descendant percentages and em lengths keep
-/// deriving from the unclamped specified size.
-fn computed_font_size(size: style::FontSize) -> f32 {
-    if size.is_absolute() {
-        size.px
-    } else {
-        size.px.max(MINIMUM_LOGICAL_FONT_SIZE)
-    }
-}
+/// Chrome's minimum logical font size in CSS pixels (the style engine's
+/// [`varta_style::font::MINIMUM_LOGICAL_FONT_SIZE`]).
+#[cfg(test)]
+pub(crate) const MINIMUM_LOGICAL_FONT_SIZE: f32 =
+    varta_style::font::MINIMUM_LOGICAL_FONT_SIZE as f32;
 
 /// Resolve inherited text properties along the path from the root, applying
 /// author declarations over the native user-agent table at each element.
+/// The font size, family and line height are the style engine's
+/// ([`varta_style::Styles::font`]), the references of `em` and `lh`.
 pub(crate) fn resolve_text(
     tree: &Tree,
     env: &Environment,
     id: u32,
     base: style::FontBase,
 ) -> Result<ResolvedText, LayoutError> {
-    let units = Units::new(env).ok_or(LayoutError::RootFont)?;
-    let mut size = style::FontSize::medium(base.px);
-    // The view root's parent is the document body: proportional `medium`.
-    let mut parent_monospace = false;
-    let mut line_height = None;
+    let font_env = Environment {
+        font: varta_style::font::FontBase {
+            medium: f64::from(base.px),
+            fixed_monospace: base.fixed_monospace,
+        },
+        ..*env
+    };
+    let font = tree.styles.font(tree, id, &font_env.style()).map_err(
+        |varta_style::font::FontError::Unsupported(node)| LayoutError::Unsupported(node),
+    )?;
+    let size = font.size.computed() as f32;
+    let line_height = match font.line_height {
+        varta_style::font::LineHeight::Normal => None,
+        varta_style::font::LineHeight::Absolute(px) => {
+            let px = px as f32;
+            if !px.is_finite() || !(0.01..=1_000_000.0).contains(&px) {
+                return Err(LayoutError::Unsupported(id));
+            }
+            Some(LineHeight::Absolute(px))
+        }
+        varta_style::font::LineHeight::Number(multiplier) => {
+            let multiplier = multiplier as f32;
+            if !multiplier.is_finite() || !(0.001..=1000.0).contains(&multiplier) {
+                return Err(LayoutError::Unsupported(id));
+            }
+            Some(LineHeight::FontSizeRelative(multiplier))
+        }
+    };
     let mut weight = 400.0;
     let mut italic = false;
     let mut white_space = WhiteSpaceMode::Normal;
     let mut break_anywhere = false;
-    let mut family = None;
     let mut align = TextAlign::Start;
     for ancestor in tree.path(id).into_iter().rev() {
-        let inherited = size.px;
         let properties = tree.computed_read(ancestor, env);
         if let Some(ua) = tree
             .element(ancestor)
             .and_then(|element| style::ua_defaults(element.tag))
         {
             if ua.control_font {
-                if !properties.contains_key(&CssProperty::FontSize) {
-                    size.absolute(style::UA_CONTROL_FONT_SIZE_PX);
-                }
                 if !properties.contains_key(&CssProperty::FontWeight) {
                     weight = style::NORMAL_FONT_WEIGHT;
                 }
                 if !properties.contains_key(&CssProperty::FontStyle) {
                     italic = false;
-                }
-                if !properties.contains_key(&CssProperty::LineHeight) {
-                    line_height = None;
                 }
             }
             if !properties.contains_key(&CssProperty::FontWeight) {
@@ -1045,16 +1037,8 @@ pub(crate) fn resolve_text(
             if ua.italic && !properties.contains_key(&CssProperty::FontStyle) {
                 italic = true;
             }
-            if ua.monospace && !properties.contains_key(&CssProperty::FontFamily) {
-                family = Some((ancestor, style::UA_MONOSPACE_FAMILY.into()));
-            }
             if ua.preformatted && !properties.contains_key(&CssProperty::WhiteSpace) {
                 white_space = WhiteSpaceMode::Pre;
-            }
-            if let Some(scale) = ua.font_scale
-                && !properties.contains_key(&CssProperty::FontSize)
-            {
-                size.scale(scale);
             }
             if let Some(value) = ua.text_align {
                 // A field's own text geometry does not follow text-align.
@@ -1090,9 +1074,6 @@ pub(crate) fn resolve_text(
                 _ => return Err(LayoutError::Unsupported(ancestor)),
             };
         }
-        if let Some(value) = declared(CssProperty::FontFamily) {
-            family = Some((ancestor, value.clone()));
-        }
         if let Some(value) = declared(CssProperty::FontWeight) {
             // CSS Fonts 4 §2.2: `normal`, `bold` or a number in [1, 1000].
             weight = match value.as_str() {
@@ -1112,73 +1093,11 @@ pub(crate) fn resolve_text(
                 _ => return Err(LayoutError::Unsupported(ancestor)),
             };
         }
-        if let Some(value) = declared(CssProperty::FontSize) {
-            if value == "medium" {
-                // Fonts 4 §2.5: the initial `medium`, of the generic family
-                // in effect.
-                let monospace = base.fixed_monospace
-                    && family
-                        .as_ref()
-                        .is_some_and(|(_, value)| style::sole_monospace(value));
-                size = style::FontSize::medium(if monospace && parent_monospace {
-                    base.px * style::UA_MONOSPACE_RATIO
-                } else {
-                    base.px
-                });
-            } else {
-                author_font_size(&mut size, units, value)
-                    .ok_or(LayoutError::Unsupported(ancestor))?;
-            }
-        }
-        // Chrome re-derives the size where the generic family switches to or
-        // from monospace, before a line-height percentage resolves against it.
-        let monospace = base.fixed_monospace
-            && family
-                .as_ref()
-                .is_some_and(|(_, value)| style::sole_monospace(value));
-        size.switch_family(base.px, parent_monospace, monospace);
-        parent_monospace = monospace;
-        // The host's medium size is its own input; any size derived here is bounded.
-        if size.px != inherited
-            && (!size.px.is_finite() || !(MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&size.px))
-        {
-            return Err(LayoutError::Unsupported(ancestor));
-        }
-        if let Some(value) = declared(CssProperty::LineHeight) {
-            line_height = if value == "normal" {
-                None
-            } else if value.ends_with("px") || value.ends_with("rem") {
-                let px = units
-                    .pixels(value, false)
-                    .ok_or(LayoutError::Unsupported(ancestor))?;
-                if !px.is_finite() || !(0.01..=1_000_000.0).contains(&px) {
-                    return Err(LayoutError::Unsupported(ancestor));
-                }
-                Some(LineHeight::Absolute(px))
-            } else if let Some(value) = value.strip_suffix('%') {
-                let percentage: f32 = value
-                    .parse()
-                    .map_err(|_| LayoutError::Unsupported(ancestor))?;
-                let px = computed_font_size(size) * percentage / PERCENT;
-                if !px.is_finite() || !(0.01..=1_000_000.0).contains(&px) {
-                    return Err(LayoutError::Unsupported(ancestor));
-                }
-                Some(LineHeight::Absolute(px))
-            } else {
-                let multiplier: f32 = value
-                    .parse()
-                    .map_err(|_| LayoutError::Unsupported(ancestor))?;
-                if !multiplier.is_finite() || !(0.001..=1000.0).contains(&multiplier) {
-                    return Err(LayoutError::Unsupported(ancestor));
-                }
-                Some(LineHeight::FontSizeRelative(multiplier))
-            };
-        }
     }
     Ok(ResolvedText {
-        specified_size: size.px,
+        specified_size: font.size.px as f32,
         options: TextOptions {
-            size: computed_font_size(size),
+            size,
             line_height,
             weight,
             italic,
@@ -1187,7 +1106,7 @@ pub(crate) fn resolve_text(
             source: TextSource::General,
             align,
         },
-        family,
+        family: font.family,
     })
 }
 
@@ -1697,6 +1616,7 @@ pub(crate) fn image_box(
 ) -> Result<replaced::AtomBox, LayoutError> {
     let engine_error = |e: taffy::TaffyError| LayoutError::Engine(e.to_string());
     let mut engine = TaffyTree::new();
+    engine.set_calc_resolver(crate::calc::resolve);
     let (node, _) = build_one(
         tree,
         env,
@@ -1899,8 +1819,14 @@ fn geometry_and_text_inner(
     }
     // Isolated flex/grid text and a single text child of a block can be measured independently.
     // Adjacent text nodes form one anonymous box in CSS and are not handled yet.
+    // The measurer's medium size is the base of computed font sizes, and so
+    // of `em` in every value.
     let layout_env = Environment {
         width: f64::from(width),
+        font: varta_style::font::FontBase {
+            medium: f64::from(font_size),
+            fixed_monospace: measurer.fixed_monospace(),
+        },
         ..*env
     };
     let mut pending = vec![(ROOT_NODE, 0usize)];
@@ -2141,19 +2067,26 @@ fn boxes_inner(
     }
     let text_metrics = measured.text;
     let mut engine = TaffyTree::new();
+    engine.set_calc_resolver(crate::calc::resolve);
     engine.disable_rounding();
     let mut ids = BTreeMap::new();
     let mut lines = BTreeMap::new();
-    let layout_env = Environment {
-        width: f64::from(width),
-        ..*env
-    };
     let base = base_size.map(|px| style::FontBase {
         px,
         fixed_monospace: text_input
             .as_deref()
             .is_none_or(TextMeasurer::fixed_monospace),
     });
+    // The measurer's medium size is the base of computed font sizes, and so
+    // of `em` in every value.
+    let layout_env = Environment {
+        width: f64::from(width),
+        font: base.map_or(env.font, |base| varta_style::font::FontBase {
+            medium: f64::from(base.px),
+            fixed_monospace: base.fixed_monospace,
+        }),
+        ..*env
+    };
     let root = build(
         tree,
         &layout_env,
@@ -2220,7 +2153,7 @@ fn boxes_inner(
                     taffy::compute_leaf_layout(
                         inputs,
                         style,
-                        |_, _| 0.0,
+                        crate::calc::resolve,
                         |known, available| {
                             let shape = match context.as_deref() {
                                 Some(Measure::Text(shape)) => shape,
@@ -2800,7 +2733,7 @@ mod positioning_tests {
             (code.options.size, code.specified_size),
             (
                 MINIMUM_LOGICAL_FONT_SIZE,
-                8.0 * crate::style::UA_MONOSPACE_RATIO
+                8.0 * varta_style::font::UA_MONOSPACE_RATIO as f32
             )
         );
         let fixed = resolve(15);

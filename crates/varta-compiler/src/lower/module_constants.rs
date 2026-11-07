@@ -116,15 +116,23 @@ pub(super) fn link_module(
             *assignable = false;
         }
     }
-    check(source, functions, &scope, &declared, types.profile)?;
+    check(
+        source,
+        functions,
+        &scope,
+        (&declared, &unit.ast),
+        types.profile,
+    )?;
     for chunk in chunks(&declared) {
         let index = *next;
         // Function initializers (v37) lift their bodies, and collection
         // constructors (v37) instantiate prelude functions, while the chunk
         // is lowered: reserve the initializer's index first so they do not
-        // take it.
+        // take it. Effectful initializers (v38 `module_evaluation`) may
+        // instantiate generic functions and classes the same way.
         let reserved = types.profile.language_core() && lifts(chunk)
-            || types.profile.collections() && constructs_collection(chunk);
+            || types.profile.collections() && constructs_collection(chunk)
+            || types.profile.module_evaluation() && chunk_effectful(chunk);
         if reserved {
             if index >= types.function_limit() {
                 return Err(source.locate(
@@ -242,6 +250,16 @@ fn lifts(chunk: &[Declared<'_>]) -> bool {
     found.0
 }
 
+/// Whether a chunk's initializers run program code (v38 `module_evaluation`).
+fn chunk_effectful(chunk: &[Declared<'_>]) -> bool {
+    chunk.iter().any(|var| {
+        var.decls
+            .iter()
+            .filter_map(|d| d.init.as_deref())
+            .any(module_evaluation::effectful)
+    })
+}
+
 /// Whether a chunk's initializers construct a `Map` or `Set` (v37).
 fn constructs_collection(chunk: &[Declared<'_>]) -> bool {
     #[derive(Default)]
@@ -303,7 +321,7 @@ fn check(
     source: &Source,
     functions: &BTreeMap<String, Signature>,
     imported: &Scope,
-    declared: &[Declared<'_>],
+    (declared, module): (&[Declared<'_>], &ast::Module),
     profile: varta_common::language::LanguageProfile,
 ) -> Result<()> {
     let mut names: BTreeSet<String> = imported.keys().cloned().collect();
@@ -357,6 +375,23 @@ fn check(
                     value.span(),
                 ));
             }
+            // V38 (`module_evaluation`): code the initializer runs may not
+            // read a binding of this module before its initialization
+            // (JavaScript's temporal dead zone, a `ReferenceError`).
+            if profile.module_evaluation()
+                && module_evaluation::effectful(value)
+                && let Some(early) = module_evaluation::reachable(module, value)
+                    .into_iter()
+                    .find(|name| names.contains(name) && !ready.contains(name))
+            {
+                return Err(source.locate(
+                    invalid(format!(
+                        "binding used before initialization: {} is read by code this initializer runs (JavaScript throws ReferenceError)",
+                        crate::desugar::display_name(&early)
+                    )),
+                    value.span(),
+                ));
+            }
             ready.insert(binding.id.sym.to_string());
         }
     }
@@ -369,6 +404,15 @@ fn initializer_form(
     names: &BTreeSet<String>,
     profile: varta_common::language::LanguageProfile,
 ) -> Result<()> {
+    // V38 (`module_evaluation`): any expression but a top-level `await`.
+    if profile.module_evaluation() {
+        if module_evaluation::awaits(expr) {
+            return Err(super::promises::rejected(
+                "await outside an async function (top-level await is not supported)",
+            ));
+        }
+        return Ok(());
+    }
     let form = match expr {
         // V37 (`language_core`): function values; their bodies run later and
         // may reference anything an ordinary function may.
@@ -569,7 +613,14 @@ impl Lower<'_> {
                 let binding = self.binding(name.id.sym.as_ref())?;
                 let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
                 let span = value.span;
-                if var.kind != ast::VarDeclKind::Const {
+                // V38 (`module_evaluation`): a primitive `const` whose
+                // initializer runs code has no literal to fold; it is stored
+                // like a module variable that no code may assign.
+                let computed = var.kind == ast::VarDeclKind::Const
+                    && self.types.profile.module_evaluation()
+                    && !ty.needs_root()
+                    && fold(&value, &folded).is_none();
+                if var.kind != ast::VarDeclKind::Const || computed {
                     // A module variable (v37) always lives in its root slot;
                     // a primitive is boxed so the slot holds a handle.
                     if matches!(value.kind, E::Zero) {
@@ -586,6 +637,13 @@ impl Lower<'_> {
                     } else {
                         unions::intern(vec![ty, Type::Undefined], self.types)?
                     };
+                    // A type of `undefined` (or `null`) alone has no boxed form.
+                    if !storage.needs_root() {
+                        return Err(self.source.locate(
+                            unsupported(&format!("module variable of type {ty}")),
+                            declarator.span,
+                        ));
+                    }
                     let index = *stored;
                     *stored += 1;
                     body.push(S::Init(slot, value));
@@ -615,8 +673,8 @@ impl Lower<'_> {
                         Constant {
                             ty,
                             value: Value::Stored(index),
-                            readonly: false,
-                            variable: Some((storage, true)),
+                            readonly: computed,
+                            variable: Some((storage, !computed)),
                             id: *ids,
                         },
                     );
