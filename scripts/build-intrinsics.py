@@ -99,6 +99,14 @@ def installed_targets():
     return set(result.stdout.split())
 
 
+def target_directory(environment):
+    """Cargo's target directory as the build sees it, including overrides."""
+    result = subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps", "--offline", "--locked"],
+        check=True, capture_output=True, text=True, cwd=ROOT, env=environment)
+    return pathlib.Path(json.loads(result.stdout)["target_directory"])
+
+
 def build():
     targets = installed_targets()
     link = [f"-zstack-size={STACK_BYTES}", "--emit-relocs", "--no-merge-data-segments"]
@@ -120,7 +128,7 @@ def build():
         ["cargo", "build", "-p", PACKAGE, "--target", target, "--profile", PROFILE,
          "--offline", "--locked"],
         check=True, cwd=ROOT, env=environment)
-    built = ROOT / "target" / target / PROFILE / (PACKAGE.replace("-", "_") + ".wasm")
+    built = target_directory(environment) / target / PROFILE / (PACKAGE.replace("-", "_") + ".wasm")
     shutil.copyfile(built, OUTPUT)
     rustc = subprocess.run(["rustc", "--version"], check=True, capture_output=True,
                            text=True).stdout.strip()
