@@ -904,6 +904,93 @@
       ],
       "origin": "typescript_handbook",
       "reference": "https://www.typescriptlang.org/docs/handbook/2/classes.html"
+    },
+    {
+      "id": "enums",
+      "title": "Numeric, string, heterogeneous and const enums with reverse mapping",
+      "core": [
+        "CORE-01",
+        "CORE-02"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/enums.html"
+    },
+    {
+      "id": "namespaces",
+      "title": "Namespaces and declaration merging",
+      "core": [
+        "CORE-02",
+        "CORE-03"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/namespaces.html"
+    },
+    {
+      "id": "abstract-classes",
+      "title": "Abstract classes and abstract members",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/2/classes.html#abstract-classes-and-members"
+    },
+    {
+      "id": "overloads",
+      "title": "Function, method and constructor overloads",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/2/functions.html#function-overloads"
+    },
+    {
+      "id": "class-accessors",
+      "title": "Class setters, getter/setter pairs and auto-accessors",
+      "core": [
+        "CORE-02",
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-method-definitions"
+    },
+    {
+      "id": "static-class-members",
+      "title": "Static fields, static blocks and this in static methods",
+      "core": [
+        "CORE-02",
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-class-definitions"
+    },
+    {
+      "id": "class-expressions",
+      "title": "Class expressions bound by const declarations",
+      "core": [
+        "CORE-02",
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-class-definitions-runtime-semantics-evaluation"
+    },
+    {
+      "id": "decorators",
+      "title": "Standard class decorators",
+      "core": [
+        "CORE-02",
+        "CORE-03"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/decorators.html"
+    },
+    {
+      "id": "class-index-signatures",
+      "title": "Class index signatures",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/2/classes.html#index-signatures"
     }
   ],
   "cases": [
@@ -1238,9 +1325,7 @@
         "varta log: 7"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Class declarations inside functions are not admitted; v32 through v38 admit top-level classes only."
+        "status": "supported"
       }
     },
     {
@@ -3384,6 +3469,21 @@
       }
     },
     {
+      "id": "enum-members",
+      "feature": "enums",
+      "path": "cases/enum-members.ts",
+      "sha256": "da14463ef767dde89c4820ab5d38c77b58f08c946f5c9c5f2a4602308cb4d843",
+      "stdout": [
+        "varta log: 0 5 6",
+        "varta log: Done Review",
+        "varta log: no member",
+        "varta log: done cold 3"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "ts-brands-and-queries",
       "feature": "ts-type-operators",
       "path": "cases/ts-brands-and-queries.ts",
@@ -3392,6 +3492,18 @@
         "varta log: U1 6 2",
         "varta log: total 7 4",
         "varta log: describe doubled 9 undefined length 1 custom ada:5"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "const-enum",
+      "feature": "enums",
+      "path": "cases/const-enum.ts",
+      "sha256": "1fd50a04b2bf577dc11330f0b354595c49b94a380011b1eb6fb1806eba9609da",
+      "stdout": [
+        "varta log: y 16 239"
       ],
       "baseline": {
         "status": "supported"
@@ -3413,6 +3525,18 @@
       }
     },
     {
+      "id": "namespace-merging",
+      "feature": "namespaces",
+      "path": "cases/namespace-merging.ts",
+      "sha256": "d64a6764a5518dc77fbd010612af122477add33a1d9b2c60078a7c00553b372d",
+      "stdout": [
+        "varta log: 16cm <b>"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "ts-inference-more",
       "feature": "ts-conditional-types",
       "path": "cases/ts-inference-more.ts",
@@ -3421,6 +3545,19 @@
         "varta log: boxed 4 5 2 3 7",
         "varta log: 1:1",
         "varta log: 3:2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "abstract-members",
+      "feature": "abstract-classes",
+      "path": "cases/abstract-members.ts",
+      "sha256": "4c88da3e0555c9161dcd03caa47cf69cc2e186fbc047581374e1e4d98cea31de",
+      "stdout": [
+        "varta log: checking:89",
+        "varta log: savings:40"
       ],
       "baseline": {
         "status": "supported"
@@ -3436,6 +3573,154 @@
         "varta log: 2 s 2",
         "varta log: root 1",
         "varta log: onClickX"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "function-overloads",
+      "feature": "overloads",
+      "path": "cases/function-overloads.ts",
+      "sha256": "f8217ae4c7b6150db81a7f4afcd1f88468e3b4ea3ab184d862b119fa9bc83b8c",
+      "stdout": [
+        "varta log: 42 2 2.0 no"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-setters",
+      "feature": "class-accessors",
+      "path": "cases/class-setters.ts",
+      "sha256": "cd355069c57ba96876cd585cd6351e9a3dc983a25d848d6f36b0039f53a10ccb",
+      "stdout": [
+        "varta log: 3..12 9"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "auto-accessor",
+      "feature": "class-accessors",
+      "path": "cases/auto-accessor.ts",
+      "sha256": "30fb1b2e5cdef87abc40da7bcae768166bf5f6221e117612b6c1ba338dff6f7a",
+      "stdout": [
+        "varta log: light-8 8"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "static-fields",
+      "feature": "static-class-members",
+      "path": "cases/static-fields.ts",
+      "sha256": "f7178269ca8b6f104dbbebd5236bb1d4730e05e195574f9fd82331e551652e87",
+      "stdout": [
+        "varta log: id-1 id-2 3",
+        "varta log: shape generic / shape circle"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-expression",
+      "feature": "class-expressions",
+      "path": "cases/class-expression.ts",
+      "sha256": "3bdfaeaa29947830316fa3d4a6f25419ce76f9aea205c850b32ab35c109cdbc5",
+      "stdout": [
+        "varta log: 4,6 ba"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "static-block",
+      "feature": "static-class-members",
+      "path": "cases/static-block.ts",
+      "sha256": "3c446454d00dd8f0b00eeb878cadc7fda168da1d2c4743001bcb513caa0a11bb",
+      "stdout": [
+        "varta log: header"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-decorator",
+      "feature": "decorators",
+      "path": "cases/class-decorator.ts",
+      "sha256": "1903c49fceaa0633bb3c43f5c03ea2179de7faae861f7ae0d7dd21fbd763c092",
+      "stdout": [
+        "varta log: Service"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Decorators run code when the class is defined and receive the class as a value; pending the module-initialization design."
+      }
+    },
+    {
+      "id": "enum-object",
+      "feature": "enums",
+      "path": "cases/enum-object.ts",
+      "sha256": "94ec5abed133884a0714a135a5e228eb6b9352910867d5b297b620eb225f1833",
+      "stdout": [
+        "varta log: [\"0\",\"1\",\"10\",\"Red\",\"Green\",\"Blue\"]",
+        "varta log: [\"UP\",\"DOWN\"]",
+        "varta log: [[\"0\",\"No\"],[\"No\",0],[\"Yes\",\"YES\"]]",
+        "varta log: UP/DOWN",
+        "varta log: 10 Red",
+        "varta log: {\"0\":\"Red\",\"1\":\"Green\",\"10\":\"Blue\",\"Red\":0,\"Green\":1,\"Blue\":10}",
+        "varta log: DOWN"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "namespace-object",
+      "feature": "namespaces",
+      "path": "cases/namespace-object.ts",
+      "sha256": "200e7a548c08edabedf3b76ecbd5b97de1d9dc379573d9232bb002fc1c744311",
+      "stdout": [
+        "varta log: [\"scale\",\"double\",\"Axis\",\"Inner\",\"unit\"]",
+        "varta log: 8cm0 1",
+        "varta log: {\"depth\":1} {\"X\":\"x\",\"Y\":\"y\"}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "enum-assignability",
+      "feature": "enums",
+      "path": "cases/enum-assignability.ts",
+      "sha256": "ee947fec4e71e55207d9250860063a70919219ef38b18c4feb680bfd8f147d54",
+      "stdout": [
+        "varta log: mid level 7 high",
+        "varta log: DOWN UP true",
+        "varta log: text YES number 0 number 0",
+        "varta log: UP true"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-index-signature",
+      "feature": "class-index-signatures",
+      "path": "cases/class-index-signature.ts",
+      "sha256": "95e2e1de8d236b484118b15ffecdaf2544a73ad1fae360c28aa927fc84f97ab2",
+      "stdout": [
+        "varta log: 17 7 1",
+        "varta log: true",
+        "varta log: 100 1 5"
       ],
       "baseline": {
         "status": "supported"

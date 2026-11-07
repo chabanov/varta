@@ -429,6 +429,23 @@ impl Lower<'_> {
             value
         };
         let source = value.ty;
+        // V38 (`declaration_forms`): `'x' as E` of a string enum member.
+        // A literal operand typed without context is its singleton literal.
+        let literal =
+            if self.types.profile.declaration_forms() && !matches!(source, Type::Literal(..)) {
+                literals::fresh(&value, self.types).unwrap_or(source)
+            } else {
+                source
+            };
+        if self.types.profile.declaration_forms()
+            && let Some(member) = literals::retag(literal, target, self.types)
+        {
+            let value = Expr {
+                ty: member,
+                ..value
+            };
+            return unions::widen(value, Some(target), self.types);
+        }
         if upcast(source, target, self.types) {
             return unions::widen(value, Some(target), self.types);
         }

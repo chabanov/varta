@@ -135,6 +135,22 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
     {
         return named::resolve(id.sym.as_ref(), types);
     }
+    // V38 (`declaration_forms`): an enum type `__vartaDeclEnum<T, "group">`
+    // (`desugar::ENUM_TYPE`), numeric members open, string members nominal.
+    if types.profile.declaration_forms()
+        && let ast::TsType::TsTypeRef(reference) = ty
+        && let ast::TsEntityName::Ident(id) = &reference.type_name
+        && id.sym == crate::desugar::ENUM_TYPE
+        && let Some(params) = &reference.type_params
+        && let [inner, group] = params.params.as_slice()
+        && let ast::TsType::TsLitType(ast::TsLitType {
+            lit: ast::TsLit::Str(group),
+            ..
+        }) = &**group
+    {
+        let inner = keyword_type(inner, types)?;
+        return literals::enum_type(inner, group.value.as_str().unwrap_or_default(), types);
+    }
     // K9 type level (v38): conditional, mapped and template literal types,
     // utility types, type queries and the other type operators.
     if let Some(ty) = type_level::evaluate(ty, types)? {
@@ -424,6 +440,7 @@ mod math_hypot;
 mod missing;
 mod mixed_records;
 mod module_constants;
+mod module_evaluation;
 pub(crate) mod named;
 mod net;
 mod number_format;
@@ -437,6 +454,7 @@ mod object_enumeration;
 mod object_is;
 mod object_narrowing;
 mod optional_chains;
+pub(crate) mod overloads;
 mod own_keys;
 mod parameters;
 mod paths;

@@ -379,7 +379,13 @@ pub(super) fn declaration(id: u32, types: &ir::ValueTypes) -> Result<ast::FnDecl
     if let Some(field) = class
         .fields
         .iter()
-        .find(|f| f.owner == id && !discipline.assigned.contains(&f.name))
+        // An abstract field (v38 `declaration_forms`) is defined by the
+        // concrete descendant; its own constructor may not read it.
+        .find(|f| {
+            f.owner == id
+                && !discipline.assigned.contains(&f.name)
+                && !class.forms.abstracts.contains(&f.name)
+        })
     {
         return Err(source.locate(
             invalid(format!(

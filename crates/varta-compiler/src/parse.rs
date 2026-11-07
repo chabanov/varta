@@ -6,8 +6,14 @@ use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 /// profile that admits TSX (v38 `tsx()`); every other module parses exactly
 /// as before.
 fn syntax(tsx: bool) -> Syntax {
+    syntax_with(tsx, false)
+}
+/// The parser syntax with standard decorators (v38 `declaration_forms`);
+/// earlier profiles keep rejecting `@` as a syntax error.
+fn syntax_with(tsx: bool, decorators: bool) -> Syntax {
     Syntax::Typescript(swc_ecma_parser::TsSyntax {
         tsx,
+        decorators,
         ..Default::default()
     })
 }
@@ -16,11 +22,19 @@ pub(crate) fn parse_module(
     source: &crate::source::Source,
     tsx: bool,
 ) -> Result<swc_ecma_ast::Module, CompilerError> {
+    parse_module_with(source, tsx, false)
+}
+
+pub(crate) fn parse_module_with(
+    source: &crate::source::Source,
+    tsx: bool,
+    decorators: bool,
+) -> Result<swc_ecma_ast::Module, CompilerError> {
     let fm = &source.file;
     check_complexity(source, tsx)?;
 
     let lexer = Lexer::new(
-        syntax(tsx),
+        syntax_with(tsx, decorators),
         Default::default(),
         StringInput::from(&**fm),
         None,

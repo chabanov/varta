@@ -111,6 +111,9 @@ impl Lower<'_> {
         if matches!(value.ty, Type::Record(_)) {
             return self.record_field(member, value, true);
         }
+        // V38 (`declaration_forms`): an undeclared member of a class with
+        // an index signature.
+        let value = self.class_index(member, value)?;
         if matches!(value.ty, Type::Dictionary(_)) {
             return self.dictionary_read(member, value);
         }
