@@ -13,8 +13,10 @@
   arrays with every Array method; `matchAll` returns a lazy RegExp String
   Iterator; `split` yields `undefined` for groups that did not take part;
   replacers of run-time patterns or with rest parameters receive the
-  arguments counted at run time. Symbol protocols wait for symbol values.
-  Conformance: 205 passed, 5 known unsupported of 210.
+  arguments counted at run time. With K9 D2 symbol values, `RegExp` has
+  `[Symbol.match]`, `[Symbol.matchAll]`, `[Symbol.replace]`,
+  `[Symbol.search]` and `[Symbol.split]`, and the String methods call custom
+  matchers. Conformance: 209 passed, 4 known unsupported of 213.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
   2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as

@@ -304,18 +304,35 @@ impl Lower<'_> {
         rewrite: impl FnOnce(ast::Expr) -> ast::Expr,
         expected: Option<Type>,
     ) -> Result<Expr> {
-        let span = value.span;
         let values = self.match_field(value, VALUES)?;
-        let ty = values.ty;
-        let name = format!("{ELEMENTS_BINDING}{}", self.next);
+        self.on_bound(vec![values], |mut bound| rewrite(bound.remove(0)), expected)
+    }
+    /// `values`, evaluated in order into hidden bindings, then the
+    /// expression `rewrite` builds over those bindings.
+    fn on_bound(
+        &mut self,
+        values: Vec<Expr>,
+        rewrite: impl FnOnce(Vec<ast::Expr>) -> ast::Expr,
+        expected: Option<Type>,
+    ) -> Result<Expr> {
+        let span = values
+            .first()
+            .map_or(swc_common::DUMMY_SP, |value| value.span);
         self.scopes.push(std::collections::BTreeMap::new());
-        let lowered = self.declare(&name, Some(ty), true, false).and_then(|()| {
-            let slot = self.binding(&name)?.slot;
-            let rewritten = rewrite(ast::Expr::Ident(ident(&name, span)));
-            Ok((slot, self.expr_expected(&rewritten, expected)?))
-        });
+        let lowered = (|| {
+            let mut slots = Vec::new();
+            let mut idents = Vec::new();
+            for value in &values {
+                let name = format!("{ELEMENTS_BINDING}{}", self.next);
+                self.declare(&name, Some(value.ty), true, false)?;
+                slots.push(self.binding(&name)?.slot);
+                idents.push(ast::Expr::Ident(ident(&name, span)));
+            }
+            let rewritten = rewrite(idents);
+            Ok::<_, CompilerError>((slots, self.expr_expected(&rewritten, expected)?))
+        })();
         self.scopes.pop();
-        let (slot, result) = lowered?;
+        let (slots, result) = lowered?;
         let result = if result.ty == Type::Void {
             Expr {
                 span,
@@ -325,16 +342,25 @@ impl Lower<'_> {
         } else {
             result
         };
-        let output = self.hidden(result.ty);
+        let (ty, result_span) = (result.ty, result.span);
+        let output = self.hidden(ty);
         let marker = self.hidden(Type::Number);
+        let mut roots = slots.clone();
+        roots.push(output);
+        let mut body: Vec<S> = slots
+            .into_iter()
+            .zip(values)
+            .map(|(slot, value)| S::Init(slot, value))
+            .collect();
+        body.push(S::Init(output, result));
         Ok(Expr {
-            span: result.span,
-            ty: result.ty,
+            span: result_span,
+            ty,
             kind: E::ValueBlock {
                 output,
                 marker,
-                roots: vec![slot, output],
-                body: vec![S::Init(slot, values), S::Init(output, result)],
+                roots,
+                body,
             },
         })
     }
@@ -528,7 +554,92 @@ impl Lower<'_> {
             let flags = string(span, profile.string_bytes(flags));
             return self.regexp_static("create", vec![value, flags], span);
         }
-        self.require_regexp(value)
+        Ok(value)
+    }
+    /// V38: whether a value of type `ty` is a custom matcher for the string
+    /// method `method`: a class instance, other than a RegExp, with the
+    /// method `[Symbol.<method>]` (§22.1.3: the String methods call it).
+    fn custom_matcher(&self, ty: Type, method: &str) -> bool {
+        let Type::Class(class) = ty else {
+            return false;
+        };
+        let symbol = if method == "replaceAll" {
+            "replace"
+        } else {
+            method
+        };
+        let key = crate::modules::symbol_keys::well_known_key(symbol);
+        self.types.profile.full_regexp()
+            && self.types.profile.symbol_values()
+            && !self.regexp_value(ty)
+            && self.types.classes.get(class).methods.contains_key(&key)
+    }
+    /// V38: `text.method(matcher, …rest)` with a custom matcher:
+    /// `matcher[Symbol.<method>](text, …rest)`, the receiver evaluated
+    /// first, then the matcher, then the other arguments.
+    fn custom_matcher_call(
+        &mut self,
+        call: &ast::CallExpr,
+        receiver: Expr,
+        matcher: Expr,
+        method: &str,
+    ) -> Result<Expr> {
+        let span = call.span;
+        // IsRegExp (§7.2.8): a matcher with `[Symbol.match]` is a regular
+        // expression to `replaceAll` and `matchAll`, which then require a
+        // global `flags` property first.
+        if matches!(method, "replaceAll" | "matchAll")
+            && let Type::Class(class) = matcher.ty
+            && self
+                .types
+                .classes
+                .get(class)
+                .methods
+                .contains_key(&crate::modules::symbol_keys::well_known_key("match"))
+        {
+            return Err(self.source.locate(
+                unsupported(&format!(
+                    "String.prototype.{method} with a custom matcher that has [Symbol.match] (its IsRegExp flags check)"
+                )),
+                call.span,
+            ));
+        }
+        let symbol = if method == "replaceAll" {
+            "replace"
+        } else {
+            method
+        };
+        let key = crate::modules::symbol_keys::well_known_key(symbol);
+        let rest: Vec<ast::ExprOrSpread> = call.args.iter().skip(1).cloned().collect();
+        self.on_bound(
+            vec![receiver, matcher],
+            |bound| {
+                let mut bound = bound.into_iter();
+                let text = bound
+                    .next()
+                    .unwrap_or(ast::Expr::Invalid(ast::Invalid { span }));
+                let matcher = bound
+                    .next()
+                    .unwrap_or(ast::Expr::Invalid(ast::Invalid { span }));
+                let mut args = vec![ast::ExprOrSpread {
+                    spread: None,
+                    expr: Box::new(text),
+                }];
+                args.extend(rest);
+                ast::Expr::Call(ast::CallExpr {
+                    span,
+                    ctxt: Default::default(),
+                    callee: ast::Callee::Expr(Box::new(ast::Expr::Member(ast::MemberExpr {
+                        span,
+                        obj: Box::new(matcher),
+                        prop: ast::MemberProp::Ident(ast::IdentName::new(key.into(), span)),
+                    }))),
+                    args,
+                    type_args: None,
+                })
+            },
+            None,
+        )
     }
     fn require_regexp(&self, value: Expr) -> Result<Expr> {
         if self.prelude_class_id(REGEXP_CLASS).ok().map(Type::Class) == Some(value.ty) {
@@ -577,6 +688,10 @@ impl Lower<'_> {
                 arity(1..=1)?;
                 let flags = if method == "matchAll" { "g" } else { "" };
                 let regexp = self.regexp_argument(&call.args[0].expr, flags)?;
+                if self.custom_matcher(regexp.ty, method) {
+                    return self.custom_matcher_call(call, receiver, regexp, method);
+                }
+                let regexp = self.require_regexp(regexp)?;
                 self.regexp_static(method, vec![receiver, regexp], span)
             }
             "replace" | "replaceAll" => {
@@ -595,6 +710,10 @@ impl Lower<'_> {
                         self.expr(argument)?
                     };
                     return self.text_replacement(receiver, pattern, replacement, all, span);
+                }
+                // V38: a custom matcher's `[Symbol.replace]` (§22.1.3.19).
+                if self.custom_matcher(pattern.ty, "replace") {
+                    return self.custom_matcher_call(call, receiver, pattern, "replace");
                 }
                 let pattern = self.require_regexp(pattern)?;
                 let argument = &*call.args[1].expr;
@@ -641,6 +760,12 @@ impl Lower<'_> {
         receiver: Expr,
         separator: Expr,
     ) -> Result<std::result::Result<Expr, (Expr, Expr)>> {
+        // V38: a custom splitter's `[Symbol.split]` (§22.1.3.23).
+        if self.custom_matcher(separator.ty, "split") {
+            return self
+                .custom_matcher_call(call, receiver, separator, "split")
+                .map(Ok);
+        }
         if !self.types.profile.regexp() || !self.regexp_value(separator.ty) {
             return Ok(Err((receiver, separator)));
         }
@@ -650,7 +775,27 @@ impl Lower<'_> {
         }
         let limit = match call.args.get(1) {
             Some(arg) => {
-                let limit = self.expr(&arg.expr)?;
+                // V38: an optional limit (`undefined` is no limit).
+                let limit = if self.types.profile.full_regexp()
+                    && unions::members(
+                        self.peek_type(&arg.expr, 0).unwrap_or(Type::Void),
+                        self.types,
+                    )
+                    .contains(&Type::Undefined)
+                {
+                    self.expr(&ast::Expr::Bin(ast::BinExpr {
+                        span,
+                        op: ast::BinaryOp::NullishCoalescing,
+                        left: arg.expr.clone(),
+                        right: Box::new(ast::Expr::Lit(ast::Lit::Num(ast::Number {
+                            span,
+                            value: NO_LIMIT,
+                            raw: None,
+                        }))),
+                    }))?
+                } else {
+                    self.expr(&arg.expr)?
+                };
                 if limit.ty != self.types.number() {
                     return Err(self
                         .source

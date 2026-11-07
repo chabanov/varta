@@ -25,8 +25,18 @@ pub(crate) type Keys = BTreeMap<String, String>;
 const SYMBOL_GLOBAL: &str = crate::modules::engine::SYMBOL_GLOBAL;
 /// The well-known symbols whose computed keys name ordinary members here;
 /// `Symbol.iterator` and `Symbol.asyncIterator` keep their method names
-/// (`lower::classes::ITERATOR_METHOD`).
-pub(crate) const WELL_KNOWN_KEYS: [&str; 3] = ["toPrimitive", "toStringTag", "hasInstance"];
+/// (`lower::classes::ITERATOR_METHOD`). The RegExp protocol symbols (K9 D3)
+/// name the methods of `RegExp` and of custom matchers.
+pub(crate) const WELL_KNOWN_KEYS: [&str; 8] = [
+    "toPrimitive",
+    "toStringTag",
+    "hasInstance",
+    "match",
+    "matchAll",
+    "replace",
+    "search",
+    "split",
+];
 
 /// The member key of the `unique symbol` constant `name` declared by the
 /// module at graph index `module`.

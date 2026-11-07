@@ -31,6 +31,7 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("runtime_patterns"),
     case!("match_arrays"),
     case!("replacers"),
+    case!("protocols"),
     // The `docs/language-guide.md` examples, verbatim.
     case!("guide"),
     case!("guide_runtime"),

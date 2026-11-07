@@ -288,7 +288,10 @@ impl Builder<'_> {
         text::check_stylesheets(&ast, &imports, &self.graph.units)?;
         // V38 (`symbol_values`): members keyed by `unique symbol` constants
         // and well-known symbols become ordinary members with stable keys.
-        let symbols = if self.profile.symbol_values() && !engine::is_prelude(&input.path) {
+        // The v38 RegExp prelude defines the RegExp protocol methods.
+        let symbol_keyed =
+            !engine::is_prelude(&input.path) || input.path == Path::new(engine::REGEXP.path);
+        let symbols = if self.profile.symbol_values() && symbol_keyed {
             symbol_keys::rewrite(
                 &mut ast,
                 self.graph.order.len(),

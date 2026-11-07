@@ -35,6 +35,8 @@ const UNICODE = 16;
 const STICKY = 32;
 const HAS_INDICES = 64;
 const UNICODE_SETS = 128;
+// The split limit when none is given (2^32 - 1).
+const NO_LIMIT = 4294967295;
 // The construction record of `varta.regexp.compile`
 // (`varta_common::regexp::construction`): words, then texts from TEXT_UNIT.
 const RECORD_STATUS = 0;
@@ -627,6 +629,34 @@ export class RegExp {
     return this.hasIndices ? indicesOf(caps, this.names, this.count) : undefined;
   }
 
+  // RegExp.prototype[@@match] (§22.2.6.8): String.prototype.match.
+  [Symbol.match](input: string): RegExpMatchArray | null {
+    return RegExp.match(input, this);
+  }
+
+  // RegExp.prototype[@@matchAll] (§22.2.6.9): a RegExp String Iterator over
+  // a copy that starts at `lastIndex`.
+  [Symbol.matchAll](input: string): Generator<RegExpExecArray, void, undefined> {
+    const copy = this.copy();
+    copy.lastIndex = this.lastIndex;
+    return RegExp.iterate(copy, input);
+  }
+
+  // RegExp.prototype[@@replace] (§22.2.6.11) with a replacement template.
+  [Symbol.replace](input: string, replacement: string): string {
+    return RegExp.replace(input, this, replacement);
+  }
+
+  // RegExp.prototype[@@search] (§22.2.6.12).
+  [Symbol.search](input: string): number {
+    return RegExp.search(input, this);
+  }
+
+  // RegExp.prototype[@@split] (§22.2.6.14).
+  [Symbol.split](input: string, limit?: number): (string | undefined)[] {
+    return RegExp.splitParts(input, this, limit ?? NO_LIMIT);
+  }
+
   test(input: string): boolean {
     return this.run(input, true).length !== 0;
   }
@@ -682,11 +712,16 @@ export class RegExp {
     return RegExp.iterate(copy, input);
   }
 
-  // %RegExpStringIteratorPrototype%.next (§22.2.9.2.1) of a global regex.
+  // %RegExpStringIteratorPrototype%.next (§22.2.9.2.1): every match of a
+  // global regex, the first match of another.
   private static *iterate(regexp: RegExp, input: string): Generator<RegExpExecArray, void, undefined> {
     for (;;) {
       const match = regexp.exec(input);
       if (match === null) {
+        return;
+      }
+      if (!regexp.global) {
+        yield match;
         return;
       }
       if (match.index === regexp.lastIndex) {

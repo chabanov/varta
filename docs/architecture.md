@@ -12060,9 +12060,17 @@ unchanged.
   under `u` or `v`. A replacer's groups parameter is the (defined) groups
   object. Match arrays and indices arrays are read like v37 match arrays
   (index, destructuring, `for…of`).
-- **Not modelled.** The `Symbol.match`/`matchAll`/`replace`/`search`/`split`
-  protocols wait for symbol values (track D2); Annex B
-  `RegExp.prototype.compile` and the legacy static properties (`RegExp.$1`)
+- **Symbol protocols.** With [symbol values](#symbol-values-symbol_values),
+  `RegExp` has `[Symbol.match]`, `[Symbol.matchAll]` (an iterator over a
+  copy, one match for a non-global regex), `[Symbol.replace]` (a
+  replacement template), `[Symbol.search]` and `[Symbol.split]`
+  (§22.2.6.8–14), and the String methods `match`, `matchAll`, `replace`,
+  `replaceAll`, `search` and `split` call a custom matcher's method of the
+  same symbol with the string first (§22.1.3), typed by that method. A
+  custom matcher that also has `[Symbol.match]` is a regular expression to
+  IsRegExp, so `replaceAll` and `matchAll` would first read its `flags`;
+  that combination is refused by name at compile time.
+- **Not modelled.** Annex B `RegExp.prototype.compile` and the legacy static properties (`RegExp.$1`)
   are not modelled; a value whose type may be a match array or `null`
   (`RegExpExecArray | null`) enters `unknown` only after narrowing. Behaviour is pinned
   against Node 24.20.0 (`varta-runtime` `full_regexp_cases`, including a
@@ -12740,7 +12748,9 @@ every form below (`symbol_forms_stay_refused_by_v37`).
   `unique symbol` constant (`const k = Symbol(…)` or annotated `unique
   symbol`, declared, imported, re-exported or renamed) or one of
   `Symbol.toPrimitive`, `Symbol.toStringTag` and `Symbol.hasInstance` names a
-  statically known member, as tsc types it: in object literals, interfaces
+  statically known member, as tsc types it (K9 D3 adds the RegExp protocol
+  keys `Symbol.match`, `matchAll`, `replace`, `search` and `split`, which
+  the v38 RegExp prelude also defines): in object literals, interfaces
   and type literals (property, method and getter signatures), class fields,
   methods and accessors, and member reads, writes and calls
   (`modules::symbol_keys`, run when the module graph is built, after the

@@ -3167,6 +3167,11 @@ See the [contract](architecture.md#full-regexp-full_regexp).
   elements (`match_elements_place`); `Array.isArray`, `JSON.stringify` and
   `unknown` see the elements array. Element 0 is read live with a non-null
   assertion.
+- The RegExp protocol symbols are well-known member keys
+  (`symbol_keys::WELL_KNOWN_KEYS`); the RegExp prelude is the one prelude
+  whose symbol keys are rewritten. String methods call a custom matcher
+  only through `custom_matcher_call` (receiver, matcher, then the other
+  arguments, in that order).
 - `split` returns `string[]` only for a separator written in place whose
   groups always take part (`captures_always_take_part`); otherwise
   `(string | undefined)[]`. Never reintroduce a throwing or coercing path for
