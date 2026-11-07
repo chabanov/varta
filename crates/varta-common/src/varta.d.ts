@@ -40,6 +40,9 @@ declare namespace View {
   function setText(node: number, text: string): void;
   function setAttribute(node: number, attribute: number, value: string): void;
   function removeAttribute(node: number, attribute: number): void;
+  /** Set a custom data attribute (`data-[a-z0-9._-]+`, HTML §3.2.6.6). */
+  function setData(node: number, name: string, value: string): void;
+  function removeData(node: number, name: string): void;
   function setClass(node: number, classes: string): void;
   function setStyle(node: number, property: number, value: string): void;
   function removeStyle(node: number, property: number): void;
@@ -63,6 +66,7 @@ declare namespace View {
   function setEffect(effect: (run: () => void) => void): void;
   function bindText(node: number, getter: () => string): void;
   function bindAttribute(node: number, attribute: number, getter: () => string): void;
+  function bindData(node: number, name: string, getter: () => string): void;
   function bindFlag(node: number, attribute: number, getter: () => boolean): void;
   function bindClass(node: number, getter: () => string): void;
   function bindStyle(node: number, property: number, getter: () => string): void;

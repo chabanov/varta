@@ -1448,7 +1448,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "s5-attribute-matchers": {
@@ -1630,7 +1632,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "s5-has-refused": {
@@ -1859,7 +1863,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "s5-readonly": {
@@ -1976,6 +1982,322 @@
       0
     ]
   },
+  "s5e-invalid-selector-dropped": {
+    "computed": {
+      "margin-top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5e-outside-type-dropped": {
+    "computed": {
+      "margin-top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5e-outside-type-in-list": {
+    "computed": {
+      "margin-top": "2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5e-unimplemented-property-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s5e-unimplemented-pseudo-class-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s5e-unknown-property-dropped": {
+    "computed": {
+      "margin-top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5e-webkit-autofill": {
+    "computed": {
+      "margin-top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5e-webkit-pseudo-element": {
+    "computed": {},
+    "pseudo": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5p-after-content": {
+    "computed": {
+      "position": "relative"
+    },
+    "pseudo": {
+      "bottom": "-4px",
+      "content": "\"!\"",
+      "left": "0",
+      "position": "absolute"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5p-after-none": {
+    "computed": {},
+    "pseudo": {
+      "color": "#111",
+      "content": "none"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5p-appearance": {
+    "computed": {
+      "appearance": "none"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5p-backdrop": {
+    "computed": {
+      "border": "0 solid",
+      "box-sizing": "border-box",
+      "margin": "0",
+      "padding": "0"
+    },
+    "pseudo": {
+      "background-color": "rgba(0, 0, 0, 0.5)",
+      "border": "0 solid",
+      "box-sizing": "border-box",
+      "margin": "0",
+      "padding": "0"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5p-before-inherits": {
+    "computed": {
+      "color": "#123456"
+    },
+    "pseudo": {
+      "color": "inherit",
+      "content": "\"a\" \"b\" / \"alt\"",
+      "font-size": "200%",
+      "width": "3px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5p-bolder": {
+    "computed": {
+      "font-weight": "lighter"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5p-font-inherit": {
+    "computed": {
+      "background-color": "transparent",
+      "border-radius": "0",
+      "color": "inherit",
+      "font-family": "inherit",
+      "font-feature-settings": "inherit",
+      "font-size": "inherit",
+      "font-style": "inherit",
+      "font-variation-settings": "inherit",
+      "font-weight": "inherit",
+      "letter-spacing": "inherit",
+      "line-height": "inherit",
+      "opacity": "1"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5p-font-settings": {
+    "computed": {
+      "font-feature-settings": "\"liga\" 0, \"tnum\"",
+      "font-variation-settings": "\"wght\" 450"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5p-font-shorthand": {
+    "computed": {
+      "font-family": "\"Varta Metrics\", serif",
+      "font-feature-settings": "normal",
+      "font-size": "12px",
+      "font-style": "italic",
+      "font-variation-settings": "normal",
+      "font-weight": "bold",
+      "line-height": "1.5"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5p-hover-after": {
+    "computed": {},
+    "pseudo": {
+      "content": "\"\"",
+      "scale": "0.5 1"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5p-list-style": {
+    "computed": {
+      "list-style-image": "none",
+      "list-style-position": "outside",
+      "list-style-type": "none"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5p-marker-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s5p-placeholder-currentcolor": {
+    "computed": {},
+    "pseudo": {
+      "color": "color-mix(in oklab, currentcolor 50%, transparent)",
+      "opacity": "1"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
   "supports": {
     "computed": {
       "color": "#333"
@@ -2031,7 +2353,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-100": {
@@ -2201,7 +2525,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-110": {
@@ -2359,7 +2685,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-120": {
@@ -2413,7 +2741,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-124": {
@@ -2507,7 +2837,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-130": {
@@ -2999,7 +3331,9 @@
     ]
   },
   "tailwind-app-16": {
-    "computed": {},
+    "computed": {
+      "appearance": "none"
+    },
     "statuses": [
       0,
       0,
@@ -3007,7 +3341,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-160": {
@@ -3477,7 +3813,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-188": {
@@ -3713,7 +4051,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-200": {
@@ -6120,7 +6460,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-60": {
@@ -6272,7 +6614,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-70": {
@@ -6436,7 +6780,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-80": {
@@ -6602,7 +6948,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-90": {

@@ -486,3 +486,55 @@ fn searching_selectors_charge_their_search() {
             > work(".d { color: #fff } .d { color: #fff }")
     );
 }
+
+/// CSS Pseudo-Elements 4: a pseudo-element's cascade takes the rules that
+/// select it of its originating element; it has no inline style, inherits
+/// from that element and resolves `var()` in its own scope.
+#[test]
+fn pseudo_elements_cascade_on_their_originating_element() {
+    let sheet = "@property --tw-content { syntax: \"*\"; initial-value: \"\"; inherits: false } \
+        .t { --x: 2px; color: #111 } \
+        .t::after { content: var(--tw-content); width: var(--x); --tw-content: \"!\" } \
+        .t:hover::after { color: #222 } \
+        .t::before { content: var(--tw-content) } \
+        .u::after { color: #333 }";
+    let mut styles = Styles::default();
+    styles.set(1, sheet, &mut 0).unwrap();
+    let mut tree = Tree::chain(&["", "t"]);
+    tree.nodes
+        .get_mut(&2)
+        .unwrap()
+        .3
+        .insert(CssProperty::Color, "#999".into());
+    let env = environment(800.0);
+    let pseudo = |kind| styles.pseudo_computed(&tree, 2, kind, &env, css::property_value);
+    let after = pseudo(PseudoElement::After);
+    assert_eq!(
+        after[&CssProperty::Content],
+        Computed::Value("\"!\"".into())
+    );
+    assert_eq!(after[&CssProperty::Width], Computed::Value("2px".into()));
+    // `:hover` is not matched and the inline `color` is the element's own.
+    assert!(!after.contains_key(&CssProperty::Color));
+    // The registered initial value of a non-inheriting property.
+    let before = pseudo(PseudoElement::Before);
+    assert_eq!(
+        before[&CssProperty::Content],
+        Computed::Value("\"\"".into())
+    );
+    assert!(pseudo(PseudoElement::Placeholder).is_empty());
+    // The element's own cascade takes no pseudo-element rule.
+    let own = styles.computed(&tree, 2, &env, css::property_value);
+    assert!(!own.contains_key(&CssProperty::Content));
+    assert!(styles.selects(PseudoElement::After) && !styles.selects(PseudoElement::Marker));
+    assert_eq!(
+        pseudo::generated(Some("\"a\" \"b\" / \"alt\"")),
+        Some(pseudo::Generated {
+            text: "ab".into(),
+            alternative: Some("alt".into())
+        })
+    );
+    assert_eq!(pseudo::generated(Some("none")), None);
+    assert_eq!(pseudo::generated(Some("normal")), None);
+    assert_eq!(pseudo::generated(None), None);
+}

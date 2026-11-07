@@ -750,6 +750,21 @@ pub(crate) const VIEW: Prelude = Prelude {
         },
         Member {
             object: VIEW_OBJECT,
+            property: "setData",
+            function: "setData",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "removeData",
+            function: "removeData",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "bindData",
+            function: "bindData",
+        },
+        Member {
+            object: VIEW_OBJECT,
             property: "copyText",
             function: "copyText",
         },

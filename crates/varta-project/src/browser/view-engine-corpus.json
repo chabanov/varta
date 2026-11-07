@@ -4260,6 +4260,208 @@
     "x"
    ],
    "style": []
+  },
+  {
+   "name": "s5e-invalid-selector-dropped",
+   "sheet": ":-moz-focusring { color: #111 } .x { margin-top: 1px }",
+   "classes": [
+    "x"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5e-unknown-property-dropped",
+   "sheet": ".x { colour: #111; -webkit-tap-highlight-color: red; margin-top: 1px }",
+   "classes": [
+    "x"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5e-unimplemented-property-refused",
+   "sheet": ".x { tab-size: 4 }",
+   "classes": [
+    "x"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5e-unimplemented-pseudo-class-refused",
+   "sheet": ".x:popover-open { color: #111 }",
+   "classes": [
+    "x"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5e-outside-type-dropped",
+   "sheet": "hr, table { text-indent: 0; border-collapse: collapse } .x { margin-top: 1px }",
+   "classes": [
+    "x"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5e-outside-type-in-list",
+   "sheet": "img, svg, div { margin-top: 2px }",
+   "classes": [
+    "x"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5e-webkit-pseudo-element",
+   "sheet": "::-webkit-datetime-edit { display: inline-flex } .x::-webkit-input-placeholder { color: #111 }",
+   "classes": [
+    "x"
+   ],
+   "tags": [
+    "input"
+   ],
+   "pseudo": "placeholder",
+   "style": []
+  },
+  {
+   "name": "s5e-webkit-autofill",
+   "sheet": ".x:-webkit-autofill { color: #111 } .x { margin-top: 1px }",
+   "classes": [
+    "x"
+   ],
+   "tags": [
+    "input"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5p-after-content",
+   "sheet": "@property --tw-content { syntax: \"*\"; initial-value: \"\"; inherits: false } .x::after { content: var(--tw-content); position: absolute; left: 0; bottom: calc(0.25rem * -1); --tw-content: \"!\" } .x { position: relative }",
+   "classes": [
+    "",
+    "x"
+   ],
+   "pseudo": "after",
+   "style": []
+  },
+  {
+   "name": "s5p-before-inherits",
+   "sheet": ".x { color: #123456; --w: 3px } .x::before { content: \"a\" \"b\" / \"alt\"; width: var(--w); color: inherit; font-size: 2em }",
+   "classes": [
+    "x"
+   ],
+   "pseudo": "before",
+   "style": []
+  },
+  {
+   "name": "s5p-hover-after",
+   "sheet": "@property --tw-content { syntax: \"*\"; initial-value: \"\"; inherits: false } .x::after { content: var(--tw-content); --tw-scale-x: 50%; scale: var(--tw-scale-x) 1 } .x:hover::after { scale: 1 1 }",
+   "classes": [
+    "x"
+   ],
+   "pseudo": "after",
+   "style": []
+  },
+  {
+   "name": "s5p-after-none",
+   "sheet": ".x::after { content: none; color: #111 }",
+   "classes": [
+    "x"
+   ],
+   "pseudo": "after",
+   "style": []
+  },
+  {
+   "name": "s5p-placeholder-currentcolor",
+   "sheet": "::placeholder { opacity: 1 } ::placeholder { color: color-mix(in oklab, currentcolor 50%, transparent) }",
+   "classes": [
+    "x"
+   ],
+   "tags": [
+    "input"
+   ],
+   "pseudo": "placeholder",
+   "style": []
+  },
+  {
+   "name": "s5p-backdrop",
+   "sheet": "*, ::after, ::before, ::backdrop, ::file-selector-button { box-sizing: border-box; margin: 0; padding: 0; border: 0 solid } .x::backdrop { background-color: rgb(0 0 0 / 0.5) }",
+   "classes": [
+    "x"
+   ],
+   "tags": [
+    "dialog"
+   ],
+   "pseudo": "backdrop",
+   "style": []
+  },
+  {
+   "name": "s5p-marker-refused",
+   "sheet": ".x::marker { color: #111 }",
+   "classes": [
+    "x"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5p-font-shorthand",
+   "sheet": ".x { font: italic bold 12px/1.5 \"Varta Metrics\", serif }",
+   "classes": [
+    "x"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5p-font-inherit",
+   "sheet": "button, input { font: inherit; font-feature-settings: inherit; font-variation-settings: inherit; letter-spacing: inherit; color: inherit; border-radius: 0; background-color: transparent; opacity: 1 }",
+   "classes": [
+    "x"
+   ],
+   "tags": [
+    "button"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5p-font-settings",
+   "sheet": ".x { font-feature-settings: \"liga\" 0, \"tnum\"; font-variation-settings: \"wght\" 450 }",
+   "classes": [
+    "x"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5p-list-style",
+   "sheet": "ol, ul, menu { list-style: none }",
+   "classes": [
+    "x"
+   ],
+   "tags": [
+    "ul"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5p-appearance",
+   "sheet": "button, input:where([type=\"button\"]) { appearance: button } .x { -webkit-appearance: none }",
+   "classes": [
+    "x"
+   ],
+   "tags": [
+    "button"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5p-bolder",
+   "sheet": "b, strong { font-weight: bolder } .x { font-weight: lighter }",
+   "classes": [
+    "",
+    "x"
+   ],
+   "tags": [
+    "strong",
+    "span"
+   ],
+   "style": []
   }
  ]
 }

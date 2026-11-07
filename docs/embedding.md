@@ -3155,6 +3155,7 @@ not imply complete CSS rendering or typography acceptance.
 | Event export (v38) | `varta.view_abi.event` (i32) → () |
 | Root node id | 1 |
 | "No node" id | 0 |
+| First generated node id (guest ids are below it) | 2147483648 |
 | Batch header bytes | 8 |
 | Operation header bytes | 4 |
 | String alignment bytes | 4 |
@@ -3164,6 +3165,7 @@ not imply complete CSS rendering or typography acceptance.
 | Placeholder: live nodes / listeners | 65536 / 8192 |
 | Placeholder: tree component depth | 512 |
 | Placeholder: value bytes / stylesheet bytes / pending events | 65536 / 262144 / 64 |
+| Placeholder: custom data attribute name bytes / per element | 64 / 32 |
 | Placeholder: retained text bytes / live field reservation bytes | 8388608 / 98304 |
 | Placeholder: pending `copy_text` requests | 16 |
 | Placeholder: single-select work / node visit units | 8388608 / 16 |
@@ -3223,7 +3225,19 @@ not imply complete CSS rendering or typography acceptance.
 | 16 | `stylesheet` | sheet (u32 id), text (string) |
 | 17 | `set_title` | text (string) |
 | 18 | `copy_text` | request (u32 id), text (string) |
+| 19 | `set_data` | node (u32 id), data_name (string), text (string) |
+| 20 | `remove_data` | node (u32 id), data_name (string) |
 <!-- generated:view-opcodes:end -->
+
+`set_data` and `remove_data` set and remove an element's HTML custom data
+attributes (HTML §3.2.6.6). The view admits names `data-[a-z0-9._-]+` of at
+most the custom data attribute name bytes, at most the per-element count
+of names, and any string value; a name, value and count outside these is an
+invalid batch, never altered. Selectors read them as attributes, and the
+browser host sets them on the element. Their names and values count toward
+the retained text bytes. Node ids are below the first generated node id:
+a host reserves the ids from there for the boxes it generates (the native
+renderer's `::before` and `::after` boxes), which no operation names.
 
 **Elements.**
 
@@ -3416,6 +3430,13 @@ not imply complete CSS rendering or typography acceptance.
 | 105 | `pointer-events` | `auto \| none` | inherited |
 | 106 | `user-select` | `auto \| text \| none \| contain \| all` | — |
 | 107 | `box-sizing` | `content-box \| border-box` | — |
+| 108 | `content` | `normal \| none \| <string>+` | `::before` and `::after`; elements take `normal` and `none` |
+| 109 | `font-feature-settings` | `normal \| [<string> [<integer> \| on \| off]?]#` | inherited; four-character OpenType tags; nonnegative feature values |
+| 110 | `font-variation-settings` | `normal \| [<string> <number>]#` | inherited; four-character OpenType tags; nonnegative feature values |
+| 111 | `list-style-type` | `disc \| circle \| square \| decimal \| none` | inherited; list items |
+| 112 | `list-style-position` | `outside` | inherited; list items |
+| 113 | `list-style-image` | `none` | inherited; list items |
+| 114 | `appearance` | `none \| auto \| button \| textfield \| menulist-button \| searchfield \| textarea \| checkbox \| radio \| menulist \| listbox \| meter \| progress-bar` | — |
 <!-- generated:view-css-properties:end -->
 
 **Events.**

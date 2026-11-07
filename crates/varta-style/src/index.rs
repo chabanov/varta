@@ -2,6 +2,7 @@
 //! document's registered custom properties.
 use crate::prelude::*;
 use varta_common::view::expansion;
+use varta_common::view::stylesheet::selector::PseudoElement;
 use varta_common::view::stylesheet::{
     LayerDeclaration, LayerName, Media, Name, ParsedStylesheet, Pseudo, Registration, Rule,
 };
@@ -15,6 +16,8 @@ pub struct RuleIndex {
     /// Rules with a selector whose subject names neither a class nor
     /// `:root`: candidates for every element.
     universal: Vec<usize>,
+    /// The pseudo-elements the sheet's selectors select.
+    pub pseudo_elements: BTreeSet<PseudoElement>,
     pub has_custom: bool,
     pub costs: Vec<RuleCost>,
     pub expansion: Vec<Vec<(Name, expansion::Value)>>,
@@ -65,6 +68,7 @@ impl RuleIndex {
                 .iter()
                 .any(|(name, _)| matches!(name, Name::Custom(_)));
             for selector in &rule.selectors {
+                out.pseudo_elements.extend(selector.pseudo_element);
                 // The subject compound's first class anchors the rule.
                 let subject = selector.subject();
                 let list = if let Some(class) = subject.classes.first() {
@@ -197,8 +201,20 @@ pub struct CascadeIndex {
     static_ranks: Option<BTreeMap<(u32, usize), usize>>,
     registrations: BTreeMap<u32, Vec<Registration>>,
     registered: BTreeMap<String, Registration>,
+    /// Each sheet's selected pseudo-elements.
+    pseudo_elements: BTreeMap<u32, BTreeSet<PseudoElement>>,
 }
 impl CascadeIndex {
+    /// Whether any sheet selects a pseudo-element.
+    #[must_use]
+    pub fn has_pseudo_elements(&self) -> bool {
+        !self.pseudo_elements.is_empty()
+    }
+    /// Whether any sheet selects `kind`.
+    #[must_use]
+    pub fn selects(&self, kind: PseudoElement) -> bool {
+        self.pseudo_elements.values().any(|set| set.contains(&kind))
+    }
     /// The layer ranks under `media`.
     #[must_use]
     pub fn ranks(&self, media: &Media) -> LayerRanks {
@@ -246,6 +262,10 @@ impl CascadeIndex {
         if !index.properties.is_empty() {
             self.registrations.insert(sheet, index.properties.clone());
         }
+        if !index.pseudo_elements.is_empty() {
+            self.pseudo_elements
+                .insert(sheet, index.pseudo_elements.clone());
+        }
         self.rebuild();
         self.custom_sheets += usize::from(index.has_custom);
         self.roots
@@ -263,6 +283,7 @@ impl CascadeIndex {
         if self.layers.remove(&sheet).is_some() | self.registrations.remove(&sheet).is_some() {
             self.rebuild();
         }
+        self.pseudo_elements.remove(&sheet);
         self.custom_sheets -= usize::from(index.has_custom);
         for rule in &index.roots {
             self.roots.remove(&(sheet, *rule));

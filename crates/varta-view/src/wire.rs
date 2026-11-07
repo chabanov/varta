@@ -23,6 +23,8 @@ pub(crate) enum Value {
     Bits(u32),
     Number(f64),
     Text(String),
+    /// A custom data attribute name (`set_data`, `remove_data`).
+    DataName(String),
 }
 
 /// One decoded operation.
@@ -37,6 +39,16 @@ impl Operation {
             Some(Value::Id(id) | Value::Bits(id)) => *id,
             _ => 0,
         }
+    }
+    /// The custom data attribute name operand, if any.
+    pub(crate) fn data_name(&self) -> &str {
+        self.operands
+            .iter()
+            .find_map(|operand| match operand {
+                Value::DataName(name) => Some(name.as_str()),
+                _ => None,
+            })
+            .unwrap_or_default()
     }
     pub(crate) fn text(&self) -> &str {
         self.operands
@@ -212,6 +224,7 @@ fn read_operand(
             Value::Key(code)
         }
         O::Argument => Value::Number(reader.f64()?),
+        O::DataName => Value::DataName(reader.string(view::DRAFT_MAX_DATA_NAME_BYTES * 2)?),
         O::Text => Value::Text(reader.string(if opcode == Opcode::Stylesheet {
             DRAFT_MAX_STYLESHEET_BYTES
         } else {
@@ -422,6 +435,14 @@ impl BatchWriter {
     }
     pub fn stylesheet(&mut self, sheet: u32, text: &str) -> &mut Self {
         self.op(Opcode::Stylesheet).u32(sheet).text(text)
+    }
+    /// Set custom data attribute `name` (`data-…`) of `node`.
+    pub fn set_data(&mut self, node: u32, name: &str, value: &str) -> &mut Self {
+        self.op(Opcode::SetData).u32(node).text(name).text(value)
+    }
+    /// Remove custom data attribute `name` of `node`.
+    pub fn remove_data(&mut self, node: u32, name: &str) -> &mut Self {
+        self.op(Opcode::RemoveData).u32(node).text(name)
     }
     pub fn set_title(&mut self, text: &str) -> &mut Self {
         self.op(Opcode::SetTitle).text(text)

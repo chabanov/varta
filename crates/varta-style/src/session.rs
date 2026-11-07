@@ -482,6 +482,32 @@ impl Session {
             .styles
             .computed(&self.committed, id, &self.environment, css::property_value)
     }
+    /// The committed computed values of pseudo-element `kind` of element
+    /// `id` (empty when no rule selects it or `id` is no element).
+    #[must_use]
+    pub fn computed_pseudo(
+        &self,
+        id: u32,
+        kind: crate::PseudoElement,
+    ) -> BTreeMap<CssProperty, Computed> {
+        self.committed.styles.pseudo_computed(
+            &self.committed,
+            id,
+            kind,
+            &self.environment,
+            css::property_value,
+        )
+    }
+    /// The pseudo-elements the committed sheets select, as bits of their
+    /// index in `PseudoElement::ALL`.
+    #[must_use]
+    pub fn selected_pseudo_elements(&self) -> u32 {
+        crate::PseudoElement::ALL
+            .iter()
+            .enumerate()
+            .filter(|(_, kind)| self.committed.styles.selects(**kind))
+            .fold(0, |bits, (index, _)| bits | 1 << index)
+    }
     /// Every committed element in document order from the root.
     #[must_use]
     pub fn attached(&self) -> Vec<u32> {

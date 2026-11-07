@@ -234,6 +234,30 @@ pub extern "C" fn view_engine_computed(id: u32) -> u32 {
     u32::try_from(state.output.len()).unwrap_or(0)
 }
 
+/// The committed computed values of pseudo-element `kind` (its index in
+/// `PseudoElement::ALL`) of element `id` as output bytes; returns their
+/// length (0 for an unknown kind).
+#[unsafe(no_mangle)]
+pub extern "C" fn view_engine_computed_pseudo(id: u32, kind: u32) -> u32 {
+    let Some(kind) = usize::try_from(kind)
+        .ok()
+        .and_then(|index| varta_style::PseudoElement::ALL.get(index).copied())
+    else {
+        return 0;
+    };
+    let bytes = with(|session, _| session::encode_computed(&session.computed_pseudo(id, kind)));
+    let state = state();
+    state.output = bytes;
+    u32::try_from(state.output.len()).unwrap_or(0)
+}
+
+/// The pseudo-elements the committed sheets select: bit `i` for
+/// `PseudoElement::ALL[i]`.
+#[unsafe(no_mangle)]
+pub extern "C" fn view_engine_pseudo_elements() -> u32 {
+    with(|session, _| session.selected_pseudo_elements())
+}
+
 /// Add a packaged face: the input holds the family name (`family_len`
 /// UTF-8 bytes) followed by the font file; `generics` has the bit of each
 /// generic family it stands for (`Generic::ALL` order). A file the engine

@@ -34,6 +34,8 @@ const FONT_MEASURES = 5;
 const encoder = new TextEncoder(), decoder = new TextDecoder("utf-8", { fatal: true });
 const propertyCodes = new Map(registry.view.css.map((row) => [row.name, row.code]));
 const propertyNames = new Map(registry.view.css.map((row) => [row.code, row.name]));
+/** The pseudo-elements in the engine's order (`PseudoElement::ALL`). */
+export const PSEUDO_ELEMENTS = Object.freeze([...registry.view.defaults.pseudoElements]);
 
 /** One style session over an instance of the compiled engine module.
  * `fontMetrics(kind, family, weight, italic, size)` measures a font the
@@ -61,6 +63,18 @@ export function createViewEngine(module, { fontMetrics } = {}) {
     const value = propertyCodes.get(property);
     if (value === undefined) throw new TypeError(`unknown CSS property ${property}`);
     return value;
+  };
+  /** Computed values in the output buffer (`session::encode_computed`):
+   * property name to CSS text. */
+  const output = (length) => {
+    const bytes = new Uint8Array(exports.memory.buffer, exports.view_engine_output(), length).slice();
+    const view = new DataView(bytes.buffer), values = new Map();
+    for (let at = 0; at < bytes.length;) {
+      const property = view.getUint16(at, true), size = view.getUint32(at + 2, true);
+      values.set(propertyNames.get(property), decoder.decode(bytes.subarray(at + 6, at + 6 + size)));
+      at += 6 + size;
+    }
+    return values;
   };
   return {
     begin: () => exports.view_engine_begin(),
@@ -105,17 +119,12 @@ export function createViewEngine(module, { fontMetrics } = {}) {
     state: (focusVisible, hovered, active) => exports.view_engine_state(focusVisible, hovered, active),
     focus: (focused) => exports.view_engine_focus(focused),
     /** The committed computed values of element `id`: property name to CSS text. */
-    computed(id) {
-      const length = exports.view_engine_computed(id);
-      const bytes = new Uint8Array(exports.memory.buffer, exports.view_engine_output(), length).slice();
-      const view = new DataView(bytes.buffer), values = new Map();
-      for (let at = 0; at < bytes.length;) {
-        const property = view.getUint16(at, true), size = view.getUint32(at + 2, true);
-        values.set(propertyNames.get(property), decoder.decode(bytes.subarray(at + 6, at + 6 + size)));
-        at += 6 + size;
-      }
-      return values;
-    },
+    computed: (id) => output(exports.view_engine_computed(id)),
+    /** The pseudo-elements the committed sheets select, by name. */
+    pseudoElements() { const bits = exports.view_engine_pseudo_elements(); return PSEUDO_ELEMENTS.filter((_, index) => bits & (1 << index)); },
+    /** The committed computed values of pseudo-element `kind` (a name of
+     * `pseudoElements`) of element `id`. */
+    computedPseudo: (id, kind) => output(exports.view_engine_computed_pseudo(id, PSEUDO_ELEMENTS.indexOf(kind))),
   };
 }
 

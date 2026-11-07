@@ -166,6 +166,14 @@ fn template_errors_name_the_construct_and_its_rule() {
             "invalid value `0` for attribute `rows`",
         ),
         (
+            "<div data-Open=\"x\">x</div>",
+            "invalid custom data attribute name `data-Open`",
+        ),
+        (
+            "<div data-=\"x\">x</div>",
+            "invalid custom data attribute name `data-`",
+        ),
+        (
             "<input type=\"date\" />",
             "invalid value `date` for attribute `type`",
         ),
@@ -323,6 +331,15 @@ fn class_name_is_an_alias_of_class() {
         "export function main(): void { let c = \"b\"; View.mount(<div class=\"a\"><p class={c}>x</p></div>); }",
     );
     assert_eq!(alias, class);
+}
+
+/// Custom data attributes (`set_data`): static and bound values, any
+/// element.
+#[test]
+fn data_attributes_lower_to_set_data() {
+    valid(
+        "export function main(): void { let open = \"true\"; View.mount(<div data-state=\"closed\" data-headlessui-state={open}><span data-x_z-1=\"1\">x</span></div>); }",
+    );
 }
 
 /// One in-memory TSX entry plus named modules.

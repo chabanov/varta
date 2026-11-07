@@ -63,6 +63,10 @@ fn layout() -> String {
         ("Root node id".into(), view::ROOT_NODE.to_string()),
         ("\"No node\" id".into(), view::NO_NODE.to_string()),
         (
+            "First generated node id (guest ids are below it)".into(),
+            view::DRAFT_FIRST_GENERATED_NODE.to_string(),
+        ),
+        (
             "Batch header bytes".into(),
             view::BATCH_HEADER_BYTES.to_string(),
         ),
@@ -109,6 +113,14 @@ fn layout() -> String {
                 view::DRAFT_MAX_VALUE_BYTES,
                 view::DRAFT_MAX_STYLESHEET_BYTES,
                 view::DRAFT_MAX_PENDING_EVENTS
+            ),
+        ),
+        (
+            "Placeholder: custom data attribute name bytes / per element".into(),
+            format!(
+                "{} / {}",
+                view::DRAFT_MAX_DATA_NAME_BYTES,
+                view::DRAFT_MAX_DATA_ATTRIBUTES
             ),
         ),
         (

@@ -521,7 +521,7 @@ fn stylesheet_resources_report_grammar_errors_inside_the_css_file() {
     project.write("varta.config.json", V38_CONFIG);
     project.write(
         "src/styles/console.css",
-        ":root { --gap: 8px }\n.card { padding: var(--gap); colour: red }\n",
+        ":root { --gap: 8px }\n.card { padding: var(--gap); tab-size: 4 }\n",
     );
     let diagnostic = project.diagnostic();
     assert_eq!(diagnostic["code"], "type_error", "{diagnostic}");

@@ -57,6 +57,9 @@ pub enum Combinator {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Compound {
     pub tag: Option<Tag>,
+    /// The type selector names an element type outside the view's elements
+    /// (Selectors 4 §5.1: any name is valid); it matches nothing.
+    pub outside_type: bool,
     pub ids: Vec<String>,
     pub classes: Vec<String>,
     pub attributes: Vec<AttributeSelector>,
@@ -222,6 +225,10 @@ pub enum PseudoElement {
     FirstLine,
     /// `::first-letter` (§2.2).
     FirstLetter,
+    /// A pseudo-element whose name begins with `-webkit-` that the view does
+    /// not recognize: valid at parse time and matching nothing (Selectors 4
+    /// Appendix B).
+    UnknownWebkit,
 }
 impl PseudoElement {
     pub const ALL: [Self; 9] = [
@@ -248,15 +255,27 @@ impl PseudoElement {
             Self::FileSelectorButton => "file-selector-button",
             Self::FirstLine => "first-line",
             Self::FirstLetter => "first-letter",
+            Self::UnknownWebkit => "-webkit-",
         }
     }
     /// Whether the renderers render it, so that its rules may be admitted:
     /// the subset fails closed instead of ignoring a pseudo-element's
-    /// declarations. `::file-selector-button` has no originating element (the
-    /// view has no file inputs), so its rules apply to nothing.
+    /// declarations. `::before` and `::after` are generated boxes,
+    /// `::placeholder` a field's placeholder text and `::backdrop` a modal
+    /// dialog's backdrop. `::file-selector-button` has no originating
+    /// element (the view has no file inputs) and an unknown `-webkit-`
+    /// pseudo-element matches nothing, so their rules apply to nothing.
     #[must_use]
     pub fn rendered(self) -> bool {
-        matches!(self, Self::FileSelectorButton)
+        matches!(
+            self,
+            Self::Before
+                | Self::After
+                | Self::Placeholder
+                | Self::Backdrop
+                | Self::FileSelectorButton
+                | Self::UnknownWebkit
+        )
     }
     /// Whether CSS 2 defined it, so it also takes one colon (Selectors 4
     /// §3.7).
@@ -470,6 +489,104 @@ pub const PSEUDO_CLASS_NAMES: &[&str] = &[
     ":has()",
 ];
 
+/// Pseudo-classes the specifications define that the view does not
+/// implement yet (Selectors 4 §7–§14, HTML §4.16.3, CSS Scoping 1, CSS
+/// Overflow 5, CSS View Transitions 2, Fullscreen, Picture-in-Picture,
+/// WebXR DOM Overlays): a rule naming one is refused, where an unknown
+/// pseudo-class makes the selector invalid and the rule is dropped.
+const UNIMPLEMENTED_PSEUDO_CLASSES: &[&str] = &[
+    "active-view-transition",
+    "blank",
+    "buffering",
+    "current",
+    "fullscreen",
+    "future",
+    "has-slotted",
+    "heading",
+    "local-link",
+    "muted",
+    "past",
+    "paused",
+    "picture-in-picture",
+    "playing",
+    "popover-open",
+    "seeking",
+    "stalled",
+    "target-current",
+    "volume-locked",
+    "xr-overlay",
+];
+/// Functional pseudo-classes the specifications define that the view does
+/// not implement yet.
+const UNIMPLEMENTED_PSEUDO_CLASS_FUNCTIONS: &[&str] = &[
+    "active-view-transition-type",
+    "current",
+    "heading",
+    "host",
+    "host-context",
+    "nth-col",
+    "nth-last-col",
+    "state",
+];
+/// Pseudo-elements the specifications define that the view does not render
+/// (CSS Pseudo-Elements 4, CSS Overflow 5, CSS View Transitions, CSS Shadow
+/// Parts, CSS Scoping 1, WebVTT, CSS Forms): refused rather than dropped.
+const UNIMPLEMENTED_PSEUDO_ELEMENTS: &[&str] = &[
+    "checkmark",
+    "column",
+    "cue",
+    "cue-region",
+    "details-content",
+    "grammar-error",
+    "picker-icon",
+    "postfix",
+    "prefix",
+    "scroll-marker",
+    "scroll-marker-group",
+    "search-text",
+    "spelling-error",
+    "target-text",
+    "view-transition",
+];
+/// Functional pseudo-elements the specifications define.
+const UNIMPLEMENTED_PSEUDO_ELEMENT_FUNCTIONS: &[&str] = &[
+    "cue",
+    "cue-region",
+    "highlight",
+    "part",
+    "picker",
+    "scroll-button",
+    "slotted",
+    "view-transition-group",
+    "view-transition-image-pair",
+    "view-transition-new",
+    "view-transition-old",
+];
+/// The legacy aliases of Selectors 4 Appendix B (`:-webkit-autofill`) and
+/// the Compat Standard §3.6.1 (`::-webkit-input-placeholder`).
+const WEBKIT_AUTOFILL: &str = "-webkit-autofill";
+const WEBKIT_INPUT_PLACEHOLDER: &str = "-webkit-input-placeholder";
+const WEBKIT_PREFIX: &str = "-webkit-";
+
+/// Why a selector list did not parse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureKind {
+    /// Invalid by Selectors 4: the style rule is dropped (§3.9).
+    Invalid,
+    /// Valid, but outside what the view implements: refused (the subset
+    /// fails closed rather than ignoring it).
+    Unsupported,
+    /// A nesting or compound bound of the subset.
+    Limit,
+}
+
+/// A selector list parse failure: the offending token and its kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectorError {
+    pub at: usize,
+    pub kind: FailureKind,
+}
+
 /// Specificity (Selectors 4 §17): `(ids, classes, types)`, compared in
 /// that order.
 pub type Specificity = (u32, u32, u32);
@@ -534,6 +651,22 @@ impl Selector {
     }
 }
 
+impl Selector {
+    /// Whether some element of the view can match: not when a compound of
+    /// its combinator chain names an element type outside the view, names
+    /// `:host` (which matches nothing in the view's sheets), or it selects
+    /// an unknown `-webkit-` pseudo-element. A rule none of whose
+    /// selectors can match applies to nothing.
+    #[must_use]
+    pub fn can_match(&self) -> bool {
+        self.pseudo_element != Some(PseudoElement::UnknownWebkit)
+            && self
+                .compounds
+                .iter()
+                .all(|compound| !compound.outside_type && !compound.pseudo.contains(&Pseudo::Host))
+    }
+}
+
 fn add(a: Specificity, b: Specificity) -> Specificity {
     (
         a.0.saturating_add(b.0),
@@ -548,7 +681,7 @@ impl Compound {
         let own = (
             count(self.ids.len()),
             count(self.classes.len()).saturating_add(count(self.attributes.len())),
-            u32::from(self.tag.is_some()),
+            u32::from(self.tag.is_some() || self.outside_type),
         );
         self.pseudo.iter().map(Pseudo::specificity).fold(own, add)
     }
@@ -606,7 +739,7 @@ impl Pseudo {
 }
 
 /// A selector parse failure: the index of the offending token.
-pub type Failure = usize;
+type Failure = usize;
 
 /// Parse a selector list (`tokens`, without surrounding whitespace) whose
 /// items must all be valid; `source` is the text the tokens' offsets refer
@@ -614,15 +747,28 @@ pub type Failure = usize;
 /// failed.
 ///
 /// # Errors
-/// The index of the first offending token.
-pub fn parse_list(tokens: &[Spanned], source: &str) -> Result<Vec<Selector>, Failure> {
-    Parser {
+/// The first offending token and whether the list is invalid or outside
+/// the subset.
+pub fn parse_list(tokens: &[Spanned], source: &str) -> Result<Vec<Selector>, SelectorError> {
+    let mut parser = Parser {
         tokens,
         source,
         at: 0,
         limit: false,
-    }
-    .list(tokens.len(), Context::TOP)
+        unsupported: false,
+    };
+    parser
+        .list(tokens.len(), Context::TOP)
+        .map_err(|at| SelectorError {
+            at,
+            kind: if parser.limit {
+                FailureKind::Limit
+            } else if parser.unsupported {
+                FailureKind::Unsupported
+            } else {
+                FailureKind::Invalid
+            },
+        })
 }
 
 /// Where a selector list is parsed.
@@ -655,6 +801,8 @@ struct Parser<'a> {
     at: usize,
     /// A nesting or compound limit was exceeded: not forgivable.
     limit: bool,
+    /// A valid construct outside the subset was found: not forgivable.
+    unsupported: bool,
 }
 
 impl Parser<'_> {
@@ -687,7 +835,9 @@ impl Parser<'_> {
             let item_end = self.item_end(end);
             match self.relative(item_end, context) {
                 Ok(selector) => out.push(selector),
-                Err(failure) if !context.forgiving || self.limit => return Err(failure),
+                Err(failure) if !context.forgiving || self.limit || self.unsupported => {
+                    return Err(failure);
+                }
                 Err(_) => {}
             }
             self.at = item_end;
@@ -781,16 +931,19 @@ impl Parser<'_> {
         match self.token() {
             Some(Token::Delim('*')) if self.at < end => self.at += 1,
             Some(Token::Ident(name)) if self.at < end => {
-                compound.tag = Some(
-                    Tag::ALL
-                        .iter()
-                        .copied()
-                        .find(|tag| tag.name().eq_ignore_ascii_case(name))
-                        .ok_or(self.at)?,
-                );
+                compound.tag = Tag::ALL
+                    .iter()
+                    .copied()
+                    .find(|tag| tag.name().eq_ignore_ascii_case(name));
+                compound.outside_type = compound.tag.is_none();
                 self.at += 1;
             }
             _ => {}
+        }
+        // A namespace prefix (§5.2) or the column combinator (§16.5).
+        if self.token_at(self.at, end) == Some(&Token::Delim('|')) {
+            self.unsupported = true;
+            return Err(self.at);
         }
         while self.at < end {
             match self.token() {
@@ -848,10 +1001,26 @@ impl Parser<'_> {
     ) -> Result<PseudoElement, Failure> {
         let at = self.at;
         let element = match self.token_at(at + colons, end) {
-            Some(Token::Ident(name)) => PseudoElement::ALL
-                .into_iter()
-                .find(|element| element.name().eq_ignore_ascii_case(name))
-                .ok_or(at)?,
+            Some(Token::Ident(name)) => {
+                let lower = name.to_ascii_lowercase();
+                match PseudoElement::ALL
+                    .into_iter()
+                    .find(|element| element.name() == lower)
+                {
+                    Some(element) => element,
+                    None if lower == WEBKIT_INPUT_PLACEHOLDER => PseudoElement::Placeholder,
+                    None if lower.starts_with(WEBKIT_PREFIX) => PseudoElement::UnknownWebkit,
+                    None => {
+                        self.unsupported = UNIMPLEMENTED_PSEUDO_ELEMENTS.contains(&lower.as_str());
+                        return Err(at);
+                    }
+                }
+            }
+            Some(Token::Function(name)) => {
+                self.unsupported = UNIMPLEMENTED_PSEUDO_ELEMENT_FUNCTIONS
+                    .contains(&name.to_ascii_lowercase().as_str());
+                return Err(at);
+            }
             _ => return Err(at),
         };
         if !context.pseudo_elements {
@@ -956,11 +1125,20 @@ impl Parser<'_> {
         self.at += 1;
         match self.tokens.get(self.at).map(|t| &t.token) {
             Some(Token::Ident(name)) if self.at < end => {
-                let found = KEYWORD_PSEUDO
+                let lower = name.to_ascii_lowercase();
+                let lower = if lower == WEBKIT_AUTOFILL {
+                    "autofill"
+                } else {
+                    lower.as_str()
+                };
+                let Some(found) = KEYWORD_PSEUDO
                     .iter()
-                    .find(|(known, _)| known.eq_ignore_ascii_case(name))
+                    .find(|(known, _)| *known == lower)
                     .map(|(_, pseudo)| pseudo.clone())
-                    .ok_or(colon)?;
+                else {
+                    self.unsupported = UNIMPLEMENTED_PSEUDO_CLASSES.contains(&lower);
+                    return Err(colon);
+                };
                 self.at += 1;
                 Ok(found)
             }
@@ -998,7 +1176,15 @@ impl Parser<'_> {
                     }
                     "nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type" => {
                         let text = self.text(self.at, close);
-                        let nth = nth(&text).ok_or(open)?;
+                        let Some(nth) = nth(&text) else {
+                            // `An+B of S` (§14.4) is valid for the child forms.
+                            self.unsupported =
+                                matches!(name.as_str(), "nth-child" | "nth-last-child")
+                                    && self.tokens[self.at..close].iter().any(|t| {
+                                        matches!(&t.token, Token::Ident(word) if word.eq_ignore_ascii_case("of"))
+                                    });
+                            return Err(open);
+                        };
                         match name.as_str() {
                             "nth-child" => Pseudo::NthChild(nth),
                             "nth-last-child" => Pseudo::NthLastChild(nth),
@@ -1028,7 +1214,11 @@ impl Parser<'_> {
                         self.lang_ranges(inner_end).ok_or(open)?;
                         Pseudo::Lang
                     }
-                    _ => return Err(colon),
+                    _ => {
+                        self.unsupported =
+                            UNIMPLEMENTED_PSEUDO_CLASS_FUNCTIONS.contains(&name.as_str());
+                        return Err(colon);
+                    }
                 };
                 self.at = close + 1;
                 Ok(pseudo)
@@ -1142,7 +1332,7 @@ mod tests {
     use super::*;
     use crate::view::syntax;
 
-    fn parse(text: &str) -> Result<Vec<Selector>, Failure> {
+    fn parse(text: &str) -> Result<Vec<Selector>, SelectorError> {
         let tokens = syntax::tokenize(text);
         parse_list(&tokens, text)
     }
@@ -1179,7 +1369,6 @@ mod tests {
         for invalid in [
             ".a >",
             "> .a",
-            "frob",
             ".a:hovered",
             ".a .",
             ":nth-child(2n+)",
@@ -1202,7 +1391,62 @@ mod tests {
         }
         let deep =
             ":is(".repeat(MAX_SELECTOR_NESTING + 1) + ".a" + &")".repeat(MAX_SELECTOR_NESTING + 1);
-        assert!(parse(&deep).is_err());
+        assert_eq!(parse(&deep).unwrap_err().kind, FailureKind::Limit);
+    }
+
+    /// Selectors 4 §3.9 and Appendix B: what is invalid (a rule is dropped)
+    /// and what is valid but outside the view (a rule is refused).
+    #[test]
+    fn invalid_and_unsupported_selectors_are_told_apart() {
+        let kind = |text: &str| parse(text).unwrap_err().kind;
+        for invalid in [
+            ":-moz-focusring",
+            ":-moz-ui-invalid",
+            ".a:hovered",
+            "::frob",
+            "::-moz-placeholder",
+            ":is(.a",
+            ":nth-of-type(2 of .a)",
+            ":not(.a, ::after)",
+        ] {
+            assert_eq!(kind(invalid), FailureKind::Invalid, "{invalid}");
+        }
+        for unsupported in [
+            ":popover-open",
+            ":fullscreen",
+            ":host(.a)",
+            ":state(x)",
+            "::part(x)",
+            "::highlight(x)",
+            "::target-text",
+            ":nth-child(2n of .a)",
+            "a|b",
+            "*|a",
+            ":is(.a, :playing)",
+        ] {
+            assert_eq!(kind(unsupported), FailureKind::Unsupported, "{unsupported}");
+        }
+        // Any element type is a valid type selector; one outside the view
+        // matches nothing.
+        let [hr] = parse("hr").unwrap().try_into().unwrap();
+        assert!(hr.subject().outside_type && !hr.can_match());
+        assert_eq!(hr.specificity(), (0, 0, 1));
+        let [host] = parse(":host").unwrap().try_into().unwrap();
+        assert!(!host.can_match());
+        let [webkit] = parse("::-WEBKIT-search-decoration")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        assert_eq!(webkit.pseudo_element, Some(PseudoElement::UnknownWebkit));
+        assert!(!webkit.can_match());
+        assert_eq!(
+            parse("::-webkit-input-placeholder").unwrap()[0].pseudo_element,
+            Some(PseudoElement::Placeholder)
+        );
+        assert_eq!(
+            parse(":-webkit-autofill").unwrap()[0].subject().pseudo,
+            [Pseudo::Autofill]
+        );
     }
 
     /// Selectors 4 §6 and §17.

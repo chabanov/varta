@@ -796,6 +796,33 @@ impl Desugar<'_> {
             }
             _ => {}
         }
+        // HTML custom data attributes (`set_data`): any element, a string
+        // value, the view's name grammar.
+        if name.starts_with(varta_common::view::DATA_ATTRIBUTE_PREFIX) {
+            if !varta_common::view::data_attribute_name(&name) {
+                return Err(self.fail(
+                    format!(
+                        "invalid custom data attribute name `{name}` (`data-` and `[a-z0-9._-]+`)"
+                    ),
+                    span,
+                ));
+            }
+            let quoted = literal(&name);
+            return self
+                .dynamic_string(
+                    attr,
+                    fixed,
+                    template,
+                    |value| {
+                        Some(format!(
+                            "{VIEW}.setData({node}, {quoted}, {})",
+                            literal(value)
+                        ))
+                    },
+                    &format!("{VIEW}.bindData({node}, {quoted}, {{}})"),
+                )
+                .map(|()| None);
+        }
         let attribute = Attribute::ALL
             .iter()
             .copied()

@@ -65,19 +65,18 @@ fn the_stylesheet_grammar_is_checked() {
     assert!(!rules[2].applies(&media(1024.0, false)));
     assert!(rules[2].applies(&media(800.0, true)));
     for invalid in [
-        ".a { colour: #fff }",
         ".a { background-color: url(x) }",
         ".a { background-color: \\75 rl(x) }",
         ".a { background-color: u\\72l(\"x\") }",
         "@import \"x\";",
         "@\\69mport \"x\";",
-        ".a::frob { color: #fff }",
-        "#1a { color: #fff }",
-        "frob { color: #fff }",
-        ".a > { color: #fff }",
-        ".a:nth-child(x) { color: #fff }",
-        ".a:has(.b:has(.c)) { color: #fff }",
-        "[data-x=1] { color: #fff }",
+        // A forbidden token refuses the sheet even in a rule that is dropped.
+        ":-moz-x { background-color: url(x) }",
+        ".a { tab-size: 4 }",
+        ".a:popover-open { color: #fff }",
+        ".a::part(x) { color: #fff }",
+        ".a:nth-child(2 of .b) { color: #fff }",
+        "a|b { color: #fff }",
         ".a { color: #fff",
         ".a { ; color: #fff }",
         ".a { color: #fff;; }",
@@ -99,6 +98,54 @@ fn the_stylesheet_grammar_is_checked() {
     }
     assert_eq!(parse("").unwrap().len(), 0);
     assert_eq!(parse(".a { }").unwrap()[0].declarations.len(), 0);
+    // Selectors 4 §3.9 and CSS Syntax 3 §5.4.4: an invalid selector list
+    // drops its rule, a property no specification defines drops its
+    // declaration; a rule that can match no element of the view applies to
+    // nothing.
+    for dropped in [
+        ".a::frob { color: #fff }",
+        "#1a { color: #fff }",
+        "frob { color: #fff }",
+        "hr, abbr:where([title]) { color: #fff; text-indent: 0 }",
+        ":host { color: #fff }",
+        "::-webkit-search-decoration { -webkit-appearance: none }",
+        ".a > { color: #fff }",
+        ".a:nth-child(x) { color: #fff }",
+        ".a:has(.b:has(.c)) { color: #fff }",
+        "[data-x=1] { color: #fff }",
+        ":-moz-focusring { outline: auto }",
+        ".a:hovered { color: #fff }",
+    ] {
+        assert_eq!(parse(dropped).unwrap(), [], "{dropped}");
+    }
+    let [rule] = parse(".a { colour: #fff; -webkit-tap-highlight-color: red; color: #000 }")
+        .unwrap()
+        .try_into()
+        .unwrap();
+    assert_eq!(
+        rule.declarations,
+        [(Name::Property(CssProperty::Color), "#000".to_owned())]
+    );
+    // Valid selectors of elements outside the view stay in a list with
+    // others; the legacy aliases of the Compat Standard and Selectors 4
+    // Appendix B apply.
+    let [rule] = parse("img, svg { display: block }")
+        .unwrap()
+        .try_into()
+        .unwrap();
+    assert_eq!(rule.selectors.len(), 2);
+    assert!(!rule.selectors[1].can_match());
+    assert_eq!(
+        parse("input::-webkit-input-placeholder { color: #000 }").unwrap()[0].selectors[0]
+            .pseudo_element,
+        Some(selector::PseudoElement::Placeholder)
+    );
+    assert_eq!(
+        parse("input:-webkit-autofill { color: #000 }").unwrap()[0].selectors[0]
+            .subject()
+            .pseudo,
+        [Pseudo::Autofill]
+    );
 }
 
 #[test]
@@ -215,17 +262,17 @@ fn registered_properties_follow_properties_and_values() {
 fn violations_carry_utf8_byte_offsets() {
     let error = |text: &str| parse(text).unwrap_err();
     assert_eq!(
-        error(".a { color: #fff; colour: red }"),
+        error(".a { color: #fff; tab-size: 4 }"),
         StylesheetError {
-            violation: Violation::Declaration,
+            violation: Violation::UnsupportedProperty,
             offset: 18
         }
     );
     // A multi-byte character before the violation counts in bytes.
-    let text = ":root { --label: x }\n/* é */ .a > #1b {}";
-    assert_eq!(error(text).offset, text.find("#1b").unwrap());
+    let text = ":root { --label: x }\n/* é */ .a > .b:popover-open {}";
+    assert_eq!(error(text).offset, text.find(":popover-open").unwrap());
     assert_eq!(
-        error(".a, .b::after { color: #fff }").violation,
+        error(".a, .b::marker { color: #fff }").violation,
         Violation::PseudoElement
     );
     assert_eq!(
@@ -234,9 +281,9 @@ fn violations_carry_utf8_byte_offsets() {
             .len(),
         1
     );
-    let text = "/* é */ frob { color: #fff }";
+    let text = "/* é */ .a:fullscreen { color: #fff }";
     assert_eq!(error(text).violation, Violation::Selector);
-    assert_eq!(error(text).offset, text.find("frob").unwrap());
+    assert_eq!(error(text).offset, text.find(":fullscreen").unwrap());
     assert_eq!(error(".a { color: #fff").violation, Violation::Unterminated);
     assert_eq!(
         error(".a { color: #fff; font-family: \"A\", Inherit }").violation,

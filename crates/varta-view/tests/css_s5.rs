@@ -114,3 +114,44 @@ fn has_and_the_input_pseudo_classes_follow_values_and_checks() {
     commit(&mut view, &b);
     assert_eq!(style(&view, &[1])["margin-top"], "1px");
 }
+
+/// Custom data attributes (`set_data`, `remove_data`): selectors see them,
+/// snapshots show them, and their names and count are bounded.
+#[test]
+fn data_attributes_reach_selectors() {
+    let mut view = View::default();
+    let mut b = B::new();
+    b.stylesheet(
+        1,
+        "[data-state=open] { color: #111 } [data-headlessui-state~=active] { margin-top: 1px }",
+    )
+    .create_element(2, Tag::Div)
+    .insert(1, 2, 0)
+    .set_data(2, "data-state", "open")
+    .set_data(2, "data-headlessui-state", "active selected");
+    commit(&mut view, &b);
+    assert_eq!(style(&view, &[0])["color"], "#111");
+    assert_eq!(style(&view, &[0])["margin-top"], "1px");
+    assert_eq!(
+        view.snapshot()["tree"]["children"][0]["data"]["data-state"],
+        "open"
+    );
+    let mut b = B::new();
+    b.remove_data(2, "data-state");
+    commit(&mut view, &b);
+    assert!(style(&view, &[0])["color"].is_null());
+    let long = format!("data-{}", "x".repeat(60));
+    for name in ["data-", "data-A", "aria-x", "data-x:y", long.as_str()] {
+        let mut b = B::new();
+        b.set_data(2, name, "1");
+        assert!(
+            view.commit(&b.finish(), false, &mut Deny).is_err(),
+            "{name}"
+        );
+    }
+    let mut b = B::new();
+    for index in 0..=varta_common::view::DRAFT_MAX_DATA_ATTRIBUTES {
+        b.set_data(2, &format!("data-n{index}"), "1");
+    }
+    assert!(view.commit(&b.finish(), false, &mut Deny).is_err());
+}
