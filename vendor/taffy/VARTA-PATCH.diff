@@ -1,0 +1,42 @@
+--- a/src/tree/taffy_tree.rs	2006-07-23 21:21:28
++++ b/src/tree/taffy_tree.rs	2026-11-06 17:09:29
+@@ -166,6 +166,10 @@
+ 
+     /// Layout mode configuration
+     config: TaffyConfig,
++
++    /// Varta: resolves an opaque `calc()` handle against its percentage basis
++    /// (`None`: every calc value resolves to zero, as upstream).
++    calc_resolver: Option<fn(*const (), f32) -> f32>,
+ }
+ 
+ impl Default for TaffyTree {
+@@ -402,8 +406,9 @@
+     }
+ 
+     #[inline(always)]
+-    fn resolve_calc_value(&self, _val: *const (), _basis: f32) -> f32 {
+-        0.0
++    fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
++        // Varta: the tree's resolver, if any.
++        self.taffy.calc_resolver.map_or(0.0, |resolve| resolve(val, basis))
+     }
+ 
+     #[inline(always)]
+@@ -607,9 +612,16 @@
+             parents: SlotMap::with_capacity(capacity),
+             node_context_data: SecondaryMap::with_capacity(capacity),
+             config: TaffyConfig::default(),
++            calc_resolver: None,
+         }
+     }
+ 
++    /// Varta: resolve `calc()` handles (`CompactLength::calc`) with `resolver`,
++    /// given the handle and the percentage basis of its context.
++    pub fn set_calc_resolver(&mut self, resolver: fn(*const (), f32) -> f32) {
++        self.calc_resolver = Some(resolver);
++    }
++
+     /// Enable rounding of layout values. Rounding is enabled by default.
+     pub fn enable_rounding(&mut self) {
+         self.config.use_rounding = true;

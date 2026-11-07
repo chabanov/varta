@@ -339,6 +339,8 @@ struct Arguments<'a> {
 const NO_LENGTHS: math::Resolution = math::Resolution {
     em: None,
     rem: 0.0,
+    lh: None,
+    rlh: None,
     viewport_width: 0.0,
     viewport_height: 0.0,
 };

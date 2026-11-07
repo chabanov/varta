@@ -15118,10 +15118,12 @@ oracle, not the definition.
   at every element, and a value that does not match the syntax after
   substitution is invalid at computed-value time and computes as `unset`
   (§2.7): the parent's value for an inheriting registration, the initial
-  value otherwise. Computed values keep the substituted text: the
-  absolutization of §2.4 (a registered `<length>` given in `em` inherits as
-  pixels) is not implemented, because the engine does not compute
-  `font-size` yet (see Lowering).
+  value otherwise. A registered value whose syntax has lengths computes at
+  the declaring element (§2.4): every length becomes `px` against that
+  element's font and the viewport, and a math function over lengths alone
+  is evaluated, so a child inherits `20px`, not `2em` of its own font; a sum
+  with a percentage stays as written. Other registered values keep the
+  substituted text.
 - **Conditional rules.** `@supports` (Conditional 3 §6.1) with declaration
   conditions, `not`, `and`, `or`, parentheses and `selector()`
   (Conditional 4 §6.1) is decided statically by this engine's own
@@ -15192,23 +15194,52 @@ oracle, not the definition.
   §2.1; unknown ones are ignored), and `transition-timing-function`
   `cubic-bezier()` (x in [0, 1]), `steps()` with every jump position,
   `step-start` and `step-end` (Easing 1 §2.2, §2.3).
+- **Computed font sizes (Fonts 4 §2.5, Inline 3 §4.2).** The engine
+  computes every element's font size and line height (`varta_style::font`),
+  the references of the font-relative units: the host's `medium` size, the
+  user-agent rows (`h1`–`h3` scale the inherited size by 2, 1.5 and 1.17,
+  `pre` and `code` take `monospace`, form controls the 13.333px
+  `-webkit-small-control` size and `line-height: normal`), author values
+  (`medium`, percentages and `em` of the parent's size, absolute lengths),
+  Blink's re-derivation where the generic family switches to or from the
+  sole `monospace` (13/16 of the size unless an absolute length fixed it, and
+  not once a packaged face names `monospace`) and Blink's minimum logical
+  font size of 9px for sizes no absolute length fixed (em lengths keep the
+  specified size, as in Blink). A computed `line-height` is `normal`, a
+  number (a multiple of each element's size), or a length (a percentage of
+  the element's computed size). The native renderer shapes text with these
+  sizes; the browser host's Chrome derives the same ones from its user-agent
+  sheet.
 - **Lowering.** After `var()` substitution (Variables 1 §3), a valid value
   is lowered to the host grammar the renderer's consumers read
   (`css::lower`): math functions are evaluated, absolute and viewport units
-  become `px`, `em` in `font-size` a percentage of the parent's size, named
-  colours and colour functions `rgba()` with 8-bit channels after gamut
-  mapping, `opacity` clamped numbers. A value the native renderer cannot
-  render yet is refused at parse time with `Unrenderable` and, when it only
-  appears after substitution, is invalid at computed-value time natively:
-  `em` outside `font-size`, `ex`/`ch`/`lh` and the other font-relative units
-  (they need the element's computed font and its metrics, Values 4 §6.1.1),
-  a math result that mixes a percentage with a length (Values 4 §10.7
-  resolves it at layout time against the percentage basis, which native
-  layout does not carry through `calc()` yet), and values of the
-  specifications that native layout lacks (`display: inline-block` and the
-  other inner/outer display types, `position: sticky`, intrinsic sizes,
-  `overflow: scroll | clip`, `white-space: pre-line | break-spaces`,
-  `text-align: justify`, border styles other than `solid`).
+  become `px`, `em`, `lh` and `rlh` become `px` against the element's font
+  (Values 4 §6.1.1; in `font-size`, `em` alone stays a percentage of the
+  parent's size and a sum with other lengths is the parent's absolute size;
+  in `font-size` and `line-height`, `lh` is the parent's), named colours and
+  colour functions `rgba()` with 8-bit channels after gamut mapping, and
+  `opacity` clamped numbers. A math function that sums lengths with
+  percentages (Values 4 §10.10) keeps its form with every length in `px`
+  (`calc(50% - 16px)`, in nonnegative properties wrapped as
+  `max(0px, …)` for the clamp of §10.12) and resolves at layout against the
+  percentage basis of its context, for the properties of
+  `css::layout_math_property` (box sizes, margins, padding, gaps, the flex
+  basis, insets and `vertical-align`): native layout interns it in a
+  per-thread table of at most `calc::MAX_CALC_EXPRESSIONS` expressions and
+  hands Taffy the index as its opaque calc handle (Taffy 0.15.1 with the
+  recorded patch `vendor/taffy/VARTA-PATCH.md`, which lets the high-level
+  tree resolve calc handles), and the browser host sets it inline. A value
+  the native renderer cannot render yet is refused at parse time with
+  `Unrenderable` and, when it only appears after substitution, is invalid at
+  computed-value time natively: `ex`, `ch`, `cap`, `ic` and their root forms,
+  `lh` where `line-height` is `normal` and `rlh` (they need the metrics of
+  the first available font), a sum of lengths and percentages in other
+  properties (`border-radius`, `transform`, `object-position`, grid tracks),
+  and values of the specifications that native layout lacks
+  (`display: inline-block` and the other inner/outer display types,
+  `position: sticky`, intrinsic sizes, `overflow: scroll | clip`,
+  `white-space: pre-line | break-spaces`, `text-align: justify`, border
+  styles other than `solid`).
 - **Not yet admitted:** `@keyframes`, `@container`, nesting, and the
   selector, layout and paint stages S4–S8.
 
