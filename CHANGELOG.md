@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- K8 T2 custom data attributes: view-protocol operations `set_data` (19)
+  and `remove_data` (20) with names `data-[a-z0-9._-]+` (at most 64 bytes,
+  32 per element) on both hosts, `View.setData`/`removeData`/`bindData`, and
+  TSX `data-…` attributes on any intrinsic element; attribute selectors such
+  as `[data-state=open]` and Tailwind's `data-*` variants apply.
 - K8 T2 S5 (third part), pseudo-elements and CSS error handling: rules
   with an invalid selector list and declarations of properties no
   specification defines are dropped as CSS requires (defined names from the

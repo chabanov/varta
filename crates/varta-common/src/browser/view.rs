@@ -36,6 +36,7 @@ pub(super) fn registry() -> Value {
         "treeDepth":v::DRAFT_MAX_TREE_DEPTH,
         "nodes":v::DRAFT_MAX_LIVE_NODES,"listeners":v::DRAFT_MAX_LIVE_LISTENERS,
         "valueBytes":v::DRAFT_MAX_VALUE_BYTES,"stylesheetBytes":v::DRAFT_MAX_STYLESHEET_BYTES,
+        "dataNameBytes":v::DRAFT_MAX_DATA_NAME_BYTES,"dataAttributes":v::DRAFT_MAX_DATA_ATTRIBUTES,
         "retainedTextBytes":v::DRAFT_MAX_RETAINED_TEXT_BYTES,"fieldValueReservationBytes":v::DRAFT_FIELD_VALUE_RESERVATION_BYTES,
         "selectWork":v::DRAFT_MAX_SELECT_WORK,"selectNodeWork":v::DRAFT_SELECT_NODE_WORK,
         "radioWork":v::DRAFT_MAX_RADIO_WORK,"radioNodeWork":v::DRAFT_RADIO_NODE_WORK,
@@ -69,7 +70,7 @@ pub(super) fn registry() -> Value {
         "capabilities":{"openUrl":v::OPEN_URL_CAPABILITY,"clipboard":v::CLIPBOARD_WRITE_CAPABILITY,"anyHttps":v::ANY_HTTPS_PATTERN},
         "opcodes":v::Opcode::ALL.iter().map(|op|json!({"code":op.code(),"name":op.name(),"operands":op.operands().iter().map(|&operand|{
             let kind=match operand {O::Node|O::Parent|O::Before|O::Handler|O::Sheet|O::Request=>"id",
-                O::Tag|O::Attribute|O::Property|O::Event|O::Command|O::Key=>"code",O::Argument=>"f64",O::Text=>"string",_=>"u32"};
+                O::Tag|O::Attribute|O::Property|O::Event|O::Command|O::Key=>"code",O::Argument=>"f64",O::Text|O::DataName=>"string",_=>"u32"};
             json!({"name":operand.name(),"kind":kind})}).collect::<Vec<_>>()})).collect::<Vec<_>>(),
         "tags":v::Tag::ALL.iter().map(|tag|json!({"code":tag.code(),"name":tag.name(),"textChild":tag.admits_child(None),"children":v::Tag::ALL.iter().filter(|child|tag.admits_child(Some(**child))).map(|child|child.name()).collect::<Vec<_>>()})).collect::<Vec<_>>(),
         "attributes":v::Attribute::ALL.iter().map(|attr|json!({"code":attr.code(),"name":attr.name(),"tags":tags(attr.tags()),"grammar":attribute(attr.value())})).collect::<Vec<_>>(),

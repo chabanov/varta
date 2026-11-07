@@ -35,6 +35,8 @@ const OP_COMMAND = 15;
 const OP_STYLESHEET = 16;
 const OP_SET_TITLE = 17;
 const OP_COPY_TEXT = 18;
+const OP_SET_DATA = 19;
+const OP_REMOVE_DATA = 20;
 const EVENT_INPUT = 2;
 const EVENT_CHANGE = 3;
 const EVENT_COMMAND_RESULT = 11;
@@ -226,6 +228,16 @@ export function setAttribute(id: number, attribute: number, value: string): void
 export function removeAttribute(id: number, attribute: number): void {
   begin(varta.view.units(OP_REMOVE_ATTRIBUTE, 0, low(id), high(id), attribute, 0));
 }
+// Custom data attributes (`data-…` names; the host checks the grammar).
+export function setData(id: number, name: string, value: string): void {
+  begin(varta.view.units(OP_SET_DATA, 0, low(id), high(id)));
+  appendText(name);
+  appendText(value);
+}
+export function removeData(id: number, name: string): void {
+  begin(varta.view.units(OP_REMOVE_DATA, 0, low(id), high(id)));
+  appendText(name);
+}
 export function setClass(id: number, value: string): void {
   begin(varta.view.units(OP_SET_CLASS, 0, low(id), high(id)));
   appendText(value);
@@ -370,6 +382,9 @@ export function bindText(id: number, getter: () => string): void {
 }
 export function bindAttribute(id: number, attribute: number, getter: () => string): void {
   track(() => setAttribute(id, attribute, getter()));
+}
+export function bindData(id: number, name: string, getter: () => string): void {
+  track(() => setData(id, name, getter()));
 }
 export function bindFlag(id: number, attribute: number, getter: () => boolean): void {
   track(() => {

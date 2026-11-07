@@ -129,6 +129,32 @@ pub const DRAFT_MAX_LIVE_NODES: usize = 64 * 1024;
 pub const DRAFT_MAX_TREE_DEPTH: usize = 512;
 pub const DRAFT_MAX_LIVE_LISTENERS: usize = 8 * 1024;
 pub const DRAFT_MAX_VALUE_BYTES: usize = 64 * 1024;
+/// The longest custom data attribute name (`set_data`), in bytes.
+pub const DRAFT_MAX_DATA_NAME_BYTES: usize = 64;
+/// Custom data attributes of one element at most.
+pub const DRAFT_MAX_DATA_ATTRIBUTES: usize = 32;
+/// The prefix of an HTML custom data attribute name.
+pub const DATA_ATTRIBUTE_PREFIX: &str = "data-";
+
+/// Whether `name` is a custom data attribute name of the view (HTML
+/// §3.2.6.6: `data-` and at least one character, XML-compatible, no ASCII
+/// upper alphas), within [`DRAFT_MAX_DATA_NAME_BYTES`]. The view admits
+/// the subset `data-[a-z0-9._-]+`, which is always valid HTML and
+/// serializes without escapes; any other name is refused, never altered.
+#[must_use]
+pub fn data_attribute_name(name: &str) -> bool {
+    name.len() <= DRAFT_MAX_DATA_NAME_BYTES
+        && name
+            .strip_prefix(DATA_ATTRIBUTE_PREFIX)
+            .is_some_and(|rest| {
+                !rest.is_empty()
+                    && rest.bytes().all(|byte| {
+                        byte.is_ascii_lowercase()
+                            || byte.is_ascii_digit()
+                            || matches!(byte, b'.' | b'_' | b'-')
+                    })
+            })
+}
 /// Guest text payload plus live-value reservations, independent of local edits.
 pub const DRAFT_MAX_RETAINED_TEXT_BYTES: usize = 8 * 1024 * 1024;
 /// A validated UTF-16 code unit needs at most three UTF-8 bytes.
@@ -212,6 +238,8 @@ coded! {
         Stylesheet = 16 => "stylesheet",
         SetTitle = 17 => "set_title",
         CopyText = 18 => "copy_text",
+        SetData = 19 => "set_data",
+        RemoveData = 20 => "remove_data",
     }
 }
 
@@ -538,6 +566,9 @@ pub enum Operand {
     RequiredModifiers,
     /// `u32` modifier bits (within [`MODIFIER_MASK`]) that must all be released.
     ForbiddenModifiers,
+    /// UTF-16LE string: an HTML custom data attribute name
+    /// ([`data_attribute_name`]).
+    DataName,
 }
 impl Operand {
     #[must_use]
@@ -561,7 +592,7 @@ impl Operand {
             | Self::RequiredModifiers
             | Self::ForbiddenModifiers => "u32",
             Self::Argument => "f64",
-            Self::Text => "string",
+            Self::Text | Self::DataName => "string",
         }
     }
     #[must_use]
@@ -586,6 +617,7 @@ impl Operand {
             Self::Request => "request",
             Self::RequiredModifiers => "required_modifiers",
             Self::ForbiddenModifiers => "forbidden_modifiers",
+            Self::DataName => "data_name",
         }
     }
 }
@@ -619,6 +651,8 @@ impl Opcode {
             Self::Stylesheet => &[O::Sheet, O::Text],
             Self::SetTitle => &[O::Text],
             Self::CopyText => &[O::Request, O::Text],
+            Self::SetData => &[O::Node, O::DataName, O::Text],
+            Self::RemoveData => &[O::Node, O::DataName],
         }
     }
 }

@@ -161,6 +161,10 @@ pub enum Violation {
     DuplicateNode(u32),
     #[error("node id {0} is reserved for the boxes the renderer generates")]
     GeneratedNode(u32),
+    #[error("invalid custom data attribute name (`data-` and `[a-z0-9._-]+`, at most 64 bytes)")]
+    InvalidDataName,
+    #[error("an element has more custom data attributes than the subset admits")]
+    TooManyDataAttributes,
     #[error("node {0} is a text node")]
     NotAnElement(u32),
     #[error("node {0} is not a text node")]

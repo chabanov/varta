@@ -15208,6 +15208,22 @@ static class value is checked against the L0 class-token grammar, so
 Tailwind tokens such as `hover:bg-red-500` or `w-1/2` are refused there until
 the T2 class-token stage (S1) widens that grammar.
 
+**Custom data attributes (K8 T2).** The operations `set_data(node,
+data_name, text)` and `remove_data(node, data_name)` (opcodes 19 and 20)
+set and remove an element's HTML custom data attributes (HTML §3.2.6.6):
+names `data-[a-z0-9._-]+` within `DRAFT_MAX_DATA_NAME_BYTES`
+(`view::data_attribute_name`; other valid HTML names are refused, never
+altered), at most `DRAFT_MAX_DATA_ATTRIBUTES` per element, any string
+value, names and values counted in the retained text. Both hosts check the
+same rules; attribute selectors read them (`[data-state=open]`, Tailwind's
+`data-[…]:` and Headless UI's `data-*` variants), the browser host sets them
+on the DOM element, and snapshots show them as `data`. The guest's
+`View.setData`, `View.removeData` and `View.bindData` encode them, and TSX
+lowers a `data-…` attribute on any intrinsic element to `setData`
+(static, checked at compile time) or `bindData` (a getter hole). Node ids
+are below `DRAFT_FIRST_GENERATED_NODE`, the native renderer's range for
+generated pseudo-element boxes.
+
 **Limits.** The `view::DRAFT_*` placeholders bound batch bytes and
 operations, live nodes and listeners, value and stylesheet bytes, pending
 events and pending `copy_text` requests; `view::css::MAX_VALUE_TOKENS` bounds

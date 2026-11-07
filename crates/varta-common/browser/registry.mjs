@@ -12316,6 +12316,8 @@ export const registry = freeze({
       "cascadeWork": 8388608,
       "commands": 16,
       "cssTokens": 128,
+      "dataAttributes": 32,
+      "dataNameBytes": 64,
       "events": 64,
       "expandedValueBytes": 8388608,
       "fieldValueReservationBytes": 98304,
@@ -12634,6 +12636,38 @@ export const registry = freeze({
           {
             "kind": "string",
             "name": "text"
+          }
+        ]
+      },
+      {
+        "code": 19,
+        "name": "set_data",
+        "operands": [
+          {
+            "kind": "id",
+            "name": "node"
+          },
+          {
+            "kind": "string",
+            "name": "data_name"
+          },
+          {
+            "kind": "string",
+            "name": "text"
+          }
+        ]
+      },
+      {
+        "code": 20,
+        "name": "remove_data",
+        "operands": [
+          {
+            "kind": "id",
+            "name": "node"
+          },
+          {
+            "kind": "string",
+            "name": "data_name"
           }
         ]
       }

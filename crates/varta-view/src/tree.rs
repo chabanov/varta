@@ -65,6 +65,8 @@ pub(crate) struct OutlineStyle {
 pub(crate) struct Element {
     pub tag: Tag,
     pub attributes: BTreeMap<Attribute, String>,
+    /// Custom data attributes (`set_data`), by name.
+    pub data: BTreeMap<String, String>,
     pub class: String,
     pub style: BTreeMap<CssProperty, String>,
     /// CSSOM-like last writer for each geometry longhand, kept separately so
@@ -92,6 +94,7 @@ impl Element {
         Self {
             tag,
             attributes: BTreeMap::new(),
+            data: BTreeMap::new(),
             class: String::new(),
             style: BTreeMap::new(),
             layout_inline: BTreeMap::new(),
@@ -376,6 +379,9 @@ impl Tree {
                     charge(element.class.len())?;
                     for text in element.attributes.values().chain(element.style.values()) {
                         charge(text.len())?;
+                    }
+                    for (name, text) in &element.data {
+                        charge(name.len() + text.len())?;
                     }
                     if element.editor.value_reserved {
                         charge(DRAFT_FIELD_VALUE_RESERVATION_BYTES)?;
@@ -1167,6 +1173,30 @@ impl Apply<'_, '_, '_> {
             Opcode::SetChecked => self.set_checked(node, operation),
             Opcode::Command => self.command(node, operation),
             Opcode::Stylesheet => self.stylesheet(node, operation.text()),
+            Opcode::SetData => {
+                let name = operation.data_name();
+                if !varta_common::view::data_attribute_name(name) {
+                    return Err(self.fail(Violation::InvalidDataName));
+                }
+                let (name, value) = (name.to_owned(), operation.text().to_owned());
+                let element = self.element(node)?;
+                if !element.data.contains_key(&name)
+                    && element.data.len() >= varta_common::view::DRAFT_MAX_DATA_ATTRIBUTES
+                {
+                    return Err(self.fail(Violation::TooManyDataAttributes));
+                }
+                element.data.insert(name, value);
+                Ok(())
+            }
+            Opcode::RemoveData => {
+                let name = operation.data_name();
+                if !varta_common::view::data_attribute_name(name) {
+                    return Err(self.fail(Violation::InvalidDataName));
+                }
+                let name = name.to_owned();
+                self.element(node)?.data.remove(&name);
+                Ok(())
+            }
             Opcode::SetTitle => {
                 self.tree.title = operation.text().into();
                 Ok(())
@@ -1902,6 +1932,9 @@ impl varta_style::Document for Tree {
         self.pointer_contains(self.active.as_ref(), id)
     }
     fn attribute(&self, id: u32, name: &str) -> Option<&str> {
+        if name.starts_with(varta_common::view::DATA_ATTRIBUTE_PREFIX) {
+            return Tree::element(self, id)?.data.get(name).map(String::as_str);
+        }
         let attribute = Attribute::ALL
             .iter()
             .copied()

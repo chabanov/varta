@@ -8695,7 +8695,34 @@ features not implemented yet.
   author font features and variations in the native shaper; `appearance:
   none` of checkboxes, radios, selects and progress bars; scale factors of
   zero (`after:scale-x-0`, invalid at computed-value time natively until the
-  S4 transform work); the `data-*` protocol extension.
+  S4 transform work); the `data-*` protocol extension (done below).
+
+#### K8 T2: custom data attributes (2026-11-07)
+
+Coordinator decision (owner's delegated authority, 2026-11-07): implement
+the two view-protocol operations, `View.setData` and the TSX lowering as
+proposed in the S5 second-part record
+([contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx)).
+
+- **Protocol.** Opcodes 19 `set_data(node, data_name, text)` and 20
+  `remove_data(node, data_name)`; names `data-[a-z0-9._-]+` of at most
+  `DRAFT_MAX_DATA_NAME_BYTES`, at most `DRAFT_MAX_DATA_ATTRIBUTES` per
+  element, values within the value bytes, counted in the retained text;
+  both hosts refuse anything else. Native tree, wire decoder and
+  `BatchWriter`; the browser view model validates, mirrors them into the
+  engine session and the DOM bridge sets them on the element; snapshots
+  show them as `data`.
+- **Guest.** `View.setData`, `View.removeData`, `View.bindData` in the view
+  prelude and `varta.d.ts`. **Compiler edit (K9 area, self-contained):**
+  `jsx.rs` lowers a `data-…` attribute of any intrinsic element to
+  `setData` (static value, name checked at compile time) or `bindData` (a
+  getter hole), before the registry attribute lookup; `prelude/view.ts`
+  gains the three functions and the two opcode constants; `modules/
+  engine.rs` the three `View` members; tests in `tsx_tests.rs`.
+- **Evidence.** Native (`css_s5::data_attributes_reach_selectors`): selector
+  matching, removal, snapshot, name and count refusals. Browser model
+  (`view-engine.test.mjs`): the same through the Wasm engine. Compiler:
+  static and bound lowering, rejected names.
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 

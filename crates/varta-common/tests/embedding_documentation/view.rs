@@ -116,6 +116,14 @@ fn layout() -> String {
             ),
         ),
         (
+            "Placeholder: custom data attribute name bytes / per element".into(),
+            format!(
+                "{} / {}",
+                view::DRAFT_MAX_DATA_NAME_BYTES,
+                view::DRAFT_MAX_DATA_ATTRIBUTES
+            ),
+        ),
+        (
             "Placeholder: retained text bytes / live field reservation bytes".into(),
             format!(
                 "{} / {}",

@@ -8,9 +8,11 @@ import {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,set
 const V = registry.view, W = V.wire;
 const named = (rows) => new Map(rows.map((row) => [row.name, row]));
 const tags = named(V.tags), attributes = named(V.attributes), commands = named(V.commands);
-const element = (tag) => ({ kind: "element", tag, parent: W.noNode, children: [], attributes: new Map(), style: new Map(), attributeBytes: new Map(), styleBytes: new Map(), class: "", classBytes: 0, valueReserved: false, listeners: [], value: "", checked: false, seq: 0, open: false });
+const element = (tag) => ({ kind: "element", tag, parent: W.noNode, children: [], attributes: new Map(), data: new Map(), dataBytes: new Map(), style: new Map(), attributeBytes: new Map(), styleBytes: new Map(), class: "", classBytes: 0, valueReserved: false, listeners: [], value: "", checked: false, seq: 0, open: false });
 const textNode = (text) => ({ kind: "text", text, textBytes:selectionTextBytes(text), parent: W.noNode, children: [], listeners: [] });
 const ident = (text) => text.length <= V.limits.identChars && /^[A-Za-z][A-Za-z0-9_-]*$/.test(text);
+/** A custom data attribute name of the view (`data_attribute_name`). */
+const dataName = (text) => text.length <= V.limits.dataNameBytes && /^data-[a-z0-9._-]+$/.test(text);
 const inputType = (node) => node.attributes.get("type") ?? "text";
 const checkable = (node) => node.tag === "input" && ["checkbox", "radio"].includes(inputType(node));
 const inputValue=value=>typeof value==='string'&&value.length*2<=V.limits.valueBytes&&!value.includes('\0')&&value.isWellFormed();
@@ -145,7 +147,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
   const transaction = (operations) => {
     // Copy every mutable container. A failed last operation cannot affect a
     // previously committed tree, listener, field, stylesheet or command request.
-    const next = new Map([...nodes].map(([id, node]) => [id, { ...node, children: [...node.children], listeners: [...node.listeners], ...(node.kind === "element" ? { attributes: new Map(node.attributes), style: new Map(node.style), attributeBytes: new Map(node.attributeBytes), styleBytes: new Map(node.styleBytes) } : {}) }]));
+    const next = new Map([...nodes].map(([id, node]) => [id, { ...node, children: [...node.children], listeners: [...node.listeners], ...(node.kind === "element" ? { attributes: new Map(node.attributes), data: new Map(node.data), dataBytes: new Map(node.dataBytes), style: new Map(node.style), attributeBytes: new Map(node.attributeBytes), styleBytes: new Map(node.styleBytes) } : {}) }]));
     const nextSheets = new Map(sheets), nextSheetBytes = new Map(sheetBytes), copies = new Set(pending), effects = [];
     const handlers = new Set([...nodes.values()].flatMap((node) => node.listeners.map((listener) => listener.handler)));
     let index, nextTitle = title, nextTitleBytes = titleBytes, nextFocus = focus;
@@ -201,6 +203,24 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           break;
         }
         case "remove_attribute": { const node = asElement(op.node); if (!admitted(attributes.get(op.attribute).tags, node)) fail("attribute not allowed"); if(node.attributes.delete(op.attribute)){node.attributeBytes.delete(op.attribute);optionAttribute(next,op.node,op.attribute,false);} engine.removeAttribute(op.node, op.attribute); break; }
+        // Custom data attributes (HTML §3.2.6.6): the view's name grammar
+        // (`varta_common::view::data_attribute_name`), a bounded count.
+        case "set_data": {
+          const node = asElement(op.node);
+          if (!dataName(op.data_name)) fail("data attribute name");
+          if (!node.data.has(op.data_name) && node.data.size >= V.limits.dataAttributes) fail("data attribute budget");
+          engineCall(engine.setAttribute(op.node, op.data_name, op.text), "attribute value");
+          node.data.set(op.data_name, op.text);
+          node.dataBytes.set(op.data_name, selectionTextBytes(op.data_name) + selectionTextBytes(op.text));
+          break;
+        }
+        case "remove_data": {
+          const node = asElement(op.node);
+          if (!dataName(op.data_name)) fail("data attribute name");
+          if (node.data.delete(op.data_name)) node.dataBytes.delete(op.data_name);
+          engine.removeAttribute(op.node, op.data_name);
+          break;
+        }
         case "set_class": { const node = asElement(op.node); engineCall(engine.setClass(op.node, op.text), "class value"); node.class = op.text; node.classBytes=selectionTextBytes(op.text); break; }
         case "set_style": {
           const node = asElement(op.node); if (["field-sizing", "resize"].includes(op.property) && node.tag !== "textarea") fail("property not allowed");
@@ -291,6 +311,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
         node.valueReserved ||= node.tag==='select'||node.tag==='textarea'||node.tag==='input'&&!checkable(node);
         retain(node.classBytes);
         for(const size of node.attributeBytes.values())retain(size);
+        for(const size of node.dataBytes.values())retain(size);
         for(const size of node.styleBytes.values())retain(size);
         if(node.valueReserved)retain(V.limits.fieldValueReservationBytes);
       }
@@ -306,8 +327,8 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
   return { commit, engine,
     // Clone inspection so an adapter cannot mutate the validation authority.
     snapshot() { return { nodes: [...nodes].map(([id, node]) => {
-      const {attributeBytes,styleBytes,...state}=node;
-      return { id, ...state, children: [...node.children], listeners: node.listeners.map((listener) => ({ ...listener })), ...(node.kind === "element" ? { attributes: Object.fromEntries(node.attributes), style: Object.fromEntries(node.style) } : {}) };
+      const {attributeBytes,styleBytes,dataBytes,data,...state}=node;
+      return { id, ...state, children: [...node.children], listeners: node.listeners.map((listener) => ({ ...listener })), ...(node.kind === "element" ? { attributes: Object.fromEntries(node.attributes), data: Object.fromEntries(node.data), style: Object.fromEntries(node.style) } : {}) };
     }), sheets: Object.fromEntries(sheets), title, focus, pending: [...pending] }; },
     close() { closed = true; nodes.clear(); sheets.clear(); sheetBytes.clear(); pending.clear(); title = ""; titleBytes=0; focus = W.noNode; },
     complete(request) { if (!pending.delete(request)) throw new ViewProtocolError("unknown command result"); },

@@ -239,6 +239,8 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
           case "set_text": node.data = op.text; break;
           case "set_attribute": node.setAttribute(op.attribute, op.attribute === "src" || op.attribute === "srcset" ? resolved.get(i) : op.attribute === "href" ? "#" : op.text); break;
           case "remove_attribute": node.removeAttribute(op.attribute); break;
+          case "set_data": node.setAttribute(op.data_name, op.text); break;
+          case "remove_data": node.removeAttribute(op.data_name); break;
           case "set_class": node.className = op.text; break;
           case "insert": nodes.get(op.parent).insertBefore(node, op.before === W.noNode ? null : nodes.get(op.before)); break;
           case "remove": { const stack = [node]; while (stack.length) { const removed = stack.pop(); for (const child of removed.childNodes) stack.push(child); nodes.delete(ids.get(removed)); ids.delete(removed); } node.remove(); break; }

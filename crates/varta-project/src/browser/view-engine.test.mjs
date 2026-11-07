@@ -93,3 +93,15 @@ test("refusals happen before any effect and keep the committed engine state", ()
   assert.throws(() => model.commit(encodeViewBatch([{ name: "set_class", node: 2, text: "a\u0001" }])), /class value/);
   assert.throws(() => model.commit(encodeViewBatch([{ name: "set_style", node: 2, property: "border-radius", text: "calc(100% - 1rem)" }])), /style value/);
 });
+
+test("custom data attributes reach the engine's selectors as natively", () => {
+  const model = createViewModel({ viewEngine });
+  model.commit(encodeViewBatch([{ name: "create_element", node: 2, tag: "div" }, { name: "insert", parent: 1, node: 2, before: 0 }, { name: "stylesheet", sheet: 1, text: "[data-state=open] { color: #111 }" }, { name: "set_data", node: 2, data_name: "data-state", text: "open" }]));
+  assert.equal(model.engine.computed(2).get("color"), "#111");
+  assert.deepEqual(model.snapshot().nodes.find((node) => node.id === 2).data, { "data-state": "open" });
+  model.commit(encodeViewBatch([{ name: "remove_data", node: 2, data_name: "data-state" }]));
+  assert.equal(model.engine.computed(2).get("color"), undefined);
+  for (const name of ["data-", "data-A", "aria-x", `data-${"x".repeat(60)}`]) assert.throws(() => model.commit(encodeViewBatch([{ name: "set_data", node: 2, data_name: name, text: "1" }])), /data attribute name/);
+  const many = Array.from({ length: 33 }, (_, index) => ({ name: "set_data", node: 2, data_name: `data-n${index}`, text: "1" }));
+  assert.throws(() => model.commit(encodeViewBatch(many)), /data attribute budget/);
+});
