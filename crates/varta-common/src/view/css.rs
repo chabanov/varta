@@ -779,6 +779,13 @@ pub fn forbidden(text: &str) -> bool {
 pub fn grammar(property: CssProperty) -> &'static str {
     use CssProperty as P;
     match property {
+        // CSS Transforms 2 §4: two-dimensional `scale` takes numbers and
+        // percentages (the third, z component is outside the 2D renderer).
+        P::Scale => "none | [<number> | <percentage>] [<number> | <percentage>]?",
+        // CSS Transforms 1 §5: `transform-origin` in two dimensions.
+        P::TransformOrigin => {
+            "left | center | right | top | bottom | <length-percentage> | [left | center | right | <length-percentage>] [top | center | bottom | <length-percentage>] | [top | center | bottom] [left | center | right]"
+        }
         // CSS Fonts 4 §2.2: `<font-weight-absolute>`; numbers in [1, 1000].
         P::FontWeight => "normal | bold | <number>",
         // CSS Color 4 §11.2: `<alpha-value>`.
@@ -858,13 +865,24 @@ impl Context {
             lh: Some(super::stylesheet::REM_PIXELS),
             parent_lh: Some(super::stylesheet::REM_PIXELS),
             rlh: Some(super::stylesheet::REM_PIXELS),
+            metrics: NOMINAL_METRICS,
+            parent_metrics: NOMINAL_METRICS,
+            root_metrics: NOMINAL_METRICS,
         }),
     };
 }
 
+/// Font metrics for a parse-time renderability check.
+const NOMINAL_METRICS: math::FontMetrics = math::FontMetrics {
+    ex: super::stylesheet::REM_PIXELS / 2.0,
+    cap: Some(super::stylesheet::REM_PIXELS),
+    ch: super::stylesheet::REM_PIXELS / 2.0,
+    ic: super::stylesheet::REM_PIXELS,
+};
+
 /// The font-relative references of one element (CSS Values 4 §6.1.1), in
-/// CSS pixels. In `font-size` and `line-height`, `em` (in `font-size`) and
-/// `lh` refer to the parent element's metrics.
+/// CSS pixels. In `font-size`, `em`, `ex`, `cap`, `ch` and `ic` refer to the
+/// parent element's metrics; in `font-size` and `line-height`, `lh` does.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FontContext {
     /// The element's computed font size.
@@ -877,6 +895,21 @@ pub struct FontContext {
     pub parent_lh: Option<f64>,
     /// The root element's computed line height.
     pub rlh: Option<f64>,
+    /// The first available font's metrics of the element, of its parent and
+    /// of the root element (`ex`, `cap`, `ch`, `ic` and their root forms).
+    pub metrics: math::FontMetrics,
+    pub parent_metrics: math::FontMetrics,
+    pub root_metrics: math::FontMetrics,
+}
+impl FontContext {
+    /// The metrics `ex`, `cap`, `ch` and `ic` refer to in `property`.
+    fn metrics_for(&self, property: CssProperty) -> math::FontMetrics {
+        if property == CssProperty::FontSize {
+            self.parent_metrics
+        } else {
+            self.metrics
+        }
+    }
 }
 
 /// Properties whose numeric slots are nonnegative (CSS Box 3, Sizing 3,
@@ -965,6 +998,12 @@ fn literal_notes(property: CssProperty, tokens: &[V], mode: Mode) -> bool {
                 _ => false,
             },
             (CssProperty::FontWeight, V::Num { value, .. }) => (1.0..=1000.0).contains(value),
+            // The renderer maps boxes through positive scale factors only.
+            (CssProperty::Scale, V::Num { value, unit, .. }) => match (unit, mode) {
+                (NumUnit::Percent | NumUnit::None, Mode::Engine) => value.is_finite(),
+                (NumUnit::None, Mode::Host | Mode::Lowered) => value.is_finite() && *value > 0.0,
+                _ => false,
+            },
             (CssProperty::TransitionProperty, V::Ident(word)) => {
                 (tokens.len() == 1 || !word.eq_ignore_ascii_case("none"))
                     && !CSS_WIDE_KEYWORDS
@@ -1137,6 +1176,8 @@ fn lower_math(
             }
         }),
         rlh: font.and_then(|font| font.rlh),
+        metrics: font.map(|font| font.metrics_for(property)),
+        root_metrics: font.map(|font| font.root_metrics),
         viewport_width: context.viewport_width,
         viewport_height: context.viewport_height,
     };
@@ -1202,6 +1243,8 @@ fn lower_math(
     } else if kind == Type::of(Base::Percent) {
         if property == CssProperty::Opacity {
             format_number((value / 100.0).clamp(0.0, 1.0))
+        } else if property == CssProperty::Scale {
+            format_number(value / 100.0)
         } else {
             format!("{}%", format_number(value))
         }
@@ -1241,6 +1284,8 @@ pub fn absolutize_lengths(value: &str, context: &Context) -> Option<String> {
                 rem: context.root_font_size,
                 lh: font.and_then(|font| font.lh),
                 rlh: font.and_then(|font| font.rlh),
+                metrics: font.map(|font| font.metrics),
+                root_metrics: font.map(|font| font.root_metrics),
                 viewport_width: context.viewport_width,
                 viewport_height: context.viewport_height,
             };
@@ -1309,7 +1354,8 @@ fn absolute_length(value: f64, unit: math::LengthUnit, context: &Context) -> Opt
         L::ViewportHeight => vh,
         L::ViewportMin => vw.min(vh),
         L::ViewportMax => vw.max(vh),
-        L::Unresolved => return None,
+        L::Metric(metric) => context.font?.metrics.get(metric)?,
+        L::RootMetric(metric) => context.font?.root_metrics.get(metric)?,
     };
     font_length(value, factor)
 }
@@ -1333,6 +1379,10 @@ fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<
     match unit {
         NumUnit::Percent if property == CssProperty::Opacity => {
             Some(format_number((value / 100.0).clamp(0.0, 1.0)))
+        }
+        // Transforms 2 §4: a `scale` percentage is the number it stands for.
+        NumUnit::Percent if property == CssProperty::Scale => {
+            Some(format_number(clamp_magnitude(value / 100.0)))
         }
         NumUnit::None if property == CssProperty::Opacity => {
             Some(format_number(value.clamp(0.0, 1.0)))
@@ -1362,7 +1412,12 @@ fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<
                     )
                 }
                 math::LengthUnit::Rlh => font_length(*value, context.font?.rlh?),
-                math::LengthUnit::Unresolved => None,
+                math::LengthUnit::Metric(metric) => {
+                    font_length(*value, context.font?.metrics_for(property).get(metric)?)
+                }
+                math::LengthUnit::RootMetric(metric) => {
+                    font_length(*value, context.font?.root_metrics.get(metric)?)
+                }
                 math::LengthUnit::Rem => Some(format!("{}rem", format_number(*value))),
                 unit => {
                     let vw = context.viewport_width / 100.0;
@@ -1385,6 +1440,52 @@ fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<
     }
 }
 
+/// The keywords of `transform-origin` and `object-position`-like positions
+/// (CSS Transforms 1 §5): the offset they stand for and whether they name
+/// the vertical axis (`Some(true)`), the horizontal one (`Some(false)`) or
+/// either (`center`, `None`).
+const ORIGIN_KEYWORDS: [(&str, &str, Option<bool>); 5] = [
+    ("left", "0%", Some(false)),
+    ("right", "100%", Some(false)),
+    ("top", "0%", Some(true)),
+    ("bottom", "100%", Some(true)),
+    ("center", "50%", None),
+];
+
+/// `transform-origin` as `<x> <y>`, each `px` or a percentage of the box;
+/// `None` for a sum of a length and a percentage (the renderer resolves
+/// none) or a value outside the 2D grammar.
+fn lower_origin(value: &str, context: &Context) -> Option<String> {
+    let parts = super::mapped::split(value)?;
+    let keyword = |part: &str| {
+        ORIGIN_KEYWORDS
+            .iter()
+            .find(|(name, _, _)| part.eq_ignore_ascii_case(name))
+            .map(|(_, offset, vertical)| (*offset, *vertical))
+    };
+    let length = |part: &str| {
+        let lowered = lower(CssProperty::Left, part, context)?;
+        (!lowered.contains('(') && lowered != "auto").then_some(lowered)
+    };
+    let offset = |part: &str| {
+        keyword(part)
+            .map(|(offset, _)| offset.to_owned())
+            .or_else(|| length(part))
+    };
+    let vertical = |part: &str| keyword(part).and_then(|(_, vertical)| vertical);
+    let (x, y) = match parts.as_slice() {
+        [single] if vertical(single) == Some(true) => ("50%".to_owned(), offset(single)?),
+        [single] => (offset(single)?, "50%".to_owned()),
+        // A vertical keyword first, or a horizontal one second, swaps them.
+        [a, b] if vertical(a) == Some(true) || vertical(b) == Some(false) => {
+            (offset(b)?, offset(a)?)
+        }
+        [a, b] => (offset(a)?, offset(b)?),
+        _ => return None,
+    };
+    Some(join(&[x, y]))
+}
+
 /// Lower a valid engine value of `property` (after `var()` substitution) to
 /// the host grammar the native renderer's consumers read: math functions
 /// are evaluated (CSS Values 4 §10.10) with lengths in `px` and the results
@@ -1394,6 +1495,9 @@ fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<
 /// render the value. A value already in the host grammar is returned as is.
 #[must_use]
 pub fn lower(property: CssProperty, value: &str, context: &Context) -> Option<String> {
+    if property == CssProperty::TransformOrigin {
+        return lower_origin(value, context);
+    }
     let tokens = lex_value(value)?;
     let target = grammar(property);
     if matches_tokens(target, &tokens, Mode::Host) && literal_notes(property, &tokens, Mode::Host) {
@@ -1567,6 +1671,9 @@ mod tests {
             (P::Width, "2em"),
             (P::Padding, "0.5em 1em"),
             (P::Height, "calc(2lh + 1em)"),
+            // ... and `ex`, `cap`, `ch`, `ic` from its first available font.
+            (P::Width, "2ch"),
+            (P::MarginLeft, "calc(1ex + 1rcap - 1ric)"),
         ] {
             assert_eq!(
                 check(property, value),
@@ -1578,7 +1685,6 @@ mod tests {
         for (property, value, refusal) in [
             (P::Width, "calc(1px + 1)", Refusal::Invalid),
             (P::BorderRadius, "calc(100% - 1rem)", Refusal::Unrenderable),
-            (P::Width, "2ch", Refusal::Unrenderable),
             (P::Width, "round(1px, 2px)", Refusal::Invalid),
             (
                 P::Color,
@@ -1682,6 +1788,19 @@ mod font_tests {
                 lh: Some(30.0),
                 parent_lh: Some(12.0),
                 rlh: None,
+                metrics: math::FontMetrics {
+                    ex: 9.0,
+                    cap: Some(14.0),
+                    ch: 11.0,
+                    ic: 20.0,
+                },
+                parent_metrics: math::FontMetrics::fallback(10.0),
+                root_metrics: math::FontMetrics {
+                    ex: 7.0,
+                    cap: None,
+                    ch: 8.0,
+                    ic: 16.0,
+                },
             }),
             ..Context::NOMINAL
         };
@@ -1706,13 +1825,101 @@ mod font_tests {
             lower(CssProperty::LineHeight, "calc(1em)").as_deref(),
             Some("20px")
         );
-        // Without the root's line height or a font context, nothing lowers.
+        // `ex`, `cap`, `ch` and `ic` from the element's font, in `font-size`
+        // from the parent's, and their root forms from the root's.
+        assert_eq!(lower(CssProperty::Width, "2ex").as_deref(), Some("18px"));
+        assert_eq!(lower(CssProperty::Width, "1cap").as_deref(), Some("14px"));
+        assert_eq!(
+            lower(CssProperty::Width, "calc(1ch + 1ic)").as_deref(),
+            Some("31px")
+        );
+        assert_eq!(lower(CssProperty::FontSize, "2ex").as_deref(), Some("10px"));
+        assert_eq!(
+            lower(CssProperty::FontSize, "calc(1ic + 1ch)").as_deref(),
+            Some("15px")
+        );
+        assert_eq!(
+            lower(CssProperty::LineHeight, "2ex").as_deref(),
+            Some("18px")
+        );
+        assert_eq!(
+            lower(CssProperty::Width, "calc(1rex + 1rch + 1ric)").as_deref(),
+            Some("31px")
+        );
+        assert_eq!(
+            lower(CssProperty::MarginLeft, "calc(10% + 1ch)").as_deref(),
+            Some("calc(10% + 11px)")
+        );
+        // Without the root's line height or cap-height, or a font context,
+        // nothing lowers.
         assert_eq!(lower(CssProperty::Width, "1rlh"), None);
+        assert_eq!(lower(CssProperty::Width, "1rcap"), None);
         let bare = Context {
             font: None,
             ..Context::NOMINAL
         };
         assert_eq!(super::lower(CssProperty::Width, "2em", &bare), None);
+    }
+}
+
+#[cfg(test)]
+mod transform_property_tests {
+    use super::*;
+
+    /// CSS Transforms 2 §4 and Transforms 1 §5 in two dimensions.
+    #[test]
+    fn individual_transforms_and_origins_lower_for_the_renderer() {
+        let lower = |property, value| lower(property, value, &Context::NOMINAL);
+        assert_eq!(
+            lower(CssProperty::Scale, "95% 95%").as_deref(),
+            Some("0.95 0.95")
+        );
+        assert_eq!(
+            lower(CssProperty::Scale, "calc(50% * 3)").as_deref(),
+            Some("1.5")
+        );
+        assert_eq!(check(CssProperty::Scale, "0"), Err(Refusal::Unrenderable));
+        assert_eq!(check(CssProperty::Scale, "1 2 3"), Err(Refusal::Invalid));
+        assert_eq!(
+            lower(CssProperty::Translate, "1rem 50%").as_deref(),
+            Some("1rem 50%")
+        );
+        assert_eq!(
+            check(CssProperty::Translate, "calc(50% + 1px)"),
+            Err(Refusal::Unrenderable)
+        );
+        assert_eq!(
+            lower(CssProperty::TransformOrigin, "top right").as_deref(),
+            Some("100% 0%")
+        );
+        assert_eq!(
+            lower(CssProperty::TransformOrigin, "100% 0").as_deref(),
+            Some("100% 0")
+        );
+        assert_eq!(
+            lower(CssProperty::TransformOrigin, "left").as_deref(),
+            Some("0% 50%")
+        );
+        assert_eq!(
+            lower(CssProperty::TransformOrigin, "bottom").as_deref(),
+            Some("50% 100%")
+        );
+        assert_eq!(
+            lower(CssProperty::TransformOrigin, "1rem center").as_deref(),
+            Some("1rem 50%")
+        );
+        assert_eq!(
+            check(CssProperty::TransformOrigin, "top 50%"),
+            Err(Refusal::Invalid)
+        );
+        assert_eq!(
+            check(CssProperty::TransformOrigin, "calc(10% + 1px) top"),
+            Err(Refusal::Unrenderable)
+        );
+        assert_eq!(
+            lower(CssProperty::LetterSpacing, "-0.025em").as_deref(),
+            Some("-0.4px")
+        );
     }
 }
 

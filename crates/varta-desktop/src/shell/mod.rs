@@ -21,6 +21,7 @@ pub mod args;
 pub mod consent;
 mod effects;
 mod fallback;
+mod font_metrics;
 // Built on Linux; elsewhere only for its tests with the `fontconfig` feature.
 #[cfg(any(target_os = "linux", all(test, feature = "fontconfig")))]
 mod fontconfig;
@@ -33,6 +34,7 @@ pub mod window;
 pub use effects::NativeEffects;
 #[cfg(target_os = "macos")]
 pub(crate) use fallback::PlatformFaces;
+pub use font_metrics::host_fonts;
 pub use fonts::FontSet;
 pub use launch::{Launch, MAX_FONT_BYTES, Package, Started, read_font, read_module, revoke};
 pub use storage::{STORAGE_DIRECTORY_PREFIX, default_storage_base, storage_directory};

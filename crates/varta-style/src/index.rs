@@ -3,7 +3,7 @@
 use crate::prelude::*;
 use varta_common::view::expansion;
 use varta_common::view::stylesheet::{
-    LayerDeclaration, LayerName, Media, Name, ParsedStylesheet, Registration, Rule,
+    LayerDeclaration, LayerName, Media, Name, ParsedStylesheet, Pseudo, Registration, Rule,
 };
 
 /// Rule anchors preserve the shared matcher's semantics, including comma
@@ -12,6 +12,9 @@ use varta_common::view::stylesheet::{
 pub struct RuleIndex {
     roots: Vec<usize>,
     classes: BTreeMap<String, Vec<usize>>,
+    /// Rules with a selector whose subject names neither a class nor
+    /// `:root`: candidates for every element.
+    universal: Vec<usize>,
     pub has_custom: bool,
     pub costs: Vec<RuleCost>,
     pub expansion: Vec<Vec<(Name, expansion::Value)>>,
@@ -62,13 +65,14 @@ impl RuleIndex {
                 .iter()
                 .any(|(name, _)| matches!(name, Name::Custom(_)));
             for selector in &rule.selectors {
-                let list = if selector.root {
+                // The subject compound's first class anchors the rule.
+                let subject = selector.subject();
+                let list = if let Some(class) = subject.classes.first() {
+                    out.classes.entry(class.clone()).or_default()
+                } else if subject.pseudo.contains(&Pseudo::Root) {
                     &mut out.roots
                 } else {
-                    let Some(class) = selector.classes.first() else {
-                        continue;
-                    };
-                    out.classes.entry(class.clone()).or_default()
+                    &mut out.universal
                 };
                 if list.last() != Some(&index) {
                     list.push(index);
@@ -186,6 +190,7 @@ impl LayerRanks {
 pub struct CascadeIndex {
     roots: BTreeSet<(u32, usize)>,
     classes: BTreeMap<String, BTreeSet<(u32, usize)>>,
+    universal: BTreeSet<(u32, usize)>,
     custom_sheets: usize,
     layers: BTreeMap<u32, SheetLayers>,
     /// Ranks when no layer declaration is conditional (else `None`).
@@ -245,6 +250,8 @@ impl CascadeIndex {
         self.custom_sheets += usize::from(index.has_custom);
         self.roots
             .extend(index.roots.iter().map(|rule| (sheet, *rule)));
+        self.universal
+            .extend(index.universal.iter().map(|rule| (sheet, *rule)));
         for (class, rules) in &index.classes {
             self.classes
                 .entry(class.clone())
@@ -259,6 +266,9 @@ impl CascadeIndex {
         self.custom_sheets -= usize::from(index.has_custom);
         for rule in &index.roots {
             self.roots.remove(&(sheet, *rule));
+        }
+        for rule in &index.universal {
+            self.universal.remove(&(sheet, *rule));
         }
         for (class, rules) in &index.classes {
             let empty = if let Some(entries) = self.classes.get_mut(class) {
@@ -280,10 +290,10 @@ impl CascadeIndex {
     }
     #[must_use]
     pub fn candidates(&self, root: bool, classes: &BTreeSet<&str>) -> Vec<(u32, usize)> {
+        let mut candidates: BTreeSet<(u32, usize)> = self.universal.iter().copied().collect();
         if root {
-            return self.roots.iter().copied().collect();
+            candidates.extend(&self.roots);
         }
-        let mut candidates = BTreeSet::new();
         for class in classes {
             if let Some(rules) = self.classes.get(*class) {
                 candidates.extend(rules);

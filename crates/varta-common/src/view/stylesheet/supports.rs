@@ -3,7 +3,7 @@
 //! declaration is supported when the engine admits it, a selector when it is
 //! in the selector subset. A `<general-enclosed>` is false.
 use super::super::syntax::{self, Spanned, Token};
-use super::super::{CssProperty, PSEUDO_CLASSES, css};
+
 #[allow(unused_imports)]
 use crate::view::prelude::*;
 
@@ -143,33 +143,15 @@ fn declaration(tokens: &[Spanned]) -> bool {
         return false;
     }
     let value = syntax::serialize(trimmed(&tokens[colon + 1..]));
-    if let Some(custom) = name.strip_prefix("--") {
-        return css::ident(custom) && css::custom_value(&value);
-    }
-    CssProperty::ALL
-        .iter()
-        .find(|property| property.name().eq_ignore_ascii_case(name))
-        .is_some_and(|property| css::check(*property, &value).is_ok())
+    super::declaration(name, &value).is_ok()
 }
 
 /// `selector( … )`: a compound selector of the subset.
 fn compound_selector(tokens: &[Spanned]) -> bool {
-    let tokens: Vec<&Token> = trimmed(tokens).iter().map(|t| &t.token).collect();
-    if let [Token::Colon, Token::Ident(name)] = tokens.as_slice() {
-        return name.eq_ignore_ascii_case("root");
-    }
-    let mut classes = 0;
-    for pair in tokens.chunks(2) {
-        match pair {
-            [Token::Delim('.'), Token::Ident(class)] if css::class_name(class) => classes += 1,
-            [Token::Colon, Token::Ident(name)]
-                if PSEUDO_CLASSES
-                    .iter()
-                    .any(|known| known[1..].eq_ignore_ascii_case(name)) => {}
-            _ => return false,
-        }
-    }
-    classes > 0
+    // Conditional 4 §6.1: `selector(<complex-selector>)`, one selector.
+    let text = syntax::serialize(trimmed(tokens));
+    let tokens = syntax::tokenize(&text);
+    super::selector::parse_list(&tokens, &text).is_ok_and(|list| list.len() == 1)
 }
 
 /// Evaluate an `@supports` prelude; the error is the index of the token
@@ -211,7 +193,9 @@ mod tests {
         assert_eq!(holds("not (backdrop-filter: blur(1px))"), Ok(true));
         assert_eq!(holds("(--x: 1px)"), Ok(true));
         assert_eq!(holds("selector(.a:hover)"), Ok(true));
-        assert_eq!(holds("selector(.a > .b)"), Ok(false));
+        assert_eq!(holds("selector(.a > .b)"), Ok(true));
+        assert_eq!(holds("selector(.a, .b)"), Ok(false));
+        assert_eq!(holds("selector(.a::after)"), Ok(false));
         assert_eq!(holds("font-tech(color-COLRv1)"), Ok(false));
         assert_eq!(holds("(width > 1px)"), Ok(false));
         assert!(holds("(a: b) and (c: d) or (e: f)").is_err());

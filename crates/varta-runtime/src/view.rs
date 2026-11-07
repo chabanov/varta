@@ -122,6 +122,11 @@ impl Session {
             environment.root_font_size = size;
         }
         self.view.set_environment(environment)?;
+        // The measurer's faces are the first available fonts of the
+        // font-relative units.
+        if let Some(font) = &layout.font {
+            self.view.set_fonts(font.font_set());
+        }
         if layout.images.is_some() {
             self.view.set_images(layout.images.clone());
         }

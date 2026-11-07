@@ -3824,7 +3824,7 @@ fn semantic_rules_reject_the_whole_batch() {
         ),
         (
             Box::new(|b| {
-                b.stylesheet(1, "div { color: #fff }");
+                b.stylesheet(1, "frob { color: #fff }");
             }),
             Violation::InvalidStylesheet,
         ),
