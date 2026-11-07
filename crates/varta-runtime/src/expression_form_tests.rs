@@ -42,9 +42,12 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("await_operands"),
     case!("operators"),
     case!("tagged_templates"),
+    case!("template_objects"),
     case!("spreads"),
     case!("receivers"),
     case!("object_methods"),
+    case!("method_receivers"),
+    case!("accessors"),
     case!("computed_keys"),
     case!("destructuring"),
     case!("callback_patterns"),
@@ -112,6 +115,13 @@ fn tagged_templates_and_string_raw_match_node() {
     matches_node("tagged_templates");
 }
 
+/// GetTemplateObject: one frozen strings array per site with its `raw`
+/// array, the same object at every evaluation of the site.
+#[test]
+fn template_objects_are_cached_per_site_like_node() {
+    matches_node("template_objects");
+}
+
 #[test]
 fn spreads_into_fixed_parameters_match_node() {
     matches_node("spreads");
@@ -125,6 +135,21 @@ fn this_parameters_and_field_arrows_match_node() {
 #[test]
 fn object_literal_methods_with_this_match_node() {
     matches_node("object_methods");
+}
+
+/// A method sees the receiver it is called on: spread copies, methods
+/// moved between objects, extracted methods (`undefined`) and enumeration.
+/// Getters and setters of object literals are accessor properties: reads,
+/// assignments, compound assignments, views, spreads, own keys, entries and
+/// `JSON.stringify` go through them.
+#[test]
+fn object_literal_accessors_match_node() {
+    matches_node("accessors");
+}
+
+#[test]
+fn object_literal_methods_see_their_receiver_like_node() {
+    matches_node("method_receivers");
 }
 
 #[test]
@@ -201,16 +226,20 @@ fn expression_forms_survive_collector_stress() {
 fn unsupported_expression_forms_are_refused_by_name() {
     for (source, diagnostic) in [
         (
-            "export function main(): void { const o = { n: 1, get two(): number { return this.n * 2; } }; console.log(String(o.two)); }",
-            "getter or setter in an object literal",
+            "export function main(): void { const o = { n: 1, set two(v: number) { this.n = v; } }; o.two = 2; console.log(String(o.n)); }",
+            "setter two without a getter",
         ),
         (
-            "function tag(s: TemplateStringsArray): string { return s.raw[0]; } export function main(): void { console.log(tag`a`); }",
-            "TemplateStringsArray.raw outside String.raw",
+            "export function main(): void { const o = { get x(): number { return 1; } }; const u: unknown = o; console.log(JSON.stringify(u)); }",
+            "held by unknown may be an object with getters",
         ),
         (
-            "async function v(): Promise<number> { return 1; } const x: number = await v(); export function main(): void { console.log(String(x)); }",
-            "top-level await is not supported",
+            "export function main(): void { const base = { n: 1 }; const o = { ...base, get two(): number { return 2; } }; console.log(String(o.two)); }",
+            "spread in an object literal with getters or setters",
+        ),
+        (
+            "function tag(s: TemplateStringsArray): string { s.raw = ['x']; return s[0]; } export function main(): void { console.log(tag`a`); }",
+            "cannot assign to raw because it is a read-only property",
         ),
         (
             "async function v(): Promise<number> { return 1; } export async function main(): Promise<void> { switch (1) { case await v(): console.log('one'); } }",
@@ -221,8 +250,8 @@ fn unsupported_expression_forms_are_refused_by_name() {
             "spread to a class constructor",
         ),
         (
-            "export function main(): void { const o = { n: 1, get(): number { return this.n; } }; const c = { ...o }; console.log(String(c.get())); }",
-            "built by an object literal whose methods use this",
+            "export function main(): void { const base = { n: 1 }; const o = { ...base, get(): number { return this.n; } }; console.log(String(o.get())); }",
+            "spread in an object literal whose methods use this",
         ),
         (
             "class C { v = 1; f = () => this.v; } export function main(): void { console.log(String(new C().f())); }",
@@ -288,6 +317,10 @@ fn expression_forms_stay_refused_by_v37() {
         (
             "export function main(): void { const o = { n: 2, d(): number { return this.n; } }; console.log(String(o.d())); }",
             "this or super in an object literal method",
+        ),
+        (
+            "export function main(): void { const o = { n: 2, get d(): number { return 2; } }; console.log(String(o.d)); }",
+            "object method, getter or setter",
         ),
         (
             "function f(a: number, b: number): number { return a + b; } export function main(): void { const t: [number, number] = [1, 2]; console.log(String(f(...t))); }",

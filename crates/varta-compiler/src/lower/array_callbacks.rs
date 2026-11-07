@@ -97,6 +97,7 @@ impl Lower<'_> {
             ));
         }
         let base = self.expr(&member.obj)?;
+        let base = tagged_templates::plain(base, self.types);
         let Type::Array(id) = base.ty else {
             return Err(type_error(
                 "array callback requires a narrowed array receiver",

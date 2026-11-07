@@ -63,6 +63,7 @@ fn lower_with(
             classes::error_family_root(family, &unit.source, unit.ast.span(), &mut types)?;
         }
     }
+    object_methods::scan(graph, &mut types);
     let mut type_exports: BTreeMap<PathBuf, named::Exports> = BTreeMap::new();
     for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];
@@ -164,7 +165,7 @@ fn lower_with(
     })?;
     let mut generated = BTreeMap::new();
     let mut call_effects = BTreeMap::new();
-    let (scopes, constants) = link_values(
+    let (scopes, mut constants) = link_values(
         graph,
         &definitions,
         &type_exports,
@@ -216,23 +217,75 @@ fn lower_with(
             (&mut generated, &mut next, &mut call_effects),
         )?;
     }
-    functions.extend(generated.into_values());
-    // Initialize stored constants in dependency order before the entry body.
-    functions[main].body.splice(
-        0..0,
-        constants.initializers.iter().map(|index| {
-            S::Expr(Expr {
-                span: entry.ast.span(),
-                ty: Type::Void,
-                kind: E::Call(*index, vec![]),
-            })
-        }),
+    // Tagged template objects (v38) are built before any module code runs.
+    object_accessors::finish(&mut types, &functions, &mut generated, &mut next)?;
+    object_methods::finish(
+        &mut types,
+        &mut functions,
+        &mut generated,
+        &mut constants.stored,
     );
+    if let Some(index) = tagged_templates::finish(
+        &mut types,
+        &mut functions,
+        &mut generated,
+        &mut next,
+        &mut constants.stored,
+    )? {
+        constants.initializers.insert(0, index);
+    }
+    functions.extend(generated.into_values());
+    // V38: modules evaluate in the order of ECMAScript's Evaluate()
+    // (`top_level_await`): their requests in source order, depth first.
+    if profile.expression_forms() && profile.module_evaluation() {
+        constants.initializers = top_level_await::ordered(graph, &constants);
+    }
+    let awaits = top_level_await::program_awaits(graph, profile);
+    let call = |index: usize| {
+        S::Expr(Expr {
+            span: entry.ast.span(),
+            ty: Type::Void,
+            kind: E::Call(index, vec![]),
+        })
+    };
+    // With top-level `await` the evaluator is the entry: it evaluates the
+    // modules, and the entry module calls `main`.
+    let evaluator = if awaits {
+        let evaluator =
+            top_level_await::evaluator(graph, &constants.modules, &mut functions, &mut types, main)
+                .map_err(|e| entry.source.locate(e, entry.ast.span()))?;
+        let leading: Vec<S> = constants
+            .initializers
+            .iter()
+            .filter(|index| {
+                !constants
+                    .modules
+                    .values()
+                    .any(|module| module.initializers.contains(index))
+            })
+            .map(|index| call(*index))
+            .collect();
+        functions[evaluator].body.splice(0..0, leading);
+        Some(evaluator)
+    } else {
+        // Initialize stored constants in evaluation order before the entry body.
+        functions[main].body.splice(
+            0..0,
+            constants.initializers.iter().map(|index| call(*index)),
+        );
+        None
+    };
     let tools = super::tools::collect(graph, &scopes, &functions, main)?;
     let service = http::collect(graph, &scopes, &mut functions, &mut types, main)?;
     let (http, http_async, http_stream) = service
         .map(|s| (Some(s.entry), s.poll, s.stream))
         .unwrap_or_default();
+    if awaits && (!tools.is_empty() || http.is_some()) {
+        return Err(entry.source.locate(
+            unsupported("top-level await with tool or HTTP entry points"),
+            entry.ast.span(),
+        ));
+    }
     if constants.stored > 0 && (!tools.is_empty() || http.is_some() && !profile.turn_budgets()) {
         return Err(entry.source.locate(
             unsupported("module constants with tool/HTTP entry points; only main initializes them"),
@@ -267,7 +320,7 @@ fn lower_with(
     let view_event = view::event_function(&types);
     let mut program = ir::Program {
         functions,
-        main,
+        main: evaluator.unwrap_or(main),
         tools,
         http,
         http_async,
@@ -280,6 +333,7 @@ fn lower_with(
     };
     subtyping::resolve(&mut program)?;
     type_level::resolve_covariance(&mut program)?;
+    object_methods::receiver_shapes(&mut program);
     if profile.literal_types() {
         json::preserve_direct_types(&mut program.types);
         literal_erasure::erase_program(&mut program)?;
@@ -384,7 +438,7 @@ fn link_values(
         }
         module_constants::link_module(
             (unit, path),
-            &definitions[path],
+            &scope,
             imported,
             (types, entry),
             (generated, next, call_effects),

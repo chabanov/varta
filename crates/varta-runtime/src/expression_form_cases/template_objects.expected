@@ -1,0 +1,12 @@
+["a\\nb","c\\u0041\\\\d"] ["a\nb","cA\\d"] 1
+["line1\nline2","\\t"] ["line1\nline2","\t"] 1
+[x\`y][\${z}]21
+true true
+false 4
+true false
+a b 2
+a+b true
+b AB
+p1q2r\n
+["[","]"] ["[","]"] 1 ["[","]"] ["[","]"] 1
+["x",""] ["x",""] 1
