@@ -10874,8 +10874,10 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   memory budget admits the same values. `json_stringify_owned` retains its
   result, as the host import does; `value_format_v12` returns an unrooted
   owned text, and a string cell's own string without a copy.
-- **Logging.** V38 lowers `console.log` of a value cell to
-  `log_string16(value_format_v12(cell))`, so a v38 module imports no value
+- **Logging.** V38 lowers `console.log` of anything but one string to
+  `log_string16(value_format_v12(cell))`, where `cell` holds the `unknown[]`
+  argument list and the text is Node's ([console
+  notation](#console-notation-node_console)), so a v38 module imports no value
   renderer: `LanguageProfile::host_operation` maps the logging operations to
   `value_format_v12`, and no profile admits `value_log_v12` (the runtime
   keeps it for the compiler's `host_import_test_hook`). Under v38
@@ -11881,12 +11883,21 @@ prelude loads only for programs that name one of its methods
   `instanceof`, `cause`, `toString`). `Promise.all`/`allSettled`/`any`/`race`
   over an array literal that mixes `Promise.reject(...)` with promises of one
   type give the rejections that type (TypeScript's `Promise<never>`).
-  `Promise.any` still rejects with an `Error` named `Error`, not an
-  `AggregateError`.
+  `Promise.any` rejects with an `AggregateError` whose `errors` are the
+  elements' reasons in input order (ECMA-262 §27.2.4.3; the aggregate
+  prelude's `anyRejection`, loaded by `Promise.any`), and with an empty
+  one for an empty array (K9 D1, 2026-11-06). V37 keeps its `Error`.
 - **Math and strings.** `Math.max(...xs)`/`Math.min(...xs)` with spread
   `number[]` arguments (NaN wins, +0 above −0). `String.prototype.at`,
   `substr` (Annex B), `isWellFormed`, `toWellFormed` and locale-free
-  `toLocaleUpperCase`/`toLocaleLowerCase`.
+  `toLocaleUpperCase`/`toLocaleLowerCase`. `String.prototype.normalize`
+  (`NFC` by default, `NFD`, `NFKC`, `NFKD`; any other form throws
+  `RangeError`) through the linked `string_normalize16` (pure, never
+  imported; form word `text::NormalizationForm`) with ICU4X's compiled
+  normalization data (`icu_normalizer` 2.4.0, already locked through the
+  text stack). A lone surrogate is a normalization boundary kept as it is,
+  as V8 keeps it; the Unicode version is ICU4X's, which may differ from
+  Node's ICU for characters assigned after it.
 - **Date.** The v38 date prelude replaces the v37 class with the complete
   `Date` (§21.4): `Date.UTC`, the component constructor (local time,
   years 0–99 as 1900–1999), every local and UTC getter and setter (with
@@ -12592,6 +12603,152 @@ evaluation, as `await main();` appended to it would. Refused with top-level
 `await`: tool and HTTP entry points (`top-level await with tool or HTTP
 entry points`); a throw of a synchronous module during the initial walk
 ends the execution as an uncaught exception.
+
+#### Console notation (`node_console`)
+
+K9 D1 (2026-11-06). V38 prints what Node 24 prints: `console.log`,
+`console.info` and `console.debug` take any number of arguments and log one
+line of `util.formatWithOptions` text with the default `util.inspect`
+options (depth 2, `compact: 3`, `breakLength: 80`, `maxArrayLength: 100`,
+`maxStringLength: 10000`, no colors). Earlier profiles keep their notation
+and their one-argument rule.
+
+- **Lowering.** One string argument is logged as it is (`log_string16`).
+  Every other call boxes each argument into an `unknown` cell, collects the
+  cells in an `unknown[]` array and logs the text the linked
+  `value_format_v12` returns for the array's cell. Under v38
+  `value_format_v12` therefore takes the cell of the *argument list*, not of
+  one value; it stays a linked intrinsic with no host import. A spread
+  argument contributes its elements in source order (the array literal
+  path, so its elements box as `unknown` values do), and a call of a `void`
+  function logs `undefined` after the call (`console_methods`). Logging
+  admits every value `unknown` holds and, for logging only, `Map` and `Set`
+  values, `Date` instances and class instances with `#private` fields;
+  values that may reach a URL, a RegExp match array or another builtin
+  object without a Node notation stay refused (`unsupported logging of a
+  value holding a URL, …`).
+- **Formatting.** The linked `varta_intrinsics::inspect` follows Node's
+  `lib/internal/util/inspect.js` step for step: `%s %d %i %f %j %o %O %c %%`
+  directives of a leading string (`%s` inspects objects at depth 0, `%o` with
+  `showHidden` at depth 4, `%j` is `JSON.stringify` with `[Circular]`),
+  strings unquoted at the top level and quoted in aggregates by Node's quote
+  choice and escapes, `-0`, BigInts with `n`, `true`/`false`, depth elision
+  (`[Object]`, `[Array]`, `[ClassName]`), single-line output up to 80
+  columns with three nesting levels, column grouping of arrays of more than
+  six entries, `... n more items`, `<n empty items>`, long strings split
+  after line breaks, `<ref *n>`/`[Circular *n]`, `ClassName { … }`,
+  `Map(n) { k => v }`, `Set(n) { v }`, `Uint8Array(n) [ … ]`, the ISO text of
+  a `Date` (`Invalid Date`), `Promise { … }` and Error objects. As in Node,
+  the text has no length limit of its own: fuel, memory and the output
+  budget bound it. The literal-format case uses the same linked path as a
+  dynamic format string.
+- **Test builds.** A build that hosts `value_format_v12`
+  (`host_import_test_hook`) lowers logging as v37 does, through the host's
+  `value_log_v12` renderer; the corpus comparisons with v37 and of linked
+  JSON serialization use it, and `console_tests` pins the linked notation
+  against Node.
+- **Errors.** Varta records no stack frames, so an Error prints as Node
+  prints it under `--stack-trace-limit=0`: `[Name: message]` (`[Name]` for
+  an empty message), the constructor named by `improveStack`
+  (`[Plain [Error]: m]`), then its own enumerable fields, `[cause]` and
+  `AggregateError`'s `[errors]`. A cause that is `undefined` is not shown
+  (an instance does not record whether its options had one).
+- **`SuppressedError`** (owner decision 2026-11-06; ECMA-262 2026
+  §20.5.8, explicit resource management). The engine prelude
+  `<varta>/builtins/suppressed.ts` (`modules::engine::SUPPRESSED`, admitted
+  by `node_console()`) declares `class SuppressedError extends Error` with
+  the constructor `(error: unknown, suppressed: unknown, message?: string)`:
+  `name` is `"SuppressedError"`, `error` and `suppressed` hold the given
+  values as `unknown`, an `undefined` message leaves no own message and
+  there is no options argument. It is an Error class like `AggregateError`
+  (prototype chain to `Error`, `instanceof`, catch narrowing, the exception
+  channel); its fields are not own enumerable properties to `JSON.stringify`
+  or the console notation, which prints `[SuppressedError: message]` as
+  Node 24 does. `typeof SuppressedError` is `"function"`; v37 does not know
+  the name. Track K9 C throws it from `using`/`await using` when a disposal
+  throws after the body threw.
+- **Record display trailers (value layout 18).** Every value18 record
+  descriptor ends, after its entries and a wide record's edge bitmap, with
+  a display trailer: a kind word (`value::RecordDisplay`: 0 object, 1
+  class, 2 Error class, 3 `AggregateError`, 4 `Map` storage, 5 `Set`
+  storage, 6 `Date`), a name length word and the UTF-8 name (none for an
+  object; at most 256 bytes otherwise; a generic class instance carries its
+  template's name). `value::record_display` validates it inside the static
+  region. Readers that do not display records read the descriptor prefix
+  (`value::descriptor_bytes`) unchanged; earlier layouts have no trailer.
+  This is the only layout change of the stream; it adds no value tag.
+- **Deviations from Node** (documented, not silent): functions carry no
+  name or source text, so every function prints `[Function (anonymous)]`
+  and `%s` of a function prints the same; `%s`, `%d`, `%i` and `%f` never
+  call program code (a class's own `toString`/`valueOf` is not used; objects
+  convert as `[object Object]`, arrays by their elements, a `Date` by its
+  time value); `%o` of a function or a typed array shows no hidden
+  properties; the column width of non-ASCII entries uses Node's non-ICU
+  width tables instead of ICU's; `%j` of a value holding a BigInt ends the
+  execution with the serializer's failure where Node throws. Standard error
+  and the rest of Node's console: [console methods](#console-methods-console_methods).
+
+#### Console methods (`console_methods`)
+
+K9 D1, owner decision 2026-11-06. V38 has the whole Node 24 console of
+`lib/internal/console/constructor.js`, printed as Node prints it; earlier
+profiles keep refusing every method but `log`.
+
+- **Standard error (host ABI 34, additive).** `log_stderr16(level, ptr,
+  len)` (`HostOperation::LogStderr16`) writes one standard-error line of
+  the UTF-16 text at `ptr`/`len`. The level word
+  (`console::StderrLevel`: 0 `error`, 1 `warn`) names the console method
+  that wrote it; any other word traps before the text is read. It is
+  capability-free and bounded like `log_string16`: the module's string limit,
+  one host call, fair fuel per byte and the shared output budget. The native
+  runtime records the line in the execution's ordered output with the
+  level's prefix (`varta error: `, `varta warn: `; standard output keeps
+  `varta log: `), so a host routes a line by its prefix alone
+  (`console::is_standard_error`); `varta` and `varta-runtime` print those
+  lines to standard error. The official browser host's worker implements
+  the same import, and its loader only forwards each standard-error line to
+  the page's `console.error` or `console.warn` (the registry's `console`
+  section names prefixes and methods); the line stays in the ordered output.
+  Validation admits the import only under host ABI 34 profiles.
+- **Methods.** `console.error` and `console.warn` format as `console.log`
+  does and write standard error at their level; `console.dirxml` is
+  `console.log`. The other methods live in the engine prelude
+  `<varta>/builtins/console.ts` (`modules::engine::CONSOLE`), which a
+  program loads by naming one of them: `trace` (the stack of a `Trace`
+  error without frames: `Trace: message`, or `Trace`), `assert` (a falsy
+  condition writes `Assertion failed[: first string]` and the remaining
+  arguments through `warn`), `group`/`groupCollapsed`/`groupEnd` (two
+  spaces of indentation before every line, standard error included, as
+  `kWriteToConsole` indents), `count`/`countReset`, `time`/`timeEnd`/
+  `timeLog` (`formatTime` of `internal/util/debuglog`), `dir` and `table`.
+  A program that loads the prelude writes every console call through its
+  `consoleWrite`, so the indentation applies to all of them; a program
+  that names none of these methods writes directly and keeps its bytes.
+- **`dir` and `table`.** The linked intrinsic `console_render(mode, cell)`
+  (`HostOperation::ConsoleRender`, `console::RenderMode`, never imported)
+  renders the request array the prelude builds:
+  `util.inspect(value, options)` for `dir` with `depth` (`null` unbounded),
+  `showHidden`, `breakLength`, `compact` (a number, `false` or `true`),
+  `maxArrayLength`, `maxStringLength`, `sorted` (`true`) and
+  `numericSeparator`, and `Console.prototype.table` with
+  `internal/cli_table` for `table` (index, column and `Values` columns,
+  `Map` and `Set` iteration tables, `properties` filters, cells inspected
+  at depth 0 or `-1` with `maxArrayLength` 3 and no line breaking, column
+  widths by `getStringWidth`). A primitive or a function given to `table`
+  is logged as `console.log` logs it.
+- **Clock.** `time`, `timeEnd` and `timeLog` read the `time.now` clock of
+  `Date.now` (its grant decides; a denial reports itself as `Date.now`
+  does). Durations therefore have whole milliseconds.
+- **Deviations from Node** (documented, not silent): Node writes its process
+  warnings (`countReset` of an unknown label, a repeated `time` label, an
+  unknown `timeEnd`/`timeLog` label) asynchronously as `(node:PID) Warning:
+  …` with a one-time `--trace-warnings` hint; Varta writes them at once as
+  one `Warning: …` line on standard error (`warn` level, outside the group
+  indentation). Timer durations come from the millisecond `time.now` clock,
+  not a monotonic high-resolution one. `dir` ignores `colors`,
+  `customInspect`, `getters` and `showProxy` (no ANSI colors, no custom
+  inspection or accessor properties exist) and admits only `sorted: true`
+  (a comparator function is a type error of its typed options).
 
 #### Bytes held by unknown (`byte_values`)
 

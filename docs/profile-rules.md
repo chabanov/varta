@@ -4330,6 +4330,66 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   `composed_class_names_follow_the_checker_types` scanner test, and the
   nine `typescript_handbook` conformance rows.
 
+### Console notation (`node_console`)
+
+Contract: [architecture.md](architecture.md#console-notation-node_console).
+
+- Gate on `node_console()`; earlier profiles keep the one-argument
+  `console.log` and their notation. `lower::console` only boxes the
+  arguments (`unknown::logged`) into an `unknown[]` array; every formatting
+  rule lives in `varta_intrinsics::inspect`, the one implementation for
+  native and browser hosts. Never format a value in the compiler or in a
+  host.
+- Keep `inspect` a step-for-step port of Node's `inspect.js` (the source is
+  in the pinned Node binary: `process.binding('natives')['internal/util/inspect']`);
+  regenerate expectations with Node 24 under `--stack-trace-limit=0`, never
+  by hand. A new value kind or record display gets its Node notation there
+  and a pinned case, or stays refused by `lower::console::logged_cell`.
+- Linked intrinsics have no function tables: no `core::fmt` (`format!`,
+  `{}`) in `inspect`; write digits with its helpers.
+- Every value18 descriptor carries its display trailer
+  (`emit::records::descriptor`, from `lower::record_displays`); readers
+  that do not display records keep reading the prefix
+  (`value::descriptor_bytes`). A new engine-owned layout that Node prints
+  specially gets a `RecordDisplay` kind, never a name test in `inspect`.
+- Private state is read only by name (`STATE`, `#time`, the promise
+  fields); `inspect` never resolves other private slots (they may hold
+  values no reader validates as a property).
+- `SuppressedError` lives in its own prelude (`SUPPRESSED`), so programs
+  that use only `AggregateError` keep their bytes; keep its fields typed
+  `unknown` and its constructor without options, as the spec defines it.
+- Tests: `varta-runtime` `console_tests` (`console_cases/*.ts` with Node
+  24.20.0 `--stack-trace-limit=0` expected files), the `inspect` unit tests,
+  the `display` trailer test, the conformance features `console-notation`
+  and `suppressed-error`.
+
+### Console methods (`console_methods`)
+
+Contract: [architecture.md](architecture.md#console-methods-console_methods).
+
+- Gate on `console_methods()`; `lower::console::Method::of` is the one map
+  from callee names to methods. V37 and earlier keep refusing every method
+  but `log`.
+- Standard error is only `log_stderr16` with a `console::StderrLevel` word;
+  never encode a stream in the text, and never add a level without a
+  registry entry (`StderrLevel::ALL`, the browser registry's `console`
+  section). Hosts route a captured line only by its prefix
+  (`console::is_standard_error`); the browser loader forwards and decides
+  nothing else.
+- Stateful and composite methods belong in the console prelude
+  (`prelude/console.ts`); its `varta.console.*` intrinsics exist only in
+  engine preludes. Every formatting rule stays in `varta_intrinsics::inspect`
+  (`render` for `dir` and `table`); the prelude never formats a value.
+- A program that never loads the console prelude must keep its bytes:
+  `log`, `error` and `warn` write directly unless the prelude is loaded,
+  and then all go through `consoleWrite` (group indentation).
+- New varta-common modules compiled into guest builds are listed in every
+  wasm build script's `COMMON_CORE` and in `link/tests.rs`.
+- Tests: `varta-runtime` `console_method_tests` (`console_method_cases/*.ts`
+  with Node 24.20.0 `.stdout`/`.stderr`), the `console::tests` units, the
+  CLI smoke `v38_console_standard_error_goes_to_stderr`, the browser
+  worker test of `log_stderr16`, the conformance feature `console-methods`.
+
 ### Bytes held by unknown (`byte_values`)
 
 Contract: [architecture.md](architecture.md#bytes-held-by-unknown-byte_values).

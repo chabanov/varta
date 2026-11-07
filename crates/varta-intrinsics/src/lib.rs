@@ -17,6 +17,7 @@ extern crate alloc;
 pub mod bigint;
 pub mod error;
 pub mod format;
+pub mod inspect;
 pub mod json;
 pub mod math;
 pub mod number;

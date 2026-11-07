@@ -371,12 +371,12 @@ fn sdk_path_record_views_of_bytes_and_instances_throw_named_type_errors() {
                console.log(either(false));
              }"
         ),
-        [r#"{"0":1,"1":255}"#, "{}", "x"]
+        // Node's notation (`node_console`).
+        ["Uint8Array(2) [ 1, 255 ]", "Uint8Array(0) []", "x"]
     );
-    refused(
-        V38,
-        "export function main(): void { console.log(new Uint8Array([1])); }",
-        "cannot log Uint8Array",
+    assert_eq!(
+        logs("export function main(): void { console.log(new Uint8Array([1])); }"),
+        ["Uint8Array(1) [ 1 ]"]
     );
 }
 

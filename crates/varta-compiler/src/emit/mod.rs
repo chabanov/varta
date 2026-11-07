@@ -426,6 +426,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     }
     let mut layout_offsets = BTreeMap::new();
     let mut layout_data = Vec::new();
+    let displays = crate::lower::record_displays(&program.types);
     for (key, (span, source)) in layouts {
         let bytes = records::descriptor(
             &key,
@@ -433,6 +434,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             &offsets,
             program.types.value_version(),
             program.types.own_tags(),
+            &displays,
         )?;
         let start = placement.push(&bytes).ok_or_else(|| {
             source.locate(

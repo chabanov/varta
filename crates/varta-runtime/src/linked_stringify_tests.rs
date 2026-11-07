@@ -1,8 +1,8 @@
 //! V38 linked serialization against the host imports: `JSON.stringify`
-//! (`json_stringify_owned`, linked) and logging (the linked
-//! `value_format_v12` text through `log_string16`) compared with modules
-//! that import `json_stringify_owned` and `value_log_v12` from the host
-//! (`host_import_test_hook`). Identical output and failures on the case
+//! (`json_stringify_owned`, linked) compared with modules that import it
+//! from the host (`host_import_test_hook`); both builds log through the
+//! host's `value_log_v12`, since the linked console notation is Node's
+//! (`console_tests`). Identical output and failures on the case
 //! corpus, on generated value graphs and on the limit cases; collections
 //! while the linked serializer runs; owned text results beyond the 1 MiB
 //! result buffer; and the fuel of linked serialization against the fair
@@ -33,11 +33,19 @@ fn imports(bytes: &[u8]) -> Vec<H> {
     }
     operations
 }
-/// The production v38 build: serialization and logging linked.
+/// The v38 build with serialization linked. Logging goes through the host's
+/// `value_log_v12` in both builds: the linked console notation is Node's
+/// (`node_console`), pinned against Node by `console_tests`, not the host
+/// renderer's.
 fn linked(source: &str) -> Vec<u8> {
-    let bytes = crate::codegen_v2_tests::compile(source, V38);
+    let bytes = varta_compiler::host_import_test_hook::compile_with_profile(
+        source,
+        V38,
+        &[H::ValueFormatV12],
+    )
+    .unwrap_or_else(|error| panic!("{error}\n{source}"));
     let imported = imports(&bytes);
-    for operation in [H::JsonStringifyOwned, H::ValueLogV12, H::ValueFormatV12] {
+    for operation in [H::JsonStringifyOwned, H::ValueFormatV12] {
         assert!(
             !imported.contains(&operation),
             "the linked module imports {}",

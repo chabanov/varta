@@ -138,6 +138,7 @@ mod tests {
         ("Response", "function"),
         ("Set", "function"),
         ("String", "function"),
+        ("SuppressedError", "function"),
         ("Symbol", "function"),
         ("SyntaxError", "function"),
         ("TextDecoder", "function"),

@@ -7,6 +7,8 @@
 //! data limit for linked code.
 use crate::{IntrinsicError, Memory};
 use alloc::{borrow::Cow, string::String, vec::Vec};
+use icu_normalizer::{ComposingNormalizerBorrowed, DecomposingNormalizerBorrowed};
+use varta_common::text::NormalizationForm;
 
 /// UTF-16LE code units per byte pair.
 const UNIT_BYTES: usize = 2;
@@ -246,8 +248,89 @@ pub fn convert_case16(bytes: &[u8], upper: bool, limit: usize) -> Result<Vec<u8>
     Ok(bytes)
 }
 
+/// `String.prototype.normalize` of UTF-16 `units` into `form` with ICU4X's
+/// compiled Unicode data. A lone surrogate is a normalization boundary kept
+/// as it is (as V8's ICU keeps it); the well-formed runs between them are
+/// normalized on their own.
+#[must_use]
+pub fn normalize(units: &[u16], form: NormalizationForm) -> Vec<u16> {
+    let mut output = Vec::with_capacity(units.len());
+    let mut start = 0;
+    let mut at = 0;
+    while at < units.len() {
+        let unit = units[at];
+        let high = (0xD800..=0xDBFF).contains(&unit);
+        if high
+            && units
+                .get(at + 1)
+                .is_some_and(|next| (0xDC00..=0xDFFF).contains(next))
+        {
+            at += 2;
+            continue;
+        }
+        if high || (0xDC00..=0xDFFF).contains(&unit) {
+            normalize_run(&units[start..at], form, &mut output);
+            output.push(unit);
+            start = at + 1;
+        }
+        at += 1;
+    }
+    normalize_run(&units[start..], form, &mut output);
+    output
+}
+/// Normalize one well-formed run of UTF-16 into `output`.
+fn normalize_run(run: &[u16], form: NormalizationForm, output: &mut Vec<u16>) {
+    if run.is_empty() {
+        return;
+    }
+    // A well-formed run decodes without replacement.
+    let chars =
+        char::decode_utf16(run.iter().copied()).map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER));
+    let mut push = |c: char| {
+        let mut buffer = [0u16; 2];
+        output.extend_from_slice(c.encode_utf16(&mut buffer));
+    };
+    match form {
+        NormalizationForm::Nfc => ComposingNormalizerBorrowed::new_nfc()
+            .normalize_iter(chars)
+            .for_each(&mut push),
+        NormalizationForm::Nfkc => ComposingNormalizerBorrowed::new_nfkc()
+            .normalize_iter(chars)
+            .for_each(&mut push),
+        NormalizationForm::Nfd => DecomposingNormalizerBorrowed::new_nfd()
+            .normalize_iter(chars)
+            .for_each(&mut push),
+        NormalizationForm::Nfkd => DecomposingNormalizerBorrowed::new_nfkd()
+            .normalize_iter(chars)
+            .for_each(&mut push),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn normalization_forms_and_lone_surrogates_match_node() {
+        // Pinned against Node 24: "\u1E9B\u0323".normalize(form), and
+        // lone surrogates kept as boundaries.
+        let text = [0x1E9B, 0x0323];
+        let expected: [(NormalizationForm, &[u16]); 4] = [
+            (NormalizationForm::Nfc, &[0x1E9B, 0x0323]),
+            (NormalizationForm::Nfd, &[0x017F, 0x0323, 0x0307]),
+            (NormalizationForm::Nfkc, &[0x1E69]),
+            (NormalizationForm::Nfkd, &[0x0073, 0x0323, 0x0307]),
+        ];
+        for (form, expected) in expected {
+            assert_eq!(normalize(&text, form), expected, "{form:?}");
+        }
+        assert_eq!(
+            normalize(&[0x61, 0xD800, 0x301], NormalizationForm::Nfc),
+            [0x61, 0xD800, 0x301]
+        );
+        assert_eq!(
+            normalize(&[0x41, 0x30A, 0xDC00, 0x301], NormalizationForm::Nfc),
+            [0xC5, 0xDC00, 0x301]
+        );
+    }
     use super::*;
     fn bytes(units: &[u16]) -> Vec<u8> {
         units.iter().flat_map(|unit| unit.to_le_bytes()).collect()

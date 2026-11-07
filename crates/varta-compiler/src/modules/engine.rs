@@ -259,6 +259,10 @@ pub(crate) const DATE: Prelude = Prelude {
     lifted: Some(date_v38),
 };
 pub(crate) const DATE_CLASS: &str = "Date";
+/// The class [`AGGREGATE`] exports.
+pub(crate) const AGGREGATE_ERROR_CLASS: &str = "AggregateError";
+/// The class [`SUPPRESSED`] exports.
+pub(crate) const SUPPRESSED_ERROR_CLASS: &str = "SuppressedError";
 /// The v38 date prelude (`standard_library`): the v37 parser and calendar
 /// helpers, `Date.parse` extended to the legacy `toString` forms, and the
 /// complete `Date` class of `prelude/date_local.ts` in place of the v37 one.
@@ -325,9 +329,52 @@ pub(crate) const AGGREGATE: Prelude = Prelude {
     triggers: &[],
     admitted: LanguageProfile::standard_library,
     extended: None,
+    // `Promise.any` rejects with an `AggregateError` (`anyRejection`).
+    loads: &["Promise.any"],
+    lifted: None,
+};
+/// `SuppressedError` (ES2026 explicit resource management; v38, K9 D1), an
+/// `Error` subclass of typed guest code like [`AGGREGATE`].
+pub(crate) const SUPPRESSED: Prelude = Prelude {
+    path: "<varta>/builtins/suppressed.ts",
+    source: include_str!("../prelude/suppressed.ts"),
+    exports: &[(SUPPRESSED_ERROR_CLASS, Namespace::Class)],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::node_console,
+    extended: None,
     loads: &[],
     lifted: None,
 };
+/// Node's console methods beyond `log` (v38 `console_methods`): group
+/// indentation, counters, timers, `trace`, `assert`, `dir` and `table`.
+/// The compiler calls its functions by name (`lower::console`).
+pub(crate) const CONSOLE: Prelude = Prelude {
+    path: "<varta>/builtins/console.ts",
+    source: include_str!("../prelude/console.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::console_methods,
+    extended: None,
+    loads: CONSOLE_LOADS,
+    lifted: None,
+};
+/// The console methods whose reference loads [`CONSOLE`].
+pub(crate) const CONSOLE_LOADS: &[&str] = &[
+    "console.trace",
+    "console.assert",
+    "console.dir",
+    "console.table",
+    "console.group",
+    "console.groupCollapsed",
+    "console.groupEnd",
+    "console.count",
+    "console.countReset",
+    "console.time",
+    "console.timeEnd",
+    "console.timeLog",
+];
 /// `Symbol` values (v38 `symbol_values`, K9 D2): the symbol record class,
 /// the global symbol registry and the well-known symbols, called by
 /// `lower::symbols`; a builtin, so its instances stay opaque to every host
@@ -369,6 +416,7 @@ pub(crate) const STANDARD_LOADS: &[&str] = &[
     ".substr",
     ".isWellFormed",
     ".toWellFormed",
+    ".normalize",
     ".toLocaleUpperCase",
     ".toLocaleLowerCase",
     ".getOwnPropertyNames",
@@ -826,7 +874,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 22] = [
+pub(crate) const PRELUDES: [&Prelude; 24] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -837,6 +885,8 @@ pub(crate) const PRELUDES: [&Prelude; 22] = [
     &DATE,
     &STANDARD,
     &AGGREGATE,
+    &SUPPRESSED,
+    &CONSOLE,
     &SYMBOL,
     &REGEXP,
     &BLOB,

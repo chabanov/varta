@@ -4338,8 +4338,8 @@ export async function main(): Promise<void> {
 ```
 
 `await` of `T | Promise<T>` waits for the promise when there is one.
-`Promise.any` rejects with an `Error("All promises were rejected")` (there is
-no `AggregateError`), an `allSettled` result's `value` is typed
+`Promise.any` rejects with an `Error("All promises were rejected")` (v38:
+an `AggregateError` of every reason), an `allSettled` result's `value` is typed
 `T | undefined`, and awaiting a promise hidden in `unknown` throws a
 `TypeError`: keep promises typed as `Promise<T>`.
 
@@ -6104,6 +6104,81 @@ without a comparator needs primitive elements, `flat` needs a literal
 depth, and `JSON.stringify` takes property lists but no replacer
 function. `Symbol()`, `WeakMap`/`WeakSet`/`WeakRef`, `Proxy`, `Reflect`,
 `structuredClone`, `Object.freeze` and `Intl` are refused with the reason.
+
+#### Console output like Node (opt-in v38)
+
+`console.log`, `console.info` and `console.debug` take any number of
+arguments and print exactly what Node 24 prints: strings as they are, every
+other value in `util.inspect` notation, and `%s %d %i %f %j %o %O %c %%`
+directives in a leading string. Class instances print with their class
+name, and `Map`, `Set`, `Date`, `Uint8Array`, promises, Error objects and
+circular references print in Node's notation:
+
+```ts
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+interface Item { name: string; next: Item | null }
+export function main(): void {
+  console.log("total", 3, true, 10n, -0); // total 3 true 10n -0
+  console.log({ id: 7, tags: ["a", "b"], ok: false }); // { id: 7, tags: [ 'a', 'b' ], ok: false }
+  console.log(new Point(1, 2)); // Point { x: 1, y: 2 }
+  console.log(new Map([["k", [1, 2]]]), new Set(["x"])); // Map(1) { 'k' => [ 1, 2 ] } Set(1) { 'x' }
+  console.log({ a: { b: { c: { d: 1 } } } }); // { a: { b: { c: [Object] } } }
+  console.log("%s is %d%%", "progress", 42.5); // progress is 42.5%
+  console.log(new Error("failed", { cause: "disk" })); // [Error: failed] { [cause]: 'disk' }
+  const first: Item = { name: "first", next: null };
+  first.next = { name: "second", next: first };
+  console.log(first);
+  // <ref *1> {
+  //   name: 'first',
+  //   next: { name: 'second', next: [Circular *1] }
+  // }
+}
+```
+
+Varta records no stack frames, so an Error prints as Node prints it with
+`--stack-trace-limit=0`, and functions print as `[Function (anonymous)]`
+because function values carry no name. `SuppressedError` (ES2026) is
+available as well: `new SuppressedError(error, suppressed, "message")` is an
+`Error` whose `error` and `suppressed` fields are `unknown`, narrowed by
+`instanceof` in a `catch`. Earlier profiles keep one argument
+per `console.log` (and print booleans as `1`/`0`).
+
+The rest of Node's console works as well. `console.error`, `console.warn`,
+`console.trace` and a failed `console.assert` write standard error (`varta`
+prints those lines to standard error; the browser host forwards them to the
+page's `console.error`/`console.warn`); groups indent every line; counters,
+timers (under the `time.now` grant), `console.dir` options and
+`console.table` print as in Node:
+
+```ts
+export function main(): void {
+  const parts = ["a", 1];
+  console.error("failed:", ...parts); // standard error: failed: a 1
+  console.group("request");
+  console.warn("slow");      // standard error:   slow
+  console.count();           //   default: 1
+  console.groupEnd();
+  console.assert(1 > 2, "math"); // standard error: Assertion failed: math
+  console.dir({ a: { b: { c: 1 } } }, { depth: 0 }); // { a: [Object] }
+  console.table([{ a: 1, b: "x" }]);
+  // ┌─────────┬───┬─────┐
+  // │ (index) │ a │ b   │
+  // ├─────────┼───┼─────┤
+  // │ 0       │ 1 │ 'x' │
+  // └─────────┴───┴─────┘
+}
+```
+
+Node prints its process warnings (`console.countReset` of an unknown
+label, a repeated `console.time` label) later and with its process id;
+Varta prints them at once as `Warning: …` on standard error.
 
 #### Local time (opt-in v38)
 

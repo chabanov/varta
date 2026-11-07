@@ -98,6 +98,7 @@ struct Lower<'a> {
     core: core::State,
 }
 
+pub(crate) use console::record_displays;
 pub(crate) use link::{lower, lower_tracked};
 
 fn annotation(ann: Option<&ast::TsTypeAnn>, types: &mut ir::ValueTypes) -> Result<Option<Type>> {
@@ -415,6 +416,7 @@ mod collections;
 mod completion;
 mod compound_assignments;
 mod computed_keys;
+mod console;
 mod core;
 mod declarations;
 mod declared_fields;

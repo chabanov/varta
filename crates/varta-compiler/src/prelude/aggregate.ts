@@ -4,6 +4,12 @@
 // held by `unknown` (TypeScript's lib types them `any[]`); `message` and the
 // `cause` option behave as for `Error`.
 
+/// The rejection reason of `Promise.any` (ECMA-262 §27.2.4.3): every
+/// element's reason in input order; the compiler calls it by name.
+export function anyRejection(errors: unknown[]): AggregateError {
+  return new AggregateError(errors, "All promises were rejected");
+}
+
 export class AggregateError extends Error {
   errors: unknown[];
   constructor(errors: unknown[], message?: string, options?: { cause?: unknown }) {

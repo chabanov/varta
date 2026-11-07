@@ -79,7 +79,7 @@ fn execute(args: Args) -> Result<i32, Error> {
                 RuntimeEvent::Listening {
                     address, scheme, ..
                 } => eprintln!("varta listening: {scheme}://{address}"),
-                RuntimeEvent::Output(line) => println!("{line}"),
+                RuntimeEvent::Output(line) => console_line(&line),
                 RuntimeEvent::Diagnostic(message) => eprintln!("varta HTTP: {message}"),
                 RuntimeEvent::HttpRequest(report) => {
                     if request_budgets && let Some(budget) = &report.budget {
@@ -107,7 +107,7 @@ fn execute(args: Args) -> Result<i32, Error> {
             // Lines emitted before a failure come first, then the report,
             // then the diagnostic.
             for line in &report.output.lines {
-                println!("{line}");
+                console_line(line);
             }
             if args.budget_report
                 && let Some(budget) = &report.budget
@@ -204,5 +204,16 @@ fn main() {
             eprintln!("varta runtime failed: {error}");
             std::process::exit(1);
         }
+    }
+}
+
+/// Print one captured console line to its stream: standard-error lines
+/// (`console.error`, `console.warn` and the other v38 standard-error
+/// methods) to standard error, every other line to standard output.
+fn console_line(line: &str) {
+    if varta_common::console::is_standard_error(line) {
+        eprintln!("{line}");
+    } else {
+        println!("{line}");
     }
 }

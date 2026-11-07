@@ -6,6 +6,7 @@
 //! last element to settle builds the result from the settled elements, so the
 //! job order and the result match Node.
 use super::*;
+use crate::modules::engine::AGGREGATE;
 
 /// The four combinators.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -56,6 +57,8 @@ const REJECTED: &str = "rejected";
 /// Message of the `Promise.any` rejection (V8's `AggregateError` message).
 /// Varta has no `AggregateError` class: the reason is a native `Error`.
 const AGGREGATE_MESSAGE: &str = "All promises were rejected";
+/// The aggregate prelude's `Promise.any` rejection (v38).
+const ANY_REJECTION: &str = "anyRejection";
 
 impl Lower<'_> {
     /// The record type of one `allSettled` element of `Promise<T>`:
@@ -605,17 +608,118 @@ impl Lower<'_> {
             }
             Combinator::Any => {
                 let reject = self.reject_helper(span, result)?;
-                let error = self.aggregate_error(span)?;
+                // V38: an `AggregateError` with no reasons. Earlier profiles
+                // keep their bytes (no `unknown[]` type is interned).
+                let errors = if self.types.profile.standard_library() {
+                    Some(Expr {
+                        span,
+                        ty: arrays::intern(Type::Unknown, self.types)?,
+                        kind: E::Array(vec![]),
+                    })
+                } else {
+                    None
+                };
+                let error = self.aggregate_error(span, errors)?;
                 vec![invoke(span, reject, vec![promise, error])]
             }
             Combinator::Race => vec![],
         })
     }
-    /// The `Promise.any` rejection reason, widened to the exception type.
-    fn aggregate_error(&mut self, span: swc_common::Span) -> Result<Expr> {
-        let error = self.array_error(ErrorClass::Error, AGGREGATE_MESSAGE, span)?;
+    /// The `Promise.any` rejection reason, widened to the exception type:
+    /// under v38 (`standard_library`) an `AggregateError` of the `unknown[]`
+    /// reasons `errors` (ECMA-262 §27.2.4.3), earlier (`None`) an `Error`.
+    fn aggregate_error(&mut self, span: swc_common::Span, errors: Option<Expr>) -> Result<Expr> {
         let reason = self.exception_type()?;
+        if let Some(errors) = errors {
+            let error = self.engine_apply((&AGGREGATE, ANY_REJECTION, &[]), vec![errors], span)?;
+            return unions::widen(error, Some(reason), self.types);
+        }
+        let error = self.array_error(ErrorClass::Error, AGGREGATE_MESSAGE, span)?;
         unions::widen(error, Some(reason), self.types)
+    }
+    /// The rejection reasons of every element of a settled `Promise.any`, in
+    /// input order, as `unknown` values; `errors` is the hidden local that
+    /// receives the array.
+    fn any_reasons(
+        &mut self,
+        span: swc_common::Span,
+        (id, state): (u32, Expr),
+        errors: u32,
+    ) -> Result<Vec<S>> {
+        let number = self.types.number();
+        let array = arrays::intern(Type::Unknown, self.types)?;
+        let promise_ty = Type::Promise(id);
+        let index = self.hidden(number);
+        let item = self.hidden(promise_ty);
+        let state_slot = match state.kind {
+            E::Local(slot) => slot,
+            _ => return Err(CompilerError::Internal("combinator state parameter".into())),
+        };
+        let state_ty = state.ty;
+        let record = || local(span, state_slot, state_ty);
+        let count = Expr {
+            span,
+            ty: number,
+            kind: E::Length(Box::new(self.state_field(record(), ITEMS)?)),
+        };
+        let read = Expr {
+            span,
+            ty: promise_ty,
+            kind: E::Index(
+                Box::new(self.state_field(record(), ITEMS)?),
+                Box::new(local(span, index, number)),
+            ),
+        };
+        let reason = unknown::widen(
+            self.read_promise(local(span, item, promise_ty), REASON)?,
+            self.types,
+        )?;
+        Ok(vec![
+            S::Init(
+                errors,
+                Expr {
+                    span,
+                    ty: array,
+                    kind: E::Array(vec![]),
+                },
+            ),
+            S::For(
+                vec![S::Init(index, float(span, 0.0))],
+                Some(compare(
+                    span,
+                    ast::BinaryOp::Lt,
+                    local(span, index, number),
+                    count,
+                )),
+                vec![S::Set(
+                    index,
+                    Expr {
+                        span,
+                        ty: number,
+                        kind: E::Binary(
+                            ast::BinaryOp::Add,
+                            Box::new(local(span, index, number)),
+                            Box::new(float(span, 1.0)),
+                        ),
+                    },
+                )],
+                vec![
+                    S::Init(item, read),
+                    S::Expr(Expr {
+                        span,
+                        ty: Type::Float64,
+                        kind: E::ArrayPush(
+                            Box::new(local(span, errors, array)),
+                            Box::new(Expr {
+                                span,
+                                ty: array,
+                                kind: E::Array(vec![Some(reason)]),
+                            }),
+                        ),
+                    }),
+                ],
+            ),
+        ])
     }
     /// The job frame of one element: `(state, index) -> void`.
     fn combinator_job(
@@ -746,7 +850,20 @@ impl Lower<'_> {
                 marker,
             },
             Combinator::Any => {
-                let error = self.aggregate_error(span)?;
+                // On the last rejection every element has settled rejected:
+                // their reasons, in input order, are the error's `errors`.
+                // Earlier profiles keep their bytes: no reasons are gathered.
+                let mut rejection = Vec::new();
+                let errors = if self.types.profile.standard_library() {
+                    let array = arrays::intern(Type::Unknown, self.types)?;
+                    let errors = self.hidden(array);
+                    rejection = self.any_reasons(span, (id, holder()), errors)?;
+                    Some(local(span, errors, array))
+                } else {
+                    None
+                };
+                let error = self.aggregate_error(span, errors)?;
+                rejection.push(invoke(span, reject, vec![target(self)?, error]));
                 S::TryCatch {
                     body: vec![
                         S::Set(fulfilled, awaited),
@@ -757,14 +874,7 @@ impl Lower<'_> {
                         ),
                     ],
                     binding: Some(e),
-                    handler: vec![
-                        decrement,
-                        S::If(
-                            last,
-                            vec![invoke(span, reject, vec![target(self)?, error])],
-                            vec![],
-                        ),
-                    ],
+                    handler: vec![decrement, S::If(last, rejection, vec![])],
                     marker,
                 }
             }

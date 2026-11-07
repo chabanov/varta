@@ -1091,6 +1091,18 @@ export function stringSubstr(value: string, start: number, length?: number): str
   return value.substring(from, end);
 }
 
+// String.prototype.normalize (§22.1.3.15): the form word of the linked
+// normalizer is the form's index in NFC, NFD, NFKC, NFKD
+// (`varta_common::text::NormalizationForm`).
+export function stringNormalize(value: string, form?: string): string {
+  const name = form === undefined ? 'NFC' : form;
+  const word = name === 'NFC' ? 0 : name === 'NFD' ? 1 : name === 'NFKC' ? 2 : name === 'NFKD' ? 3 : -1;
+  if (word < 0) {
+    throw new RangeError('The normalization form should be one of NFC, NFD, NFKC, NFKD.');
+  }
+  return varta.text.normalize(value, word);
+}
+
 // String.prototype.isWellFormed (§22.1.3.10): no lone surrogate.
 export function stringIsWellFormed(value: string): boolean {
   const length = value.length;
