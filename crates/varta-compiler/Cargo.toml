@@ -20,6 +20,12 @@ swc_ecma_visit = "=29.0.0"
 # The shared RegExp pattern compiler (`regexp::pattern`), which v38 guests
 # also link to compile patterns built at run time.
 varta-intrinsics = { path = "../varta-intrinsics" }
+# The locale selection of linked `Intl` data (`link::intl`): BCP 47 tags and
+# ICU4X's locale fallback chains (compiled fallback data, a few kilobytes),
+# the same chains the linked data provider walks.
+icu_locale_core.workspace = true
+icu_locale_fallback.workspace = true
+icu_provider.workspace = true
 
 [features]
 # Test-only: exposes the K4.4 suspension lowering hook and frame test exports

@@ -1,0 +1,52 @@
+[package]
+name = "varta-intl-data"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# Development tooling, outside the Varta workspace (its own lockfile): the
+# generator of the v38 locale data blobs (`scripts/build-intl-data.py`). It
+# reads ICU4X 2.4's compiled data (the same `icu_*_data` crates and versions
+# the intrinsic library linked as baked statics before) through their baked
+# macros with iteration, and needs the ICU4X `datagen` features (serde
+# serialization of the data structs), which the engine never enables.
+[workspace]
+
+[dependencies]
+varta-common = { path = "../../crates/varta-common", default-features = false }
+postcard = { version = "=1.1.3", default-features = false, features = ["alloc"] }
+icu_provider = { version = "=2.4.0", features = ["export", "baked"] }
+icu_locale_core = { version = "=2.4.0" }
+icu_locale = { version = "=2.4.0", default-features = false, features = ["datagen", "unstable"] }
+icu_locale_fallback = { version = "=2.4.0", features = ["datagen"] }
+icu_time = { version = "=2.4.0", default-features = false, features = ["datagen", "unstable"] }
+icu_calendar = { version = "=2.4.0", default-features = false, features = ["datagen", "unstable"] }
+icu_decimal = { version = "=2.4.0", default-features = false, features = ["datagen", "unstable"] }
+icu_plurals = { version = "=2.4.0", default-features = false, features = ["datagen", "unstable"] }
+icu_list = { version = "=2.4.0", default-features = false, features = ["datagen"] }
+icu_collator = { version = "=2.4.0", default-features = false, features = ["datagen", "unstable"] }
+icu_segmenter = { version = "=2.4.0", default-features = false, features = ["datagen", "unstable"] }
+icu_casemap = { version = "=2.4.0", default-features = false, features = ["datagen"] }
+icu_datetime = { version = "=2.4.0", default-features = false, features = ["datagen", "unstable"] }
+icu_experimental = { version = "=0.7.0", default-features = false, features = ["datagen"] }
+icu_collections = { version = "=2.4.0" }
+icu_pattern = { version = "=0.5.1" }
+zerovec = { version = "=0.11.9" }
+zerotrie = { version = "=0.2.5" }
+tinystr = { version = "=0.8.5" }
+potential_utf = { version = "=0.1.6" }
+icu_locale_data = { version = "=2.4.0" }
+icu_time_data = { version = "=2.4.0" }
+icu_calendar_data = { version = "=2.4.0" }
+icu_decimal_data = { version = "=2.4.0" }
+icu_plurals_data = { version = "=2.4.0" }
+icu_list_data = { version = "=2.4.0" }
+icu_collator_data = { version = "=2.4.0" }
+icu_segmenter_data = { version = "=2.4.0" }
+icu_casemap_data = { version = "=2.4.0" }
+icu_datetime_data = { version = "=2.4.0" }
+icu_experimental_data = { version = "=0.7.0" }
+serde_json = { version = "=1.0.154" }
+serde = { version = "=1.0.229", default-features = false }
+yoke = { version = "=0.8.4" }

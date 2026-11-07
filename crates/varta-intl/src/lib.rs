@@ -8,7 +8,9 @@
 //!   ECMA-262 §21.4.1.20–26 define them;
 //! - [`posix`]: the POSIX TZ rules of TZif footers;
 //! - [`names`]: the localized zone name of `Date.prototype.toString`, from
-//!   ICU4X's compiled CLDR data.
+//!   ICU4X with CLDR data;
+//! - [`data`]: the ICU4X data provider over the module's linked locale data
+//!   segments (`varta_common::intl_data`).
 //!
 //! The host supplies only its zone identifier and locale tag (recorded host
 //! inputs); every offset, transition and name is computed here, so the
@@ -16,6 +18,7 @@
 extern crate alloc;
 
 pub mod calendar;
+pub mod data;
 pub mod names;
 pub mod posix;
 pub mod zone;

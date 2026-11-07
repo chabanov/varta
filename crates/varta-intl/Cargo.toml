@@ -12,9 +12,13 @@ license.workspace = true
 [dependencies]
 # The IANA Time Zone Database as TZif (RFC 8536), `no_std`, data only.
 jiff-tzdb.workspace = true
-# ICU4X with its compiled CLDR data: zone names, metazones, locales.
+# The locale data format of the linked segments (`intl_data`).
+varta-common = { path = "../varta-common", default-features = false }
+# ICU4X over the linked CLDR data: zone names, metazones, locales.
 icu_locale_core.workspace = true
+icu_locale_fallback.workspace = true
 icu_provider.workspace = true
+icu_decimal.workspace = true
 icu_time.workspace = true
 icu_datetime.workspace = true
 writeable.workspace = true

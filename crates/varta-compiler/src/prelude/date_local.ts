@@ -17,6 +17,14 @@ const MAX_TWO_DIGIT_YEAR = 99;
 const INVALID_DATE = 'Invalid Date';
 const OFFSET_AT_INSTANT = 0;
 const OFFSET_OF_LOCAL = 1;
+// The daylight flag the zone name of an instant uses (`date_zone_offset`
+// mode 2): the name depends on the instant only through it, so each
+// instance computes the standard and the daylight name once.
+const NAME_DAYLIGHT = 2;
+let standardName = '';
+let daylightName = '';
+let standardNamed = false;
+let daylightNamed = false;
 
 // The host's zone identifier and locale tag, read on first use.
 let hostZone = '';
@@ -180,9 +188,25 @@ function zoneString(time: number): string {
   const sign = offset >= 0 ? '+' : '-';
   const hours = Math.floor(magnitude / MS_PER_HOUR);
   const minutes = Math.floor(magnitude / MS_PER_MINUTE) % 60;
+  return `${sign}${pad(hours, 2)}${pad(minutes, 2)} (${zoneName(time)})`;
+}
+
+// The localized long zone name of the instant `time`, memoized per daylight
+// flag.
+function zoneName(time: number): string {
   readHost();
-  const name = varta.date.zoneName(hostZone, hostLocale, time);
-  return `${sign}${pad(hours, 2)}${pad(minutes, 2)} (${name})`;
+  if (varta.date.zoneOffset(hostZone, time, NAME_DAYLIGHT) === 1) {
+    if (!daylightNamed) {
+      daylightName = varta.date.zoneName(hostZone, hostLocale, time);
+      daylightNamed = true;
+    }
+    return daylightName;
+  }
+  if (!standardNamed) {
+    standardName = varta.date.zoneName(hostZone, hostLocale, time);
+    standardNamed = true;
+  }
+  return standardName;
 }
 
 // The legacy forms that toString, toDateString and toUTCString produce

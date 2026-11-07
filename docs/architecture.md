@@ -190,6 +190,9 @@ prerequisite and its presence cannot change whether a project is accepted.
 With `"tailwind": {"entry": …}` (v38), the pipeline first generates the
 project's stylesheet and serves it as that entry's text resource
 ([build-time Tailwind stylesheets](#build-time-tailwind-stylesheets-k8-t1)).
+With `"locales": ["en", "uk"]` (v38), linking keeps only those locales' CLDR
+data and the module's [[AvailableLocales]] are that list
+([locale data](#locale-data-intl_data)); without it every locale is linked.
 
 The pipeline is:
 
@@ -10645,7 +10648,9 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   global other than its stack pointer and the zero memory/table bases of
   position-independent code, an absolute linker symbol (such as
   `__heap_base`) or a 64-bit, TLS or location-relative memory relocation is
-  not linkable. Linking is deterministic, and a program without a linked
+  not linkable (the linker's own passive locale data segments are the
+  exception, see [locale data](#locale-data-intl_data)). Linking is
+  deterministic, and a program without a linked
   import is emitted byte for byte as before.
 - **Memory: the intrinsic region of memory 0.** A linked module has exactly
   one memory (owner decision: no multi-memory, so Safari and embedded engines
@@ -11958,7 +11963,9 @@ new.
   local) -> f64` returns the offset LocalTime(t) adds (`local` 0, the offset
   in effect at the instant) or UTC(t) subtracts (`local` 1: the offset of the
   earliest instant whose local time is `t`, and for a local time skipped by a
-  transition the offset before it, §21.4.1.26), in milliseconds.
+  transition the offset before it, §21.4.1.26), in milliseconds; `local` 2
+  answers the daylight flag the instant's zone name uses (1 or 0), by which
+  the date prelude memoizes the two names per instance.
   `varta-intl::zone` reads the IANA Time Zone Database as TZif (RFC 8536,
   versions 2–4) with its POSIX TZ footer (with the RFC 8536 extensions) for
   instants after the last explicit transition, and uses local time type 0
@@ -11974,7 +11981,8 @@ new.
   through the linked `date_zone_name (zone, locale, time) -> string`
   (`varta-intl::names`, ICU4X): the CLDR long specific name of the zone's
   metazone, or the zone's own name for that variant (`British Summer Time`),
-  in the default locale, else the localized GMT format of the zone's current
+  in the default locale (the host's locale input, resolved against a
+  project's locale selection), else the localized GMT format of the zone's current
   standard offset (or daylight offset, for a daylight name of a zone that
   observes daylight saving time now). The metazone and the current offsets
   are those of the reference instant `names::REFERENCE_SECONDS`
@@ -11992,7 +12000,8 @@ new.
   (2026e) in the *rearguard* form ICU compiles, from `jiff-tzdb` 0.1.9;
   the System V names that IANA 2024b turned into links (`EST5EDT`,
   `CST6CDT`, `MST7MDT`, `PST8PDT`) read their link targets' data. Zone names
-  come from ICU4X 2.4.0's compiled data (CLDR 49.0). Node 24.20.0 ships
+  come from ICU4X 2.4.0's CLDR 49.0 data, linked as
+  [locale data](#locale-data-intl_data). Node 24.20.0 ships
   tzdata 2026c and CLDR 48.0: offsets agree for every zone it lists up to
   2026 (Manitoba and Inuvik differ from 2027 under the newer rules), and
   names agree except where CLDR 49 renamed or newly translated a zone
@@ -12002,11 +12011,116 @@ new.
   metazone that no longer observes daylight saving time (Moscow and Türkiye
   summer time in 2000) and for `Africa/Casablanca` (`varta-intl`'s
   `names::tests` pins every difference).
+- **Accepted differences from Node 24.20.0** (coordinator decision of
+  2026-11-07 under the owner's delegated authority; owner review pending).
+  Data versions: CLDR 49.0 (ICU4X 2.4) instead of Node's CLDR 48.0, and IANA
+  tzdata 2026e instead of 2026c. Specification over V8: `getTimezoneOffset`
+  returns the fractional minutes of local mean time offsets that ECMA-262
+  §21.4.4.11 defines (V8 truncates). Every differing sample is pinned by its
+  cause: names in `varta-intl` `names::tests` (`DIFFERENT`,
+  `DIFFERENT_ZONES`, `DIFFERENT_SUMMERS`, `MISMATCHES`), offsets in
+  `zone::tests`, `getTimezoneOffset` in `varta-runtime`
+  `fractional_offsets_follow_the_specification`.
 - **Costs.** No budget changes. A program that uses local time links the
-  tzdata (about 225 KB of data in its intrinsic region); one that writes
-  `toString`/`toTimeString` also links the zone names of every CLDR locale
-  (about 2.5 MB). The data lives in the intrinsic region of memory 0 and
-  counts toward the memory budget.
+  tzdata (about 225 KB of data in its intrinsic region). One that writes
+  `toString`/`toTimeString` links the zone names as
+  [locale data](#locale-data-intl_data): passive segments that stay out of
+  memory until a call copies the parts it reads.
+
+#### Locale data (`intl_data`)
+
+K9 D4 (2026-11-07), part of the v38 [local time](#local-time-local_time) and
+`Intl` work: ICU4X's CLDR data is not compiled into the intrinsic library.
+Linked code reads it from **passive data segments** of the module, so the
+library carries no locale data (the checked-in library went from 3.6 MB to
+1.1 MB), a module carries only the data its linked operations read, and an
+instance's memory holds only the parts a call touches.
+
+- **Format** (`varta_common::intl_data`, format version
+  `intl_data::FORMAT_VERSION`). One versioned *blob per service*
+  (`crates/varta-compiler/src/link/intl/<service>.bin`: `zone`, `datetime`,
+  `decimal`, `compact`, `plurals`, `list`, `collator`, `segmenter`,
+  `casemap`, `relativetime`, `displaynames`, `currency`, `units`, `duration`,
+  `locale`), holding one *segment per ICU4X data marker*: a header (entry
+  count, ICU4X's checksum of the marker), sorted fixed-size entries (key and
+  payload ranges), the keys (`locale`, or `locale` U+001E `attributes`) and
+  the payloads (the data struct in postcard 1 form, equal payloads stored
+  once). Blobs are generated, never edited: `scripts/build-intl-data.py` runs
+  the standalone generator `scripts/intl-data` (its own lockfile; ICU4X's
+  `datagen` features never enter the engine), which loads every payload of
+  ICU4X 2.4.0's compiled data (CLDR 49.0.0, the same bytes the library baked
+  before) through the data crates' own baked macros. `intl.json` records the
+  versions, the per-marker sizes and the generator's source fingerprint
+  (`intl_data_matches_its_generator`).
+- **Linking.** `intl_data::OPERATION_MARKERS` lists the markers each linked
+  operation reads (`date_zone_name`: the IANA identifier map, metazone
+  periods, zone name essentials, location names, specific and standard long
+  names, decimal symbols and digits). The linker appends exactly those
+  markers' segments as passive data segments after every active segment,
+  sorted by marker id hash, adds a data count section, the `varta.intl`
+  custom section (`intl_data::Manifest`: format version, CLDR, ICU4X and
+  tzdata versions, the locale selection, the marker of each passive
+  segment) and synthesizes the accessor `intl_data (marker, offset, len, dst)
+  -> i32`: for a linked marker and a range inside its segment (checked in 64
+  bits), `memory.init` of that range to `dst` and the segment's length,
+  otherwise -1 without a copy. The runtime admits passive segments only in a
+  linked v38 module whose single manifest names exactly as many; a host
+  never reads them.
+- **Provider.** `varta_intl::data::Provider` is ICU4X's buffer provider over
+  the accessor: for each load it reads the segment header, binary-searches
+  the entries by copying only the probed entries and keys, walks ICU4X's
+  locale fallback for the marker's priority exactly as ICU4X's baked data
+  does (exact key, then the fallback chain to `und`, attribute prefix
+  matching included), copies the one payload into the call's arena and lets
+  ICU4X deserialize it; a marker the module does not link is
+  `MarkerNotFound`. The fallback algorithm's own data (CLDR parent locales
+  and fallback likely subtags, `icu_locale_fallback`) stays compiled in, so
+  the linker computes the same chains. Every `varta-intl` name test runs
+  through the provider over the generated blobs restricted to the
+  operation's marker list (complete: all 2,349 Node-pinned names unchanged;
+  minimal: every listed marker is read).
+- **Locale selection** (ECMA-402 [[AvailableLocales]]). `"locales": ["en",
+  "uk"]` in `varta.config.json` (v38 only; BCP 47 language tags without
+  extensions, at most `intl_data::MAX_LOCALES`, canonicalized; empty lists,
+  `und` and extensions are rejected) selects the locales a build links: each
+  segment keeps the entries of the selected locales' fallback chains for its
+  marker's priority, singletons stay whole, and the module gets the
+  available-locales segment (marker hash `intl_data::AVAILABLE_LOCALES_HASH`,
+  the tags joined by line feeds). Linked code resolves the host's locale
+  input against it: the host's tag when every locale is linked, else the
+  first selected locale on the host tag's CLDR fallback chain, else the
+  first selected locale (`varta_intl::data::default_locale`). The owner has
+  not chosen a default selection yet; without `"locales"` every locale is
+  linked (option A of the [plan record](development-plan.md#k9-d4-local-time--2026-11-06)).
+- **Costs** (macOS arm64, `zone_name_locale_data_costs`; the per-call memory
+  is the instance's memory after one `toString`):
+
+  | Program (`America/Los_Angeles`) | Module | Fuel | Memory |
+  | --- | --- | --- | --- |
+  | `getHours` only (no names) | 337 KB | 22,936 | 2,228,224 B |
+  | one `toString`, every locale, `en-US` | 3.10 MB | 771,983 | 2,228,224 B |
+  | one `toString`, every locale, `uk-UA` | 3.10 MB | 1,397,453 | 2,228,224 B |
+  | one `toString`, every locale, `ja-JP` | 3.10 MB | 921,584 | 2,228,224 B |
+  | one `toString`, `"locales": ["en", "uk"]`, `uk-UA` | 574 KB | 1,323,273 | 2,228,224 B |
+  | 100 `toString`, every locale, `uk-UA` | 3.10 MB | 9,108,210 | 2,228,224 B |
+
+  With the names baked into the library (before), the same one-`toString`
+  module was 5.44 MB with both data forms present, 2.85 MB alone, used
+  5,767,168 bytes of memory (the names occupied the intrinsic region) and
+  about 150,000 fuel per call. Now the first name of each daylight flag
+  costs 0.77–1.4 million fuel (copying and validating the payloads ICU4X
+  deserializes: the UTF-8 of the location and specific names dominates);
+  the date prelude memoizes the name per daylight flag per instance (the
+  name depends on the instant only through the flag, which
+  `date_zone_offset` mode 2 answers), so later calls cost no data loads
+  (100 calls: 9.1 million fuel against about 15 million before).
+
+  Per service, the generated blobs hold (bytes, every locale): `zone` 3.37 MB, `datetime` 3.22 MB, `displaynames` 5.06 MB, `currency` 3.74 MB, `segmenter` 3.54 MB, `units` 1.56 MB, `collator` 1.06 MB, `relativetime` 448 KB, `locale` 85 KB, `list` 38 KB, `compact` 32 KB, `casemap` 24 KB, `decimal` 10 KB, `plurals` 8.5 KB, `duration` 0.4 KB; 22.2 MB in all (the compiler embeds only the blobs a linked operation reads: `zone` and `decimal` today).
+  The per-call worst case of a service is bounded by the sum of its
+  markers' largest payloads plus ICU4X's working memory: about 108 KB for
+  zone names, 2.75 MB for the segmenter (its CJK dictionary and LSTM models)
+  and 360 KB for the collator, against the 8 MiB of an HTTP request
+  instance. No budget changed.
 
 #### Full RegExp (`full_regexp`)
 

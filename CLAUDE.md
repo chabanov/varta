@@ -101,6 +101,7 @@ docs/
 scripts/verify.py        # scoped and full verification helper
 scripts/build-intrinsics.py # rebuilds the linked intrinsic library (offline, locked)
 scripts/build-kv-codec.py # rebuilds the browser KV codec module (offline, locked)
+scripts/build-intl-data.py # regenerates the v38 locale data blobs (scripts/intl-data tool, own lockfile)
 .github/workflows/       # CI mirrors the commands below
 ```
 

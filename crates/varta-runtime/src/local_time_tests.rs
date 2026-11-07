@@ -245,3 +245,126 @@ fn v37_keeps_the_utc_date() {
     .unwrap_or_default();
     assert!(!error.is_empty());
 }
+
+fn compile_selected(source: &str, locales: &[&str]) -> Vec<u8> {
+    let bytes = varta_compiler::compile_typescript_with_settings(
+        source,
+        V38,
+        &varta_compiler::Settings {
+            locales: locales.iter().map(|&tag| tag.to_owned()).collect(),
+        },
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    bytes
+}
+
+/// A project's locale selection (`"locales"`) links only the selected
+/// locales' data, and the host's default locale resolves through CLDR
+/// fallback to the best selected one (else the first).
+#[test]
+fn selected_locales_resolve_the_default_locale_through_cldr_fallback() {
+    let source = "export function main(): void { console.log(new Date(0).toString()); }";
+    let kyiv = "Thu Jan 01 1970 03:00:00 GMT+0300 (за східноєвропейським стандартним часом)";
+    let english = "Thu Jan 01 1970 03:00:00 GMT+0300 (Eastern European Standard Time)";
+    let both = compile_selected(source, &["en", "uk"]);
+    assert_eq!(logs(run(&both, inputs("Europe/Kyiv", "uk-UA"))), [kyiv]);
+    assert_eq!(logs(run(&both, inputs("Europe/Kyiv", "en-GB"))), [english]);
+    // No selected locale on fr-FR's chain: the first selected one.
+    assert_eq!(logs(run(&both, inputs("Europe/Kyiv", "fr-FR"))), [english]);
+    let ukrainian = compile_selected(source, &["uk"]);
+    assert_eq!(
+        logs(run(&ukrainian, inputs("Europe/Kyiv", "en-US"))),
+        [kyiv]
+    );
+    // Every locale: the host's own.
+    let all = compile(V38, source);
+    assert_eq!(
+        logs(run(&all, inputs("Europe/Kyiv", "fr-FR"))),
+        ["Thu Jan 01 1970 03:00:00 GMT+0300 (heure normale d’Europe de l’Est)"]
+    );
+}
+
+/// The section bytes of a module without its custom section `name`.
+fn without_section(bytes: &[u8], name: &str) -> Vec<u8> {
+    let mut output = bytes[..8].to_vec();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        let Some((id, range)) = payload.unwrap().as_section() else {
+            continue;
+        };
+        let mut reader = wasmparser::BinaryReader::new(&bytes[range.start..range.end], 0);
+        let skip = id == 0 && reader.read_string().is_ok_and(|section| section == name);
+        if !skip {
+            // The section id, its size (LEB128) and its contents.
+            output.push(id);
+            let mut size = range.len();
+            loop {
+                let byte = (size & 0x7F) as u8;
+                size >>= 7;
+                output.push(if size == 0 { byte } else { byte | 0x80 });
+                if size == 0 {
+                    break;
+                }
+            }
+            output.extend_from_slice(&bytes[range]);
+        }
+    }
+    output
+}
+
+/// Passive segments must be exactly the locale data the manifest names.
+#[test]
+fn passive_segments_need_their_locale_data_manifest() {
+    let bytes = compile(
+        V38,
+        "export function main(): void { console.log(new Date(0).toString()); }",
+    );
+    assert!(run(&bytes, inputs("UTC", "en-US")).into_result().is_ok());
+    let stripped = without_section(&bytes, varta_common::intl_data::SECTION);
+    assert!(stripped.len() < bytes.len());
+    wasmtime::Module::new(&wasmtime::Engine::default(), &stripped).unwrap();
+    let error = format!("{:?}", run(&stripped, inputs("UTC", "en-US")).failure);
+    assert!(
+        error.contains("passive data segments must be the locale data its manifest names"),
+        "{error}"
+    );
+}
+
+/// Sizes and memory of zone names with every locale and with a selection
+/// (recorded in the contract; the assertions bound them).
+#[test]
+fn zone_name_locale_data_costs() {
+    let source = "export function main(): void { console.log(new Date(0).toString()); }";
+    let offsets = "export function main(): void { console.log(`${new Date(0).getHours()}`); }";
+    let measure = |bytes: &[u8], locale: &str| {
+        let report = run(bytes, inputs("America/Los_Angeles", locale));
+        let budget = report.budget.clone().unwrap();
+        let turn = &budget.turns[0];
+        let (fuel, memory) = (turn.fuel, turn.memory_bytes);
+        assert!(report.into_result().is_ok());
+        (bytes.len(), fuel, memory)
+    };
+    let repeated = "export function main(): void { let n = 0; \
+         for (let i = 0; i < 100; i++) { n += new Date(i * 86400000 * 3).toString().length; } \
+         console.log(`${n}`); }";
+    let all = compile(V38, source);
+    let selected = compile_selected(source, &["en", "uk"]);
+    let base = compile(V38, offsets);
+    let hundred = compile(V38, repeated);
+    let rows = [
+        (
+            "100 toString calls, every locale, uk-UA",
+            measure(&hundred, "uk-UA"),
+        ),
+        ("offsets only", measure(&base, "en-US")),
+        ("names, every locale, en-US", measure(&all, "en-US")),
+        ("names, every locale, uk-UA", measure(&all, "uk-UA")),
+        ("names, every locale, ja-JP", measure(&all, "ja-JP")),
+        ("names, en+uk, uk-UA", measure(&selected, "uk-UA")),
+    ];
+    for (name, (bytes, fuel, memory)) in rows {
+        std::eprintln!("{name}: module {bytes} bytes, fuel {fuel}, memory {memory} bytes");
+        assert!(memory <= 8 << 20, "{name}: {memory}");
+    }
+    assert!(selected.len() * 4 < all.len());
+}

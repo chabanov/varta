@@ -4,7 +4,29 @@
 //! locale (POSIX form), at the instants of [`INSTANTS`].
 extern crate std;
 use super::*;
-use std::vec::Vec;
+use crate::data::{Blobs, Provider, Source, marker_hash, testing};
+use core::cell::RefCell;
+use std::{collections::BTreeSet, vec::Vec};
+
+/// The generated blobs restricted to [`MARKERS`], recording the markers
+/// read, so the list the linker links is complete and minimal.
+struct Linked {
+    blobs: Blobs<'static>,
+    read: RefCell<BTreeSet<u32>>,
+}
+
+impl Source for Linked {
+    fn read(&self, marker: u32, offset: u32, dest: &mut [u8]) -> bool {
+        if !MARKERS.iter().any(|info| marker_hash(*info) == marker) {
+            return false;
+        }
+        self.read.borrow_mut().insert(marker);
+        self.blobs.read(marker, offset, dest)
+    }
+    fn len(&self, marker: u32) -> Option<u32> {
+        self.blobs.len(marker)
+    }
+}
 
 const FIXTURE: &str = include_str!("node_names.txt");
 
@@ -83,6 +105,11 @@ fn names_match_node() {
     let mut unexpected = Vec::new();
     let mut mismatches = 0;
     let mut rows = 0;
+    let linked = Linked {
+        blobs: testing::blobs(),
+        read: RefCell::default(),
+    };
+    let provider = Provider(&linked);
     for line in FIXTURE.lines() {
         let mut parts = line.split('|');
         let name = parts.next().unwrap();
@@ -90,7 +117,7 @@ fn names_match_node() {
         let zone = Zone::find(name).unwrap();
         let locale = locale(tag);
         for (&time, expected) in instants.iter().zip(parts) {
-            let got = long_name(&locale, &zone, time);
+            let got = long_name(&provider, &locale, &zone, time);
             if got != expected {
                 mismatches += 1;
                 if !expected_difference(name, tag, time) {
@@ -108,6 +135,10 @@ fn names_match_node() {
         unexpected.join("\n")
     );
     assert_eq!(mismatches, MISMATCHES);
+    let read = linked.read.borrow();
+    for info in MARKERS {
+        assert!(read.contains(&marker_hash(*info)), "{info:?} is never read");
+    }
 }
 
 #[test]
@@ -119,4 +150,23 @@ fn equivalent_years_follow_v8() {
     assert_eq!(equivalent_time(MAX_EPOCH_MS), MAX_EPOCH_MS);
     let july_1943 = utc(1943, 6, 1) + 3_600_000;
     assert_eq!(equivalent_time(july_1943), utc(2027, 6, 1) + 3_600_000);
+}
+
+#[test]
+fn the_linker_links_exactly_the_markers_names_read() {
+    let mut by_name = std::collections::BTreeMap::new();
+    for bytes in [testing::ZONE, testing::DECIMAL] {
+        for marker in varta_common::intl_data::Blob::parse(bytes)
+            .unwrap()
+            .markers()
+        {
+            by_name.insert(marker.name, marker.hash);
+        }
+    }
+    let linked: BTreeSet<u32> = varta_common::intl_data::operation_markers("date_zone_name")
+        .iter()
+        .map(|name| by_name[name])
+        .collect();
+    let read: BTreeSet<u32> = MARKERS.iter().map(|info| marker_hash(*info)).collect();
+    assert_eq!(linked, read);
 }

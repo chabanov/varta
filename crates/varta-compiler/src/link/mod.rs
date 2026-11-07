@@ -14,6 +14,7 @@
 //! the library's shadow stack and relocated data there. The library reaches
 //! guest values and the result globals only through the accessor functions
 //! synthesized here, and its per-call arena lives above the guest heap's end.
+pub(crate) mod intl;
 mod library;
 mod merge;
 
@@ -21,6 +22,10 @@ use library::library;
 
 use crate::CompilerError;
 use varta_common::{HostOperation, abi, language::LanguageProfile};
+
+/// A module's locale data: its passive segments (marker hash and bytes)
+/// and the manifest naming them ([`intl`]).
+pub(crate) type LinkedData = (Vec<(u32, Vec<u8>)>, varta_common::intl_data::Manifest);
 
 /// The guest functions and global linked JSON builds values with, as
 /// emitted (before linking): the allocator (`(len) -> ptr`), the retention
@@ -116,12 +121,14 @@ pub(crate) mod json_hook {
 /// Link the intrinsics `guest` imports when `profile` links them; modules of
 /// every other profile are returned unchanged. `heap` is the guest
 /// allocator's heap-end global and `values` its value helpers, when the
-/// module has a managed heap.
+/// module has a managed heap. `locales` is the project's locale selection
+/// (empty: every locale) for the locale data linked operations read.
 pub(crate) fn link(
     guest: Vec<u8>,
     profile: LanguageProfile,
     heap: Option<u32>,
     values: Option<GuestValues>,
+    locales: &[String],
 ) -> Result<Vec<u8>, CompilerError> {
     if !profile.linked_intrinsics() {
         return Ok(guest);
@@ -142,7 +149,10 @@ pub(crate) fn link(
         return Ok(guest);
     }
     let library = library().map_err(CompilerError::Internal)?;
-    merge::merge(&guest, &parts, library, &linked, heap, values).map_err(CompilerError::Internal)
+    let operations: Vec<HostOperation> = linked.iter().map(|&(_, operation)| operation).collect();
+    let intl = intl::linked_data(&operations, locales).map_err(CompilerError::Invalid)?;
+    merge::merge(&guest, &parts, library, &linked, heap, values, intl)
+        .map_err(CompilerError::Internal)
 }
 
 /// Pages of the intrinsic region a module of `profile` importing `hosts`

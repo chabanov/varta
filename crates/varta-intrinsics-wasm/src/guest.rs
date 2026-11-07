@@ -44,6 +44,27 @@ unsafe extern "C" {
     /// The static region's extension (low word) and intrinsic (high word)
     /// pages.
     fn static_pages() -> i64;
+    /// Copy `[offset, offset + len)` of the linked locale data segment of
+    /// the data marker with id hash `marker` to the library buffer at
+    /// `dst` (`memory.init`) and return the segment's length; -1 (and no
+    /// copy) when the module links no such marker or the range lies
+    /// outside its segment.
+    fn intl_data(marker: u32, offset: u32, len: usize, dst: *mut u8) -> i32;
+}
+
+/// Fill `dest` from the locale data segment of `marker` at `offset`
+/// (`varta_common::intl_data`); false when it is not linked or the range
+/// is outside it.
+pub fn intl_read(marker: u32, offset: u32, dest: &mut [u8]) -> bool {
+    // SAFETY: the accessor writes exactly `dest.len()` bytes at `dest`, a
+    // live library buffer, or nothing.
+    unsafe { intl_data(marker, offset, dest.len(), dest.as_mut_ptr()) >= 0 }
+}
+
+/// The length of the locale data segment of `marker`, when it is linked.
+pub fn intl_len(marker: u32) -> Option<u32> {
+    // SAFETY: an empty copy writes nothing.
+    u32::try_from(unsafe { intl_data(marker, 0, 0, core::ptr::null_mut()) }).ok()
 }
 
 /// End the execution: a fatal failure of linked code.

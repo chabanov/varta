@@ -4262,12 +4262,21 @@ Contract: [architecture.md](architecture.md#local-time-local_time).
   (`node_offsets.txt`, `node_zones.txt`, `node_names.txt`,
   `local_time_cases/*.expected`) with the matching Node, rebuild the
   intrinsic library, and keep every pinned difference explained.
+- Locale data is never baked into the intrinsic library: ICU4X reads it
+  through `varta_intl::data::Provider` from the module's passive segments
+  ([locale data](architecture.md#locale-data-intl_data)). A linked operation
+  that loads a marker lists it in `intl_data::OPERATION_MARKERS`, and its
+  `varta-intl` test proves the list complete and minimal (a source restricted
+  to the list, every listed marker read). Regenerate the blobs only with
+  `scripts/build-intl-data.py`; never edit them.
 - Linked code may call indirectly only through table 0
   ([linked intrinsics](architecture.md#linked-intrinsics-linked_intrinsics));
   the effect analysis treats such a call as reaching every table function.
 - Tests: `varta-intl` unit tests, `varta-runtime` `local_time_tests`, the
-  linker test `indirect_calls_of_linked_code_get_appended_table_slots`, the
-  browser registry facts and the conformance case `date-local-time`.
+  linker tests `indirect_calls_of_linked_code_get_appended_table_slots`,
+  `zone_names_link_their_locale_data_as_passive_segments` and
+  `intl_data_matches_its_generator`, the browser registry facts and the
+  conformance case `date-local-time`.
 
 ### Type level (`type_level`)
 

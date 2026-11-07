@@ -7,7 +7,11 @@ use crate::{
     text::owned,
 };
 use alloc::string::String;
-use varta_intl::{names, zone::Zone};
+use varta_intl::{
+    data::{self, Provider, Source},
+    names,
+    zone::Zone,
+};
 use varta_intrinsics::string;
 
 /// Zone identifiers and locale tags are short host inputs
@@ -21,6 +25,21 @@ const FALLBACK_ZONE: &str = "UTC";
 /// range (MakeDate of clipped components); farther values clip to NaN with
 /// any offset.
 const MAX_TIME: f64 = 8.64e15 + 8.64e7;
+/// The `date_zone_offset` mode that answers the daylight flag of the zone
+/// name (`date_zone_name` depends on the instant only through it).
+const DAYLIGHT_FLAG: f64 = 2.0;
+
+/// The module's linked locale data segments.
+struct Linked;
+
+impl Source for Linked {
+    fn read(&self, marker: u32, offset: u32, dest: &mut [u8]) -> bool {
+        crate::guest::intl_read(marker, offset, dest)
+    }
+    fn len(&self, marker: u32) -> Option<u32> {
+        crate::guest::intl_len(marker)
+    }
+}
 
 /// The text of a short UTF-16 argument; empty when it is longer than
 /// [`MAX_NAME_BYTES`] or not well-formed.
@@ -46,9 +65,10 @@ fn milliseconds(time: f64) -> Option<i64> {
     (time.is_finite() && time.abs() <= MAX_TIME).then_some(time as i64)
 }
 
-/// `date_zone_offset (zone ptr, len, time, local) -> offset`: the offset of
-/// LocalTime(t) (`local` 0) or of UTC(t) (`local` 1) in milliseconds; 0 for
-/// a time value outside the range.
+/// `date_zone_offset (zone ptr, len, time, mode) -> offset`: the offset of
+/// LocalTime(t) (`mode` 0) or of UTC(t) (`mode` 1) in milliseconds, or
+/// (`mode` 2) the daylight flag the zone name of the instant uses (1 or 0,
+/// [`names::equivalent_time`]); 0 for a time value outside the range.
 #[unsafe(no_mangle)]
 pub extern "C" fn date_zone_offset(ptr: i32, len: i32, time: f64, local: f64) -> f64 {
     entry(|| {
@@ -56,6 +76,9 @@ pub extern "C" fn date_zone_offset(ptr: i32, len: i32, time: f64, local: f64) ->
             return 0.0;
         };
         let zone = zone(ptr, len);
+        if local == DAYLIGHT_FLAG {
+            return f64::from(u8::from(zone.daylight(names::equivalent_time(time))));
+        }
         let offset = if local == 0.0 {
             zone.offset_at(time)
         } else {
@@ -77,8 +100,13 @@ pub extern "C" fn date_zone_name(
 ) -> i32 {
     entry(|| {
         let zone = zone(zone_ptr, zone_len);
-        let locale = names::locale(&text(locale_ptr, locale_len));
-        let name = names::long_name(&locale, &zone, milliseconds(time).unwrap_or(0));
+        let locale = data::default_locale(&Linked, &names::locale(&text(locale_ptr, locale_len)));
+        let name = names::long_name(
+            &Provider(Linked),
+            &locale,
+            &zone,
+            milliseconds(time).unwrap_or(0),
+        );
         owned(&varta_common::text::encode(&name))
     })
 }
