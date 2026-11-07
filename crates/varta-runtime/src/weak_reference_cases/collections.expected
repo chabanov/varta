@@ -1,0 +1,19 @@
+true
+point record array function
+true false
+true false undefined
+replaced
+true false false undefined
+again
+249500
+250
+1 2 false
+undefined false false
+TypeError: Invalid value used as weak map key
+true true false
+true
+true false false true
+true false
+TypeError: Invalid value used in weak set
+TypeError: Invalid value used in weak set
+object object true true

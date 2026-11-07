@@ -252,6 +252,7 @@ impl Emitter<'_> {
                 self.expr(value)?;
                 self.string_helper(strings::Helper::text_units(*op))?;
             }
+            E::Intrinsic(ir::Intrinsic::Weak(op), args) => self.weak(*op, args, expr.ty)?,
             E::Intrinsic(op, args) => {
                 for (at, arg) in args.iter().enumerate() {
                     self.expr(arg)?;
@@ -333,6 +334,9 @@ impl Emitter<'_> {
                     }
                     // The low word of every managed handle is its payload address.
                     ir::Intrinsic::Identity => self.code.extend([I::I32WrapI64, I::F64ConvertI32U]),
+                    ir::Intrinsic::Weak(_) => {
+                        return Err(CompilerError::Internal("weak intrinsic operands".into()));
+                    }
                 }
             }
             E::StringRepeat {

@@ -91,6 +91,9 @@ pub mod value;
 /// `view`, which `std` implies).
 #[cfg(feature = "view")]
 pub mod view;
+/// Ephemeron tables and the checkpoint export of v38 weak references.
+#[cfg(feature = "std")]
+pub mod weak;
 #[cfg(feature = "std")]
 pub use capability::*;
 #[cfg(feature = "std")]

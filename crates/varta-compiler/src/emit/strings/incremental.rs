@@ -238,6 +238,9 @@ pub(in crate::emit) struct Calls {
     pub trace: u32,
     pub shade: u32,
     pub blacken: u32,
+    /// V38 (`weak_references`): the weak phase (`weak::incremental`) of a
+    /// module with ephemeron tables.
+    pub weak: Option<u32>,
 }
 
 /// Count `len` (a local holding the requested bytes) as allocated and, while
@@ -343,13 +346,13 @@ pub(super) fn abandon(globals: Globals) -> Vec<I<'static>> {
 /// Locals holding one block's bit position: the byte offset of its bitmap
 /// word (the same in the mark and the traced bitmap) and its mask.
 #[derive(Clone, Copy)]
-struct Bits {
-    offset: u32,
-    mask: u32,
+pub(super) struct Bits {
+    pub offset: u32,
+    pub mask: u32,
 }
 impl Bits {
     /// Locate the bits of the block whose header is in `block`.
-    fn locate(self, globals: Globals, block: u32) -> Vec<I<'static>> {
+    pub(super) fn locate(self, globals: Globals, block: u32) -> Vec<I<'static>> {
         vec![
             I::LocalGet(block),
             I::I32Const(globals.base as i32),
@@ -375,12 +378,12 @@ impl Bits {
         [I::GlobalGet(bitmap), I::LocalGet(self.offset), I::I32Add]
     }
     /// `[] -> [i32]`: the located bit, nonzero when set.
-    fn test(self, bitmap: u32) -> Vec<I<'static>> {
+    pub(super) fn test(self, bitmap: u32) -> Vec<I<'static>> {
         let mut code = self.word(bitmap).to_vec();
         code.extend([I::I32Load(WORD), I::LocalGet(self.mask), I::I32And]);
         code
     }
-    fn set(self, bitmap: u32) -> Vec<I<'static>> {
+    pub(super) fn set(self, bitmap: u32) -> Vec<I<'static>> {
         let mut code = self.word(bitmap).to_vec();
         code.extend(self.word(bitmap));
         code.extend([
@@ -394,7 +397,7 @@ impl Bits {
 }
 
 /// Push the header in `block` onto the mark stack, or record an overflow.
-fn push(state: State, block: u32) -> Vec<I<'static>> {
+pub(super) fn push(state: State, block: u32) -> Vec<I<'static>> {
     vec![
         I::GlobalGet(state.global(Slot::StackTop)),
         I::GlobalGet(state.global(Slot::StackEnd)),
@@ -1244,8 +1247,15 @@ pub(super) fn step(globals: Globals, calls: Calls, mark: u32) -> Function {
     code.extend([I::I32Eqz, I::If(BlockType::Empty)]);
     code.extend(spend(trace(vec![I::I32Const(0)])));
     code.extend([I::End, I::End, I::End, I::Br(AGAIN + 2), I::End]);
-    // Nothing is gray: the marking is complete and the sweep starts. Every
-    // free list is rebuilt from the blocks it passes.
+    // Nothing is gray. V38 (`weak_references`): the weak phase marks the
+    // values of live keys and resumes marking, until it marks nothing and
+    // vacates the pairs of dead keys.
+    if let Some(weak) = calls.weak {
+        code.extend(spend(vec![I::I32Const(1)]));
+        code.extend([I::Call(weak), I::BrIf(AGAIN + 1)]);
+    }
+    // The marking is complete and the sweep starts. Every free list is
+    // rebuilt from the blocks it passes.
     code.extend(lists.reset());
     code.extend([I::I32Const(0), I::GlobalSet(globals.free)]);
     for slot in [Slot::Run, Slot::LargeHead, Slot::LargeTail, Slot::Swept] {

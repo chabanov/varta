@@ -6105,6 +6105,41 @@ depth, and `JSON.stringify` takes property lists but no replacer
 function. `Symbol()`, `WeakMap`/`WeakSet`/`WeakRef`, `Proxy`, `Reflect`,
 `structuredClone`, `Object.freeze` and `Intl` are refused with the reason.
 
+#### Weak references (opt-in v38)
+
+`WeakMap`, `WeakSet`, `WeakRef` and `FinalizationRegistry` follow
+TypeScript's lib types: keys, members and targets are objects or symbols that
+`Symbol.for` did not register (`WeakKey`). A `WeakMap` value lives as long as
+its key and keeps nothing else alive, even when it refers back to the key; a
+`WeakRef` keeps its target until the end of the turn that created or read it;
+a `FinalizationRegistry` calls its callback in a job of its own after a
+collection found a target dead, never for an unregistered cell. When
+collections run is the engine's choice (as in every JavaScript engine), but in
+Varta it is a deterministic function of the program and its inputs
+([contract](architecture.md#weak-references-weak_references)).
+
+```ts
+class Session {
+  readonly user: string;
+  constructor(user: string) {
+    this.user = user;
+  }
+}
+
+const cache = new WeakMap<Session, string>();
+const registry = new FinalizationRegistry<string>((user) => {
+  console.log(`session of ${user} collected`);
+});
+
+export function main(): void {
+  const session = new Session('ada');
+  cache.set(session, 'profile');
+  registry.register(session, session.user);
+  const ref = new WeakRef(session);
+  console.log(`${cache.get(session)} ${ref.deref()?.user}`);
+}
+```
+
 #### Local time (opt-in v38)
 
 `Date` local time follows the host's time zone, and `toString` names the

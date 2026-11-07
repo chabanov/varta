@@ -4427,6 +4427,41 @@ Contract: [architecture.md](architecture.md#symbol-values-symbol_values).
   refusal in `kv_tests`, the `language` test of the tag, the conformance
   feature `symbol`.
 
+### Weak references (`weak_references`)
+
+Contract: [architecture.md](architecture.md#weak-references-weak_references).
+
+- Gate every admission on `weak_references()`; v37 rejects the four names
+  (`v37_rejects_weak_references`).
+- The classes are typed guest code of `prelude/weak.ts`; only that prelude
+  calls the `varta.weak.*` intrinsics (`lower::weak`), and every table
+  access goes through them. Never store a weak key in an ordinary field,
+  array or closure of the prelude: that would be a strong edge. A value
+  that must die with its key goes into the key's own pair.
+- An ephemeron table is a `HEAP_WEAK_FLAG` block with no edge flag. Never
+  give it an edge flag, never let a value tag or host reader reach it, and
+  keep the table helpers' checks (position, identity, kind of the value) in
+  `emit::strings::weak`. A table of kind `KIND_VALUES` holds only
+  reference values; any other holds none.
+- Every collector path runs the weak phase between complete marking and the
+  first sweep step (`collect` after its worklist and scans, `step` when
+  nothing is gray, through `CollectWeak`). A new collector path must too;
+  a sweep that runs before the vacating pass frees blocks that tables
+  still name. The weak list is no root.
+- A store that removes or replaces a pair's value (or a kept key) while a
+  cycle marks shades the old one (`WeakPut`, `WeakRemove`, `WeakClear`).
+  `deref` and `new WeakRef` add the target to the kept objects; never read a
+  target out of a table without doing so.
+- Cleanup callbacks run only in the jobs the checkpoint export queues; never
+  call guest callbacks from the collector or from an allocation. Both hosts
+  call the export after every drained checkpoint without an unhandled
+  rejection (`scheduler::drain`, `drain_async`, browser `scheduler.js`).
+- Tests: `varta-runtime` `weak_reference_tests` (`weak_reference_cases/*.ts`
+  with Node 24.20.0 `--expose-gc` expected files, stress builds, the
+  bounded-memory churn, the fixed point's fuel, typing and validation), the
+  browser `scheduler.test.mjs` checkpoint test, the conformance feature
+  `weak-reference-lifecycle`.
+
 ### V38 linked intrinsics
 
 Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),

@@ -4,7 +4,7 @@ use super::*;
 pub(super) const EDGE_CURSOR: u32 = 8;
 pub(super) const EDGE_MASK: u32 = 9;
 const CHILD: u32 = 10;
-const CHANGED: u32 = 11;
+pub(super) const CHANGED: u32 = 11;
 pub(super) const BLOCK: u32 = 12;
 pub(super) const FIELD_COUNT: u32 = 13;
 pub(super) const IS_ARRAY: u32 = 14;
@@ -18,6 +18,18 @@ pub(super) const EDGE_SLOT: u32 = 16;
 const STACK: u32 = 17;
 /// V38 scan cursor saved while the worklist drains inside a fallback scan.
 const SCAN: u32 = 18;
+/// V38 (`weak_references`): the locals of the weak phase.
+const WEAK: super::weak::Locals = super::weak::Locals {
+    table: SCAN + 1,
+    next: SCAN + 2,
+    previous: SCAN + 3,
+    pair: SCAN + 4,
+    end: SCAN + 5,
+    kind: SCAN + 6,
+    key: SCAN + 7,
+    block: SCAN + 8,
+    new: SCAN + 9,
+};
 
 pub(super) fn function(
     globals: Globals,
@@ -39,8 +51,17 @@ pub(super) fn function(
     const PTR: u32 = 7;
     const AGAIN: u32 = 0;
     const DONE: u32 = 1;
+    let weak = globals.weak.filter(|_| worklist);
+    if globals.weak.is_some() && weak.is_none() {
+        // Weak references exist only with the v38 worklist (`data_limits`).
+        let mut function = Function::new([]);
+        instructions(&mut function, [I::Unreachable, I::End]);
+        return function;
+    }
     let mut function = Function::new([(
-        if worklist {
+        if weak.is_some() {
+            WEAK.new + 1
+        } else if worklist {
             SCAN + 1
         } else if trace_values && wide {
             EDGE_SLOT + 1
@@ -108,6 +129,11 @@ pub(super) fn function(
     );
     if worklist {
         worklist_trace(&mut function, globals, closures, frames, array_elements);
+        // V38 (`weak_references`): the strong marking and the ephemeron pass
+        // repeat until the pass marks nothing (`weak::atomic`).
+        if weak.is_some() {
+            function.instruction(&I::Loop(BlockType::Empty));
+        }
         // Only a worklist overflow leaves marked blocks with untraced edges;
         // the scans below then complete the mark exactly, draining the
         // worklist after every scanned block.
@@ -127,6 +153,17 @@ pub(super) fn function(
     }
     if worklist {
         function.instruction(&I::End);
+    }
+    if let Some(weak) = weak {
+        let (ephemerons, vacate) = super::weak::atomic(
+            globals,
+            weak,
+            WEAK,
+            drain(globals, closures, frames, array_elements),
+        );
+        instructions(&mut function, ephemerons);
+        function.instruction(&I::End);
+        instructions(&mut function, vacate);
     }
     if let Some(classes) = globals.classes {
         instructions(&mut function, segregated_sweep(globals, classes));
@@ -462,7 +499,7 @@ fn worklist_trace(
 const ENTRY: i32 = size_of::<u32>() as i32;
 /// Push the header in `BLOCK` onto the worklist; a full worklist records the
 /// overflow in `CHANGED` instead.
-fn push() -> Vec<I<'static>> {
+pub(super) fn push() -> Vec<I<'static>> {
     vec![
         I::LocalGet(STACK),
         I::I32Const(abi::STRING_ROOT_END as i32 - ENTRY),

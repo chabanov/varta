@@ -897,6 +897,16 @@ impl LanguageProfile {
     pub fn symbol_values(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 D5 weak references: `WeakMap`, `WeakSet`, `WeakRef`
+    /// and `FinalizationRegistry` over ephemeron tables (value layout 18
+    /// [`crate::weak::HEAP_WEAK_FLAG`]) that the collector processes after
+    /// marking; keys are objects and symbols that are not registered. A
+    /// module that uses them exports [`crate::weak::CHECKPOINT_EXPORT`],
+    /// which the host calls at the end of every microtask checkpoint.
+    #[must_use]
+    pub fn weak_references(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, virtual-roots stream: `fs.*` paths and grants are virtual
     /// paths `/<root>/...` under named roots that the host maps to pinned
     /// directories ([`crate::files`]); an absolute host path is denied.
@@ -3363,6 +3373,7 @@ mod tests {
                 profile.sdk_paths(),
                 profile.byte_values(),
                 profile.symbol_values(),
+                profile.weak_references(),
                 profile.file_roots(),
                 profile.json_decoders(),
                 profile.iteration_protocol(),

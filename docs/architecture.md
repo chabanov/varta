@@ -9310,6 +9310,11 @@ history, both nonmoving with the exact roots and block layout of the
   marking; if … end`, two instructions per reference store while no cycle
   marks.
 
+A module with ephemeron tables runs the [weak phase](#weak-references-weak_references)
+when marking finds nothing gray: it may resume marking, and it vacates the
+pairs of dead keys before the sweep starts; a complete collection runs the
+same phase after its worklist.
+
 Collector stress builds (`varta_compiler::with_collector_stress`, test-only)
 run cycles back to back with a fixed small quantum, poison every block a
 sweep frees and verify every finished cycle with a complete collection whose
@@ -12797,6 +12802,108 @@ every form below (`symbol_forms_stay_refused_by_v37`).
   of type `unknown` (or a union) that holds no JSON form keeps Varta's
   `TypeError`, because the result is typed `string` as in TypeScript's lib
   (see the K9 D2 record for the owner question).
+
+#### Weak references (`weak_references`)
+
+K9 track D5 (owner decision of 2026-11-06: weak collections get real weak
+semantics in the exact-root collector), selector
+`LanguageProfile::weak_references()`: `WeakMap`, `WeakSet`, `WeakRef` and
+`FinalizationRegistry`
+([ECMA-262 §24.3, §24.4, §26.1, §26.2](https://tc39.es/ecma262/2025/multipage/managing-memory.html))
+with Node 24.20.0 (`--expose-gc`) as the oracle. No host import, budget or
+ABI number changes; v37 and earlier reject every name below
+(`v37_rejects_weak_references`).
+
+- **Language.** The four classes are generic classes of the builtin weak
+  prelude (`prelude/weak.ts`) with TypeScript's lib signatures:
+  `WeakMap<K extends WeakKey, V>` (`get`, `set` returning the map, `has`,
+  `delete`, a constructor of `[key, value]` pairs), `WeakSet<T extends
+  WeakKey>` (`add`, `has`, `delete`, a constructor of values),
+  `WeakRef<T extends WeakKey>` (`deref`) and `FinalizationRegistry<T>`
+  (`register(target, heldValue, unregisterToken?)`, `unregister(token)`).
+  `WeakKey` is `lib.es2023`'s `object | symbol` and is exported for
+  annotations. A constraint `WeakKey` (or a union of only `object` and
+  `symbol`) admits the object kinds and symbols, and an argument keeps its
+  own type when a type argument is inferred from it, as tsc infers it.
+  CanBeHeldWeakly (§9.13) rejects a registered symbol (`Symbol.for`) and,
+  through an `unknown`-like `WeakKey` cell, any primitive with V8's
+  `TypeError` messages (`Invalid value used as weak map key`, `Invalid value
+  used in weak set`, `WeakRef: invalid target`,
+  `FinalizationRegistry.prototype.register: invalid target`, `Invalid
+  unregisterToken ('Symbol(…)')`); `register` refuses a held value that is
+  its target (`target and holdings must not be same`). Unregistered and
+  well-known symbols are keys. Their instances are opaque builtins like
+  `Map`'s: logging, JSON and `unknown` refuse a value holding one.
+- **Value layout.** The value ABI number stays 18. An **ephemeron table**
+  (`varta_common::weak`) is a heap block with the additive value18 heap flag
+  `weak::HEAP_WEAK_FLAG` and no edge flag, so ordinary tracing marks it and
+  never reads its slots, and no value tag names it (no host reader can meet
+  one). Its header link word chains it into the module's weak list (a
+  global, no root); its payload holds the capacity, kind bits
+  (`KIND_VALUES`: value slots are references, `KIND_STRONG`: keys are
+  strong, `KIND_NOTIFY`: a vacated key raises the pending flag), the pairs
+  in use, the pairs the collector vacated, and `capacity` pairs of a key
+  slot (the identity address of the key's block, or `KEY_EMPTY`/
+  `KEY_VACATED`) and a value slot. The table helpers trap on a position
+  out of range, on a key that is no identity address, on occupying a pair
+  that holds another key and on a value whose kind does not match the
+  table's.
+- **Collector.** Once marking has traced every strong edge (the worklist and
+  any overflow scans of a complete collection; nothing gray in an
+  incremental cycle), the weak phase runs with no guest code in between:
+  the **ephemeron pass** marks and pushes the value of every occupied pair
+  of a marked table whose key is marked (a static key always is) and every
+  key of a kept-objects table; while a pass marks anything, marking resumes
+  and the pass repeats, giving the least fixed point. Then the **vacating
+  pass** vacates every pair of a marked table whose key stayed unmarked
+  (counting it, and raising the pending flag for a notifying table) and
+  unlinks every unmarked table, before the sweep frees any block, so no
+  table ever names a freed or reused block. Both passes cost guest fuel in
+  proportion to the pairs of the live tables; a chain of `n` ephemerons
+  whose keys are reachable only through earlier values may take `n` passes
+  (quadratic work), all charged to the turn or idle period that collects:
+  a turn whose fuel cannot pay for it fails with its fuel budget
+  (`the_ephemeron_fixed_point_is_charged_to_the_turn`). In an incremental
+  cycle the final pass runs in one step, outside the per-allocation
+  quantum. Removing or replacing a pair shades its old value (and a kept
+  key) while a cycle marks (the deletion barrier); creating a `WeakRef` or
+  a successful `deref` adds its target to the kept objects, which the
+  ephemeron pass marks, so a target read during a cycle survives it.
+- **KeepDuringJob and cleanup jobs.** A module that uses weak references
+  exports `varta.weak.checkpoint` (`weak::CHECKPOINT_EXPORT`, `() -> ()`,
+  validated by the runtime to that signature and profile). The host calls
+  it whenever a microtask checkpoint has drained its queue and no rejection
+  is unhandled (the native runtime in `scheduler::drain` and its async
+  form, the official browser host in `scheduler.js`): the guest empties the
+  kept objects (ClearKeptObjects, so a target stays alive until the end of
+  the turn that created or dereferenced it) and, when a collection vacated
+  a registered target since the last call, every live registry with a
+  collected cell queues one cleanup job (HostEnqueueFinalizationRegistry
+  CleanupJob), in the order of their first registrations; the checkpoint
+  then drains those jobs as part of the same turn, and calls the export
+  again. A cleanup job removes each collected cell, the most recently
+  registered first, and calls the callback with its held value; a
+  collection during a callback adds cells the job then also cleans up. A
+  callback never runs during an allocation, never in the job whose
+  `deref` observed its target (the target is kept until that turn ends) and
+  never for a cell unregistered before the job ran. A callback that throws
+  fails the instance with that exception uncaught, as a timer callback
+  does. A registry that is itself collected runs no callbacks. Collections
+  happen at defined points (allocations, idle periods, the test-only
+  `gc()`), so the same program and inputs give the same cleanups on every
+  run; a collection of an idle period is cleaned up after the next turn's
+  checkpoint.
+- **Deviations from V8 that the specification leaves open.** V8 cleans up
+  several registries in separate tasks that later timers may overtake, and
+  its order of one registry's cells depends on its heap (cells with
+  unregister tokens and symbol targets come apart); Varta's order is the
+  one above. Varta's frames keep only live bindings, so a registry that a
+  suspended async function no longer uses may be collected where V8 keeps
+  every captured binding of the function alive.
+- **Test-only `gc()`.** `varta_compiler::with_exposed_gc` compiles a
+  global `gc()` (where no binding shadows it) as one complete collection,
+  the equivalent of Node's `--expose-gc`, for oracle programs; no
+  production build has it.
 
 #### Virtual file roots (`file_roots`)
 
