@@ -110,6 +110,35 @@ fn register_log(
                 }
                 // Value17: a function shows as Node shows an anonymous one.
                 Kind::Function => crate::json::FUNCTION_DISPLAY.into(),
+                // Value18 symbol (v38 `symbol_values`): `Symbol(description)`.
+                Kind::Symbol => {
+                    let module = caller.data().module;
+                    let record = varta_common::value::symbol_record(
+                        data(&mut caller)?,
+                        value.payload,
+                        version,
+                        module,
+                    )
+                    .map_err(wasmtime::Error::new)?;
+                    let description = match record.description {
+                        Some(payload) => String::from_utf16_lossy(
+                            &varta_common::text::units(text(
+                                data(&mut caller)?,
+                                ReferenceBox {
+                                    kind: Kind::String,
+                                    payload,
+                                },
+                            ))
+                            .map_err(wasmtime::Error::new)?,
+                        ),
+                        None => String::new(),
+                    };
+                    format!(
+                        "{}{description}{}",
+                        varta_intrinsics::json::SYMBOL_OPEN,
+                        varta_intrinsics::json::SYMBOL_CLOSE
+                    )
+                }
                 // Value18 `Uint8Array` (v38 `byte_values`): only the value18
                 // reader accepts the byte-array tag, and it renders as the
                 // JSON diagnostic notation of `render_diagnostic`. No profile

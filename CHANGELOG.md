@@ -103,8 +103,18 @@
   subclasses; `this`-using static methods inherited across modules run with
   the calling subclass as `this` (before, silently with the declaring
   class); generic overload signatures of functions infer their type
-  arguments per call. Conformance (with K9 C and D3): 205 passed, 5 known
-  unsupported of 210.
+  arguments per call.
+- V38 K9 D2 symbol values (selector `symbol_values`): `Symbol()` values
+  with the additive value18 tag `ValueKind::Symbol` (16), `Symbol.for`/
+  `Symbol.keyFor`, the well-known symbols as values, `description`,
+  `toString`, `String`/`Number` conversion, `typeof` narrowing, identity,
+  and symbols in records, classes, arrays, unions, dictionaries, `unknown`
+  and `Map`/`Set` keys; `unique symbol` annotations. JSON skips symbols as
+  Node does, diagnostics show `Symbol(description)`, KV refuses them. Value
+  ABI number unchanged (18); v37 keeps rejecting every form. Members keyed
+  by a module-level `unique symbol` (across modules) or by
+  `Symbol.toPrimitive`/`toStringTag`/`hasInstance`, with the ToPrimitive,
+  `Object.prototype.toString` tag and `instanceof` protocols.
 - V38 K9 type level, step 2 (owner decisions): branded primitives
   (`string & { __brand: … }` is the primitive), `typeof` of local bindings,
   overloaded call/construct signatures and function intersections (calls

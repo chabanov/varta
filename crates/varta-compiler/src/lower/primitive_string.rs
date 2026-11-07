@@ -52,6 +52,14 @@ impl Lower<'_> {
             }
             return self.unknown_string(value, span);
         }
+        // V38 (`symbol_values`): `String(symbol)` is its descriptive string;
+        // `Number(symbol)` throws a `TypeError` (§7.1.4 ToNumber).
+        if value.ty == Type::Symbol && rest.is_empty() {
+            if !number {
+                return self.symbol_text(value);
+            }
+            return self.symbol_number(value, span);
+        }
         if value.ty == Type::BigInt {
             let input = self.hidden(Type::BigInt);
             let mut body = vec![S::Init(input, value)];
@@ -86,6 +94,21 @@ impl Lower<'_> {
                 },
             });
         }
+        // V38 (`symbol_values`): a class instance converts through its
+        // `[Symbol.toPrimitive]` method, or (String) its
+        // `[Symbol.toStringTag]` getter.
+        let value = match self.object_primitive(value, if number { "number" } else { "string" })? {
+            Ok(primitive) => return self.primitive_convert(primitive, rest, number, span),
+            Err(value) => value,
+        };
+        let value = if number || !rest.is_empty() {
+            value
+        } else {
+            match self.tagged_text(value)? {
+                Ok(text) => return Ok(text),
+                Err(value) => value,
+            }
+        };
         if unions::members(value.ty, self.types).iter().any(|ty| {
             !unions::primitive(*ty) && !(self.types.profile.bigint_values() && *ty == Type::BigInt)
         }) {

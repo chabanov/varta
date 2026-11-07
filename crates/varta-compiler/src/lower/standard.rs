@@ -1000,11 +1000,9 @@ impl Lower<'_> {
 /// reasons name the missing value-model part (see the K9 D record in
 /// docs/development-plan.md).
 pub(super) fn refusal(name: &str) -> Option<&'static str> {
-    const SYMBOLS: &str = "Symbol values (they need their own value tag in value layout 18, an owner decision; the well-known Symbol.iterator and Symbol.asyncIterator method keys are admitted)";
     const INTEGRITY: &str = "object integrity levels (freeze, seal and preventExtensions need a per-object flag checked by every write, a value layout 18 change awaiting an owner decision)";
     const DESCRIPTORS: &str = "property descriptors and prototypes (closed checked values have fixed data properties and no mutable prototype)";
     Some(match name {
-        "Symbol" | "Symbol.for" | "Symbol.keyFor" => SYMBOLS,
         "WeakMap" | "WeakSet" | "WeakRef" | "FinalizationRegistry" => {
             "weak collections and references (they need weak edges and deterministic cleanup turns in the exact-root collector)"
         }

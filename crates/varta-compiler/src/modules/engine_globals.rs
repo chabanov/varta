@@ -45,7 +45,7 @@ pub(crate) const GLOBAL_OBJECT_MEMBERS: [&str; 3] = [GLOBAL_THIS, "crypto", "pro
 /// namespaces of `Math`, `JSON` and `console`, the primitive and object
 /// constructors, `Promise`, the global numeric functions and the timers of
 /// `lower::promises::timers`.
-pub(crate) const INTRINSIC_GLOBALS: [(&str, GlobalKind); 18] = [
+pub(crate) const INTRINSIC_GLOBALS: [(&str, GlobalKind); 19] = [
     ("Math", GlobalKind::Object),
     ("JSON", GlobalKind::Object),
     ("console", GlobalKind::Object),
@@ -64,6 +64,8 @@ pub(crate) const INTRINSIC_GLOBALS: [(&str, GlobalKind); 18] = [
     ("setInterval", GlobalKind::Function),
     ("clearTimeout", GlobalKind::Function),
     ("clearInterval", GlobalKind::Function),
+    // V38 (`symbol_values`): `Symbol` (`lower::symbols`).
+    ("Symbol", GlobalKind::Function),
 ];
 
 /// Whether `profile` folds `typeof` of an engine global.
@@ -138,6 +140,7 @@ mod tests {
         ("Response", "function"),
         ("Set", "function"),
         ("String", "function"),
+        ("Symbol", "function"),
         ("SyntaxError", "function"),
         ("TextDecoder", "function"),
         ("TextEncoder", "function"),

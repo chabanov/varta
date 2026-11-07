@@ -321,6 +321,26 @@ pub(crate) const AGGREGATE: Prelude = Prelude {
     lifted: None,
     required: None,
 };
+/// `Symbol` values (v38 `symbol_values`, K9 D2): the symbol record class,
+/// the global symbol registry and the well-known symbols, called by
+/// `lower::symbols`; a builtin, so its instances stay opaque to every host
+/// reader that does not read them by their value tag.
+pub(crate) const SYMBOL: Prelude = Prelude {
+    path: "<varta>/builtins/symbol.ts",
+    source: include_str!("../prelude/symbol.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::symbol_values,
+    extended: None,
+    loads: &[SYMBOL_GLOBAL],
+    lifted: None,
+    required: None,
+};
+/// The global that loads [`SYMBOL`].
+pub(crate) const SYMBOL_GLOBAL: &str = "Symbol";
+/// The class of a symbol's private record in [`SYMBOL`].
+pub(crate) const SYMBOL_CLASS: &str = "SymbolValue";
 /// The reference keys that load [`STANDARD`]: its method names and the
 /// static members `Array.from`, `Object.groupBy` and `Object.fromEntries`.
 pub(crate) const STANDARD_LOADS: &[&str] = &[
@@ -836,7 +856,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 22] = [
+pub(crate) const PRELUDES: [&Prelude; 23] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -847,6 +867,7 @@ pub(crate) const PRELUDES: [&Prelude; 22] = [
     &DATE,
     &STANDARD,
     &AGGREGATE,
+    &SYMBOL,
     &REGEXP,
     &BLOB,
     &FETCH,
@@ -918,8 +939,15 @@ pub(crate) fn is_prelude_source(source: &crate::source::Source) -> bool {
 
 /// The v37 builtin preludes (`collections`), whose class instances are
 /// private to every host value reader.
-pub(crate) const BUILTINS: [&Prelude; 6] =
-    [&TEXT, &COLLECTIONS, &BINARY, &BASE64, &DATE, &STANDARD];
+pub(crate) const BUILTINS: [&Prelude; 7] = [
+    &TEXT,
+    &COLLECTIONS,
+    &BINARY,
+    &BASE64,
+    &DATE,
+    &STANDARD,
+    &SYMBOL,
+];
 
 /// Whether `source` is a v37 builtin prelude module.
 pub(crate) fn is_builtin_source(source: &crate::source::Source) -> bool {

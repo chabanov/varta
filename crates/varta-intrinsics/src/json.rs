@@ -32,13 +32,16 @@ use varta_common::{
         PRIVATE_KEY_PREFIX, PROMISE_REASON_FIELD, PROMISE_STATE_FIELD, PROMISE_VALUE_FIELD,
         PrimitiveBox, PromiseState, RecordShape, ReferenceBox, ValueKind as Kind, Vector,
         array_index_units, byte_at, byte_vector, function_field_layout, read_record_with,
-        record_descriptor, string_range,
+        record_descriptor, string_range, symbol_record,
     },
 };
 
 /// How a logged function value reads: as Node shows an anonymous function,
 /// since closures carry no source name.
 pub const FUNCTION_DISPLAY: &str = "[Function (anonymous)]";
+/// How a logged symbol reads around its description (v38 `symbol_values`).
+pub const SYMBOL_OPEN: &str = "Symbol(";
+pub const SYMBOL_CLOSE: &str = ")";
 /// The field a record would need to call for `JSON.stringify` (not
 /// supported: guest call dispatch from the serializer).
 const TO_JSON: &[u8] = b"toJSON";
@@ -248,6 +251,14 @@ pub fn format<M: Memory + ?Sized, S: Sink + ?Sized>(
             }
         }
         Kind::Function => sink.ascii(FUNCTION_DISPLAY.as_bytes()),
+        Kind::Symbol => {
+            let record = symbol_record(memory, value.payload, VERSION, bounds).map_err(layout)?;
+            sink.ascii(SYMBOL_OPEN.as_bytes());
+            if let Some(text) = record.description {
+                raw(memory, text, sink)?;
+            }
+            sink.ascii(SYMBOL_CLOSE.as_bytes());
+        }
         Kind::Record | Kind::Array | Kind::Dictionary | Kind::Promise | Kind::Bytes => {
             let mut encoder = Encoder::new(memory, bounds, Mode::Diagnostic, sink, Some(budget));
             let (kind, payload) = encoder.resolve(value.kind as u32, value.payload)?;
@@ -639,6 +650,15 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
             }
             return Ok((Kind::Undefined as u32, 0));
         }
+        // A symbol (v38 `symbol_values`) is skipped in JSON like `undefined`
+        // (omitted in objects, `null` in arrays), after its record check.
+        if kind == Kind::Symbol as u32 {
+            symbol_record(self.memory, payload, VERSION, self.bounds).map_err(layout)?;
+            if self.mode == Mode::Diagnostic {
+                return Ok((kind, payload));
+            }
+            return Ok((Kind::Undefined as u32, 0));
+        }
         if kind == Kind::ReferenceUnion as u32 {
             let cell =
                 ReferenceBox::read_envelope(self.memory, payload, VERSION).map_err(layout)?;
@@ -697,11 +717,50 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
             Kind::Dictionary => self.dictionary(payload, depth),
             Kind::Promise => self.promise(payload, depth),
             Kind::Bytes => self.bytes(payload, depth),
+            Kind::Symbol if self.mode == Mode::Diagnostic => self.symbol(payload),
             Kind::Function if self.mode == Mode::Diagnostic => {
                 self.ascii(FUNCTION_DISPLAY.as_bytes())
             }
             _ => Err(EncodeError::Layout),
         }
+    }
+    /// A symbol in the diagnostic notation: `Symbol(description)`, as
+    /// `String(symbol)` and Node's console show it.
+    fn symbol(&mut self, payload: u64) -> Result<(), EncodeError> {
+        let record = symbol_record(self.memory, payload, VERSION, self.bounds).map_err(layout)?;
+        self.ascii(SYMBOL_OPEN.as_bytes())?;
+        if let Some(text) = record.description {
+            let (ptr, len) = string_range(text);
+            let memory = self.memory;
+            let bytes = memory.borrow(ptr, len).ok_or(EncodeError::Layout)?;
+            let units = bytes.as_chunks::<2>().0;
+            let mut utf8 = 0;
+            for (index, pair) in units.iter().enumerate() {
+                let unit = u16::from_le_bytes(*pair);
+                self.put(unit);
+                // UTF-8 bytes of the text: a surrogate pair takes four.
+                utf8 += match unit {
+                    0..0x80 => 1,
+                    0x80..0x800 => 2,
+                    0xD800..0xDC00
+                        if units.get(index + 1).is_some_and(|next| {
+                            LOW_SURROGATES.contains(&u16::from_le_bytes(*next))
+                        }) =>
+                    {
+                        2
+                    }
+                    0xDC00..0xE000
+                        if index > 0
+                            && (0xD800..0xDC00).contains(&u16::from_le_bytes(units[index - 1])) =>
+                    {
+                        2
+                    }
+                    _ => 3,
+                };
+            }
+            self.count(utf8)?;
+        }
+        self.ascii(SYMBOL_CLOSE.as_bytes())
     }
     fn integer(&mut self, value: i32) -> Result<(), EncodeError> {
         let mut digits = [0u8; 11];

@@ -3204,8 +3204,9 @@ decoders (`json_decoders`, [rules below](#json-decoders-json_decoders))
 and hashed `Map`/`Set` tables (`collection_hashing`, [rules
 below](#collection-hashing-collection_hashing)), and the iteration
 protocol (`iteration_protocol`, [rules below](#iteration-protocol-iteration_protocol)), the K9 D
-standard library (`standard_library`, [rules below](#standard-library-standard_library))
-and the K9 type level (`type_level`, [rules below](#type-level-type_level));
+standard library (`standard_library`, [rules below](#standard-library-standard_library)),
+the K9 type level (`type_level`, [rules below](#type-level-type_level)) and the K9 D2
+symbol values (`symbol_values`, [rules below](#symbol-values-symbol_values));
 the view-protocol and TSX selectors admit their streams (below). Gate every admission on its own selector, keep v37 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
 
@@ -4235,7 +4236,7 @@ Contract: [architecture.md](architecture.md#standard-library-standard_library).
   `valueOf`, `toJSON`) are prelude functions reached through
   `date_conversion`; the local time zone enters only through `zoneOffset`
   (UTC until an owner-decided host zone exists).
-- `refusal` names the missing value-model part for `Symbol`, weak
+- `refusal` names the missing value-model part for weak
   collections, `Proxy`, `Reflect`, `structuredClone`, integrity levels,
   descriptors/prototypes and `Intl`; admitting one of them replaces its row.
 - Tests: `varta-runtime` `standard_library_tests` (the
@@ -4395,6 +4396,48 @@ Contract: [architecture.md](architecture.md#bytes-held-by-unknown-byte_values).
   the corrupt-storage rejections of the host and linked encoders, v37
   denials), `kv_tests` (the KV refusal), `web_bytes_tests` and the
   `language` test of the tag.
+
+### Symbol values (`symbol_values`)
+
+Contract: [architecture.md](architecture.md#symbol-values-symbol_values).
+
+- Gate every admission on `symbol_values()`; v37 keeps value layout 17 and
+  its diagnostics (`symbol_forms_stay_refused_by_v37`).
+- `Type::Symbol` exists only while lowering. `literal_erasure` replaces it
+  by the symbol prelude class (`ValueTypes::symbol`, set only when
+  `ValueTypes::symbols.used`), and emission writes its tag only through
+  `Emitter::tag`/`ir::tag_of` and `records::descriptor` with
+  `ValueTypes::own_tags()`; never call `Type::profile_kind` on a value that
+  may be a symbol. A union member test of the symbol class is its tag alone
+  (`shared_members`).
+- `lower::symbols` is the only module that calls the symbol prelude; every
+  new symbol form goes there with a one-line hook. A prelude result of the
+  record class becomes a `symbol` through `as_symbol` (which notes the use);
+  a `symbol` reaches the prelude through `symbol_storage`.
+- `value::ValueKind::Symbol` belongs to value layout 18 only
+  (`value::symbol_layout`). Every reader of value18 kinds handles it or
+  refuses it by name: `value::symbol_record` validates the record, JSON
+  treats it as `undefined` after that check, diagnostics show
+  `Symbol(description)`, KV staging refuses it. A `_` arm that turns it into
+  a fatal layout error is a bug. Rebuild `intrinsics.wasm` and the browser
+  `kv-codec.wasm` with every change of these readers.
+- The prelude's registry and well-known symbols are module constants:
+  never move them into host state, and never let a symbol identity cross an
+  instance. A user module constant admits only `Symbol()`/`Symbol(literal)`,
+  which read no prelude constant; admitting `Symbol.for` or a well-known
+  symbol there needs the prelude's initializers ordered first.
+- Symbol-keyed members exist only as the members `modules::symbol_keys`
+  rewrites before lowering: a key is `symbol_keys::key` (declaring module's
+  graph index and name) or `well_known_key`, and `is_symbol_key` tells it
+  apart. Never derive a key from a symbol value, never let a quoted key
+  spell one (`records::quoted_key`), and refuse every string-key view of a
+  record that has one (enumeration does). A new computed-key form adds its
+  case to the rewriter's visitor; a new protocol member adds its symbol to
+  `WELL_KNOWN_KEYS` and its call to `lower::symbols`.
+- Tests: `varta-runtime` `symbol_tests` (`symbol_cases/*.ts` with Node
+  24.20.0 expected files, collector stress builds, v37 denials), the KV
+  refusal in `kv_tests`, the `language` test of the tag, the conformance
+  feature `symbol`.
 
 ### V38 linked intrinsics
 

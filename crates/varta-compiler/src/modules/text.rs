@@ -150,6 +150,7 @@ pub(super) fn unit(path: &Path, text: String) -> Result<Unit, CompilerError> {
         text: true,
         declarations: Default::default(),
         class_compositions: Vec::new(),
+        symbols: super::symbol_keys::Keys::new(),
     })
 }
 

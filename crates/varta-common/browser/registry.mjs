@@ -9633,7 +9633,8 @@ export const registry = freeze({
         12,
         13,
         14,
-        15
+        15,
+        16
       ],
       "toolEntries": false,
       "valueAbi": 18
@@ -10760,7 +10761,8 @@ export const registry = freeze({
       12,
       13,
       14,
-      15
+      15,
+      16
     ],
     "slotBytes": 8,
     "staticSection": "varta.static",
@@ -10780,6 +10782,7 @@ export const registry = freeze({
       "Record": 4,
       "ReferenceUnion": 9,
       "String": 3,
+      "Symbol": 16,
       "Undefined": 7
     },
     "unionFlag": 16

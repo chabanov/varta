@@ -63,6 +63,12 @@ impl Lower<'_> {
         value: Expr,
         span: swc_common::Span,
     ) -> Result<Expr> {
+        // V38 (`symbol_values`): `+object` and `-object` through
+        // `[Symbol.toPrimitive]("number")`.
+        let value = match self.object_primitive(value, "number")? {
+            Ok(primitive) => return self.primitive_unary(op, primitive, span),
+            Err(value) => value,
+        };
         if unions::members(value.ty, self.types)
             .iter()
             .any(|ty| !unions::primitive(*ty) && *ty != Type::BigInt)

@@ -268,6 +268,10 @@ impl Lower<'_> {
             }
             ast::Expr::Bin(binary) if binary.op == ast::BinaryOp::InstanceOf => {
                 if let Some(class) = self.class_callee(&binary.right) {
+                    // V38 (`symbol_values`): `static [Symbol.hasInstance]`.
+                    if let Some(test) = self.has_instance(binary, class)? {
+                        return Ok(test);
+                    }
                     return self.class_instance_of(binary, class);
                 }
                 if let Some(test) = self.collection_instance_of(binary)? {
@@ -511,6 +515,7 @@ impl Lower<'_> {
                         Type::Promise(_) if self.types.profile.promise_values() => "object",
                         Type::Number | Type::Float64 => "number",
                         Type::BigInt => "bigint",
+                        Type::Symbol => "symbol",
                         Type::Boolean => "boolean",
                         Type::String => "string",
                         _ => return Err(unsupported("typeof an opaque result value")),
@@ -826,6 +831,7 @@ impl Lower<'_> {
                             | Type::Dictionary(_)
                             | Type::Class(_)
                             | Type::Promise(_)
+                            | Type::Symbol
                             | Type::Array(_)
                     ) =>
                 {
@@ -879,6 +885,13 @@ impl Lower<'_> {
             && let ast::Callee::Expr(callee) = &call.callee
             && let Some(name) = callee_name(callee)
             && let Some(value) = self.prelude_kv(call, &name)?
+        {
+            return Ok(value);
+        }
+        // V38 (`symbol_values`): `Symbol(...)`, `Symbol.for`, `Symbol.keyFor`
+        // and the methods of a symbol.
+        if self.types.profile.symbol_values()
+            && let Some(value) = self.symbol_call(call)?
         {
             return Ok(value);
         }
@@ -1357,8 +1370,8 @@ impl Lower<'_> {
                     value.span,
                 ));
             }
-            // A function (v36) serializes like `undefined`.
-            let function = |ty: &Type| matches!(ty, Type::Function(_));
+            // A function (v36) and a symbol (v38) serialize like `undefined`.
+            let function = |ty: &Type| matches!(ty, Type::Function(_) | Type::Symbol);
             let ty = if value.ty == Type::Unknown
                 || value.ty.is_union()
                     && unions::members(value.ty, self.types)

@@ -66,6 +66,7 @@ pub fn type_of(value: ReferenceBox) -> Result<&'static str, ValueError> {
         Kind::Boolean => "boolean",
         Kind::BigInt => "bigint",
         Kind::Function => "function",
+        Kind::Symbol => "symbol",
         _ => return Err(ValueError::Kind),
     })
 }
@@ -89,7 +90,8 @@ pub fn truthy<M: Memory + ?Sized>(memory: &M, value: ReferenceBox) -> Result<boo
         | Kind::Dictionary
         | Kind::Function
         | Kind::Promise
-        | Kind::Bytes => true,
+        | Kind::Bytes
+        | Kind::Symbol => true,
         Kind::BigInt => !BigIntView::check(memory, value.payload)?,
         Kind::Boolean => value.payload != 0,
         Kind::String => value.payload >> i32::BITS != 0,
