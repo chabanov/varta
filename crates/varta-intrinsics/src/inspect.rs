@@ -1269,7 +1269,8 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
     /// properties and the private state this notation reads ([`STATE`]), or
     /// only the fields `wanted` names. Other private state is not read.
     fn record(&mut self, payload: u64, wanted: Option<&[&[u8]]>) -> Result<Record, EncodeError> {
-        let (descriptor, count) = record_descriptor(self.memory, payload).map_err(layout)?;
+        let (descriptor, count) =
+            record_descriptor(self.memory, payload, VERSION).map_err(layout)?;
         let shape = match self
             .shapes
             .iter()

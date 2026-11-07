@@ -292,18 +292,18 @@ impl Builder<'_> {
         // V38 (`symbol_values`): members keyed by `unique symbol` constants
         // and well-known symbols become ordinary members with stable keys.
         // The RegExp prelude defines symbol-keyed protocol methods too.
-        let symbol_keyed = !engine::is_prelude(&input.path) || input.path == Path::new(engine::REGEXP.path);
-        let (symbols, symbol_constants) =
-            if self.profile.symbol_values() && symbol_keyed {
-                symbol_keys::rewrite(
-                    &mut ast,
-                    self.graph.order.len(),
-                    (&imports, &exports),
-                    &self.graph.units,
-                )
-            } else {
-                (symbol_keys::Keys::new(), symbol_keys::Keys::new())
-            };
+        let symbol_keyed =
+            !engine::is_prelude(&input.path) || input.path == Path::new(engine::REGEXP.path);
+        let (symbols, symbol_constants) = if self.profile.symbol_values() && symbol_keyed {
+            symbol_keys::rewrite(
+                &mut ast,
+                self.graph.order.len(),
+                (&imports, &exports),
+                &self.graph.units,
+            )
+        } else {
+            (symbol_keys::Keys::new(), symbol_keys::Keys::new())
+        };
         self.graph.order.push(input.path.clone());
         self.graph.units.insert(
             input.path,

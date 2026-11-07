@@ -25,7 +25,12 @@ macro_rules! case {
     };
 }
 
-const CASES: &[(&str, &str, &str)] = &[case!("collections"), case!("lifecycle"), case!("registry")];
+const CASES: &[(&str, &str, &str)] = &[
+    case!("collections"),
+    case!("lifecycle"),
+    case!("registry"),
+    case!("guide"),
+];
 
 fn compile(source: &str) -> Vec<u8> {
     let bytes = varta_compiler::with_exposed_gc(|| {
@@ -471,5 +476,37 @@ fn v37_rejects_weak_references() {
             varta_compiler::compile_typescript_with_profile(source, V37).is_err(),
             "{source}"
         );
+    }
+}
+
+/// Object integrity bits must never make ordinary objects look like weak tables.
+#[test]
+fn sealed_and_frozen_keys_survive_weak_collection() {
+    let source = r#"
+export function main(): void {
+  const sealed = { value: 1 };
+  const frozen = { value: 2 };
+  const map = new WeakMap<object, { label: string }>();
+  const set = new WeakSet<object>();
+  map.set(sealed, { label: 'sealed' });
+  map.set(frozen, { label: 'frozen' });
+  set.add(sealed).add(frozen);
+  Object.seal(sealed);
+  Object.freeze(frozen);
+  gc();
+  sealed.value = 3;
+  try { frozen.value = 4; } catch (error) {
+    console.log(error instanceof TypeError);
+  }
+  gc();
+  console.log(sealed.value, frozen.value, Object.isSealed(sealed), Object.isFrozen(frozen));
+  console.log(map.get(sealed)?.label, map.get(frozen)?.label, set.has(sealed), set.has(frozen));
+}
+"#;
+    let expected = ["true", "3 2 true true", "sealed frozen true true"];
+    assert_eq!(logs(source), expected);
+    for units in STRESS_UNITS {
+        let bytes = varta_compiler::with_collector_stress(units, || compile(source));
+        assert_eq!(printed(&run(&bytes).unwrap().lines), expected);
     }
 }

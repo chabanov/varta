@@ -32,7 +32,9 @@
 /// since no linked or browser reader ever meets one). Tables have no edge
 /// flag, so ordinary tracing marks one without tracing its slots; no value
 /// tag refers to one and no host value reader sees one.
-pub const HEAP_WEAK_FLAG: i32 = 1 << 14;
+pub const HEAP_WEAK_FLAG: i32 = 1 << 16;
+// Weak tables are a distinct block kind, never an object integrity level.
+const _: () = assert!(HEAP_WEAK_FLAG as u32 & crate::value::HEAP_INTEGRITY_FLAGS == 0);
 /// The export the host calls at the end of every microtask checkpoint of a
 /// module that uses weak references: `() -> ()`.
 pub const CHECKPOINT_EXPORT: &str = "varta.weak.checkpoint";
