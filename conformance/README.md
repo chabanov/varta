@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 120 feature rows and 202 cases:
-197 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 122 feature rows and 206 cases:
+201 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 

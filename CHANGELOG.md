@@ -18,25 +18,6 @@
   Dictionaries of such objects are walked the same way. Logging,
   `unknown` holders and class-instance fields of such objects reaching a
   host stay refused by name. Earlier profiles are unchanged.
-- V38 K9 C owner decisions (2026-11-06), `expression_forms`: tagged
-  templates pass GetTemplateObject's per-site template object, so
-  `TemplateStringsArray.raw` works and every evaluation of a site sees the
-  same arrays; object-literal methods see the receiver they are called on
-  (spread copies, methods moved between objects, `undefined` for an
-  extracted method), passed through a register by every function-value call
-  of programs that have such methods, so spreads, `Object.assign` and
-  enumeration of such objects are admitted. Modules evaluate in the order of
-  ECMAScript's Evaluate() (requests in source order, type-only imports
-  erased), initializers may call imported functions, and module
-  initializers may `await`: a synthesized evaluator runs the asynchronous
-  module algorithm (siblings run while an awaiting module is suspended,
-  dependents run in the job its completion settles, a rejection fails every
-  waiting importer) and the entry module calls `main` at its end. Object
-  literals have getters and setters (accessor properties): reads, writes,
-  compound assignments, views, spreads, own keys, entries and
-  `JSON.stringify` go through them; other host reads of such objects are
-  refused. No host ABI change (the accepted value ABI bump was not needed);
-  v37 keeps rejecting every form.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
   2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as
@@ -88,6 +69,25 @@
   table). The Chrome comparison scenes (three new) pass at 1x, 1.25x and
   2x with no new deviation; the browser host's `monospace` fixed-size flag
   is fixed. New package: `core_maths` (read-fonts' `no_std` floats).
+- V38 K9 C owner decisions (2026-11-06), `expression_forms`: tagged
+  templates pass GetTemplateObject's per-site template object, so
+  `TemplateStringsArray.raw` works and every evaluation of a site sees the
+  same arrays; object-literal methods see the receiver they are called on
+  (spread copies, methods moved between objects, `undefined` for an
+  extracted method), passed through a register by every function-value call
+  of programs that have such methods, so spreads, `Object.assign` and
+  enumeration of such objects are admitted. Modules evaluate in the order of
+  ECMAScript's Evaluate() (requests in source order, type-only imports
+  erased), initializers may call imported functions, and module
+  initializers may `await`: a synthesized evaluator runs the asynchronous
+  module algorithm (siblings run while an awaiting module is suspended,
+  dependents run in the job its completion settles, a rejection fails every
+  waiting importer) and the entry module calls `main` at its end. Object
+  literals have getters and setters (accessor properties): reads, writes,
+  compound assignments, views, spreads, own keys, entries and
+  `JSON.stringify` go through them; other host reads of such objects are
+  refused. No host ABI change (the accepted value ABI bump was not needed);
+  v37 keeps rejecting every form.
 - V38 K9 type level, step 2 (owner decisions): branded primitives
   (`string & { __brand: … }` is the primitive), `typeof` of local bindings,
   overloaded call/construct signatures and function intersections (calls
