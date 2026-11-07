@@ -138,6 +138,14 @@ pub(super) fn evaluate(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<O
         ast::TsType::TsTypeQuery(query) => queries::type_of(query, types)?,
         ast::TsType::TsTypeOperator(operator) => match operator.op {
             ast::TsTypeOperatorOp::KeyOf => objects::key_of(&operator.type_ann, types)?,
+            // V38 (`symbol_values`, K9 D2): `unique symbol` is a `symbol`.
+            ast::TsTypeOperatorOp::Unique
+                if types.profile.symbol_values()
+                    && matches!(&*operator.type_ann, ast::TsType::TsKeywordType(keyword)
+                        if keyword.kind == ast::TsKeywordTypeKind::TsSymbolKeyword) =>
+            {
+                super::symbols::use_type(types)
+            }
             ast::TsTypeOperatorOp::Unique => {
                 return Err(unsupported(
                     "unique symbol type (a unique symbol needs Symbol values, which this profile does not admit)",

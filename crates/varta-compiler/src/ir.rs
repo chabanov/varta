@@ -19,6 +19,11 @@ pub(crate) fn is_number_bitwise(op: BinaryOp) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Type {
     BigInt,
+    /// ECMAScript `symbol` (v38 `symbol_values`, K9 D2): physically the
+    /// handle of a private record of the symbol prelude class
+    /// (`ValueTypes::symbol`), whose identity is the symbol's; erased to that
+    /// class before emission, where it carries the value18 symbol tag.
+    Symbol,
     Function(u32),
     Number,
     Float64,
@@ -157,6 +162,7 @@ impl Type {
         matches!(
             self,
             Self::BigInt
+                | Self::Symbol
                 | Self::Collection(..)
                 | Self::Tuple(_)
                 | Self::Dictionary(_)
@@ -342,6 +348,8 @@ pub(crate) struct ValueTypes {
     pub tuples: Vec<TupleType>,
     /// Loaded engine prelude modules and their functions (v37).
     pub engine: crate::lower::engine::EngineModules,
+    /// V38 (`symbol_values`): the program's use of symbols.
+    pub symbols: crate::lower::symbols::Symbols,
     /// Structural views admitted by width subtyping (v38).
     pub subtyping: crate::lower::subtyping::Views,
     /// Property keys of `const` bindings initialized by a string or number
@@ -369,6 +377,12 @@ pub(crate) struct ValueTypes {
     /// The receiver register of object-literal methods that use `this`
     /// (v38 `expression_forms`); see `lower::object_methods`.
     pub receivers: crate::lower::object_methods::Receivers,
+    /// V38 (`symbol_values`, K9 D2): the class id of the symbol prelude's
+    /// record class (`SymbolValue`) that every `symbol` value erases to
+    /// (`literal_erasure`), so emission tags it with the value18 symbol tag
+    /// ([`varta_common::value::ValueKind::Symbol`]) wherever a tag is written
+    /// ([`tag_of`]). Set only after erasure.
+    pub symbol: Option<u32>,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1), or under value
@@ -661,6 +675,7 @@ impl Type {
         use varta_common::value::ValueKind as V;
         Some(match self {
             Self::BigInt => V::BigInt,
+            Self::Symbol => V::Symbol,
             Self::Error | Self::NativeError(_) => V::Error,
             Self::Null => V::Null,
             Self::Undefined => V::Undefined,
@@ -682,20 +697,49 @@ impl Type {
         })
     }
 }
+/// The erased types that carry a value18 tag of their own (v38): the
+/// `Uint8Array` array type (`ValueTypes::bytes`) and the symbol record
+/// class (`ValueTypes::symbol`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct OwnTags {
+    pub bytes: Option<u32>,
+    pub symbol: Option<u32>,
+}
+impl OwnTags {
+    /// Whether `ty` is the `Uint8Array` array type (v38 `byte_values`).
+    pub(crate) fn is_bytes(self, ty: Type) -> bool {
+        matches!(ty, Type::Array(id) if self.bytes == Some(id))
+    }
+    /// Whether `ty` is the symbol record class (v38 `symbol_values`).
+    pub(crate) fn is_symbol(self, ty: Type) -> bool {
+        matches!(ty, Type::Class(id) if self.symbol == Some(id))
+    }
+}
+impl ValueTypes {
+    /// The erased types with value18 tags of their own.
+    pub(crate) fn own_tags(&self) -> OwnTags {
+        OwnTags {
+            bytes: self.bytes,
+            symbol: self.symbol,
+        }
+    }
+}
 /// The value tag of an erased type under `profile`: the byte-array tag for
-/// the `Uint8Array` array type `bytes` (v38 `byte_values`), otherwise
+/// the `Uint8Array` array type (v38 `byte_values`), the symbol tag for the
+/// symbol record class (v38 `symbol_values`), otherwise
 /// [`Type::profile_kind`].
 pub(crate) fn tag_of(
     ty: Type,
-    bytes: Option<u32>,
+    tags: OwnTags,
     profile: varta_common::language::LanguageProfile,
 ) -> Option<varta_common::value::ValueKind> {
-    match ty {
-        Type::Array(id) if bytes == Some(id) && profile.byte_values() => {
-            Some(varta_common::value::ValueKind::Bytes)
-        }
-        _ => ty.profile_kind(profile),
+    if tags.is_bytes(ty) && profile.byte_values() {
+        return Some(varta_common::value::ValueKind::Bytes);
     }
+    if tags.is_symbol(ty) && profile.symbol_values() {
+        return Some(varta_common::value::ValueKind::Symbol);
+    }
+    ty.profile_kind(profile)
 }
 impl Type {
     /// The value tag of this type under `profile`: value16 (v35
@@ -1296,6 +1340,7 @@ impl std::fmt::Display for Type {
             Self::Function(_) => "function",
             Self::Number | Self::Float64 => "number",
             Self::BigInt => "bigint",
+            Self::Symbol => "symbol",
             Self::Boolean => "boolean",
             Self::String => "string",
             Self::Void => "void",

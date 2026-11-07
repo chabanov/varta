@@ -875,6 +875,18 @@ impl LanguageProfile {
     pub fn byte_values(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 D2 symbol stream: `Symbol()` values with their own
+    /// value tag ([`crate::value::ValueKind::Symbol`], an additive tag of the
+    /// in-development value layout 18) in record fields, array elements,
+    /// dictionary values, union cells and `unknown` cells; `Symbol.for`/
+    /// `Symbol.keyFor` over a guest registry, the well-known symbols as
+    /// values, `typeof x === "symbol"`, and symbol-keyed members of records
+    /// and classes keyed by a `unique symbol` constant. Every value reader
+    /// skips a symbol in JSON as Node does.
+    #[must_use]
+    pub fn symbol_values(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, virtual-roots stream: `fs.*` paths and grants are virtual
     /// paths `/<root>/...` under named roots that the host maps to pinned
     /// directories ([`crate::files`]); an absolute host path is denied.
@@ -3341,6 +3353,7 @@ mod tests {
                 profile.web_bytes(),
                 profile.sdk_paths(),
                 profile.byte_values(),
+                profile.symbol_values(),
                 profile.file_roots(),
                 profile.json_decoders(),
                 profile.iteration_protocol(),
@@ -3387,14 +3400,15 @@ mod tests {
                 "{profile:?}"
             );
         }
-        // The wave-3 bytes stream adds the byte-array tag to value layout 18
-        // only: value17 and every earlier layout keep rejecting it, and every
-        // other tag keeps its value17 meaning.
+        // The wave-3 bytes stream adds the byte-array tag and the K9 D2
+        // stream the symbol tag to value layout 18 only: value17 and every
+        // earlier layout keep rejecting them, and every other tag keeps its
+        // value17 meaning.
         use crate::value::ValueKind;
         for tag in 0..=ValueKind::LAST as u32 {
             let kind = ValueKind::from_tag(tag).unwrap();
             let value18 = kind.supported_by(crate::value::HASHED_DICTIONARY_VALUE_VERSION);
-            if kind == ValueKind::Bytes {
+            if matches!(kind, ValueKind::Bytes | ValueKind::Symbol) {
                 assert!(value18 && kind.is_reference());
                 assert!(
                     SUPPORTED_PROFILES
@@ -3412,6 +3426,7 @@ mod tests {
         }
         assert_eq!(ValueKind::from_tag(ValueKind::LAST as u32 + 1), None);
         assert!(new.byte_values() && !old.byte_values());
+        assert!(new.symbol_values() && !old.symbol_values());
         assert_eq!(
             new.exception_channel(),
             (
