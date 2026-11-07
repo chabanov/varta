@@ -8438,7 +8438,8 @@ same day ([contract](architecture.md#view-css-engine-k8-t2-and-t3)).
   one package `core_maths` 0.1.1 (MIT, a float extension trait over the
   locked `libm`). Alternatives rejected: skrifa (its `no_std` feature needs
   the same package), and a second hand-written sfnt reader. The engine
-  module grows from 467 to 508 KB.
+  module grows from 467 to 508 KB. Accepted by the coordinator under the
+  owner's delegated authority (2026-11-07).
 - **Evidence.** Cross-host corpus: twelve new font cases decided identically
   by the Wasm module, the native session and the native renderer, and by
   the browser view model in Node, with a deterministic stand-in for the
@@ -8523,6 +8524,118 @@ same day ([contract](architecture.md#view-css-engine-k8-t2-and-t3)).
   (4376 Rust tests passed, 0 failed, 25 ignored; 186 browser Node tests;
   conformance baseline; sources unchanged), report
   `target/verification/20261106-231206-57zwplmi/report.json` (macOS only).
+
+#### K8 T2 S4 remainder, first part: borders, corners, overflow and text (2026-11-07)
+
+([contract](architecture.md#view-css-engine-k8-t2-and-t3))
+
+- **Engine.** Registry codes 85–107: the per-side border width, style and
+  colour longhands, the four corner radii (one or two radii), `overflow-x`,
+  `overflow-y`, `visibility`, `text-transform`, `pointer-events`,
+  `user-select` and `box-sizing` (Preflight's first declaration).
+  `border-width`/`-style`/`-color` take one to four values, `border` and
+  the side shorthands any order with `none`/`hidden`, and the
+  `<line-width>` keywords lower to `px`; `overflow` takes two values with
+  `clip` and `scroll`. Mapped: the 28 flow-relative border and corner
+  properties of Logical 1 §4.4/§4.6 and `-webkit-user-select`. The
+  shorthand rule of the S5 batch is generalized (`varta_style::shorthands`):
+  wherever a shorthand wins over a registered longhand or nested shorthand
+  (`border` over `border-top` and `border-top-width`, `border-radius`,
+  `outline`, `overflow`), the longhand computes to its component, an
+  omitted component to `initial`; this fixes the bridge applying an
+  outranked side longhand after its shorthand.
+- **Native.** Borders per side and per value, colours per side, elliptical
+  radii from the corner longhands, `overflow` per axis (Taffy's per-axis
+  overflow, the padding-box clip of a one-axis `clip`, classic gutters for
+  `scroll`, the §3.1 axis rule), `visibility` (draws suppressed per node
+  and per glyph owner; no hits, focus, accessibility node or name text),
+  `pointer-events` (hits pass through), `text-transform` (a new
+  `text::transform`: full Unicode case mappings with the final sigma, UAX
+  #29 word starts for `capitalize` across text nodes, the inverse
+  `<wide>`/`<narrow>` decompositions, Appendix G kana; the user-agent
+  `none` of form controls).
+- **Evidence.** Corpus: 31 new cases on all hosts (Wasm module, native
+  session and renderer, Node view model). Native tests (`css_s4`): sides
+  and box values in cascade order, logical mapping, corner overrides,
+  one-axis clip, invisible paint/hit/focus, `pointer-events`, transformed
+  text widths, the controls' reset, `box-sizing`. Chrome oracle: six new
+  scenes (`border-sides`, `corner-radii`, `overflow-axes`, `visibility`,
+  `text-transform` with the new `case.ttf` fixture,
+  `scripts/generate-style-case-font.py`, `box-sizing`): `bridge` 1081 and
+  `platform` 1069 checks pass at 1x, 1.25x and 2x.
+- **Tailwind acceptance:** 251 → 261 of 312 candidates (83.7%): `border-b`,
+  `divide-y`, `overflow-x-auto`, `overflow-y-auto`, `invisible`,
+  `uppercase`, `select-none`, `disabled:pointer-events-none`, and the
+  `visible` of `group-focus-within`.
+- **Recorded deviations and open items.** Chrome 156 implements neither
+  `text-transform: full-width`/`full-size-kana` nor `user-select: contain`
+  (Text 3 and UI 4 admit them): the native renderer follows the
+  specification, the browser host renders what Chrome renders (owner
+  decision requested: keep admitting them, or refuse them until Chrome
+  implements them so both hosts agree). Native scrolling stays vertical:
+  a horizontal scroll container (`overflow-x: auto`) clips without
+  scrolling, as `overflow: auto` already did; horizontal scroll offsets,
+  wheel deltas, overlay bars and the `scroll` event's fields are open (the
+  event record has no `scroll_left`, a view protocol change). Also open: a
+  curved clip on one axis (refused), `text-transform` of a text field's or
+  select's own text (refused: editing offsets would need a map),
+  `visibility: collapse` struts of flex items (Flexbox 1 §4.4; treated as
+  `hidden`, as Chrome does), and border styles other than `none`,
+  `hidden`, `solid` (S6 paint).
+
+#### K8 T2 S5, second part: attributes, `:has()` and input pseudo-classes (2026-11-07)
+
+([contract](architecture.md#view-css-engine-k8-t2-and-t3))
+
+- **Selectors.** Id and attribute selectors with every matcher and the
+  `i`/`s` flags (HTML's case-insensitive attribute values by default),
+  `:has()` with relative selectors (bounded: no `:has()` or pseudo-element
+  inside, the subtree search charged to the cascade work estimate), and
+  the location, input and tree pseudo-classes of the view's elements
+  (`varta_style::forms`: read-write, placeholder, default, indeterminate,
+  HTML constraint validation of the subset's controls with an exact
+  decimal step check). Pseudo-elements parse with their specificity and are
+  kept out of the element's own cascade; a rule naming one the renderers do
+  not draw yet is refused (`PseudoElement`), so nothing is ignored
+  silently. `::file-selector-button` is admitted (no file inputs).
+- **Engine inputs on both hosts.** The style session mirrors attributes,
+  field values, text data and element states (`view_engine_attribute`,
+  `_unattribute`, `_value`, `_states`); the browser view model forwards the
+  attributes and texts it admits and the dialogs' states, the DOM bridge
+  records a number field's bad input and the user validity from the DOM
+  (as it records hover and focus); the native tree answers the same
+  `Document` queries from its own state and sets the user validity on a
+  trusted `change` and on form submission.
+- **Attributes in the view contract (coordinator decision).** The
+  protocol's registered attributes (`id`, `role`, `type`, `name`,
+  `placeholder`, `disabled`, `readonly`, `selected`, `href`, the `aria-*`
+  attributes of the registry, …) now reach selectors on both hosts.
+  `data-*` attributes need a protocol extension and the guest's `View` API
+  and TSX lowering, which live in the compiler (K9's files): designed, not
+  implemented here — see the open items.
+- **Evidence.** Corpus: 22 new cases (tags, attributes, values and checked
+  states are new corpus inputs on every host). Native tests (`css_s5`):
+  attribute writes, `:has()` over checked state, `:invalid`, the user
+  validity after a stepped `change`, `:placeholder-shown`. Chrome oracle:
+  three new scenes (`attribute-selectors`, `has-selectors`,
+  `input-pseudo-classes`; scenes now take tags, attributes, values and
+  checked states): `bridge` 1253 and `platform` 1241 checks pass at 1x,
+  1.25x and 2x, the platform mode (Chrome's own selector matching)
+  pixel-exact.
+- **Tailwind acceptance:** 261 → 275 of 312 candidates (88.1%): the
+  `aria-[current=page]` variant, the `has-checked:` and `invalid:`/
+  `peer-invalid:` variants.
+- **Open items (S5 third part and a protocol decision).** The rendering of
+  `::before`/`::after` (generated boxes with `content`), `::placeholder`,
+  `::marker`, `::selection`, `::backdrop`, `::first-line` and
+  `::first-letter`, natively and through generated per-element rules in
+  the bridge (the engine computes them). `data-*` attributes: proposed as
+  two draft opcodes `set_data(node, name, value)` and `remove_data(node,
+  name)` (an HTML custom data attribute name of at most 64 bytes, at most
+  32 per element, values within `DRAFT_MAX_VALUE_BYTES`), with `View.setData`
+  and TSX `data-*` lowering in the compiler; this needs the K9 owners of
+  the compiler files (9 of the 37 remaining application candidates are
+  Headless UI's `data-*` variants).
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 

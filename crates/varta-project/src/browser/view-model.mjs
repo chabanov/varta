@@ -1,7 +1,7 @@
 import { registry } from "../../../varta-common/browser/registry.mjs";
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
 import { potentialNamingWork } from './view-naming.mjs';
-import { createViewEngine, ENGINE_STATUS } from "./view-engine.mjs";
+import { createViewEngine, ENGINE_STATES, ENGINE_STATUS } from "./view-engine.mjs";
 
 import {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork} from './view-select.mjs';
 
@@ -122,8 +122,15 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
   const engine = viewEngine === undefined ? undefined : createViewEngine(viewEngine, { fontMetrics });
   let nodes = new Map([[W.root, element("div")]]), sheets = new Map(), sheetBytes = new Map(), pending = new Set(), title = "", titleBytes = 0, focus = W.noNode;
   let closed = false;
-  // The engine's `:disabled`/`:checked` inputs follow the committed tree.
-  const syncFlags = (tree) => { if (!engine) return; for (const [id, node] of tree) if (node.kind === "element") { const [disabled, checked] = flagsOf(node); engine.setFlags(id, disabled, checked); } };
+  // The engine's selector inputs follow the committed tree: `:disabled`,
+  // `:checked`, the fields' values and the dialogs' `:open`/`:modal` (a
+  // dialog is only ever shown modally).
+  const dialogStates = ENGINE_STATES.open | ENGINE_STATES.modal;
+  const syncFlags = (tree) => { if (!engine) return; for (const [id, node] of tree) if (node.kind === "element") {
+    const [disabled, checked] = flagsOf(node); engine.setFlags(id, disabled, checked);
+    if (["input", "textarea", "select"].includes(node.tag)) engine.setValue(id, node.value ?? "");
+    if (node.tag === "dialog") engine.setStates(id, node.open ? dialogStates : 0, dialogStates);
+  } };
   const validateChoice = (record, choice) => {
     const MAX_NODE_ID=0xffff_ffff;
     if(choice!==undefined&&(!Number.isSafeInteger(choice)||choice<0||choice>MAX_NODE_ID||!['input','change'].includes(record.kind)))throw new ViewProtocolError('invalid select option envelope');
@@ -173,8 +180,10 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if (!op.node || next.has(op.node)) fail("duplicate node");
           if (next.size >= V.limits.nodes) fail("node budget");
           next.set(op.node, op.name === "create_element" ? element(op.tag) : textNode(op.text));
-          engineCall(engine.create(op.node, op.name === "create_element" ? tags.get(op.tag).code : null), "unknown node"); break;
-        case "set_text": { const node = live(op.node); if (node.kind !== "text") fail("not a text"); node.text = op.text; node.textBytes=selectionTextBytes(op.text); syncSelectFor(next,op.node); break; }
+          engineCall(engine.create(op.node, op.name === "create_element" ? tags.get(op.tag).code : null), "unknown node");
+          if (op.name === "create_text") engine.setValue(op.node, op.text);
+          break;
+        case "set_text": { const node = live(op.node); if (node.kind !== "text") fail("not a text"); node.text = op.text; node.textBytes=selectionTextBytes(op.text); engine.setValue(op.node, op.text); syncSelectFor(next,op.node); break; }
         case "set_attribute": {
           const node = asElement(op.node), rule = attributes.get(op.attribute);
           if (!admitted(rule.tags, node)) fail("attribute not allowed");
@@ -182,6 +191,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if (op.attribute === "src" && !assetRequested(op.text)) fail("unpackaged view asset");
           if (op.attribute === "srcset" && !imageCandidateNames(op.text).every(assetRequested)) fail("unpackaged view asset");
           const changed=node.attributes.get(op.attribute)!==op.text;
+          engineCall(engine.setAttribute(op.node, op.attribute, op.text), "attribute value");
           node.attributes.set(op.attribute, op.text);
           node.attributeBytes.set(op.attribute,selectionTextBytes(op.text));
           if(op.attribute === "name")node.radioNameBytes=node.attributeBytes.get(op.attribute);
@@ -189,7 +199,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if (["name", "type"].includes(op.attribute) && checkable(node) && inputType(node) === "radio") reconcileRadio(op.node,node.checked);
           break;
         }
-        case "remove_attribute": { const node = asElement(op.node); if (!admitted(attributes.get(op.attribute).tags, node)) fail("attribute not allowed"); if(node.attributes.delete(op.attribute)){node.attributeBytes.delete(op.attribute);optionAttribute(next,op.node,op.attribute,false);} break; }
+        case "remove_attribute": { const node = asElement(op.node); if (!admitted(attributes.get(op.attribute).tags, node)) fail("attribute not allowed"); if(node.attributes.delete(op.attribute)){node.attributeBytes.delete(op.attribute);optionAttribute(next,op.node,op.attribute,false);} engine.removeAttribute(op.node, op.attribute); break; }
         case "set_class": { const node = asElement(op.node); engineCall(engine.setClass(op.node, op.text), "class value"); node.class = op.text; node.classBytes=selectionTextBytes(op.text); break; }
         case "set_style": {
           const node = asElement(op.node); if (["field-sizing", "resize"].includes(op.property) && node.tag !== "textarea") fail("property not allowed");
@@ -305,7 +315,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
       validateChoice(record, selectedOption);
       if (record.kind === "command_result" && record.key === "copy_text") { if (!pending.delete(record.seq)) throw new ViewProtocolError("unknown command result"); }
       const node = nodes.get(record.target);
-      if(node){if(record.kind==="focusin")focus=record.target;if(record.kind==="focusout"&&focus===record.target)focus=W.noNode;if(record.kind==="close"&&node.tag==="dialog")node.open=false;}
+      if(node){if(record.kind==="focusin")focus=record.target;if(record.kind==="focusout"&&focus===record.target)focus=W.noNode;if(record.kind==="close"&&node.tag==="dialog"){node.open=false;syncFlags(nodes);}}
       if (!node || node.kind !== "element" || !["input", "textarea", "select"].includes(node.tag) || !["input", "change"].includes(record.kind)) return;
       if(!inputValue(record.value))throw new ViewProtocolError("input value");
       node.seq = record.seq;

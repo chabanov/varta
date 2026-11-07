@@ -30,11 +30,16 @@ pub(crate) fn requested(tree: &Tree, env: &Environment, root: u32) -> Result<boo
     };
     match value.as_str() {
         "clip" => Ok(false),
-        "ellipsis" => match tree.computed_property(root, env, P::Overflow).as_deref() {
-            None | Some("visible") => Ok(false),
-            Some("hidden") => Ok(true),
-            _ => Err(LayoutError::Unsupported(root)),
-        },
+        // Text Overflow applies where the inline axis (x) does not show the
+        // overflow (CSS Overflow 4 §5.1).
+        "ellipsis" => {
+            use crate::style::Overflow as O;
+            match crate::style::overflow(&tree.computed_read(root, env)) {
+                Some([O::Visible, _]) => Ok(false),
+                Some([O::Hidden | O::Clip, O::Visible | O::Hidden | O::Clip]) => Ok(true),
+                _ => Err(LayoutError::Unsupported(root)),
+            }
+        }
         _ => Err(LayoutError::Unsupported(root)),
     }
 }

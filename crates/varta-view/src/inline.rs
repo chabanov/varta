@@ -382,7 +382,28 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<layout::InlineSpa
             | P::BorderLeft
             | P::BorderWidth
             | P::BorderStyle
-            | P::BorderColor => true, // Widths are resolved with spacing below.
+            | P::BorderColor
+            | P::BorderTopWidth
+            | P::BorderRightWidth
+            | P::BorderBottomWidth
+            | P::BorderLeftWidth
+            | P::BorderTopStyle
+            | P::BorderRightStyle
+            | P::BorderBottomStyle
+            | P::BorderLeftStyle
+            | P::BorderTopColor
+            | P::BorderRightColor
+            | P::BorderBottomColor
+            | P::BorderLeftColor => true, // Widths are resolved with spacing below.
+            P::BorderTopLeftRadius
+            | P::BorderTopRightRadius
+            | P::BorderBottomRightRadius
+            | P::BorderBottomLeftRadius => true,
+            // Inherited by its text (`layout::text_transform`), its glyphs
+            // and boxes (`style::visible`, `style::pointer_target`).
+            P::TextTransform | P::Visibility | P::PointerEvents | P::UserSelect => true,
+            // A non-replaced inline box has no `width` or `height` to size.
+            P::BoxSizing => true,
             P::Outline | P::OutlineWidth | P::OutlineStyle | P::OutlineColor | P::OutlineOffset => {
                 true
             }
@@ -461,6 +482,9 @@ pub(crate) fn collect(
     let options = layout::controls::control_line_height(tree, root, measurer, &families, options)?;
     let mut text = String::new();
     let mut spans = Vec::<TextSpan>::new();
+    // Each span's `text-transform` (CSS Text 3 §2.1), applied to its
+    // characters after white-space collapsing.
+    let mut transforms = Vec::<crate::text::transform::TextTransform>::new();
     let mut paths = BTreeMap::new();
     let mut nodes = Vec::new();
     let mut needs_paint_order = tree.path(root).into_iter().any(|id| {
@@ -549,7 +573,7 @@ pub(crate) fn collect(
                 let atom = atoms::measure(tree, env, id, (measurer, size))?;
                 // A collapsible space before an atomic inline is content.
                 if let Some(owner) = whitespace.take() {
-                    append(&mut text, &mut spans, owner, ' ')?;
+                    append_mapped(&mut text, &mut spans, (owner, transforms[owner]), ' ', "")?;
                     for edge in deferred.drain(..) {
                         edges[edge].index = text.len();
                     }
@@ -651,6 +675,7 @@ pub(crate) fn collect(
         // preserving modes mix in one flow, as CSS Text 3 defines.
         let (style, names) = layout::text_style(tree, env, id, size, measurer)?;
         let style = layout::controls::control_line_height(tree, id, measurer, &names, style)?;
+        transforms.push(layout::text_transform(tree, env, id)?);
         let index = spans.len();
         spans.push(TextSpan {
             owner: id,
@@ -667,7 +692,7 @@ pub(crate) fn collect(
             append(&mut text, &mut spans, index, '\n')?;
             continue;
         }
-        for raw in source.chars() {
+        for (at, raw) in source.char_indices() {
             measurer
                 .charge_inline_work(1)
                 .map_err(|_| LayoutError::Limit)?;
@@ -687,12 +712,13 @@ pub(crate) fn collect(
                 continue;
             }
             if let Some(owner) = whitespace.take() {
-                append(&mut text, &mut spans, owner, ' ')?;
+                append_mapped(&mut text, &mut spans, (owner, transforms[owner]), ' ', "")?;
                 for edge in deferred.drain(..) {
                     edges[edge].index = text.len();
                 }
             }
-            append(&mut text, &mut spans, index, ch)?;
+            let after = &source[at + raw.len_utf8()..];
+            append_mapped(&mut text, &mut spans, (index, transforms[index]), ch, after)?;
         }
     }
     // Every tab left after collapsing is preserved.
@@ -858,6 +884,24 @@ fn edge(
 /// shaped as its own run, is bounded.
 pub(crate) fn preserved_text_admitted(text: &str, mode: WhiteSpaceMode) -> bool {
     !mode.preserves() || crate::text::whitespace::tabs_admitted(text)
+}
+
+/// Append `ch` with its span's text transform (`after` is the rest of its
+/// text node, the transform's context).
+fn append_mapped(
+    text: &mut String,
+    spans: &mut [TextSpan],
+    (index, transform): (usize, crate::text::transform::TextTransform),
+    ch: char,
+    after: &str,
+) -> Result<(), LayoutError> {
+    if transform.is_none() {
+        return append(text, spans, index, ch);
+    }
+    for mapped in transform.map(ch, text, after).chars() {
+        append(text, spans, index, mapped)?;
+    }
+    Ok(())
 }
 
 fn append(
