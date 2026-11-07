@@ -28,8 +28,13 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("unicode_sets"),
     case!("string_methods"),
     case!("differential"),
-    // The `docs/language-guide.md` example, verbatim.
+    case!("runtime_patterns"),
+    case!("match_arrays"),
+    case!("replacers"),
+    case!("protocols"),
+    // The `docs/language-guide.md` examples, verbatim.
     case!("guide"),
+    case!("guide_runtime"),
 ];
 
 fn compile_in(profile: LanguageProfile, source: &str) -> Vec<u8> {
@@ -143,4 +148,44 @@ fn matcher_fuel_stays_within_the_contract() {
     assert!(scan <= 40, "{scan}");
     assert!(class <= 40, "{class}");
     assert!(nested <= 200, "{nested}");
+}
+
+/// Fuel of constructing `new RegExp(pattern, flags)` from values the
+/// compiler cannot see, beyond building the arguments.
+fn construction_fuel(pattern: &str, flags: &str) -> u64 {
+    let arguments = format!("const p:string[]=[{pattern:?},{flags:?}];console.log(p[1]??'');");
+    let base = format!("export function main():void{{{arguments}}}");
+    let program = format!("export function main():void{{{arguments}new RegExp(p[0]??'',p[1]);}}");
+    fuel(&program) - fuel(&base)
+}
+
+/// A pattern only known at run time is compiled by the linked pattern
+/// compiler as guest code: metered as fuel (the contract's figures) and
+/// absent from modules that construct no such pattern.
+#[test]
+fn runtime_pattern_compilation_is_metered_and_linked_on_demand() {
+    let small = construction_fuel("a(b)+c", "g");
+    let case = construction_fuel(r"\w+@\w+\.com", "iu");
+    let letters = construction_fuel(r"\p{L}+", "u");
+    let emoji = construction_fuel(r"\p{RGI_Emoji}", "v");
+    // Measured 2026-11-06: about 37 000, 228 000, 3.3 million and 48 million.
+    assert!(small <= 60_000, "{small}");
+    assert!(case <= 400_000, "{case}");
+    assert!(letters <= 5_000_000, "{letters}");
+    assert!(emoji <= 70_000_000, "{emoji}");
+    let constant = compile_in(
+        V38,
+        "export function main():void{console.log(String(/a/.test('a')));}",
+    );
+    let runtime = compile_in(
+        V38,
+        "export function main():void{const p:string[]=['a'];console.log(String(new RegExp(p[0]??'').test('a')));}",
+    );
+    // The pattern compiler and its Unicode data join only the second.
+    assert!(
+        runtime.len() > constant.len() + 100_000,
+        "{} {}",
+        runtime.len(),
+        constant.len()
+    );
 }

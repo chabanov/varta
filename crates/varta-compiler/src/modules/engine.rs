@@ -1276,12 +1276,13 @@ const PENDING: &[(&str, &[&str], &str)] = &[
         &["toString"],
         "RegExp.prototype.toString (class members cannot override the inherited toString; build '/' + source + '/' + flags)",
     ),
-    (
-        REGEXP_CLASS,
-        &["escape"],
-        "RegExp.escape (its result could only be compiled at run time; v37 compiles every pattern ahead of time)",
-    ),
 ];
+/// Members the v37 RegExp prelude lacks and the v38 one (`full_regexp`) has.
+const PENDING_V37_REGEXP: &[(&str, &[&str], &str)] = &[(
+    REGEXP_CLASS,
+    &["escape"],
+    "RegExp.escape (its result could only be compiled at run time; v37 compiles every pattern ahead of time)",
+)];
 
 /// Array methods a match array does not have: its elements are read by
 /// index, destructuring or `for…of` (v37 `regexp`).
@@ -1345,7 +1346,13 @@ pub(crate) fn pending(class: &str, name: &str, profile: LanguageProfile) -> Opti
     {
         return Some(reason);
     }
-    find(PENDING).or_else(|| find(PENDING_MATCH_ARRAYS))
+    // V38: match arrays have every array method and `RegExp.escape` exists.
+    if profile.full_regexp() {
+        return find(PENDING);
+    }
+    find(PENDING)
+        .or_else(|| find(PENDING_V37_REGEXP))
+        .or_else(|| find(PENDING_MATCH_ARRAYS))
 }
 
 /// Replace the one declaration `from` of a prelude source with `to`.

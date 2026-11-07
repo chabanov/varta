@@ -146,6 +146,7 @@ pub(super) fn logged(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
 /// URL, a RegExp match array or a class instance with `#private` fields,
 /// which a host reader would misread.
 fn boxed(value: Expr, types: &ir::ValueTypes, checked: bool) -> Result<Expr> {
+    let value = regexp::elements_value(value, types);
     // A tuple (v37) is an ordinary array to every dynamic reader.
     let value = match value.ty {
         Type::Tuple(id) => Expr {
@@ -775,8 +776,11 @@ impl Lower<'_> {
     /// `x!` (v34 `checked_assertions`): free when `x` cannot be nullish,
     /// otherwise a test that throws `TypeError` on `null` or `undefined`.
     pub(super) fn non_null_assertion(&mut self, assertion: &ast::TsNonNullExpr) -> Result<Expr> {
-        let span = assertion.span;
         let value = self.expr_preserving(&assertion.expr)?;
+        self.non_null_value(value, assertion.span)
+    }
+    /// `value!` for a lowered value: a `TypeError` when it is nullish.
+    pub(super) fn non_null_value(&mut self, value: Expr, span: swc_common::Span) -> Result<Expr> {
         let source = value.ty;
         let nullish = |ty: &Type| matches!(ty, Type::Null | Type::Undefined);
         let members = unions::members(source, self.types);

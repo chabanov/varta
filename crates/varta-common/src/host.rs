@@ -351,6 +351,13 @@ operations! {
     /// capability-free; always linked (`varta_intrinsics::regexp`), so its
     /// matching is guest code metered as fuel.
     RegExpExec,
+    /// V38 (`full_regexp`) run-time RegExp construction: parse and compile a
+    /// UTF-16 pattern and flags (RegExpInitialize) into the
+    /// `crate::regexp::construction` record (the programs, names, `source`
+    /// and flags, or V8's SyntaxError message) as an owned string. Pure and
+    /// capability-free; always linked (`varta_intrinsics::regexp::pattern`),
+    /// so compiling is guest code metered as fuel.
+    RegExpCompile,
     /// V37 (`collections`) `Date.now()`: milliseconds since the Unix epoch as
     /// binary64, under the exact `time.now` grant (a denial is fatal).
     DateNow,
@@ -563,6 +570,7 @@ impl HostOperation {
                 | Self::StringToUpperCase16
                 | Self::StringToLowerCase16
                 | Self::RegExpExec
+                | Self::RegExpCompile
                 | Self::EnvGet
                 | Self::FsRead
                 | Self::NetGet
@@ -839,6 +847,7 @@ impl HostOperation {
             Self::StringToUpperCase16 => "string_to_upper_case16",
             Self::StringToLowerCase16 => "string_to_lower_case16",
             Self::RegExpExec => "regexp_exec",
+            Self::RegExpCompile => "regexp_compile",
             Self::LogFloatV2 => "log_f64_v2",
             Self::LogFloat => "log_f64",
             Self::FloatRemainder => "number_remainder",
@@ -945,8 +954,9 @@ impl HostOperation {
                 | Self::StringCharCodeAt16
                 | Self::StringToUpperCase16
                 | Self::StringToLowerCase16
-                // The v38 backtracking RegExp matcher.
+                // The v38 backtracking RegExp matcher and pattern compiler.
                 | Self::RegExpExec
+                | Self::RegExpCompile
                 // The value18 primitive conversions and the primitive
                 // comparisons (`varta_intrinsics::bigint`): codegen v2 answers
                 // their common cases inline (integral Numbers, strings,
@@ -1113,6 +1123,7 @@ impl HostOperation {
                     | Self::ConsoleRender
                     | Self::StringNormalize16
                     | Self::RegExpExec
+                    | Self::RegExpCompile
             )
         {
             return crate::abi::PROGRAM_LIMITS_VERSION;
@@ -1625,6 +1636,7 @@ impl HostOperation {
             Self::StringCharCodeAt16 => (&[I32, I32, F64], &[F64]),
             Self::StringToUpperCase16 | Self::StringToLowerCase16 => (&[I32, I32], &[I32]),
             Self::RegExpExec => (&[I32, I32, I32, I32, F64, I32], &[I32]),
+            Self::RegExpCompile => (&[I32, I32, I32, I32], &[I32]),
             Self::DateNow => (&[], &[F64]),
             Self::IntlTimeZone | Self::IntlLocale => (&[], &[I32]),
             Self::DateZoneOffset => (&[I32, I32, F64, F64], &[F64]),
@@ -1860,6 +1872,7 @@ impl HostOperation {
             "string_to_upper_case16" => Self::StringToUpperCase16,
             "string_to_lower_case16" => Self::StringToLowerCase16,
             "regexp_exec" => Self::RegExpExec,
+            "regexp_compile" => Self::RegExpCompile,
             "log_f64_v2" => Self::LogFloatV2,
             "log_f64" => Self::LogFloat,
             "number_remainder" => Self::FloatRemainder,
@@ -2106,6 +2119,7 @@ impl HostOperation {
             | Self::StringToUpperCase16
             | Self::StringToLowerCase16
             | Self::RegExpExec
+            | Self::RegExpCompile
             | Self::LogInt
             | Self::LogFloatV2
             | Self::LogFloat

@@ -21,3 +21,7 @@ ryu-js.workspace = true
 icu_normalizer.workspace = true
 num-bigint = { version = "=0.4.8", default-features = false }
 thiserror = { version = "2.0", default-features = false }
+# Unicode property tables (`no_std` compiled data) for RegExp `\p{…}` escapes,
+# resolved when a pattern is compiled (ahead of time or in the guest). Already
+# locked through the compiler, the view crate and Parley.
+icu_properties.workspace = true

@@ -4,20 +4,18 @@
 //! (`emit::strings::regexp`) runs the linear-time subset in time linear in
 //! the input length (program format 1, `program`); v38 (`full_regexp`)
 //! admits the whole ECMAScript 2025 pattern language and compiles it to
-//! backtracking programs (format 2, `backtrack`) for the linked matcher.
-pub(crate) mod backtrack;
-pub(crate) mod case;
-pub(crate) mod classes;
+//! backtracking programs (format 2) for the linked matcher.
+//!
+//! The pattern parser and the v38 program compiler are the shared
+//! `varta_intrinsics::regexp::pattern`, which v38 guests also link to
+//! compile patterns built at run time; v37's format 1 stays here.
 pub(crate) mod compile;
-pub(crate) mod parse;
 pub(crate) mod program;
-pub(crate) mod property;
-pub(crate) mod set;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use compile::Compiled;
-pub(crate) use parse::Flags;
+use varta_intrinsics::regexp::pattern::{self as shared, RegExpError as PatternError};
+pub(crate) use varta_intrinsics::regexp::pattern::{Compiled, Flags, case, parse, set};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RegExpError {
@@ -47,12 +45,35 @@ impl RegExpError {
             },
         }
     }
+    /// A shared pattern error with V8's message for `/pattern/flags`
+    /// (`parsed`: the flags, once they parsed; a pattern is parsed only
+    /// after its flags).
+    fn from_pattern(error: PatternError, pattern: &str, flags: &str, parsed: Flags) -> Self {
+        match error {
+            PatternError::Pattern(message) => Self::Syntax(format!(
+                "{}{pattern}/{}: {message}",
+                shared::SYNTAX_PREFIX,
+                parsed.text()
+            )),
+            PatternError::Flags => Self::Syntax(format!("{}{flags}'", shared::FLAGS_PREFIX)),
+            PatternError::Unsupported(kind) => Self::Unsupported(kind.to_owned()),
+            PatternError::Backreference(number) => Self::Unsupported(format!(
+                "RegExp backreference \\{number} (backreferences need backtracking; v37 matches in linear time)"
+            )),
+            PatternError::TooLarge => Self::Unsupported(format!(
+                "RegExp program larger than {} code units",
+                varta_common::regexp::MAX_PROGRAM_UNITS
+            )),
+        }
+    }
 }
 
 /// A compiled regular expression with its observable `source` and `flags`.
 #[derive(Debug)]
 pub(crate) struct RegExp {
     pub source: String,
+    /// The pattern as written ([[OriginalSource]]); `source` escapes it.
+    pub pattern: String,
     pub flags: Flags,
     pub compiled: Compiled,
 }
@@ -60,16 +81,21 @@ pub(crate) struct RegExp {
 /// Compile a pattern written as a literal (`source` is its text); `full`
 /// selects the v38 language and backtracking program.
 pub(crate) fn literal(pattern: &str, flags: &str, full: bool) -> Result<RegExp, RegExpError> {
-    let flags = Flags::parse(flags, full)?;
-    let parsed = parse::parse(pattern, flags, full)?;
+    let flag_units: Vec<u16> = flags.encode_utf16().collect();
+    let parsed = Flags::parse(&flag_units, full)
+        .map_err(|error| RegExpError::from_pattern(error, pattern, flags, Flags::default()))?;
+    let units: Vec<u16> = pattern.encode_utf16().collect();
+    let error = |error| RegExpError::from_pattern(error, pattern, flags, parsed);
     let compiled = if full {
-        backtrack::compile(&parsed.node, parsed.groups, &parsed.names, flags)?
+        shared::compile_full(&units, parsed).map_err(error)?
     } else {
-        compile::compile(&parsed.node, parsed.groups, &parsed.names, flags)?
+        let tree = parse::parse(&units, parsed, false).map_err(error)?;
+        compile::compile(&tree.node, tree.groups, &tree.names, parsed)?
     };
     Ok(RegExp {
         source: pattern.to_owned(),
-        flags,
+        pattern: pattern.to_owned(),
+        flags: parsed,
         compiled,
     })
 }
@@ -78,39 +104,52 @@ pub(crate) fn literal(pattern: &str, flags: &str, full: bool) -> Result<RegExp, 
 /// EscapeRegExpPattern as V8 does (`/` and line terminators escaped).
 pub(crate) fn constructed(pattern: &str, flags: &str, full: bool) -> Result<RegExp, RegExpError> {
     let mut regexp = literal(pattern, flags, full)?;
-    regexp.source = escape(pattern);
+    let units: Vec<u16> = pattern.encode_utf16().collect();
+    // Escaping inserts only ASCII before characters of `pattern`, so the
+    // result of a `&str` pattern is valid UTF-16.
+    regexp.source = String::from_utf16_lossy(&shared::escape_source(&units));
     Ok(regexp)
 }
 
-fn escape(pattern: &str) -> String {
-    if pattern.is_empty() {
-        return "(?:)".into();
-    }
-    let mut source = String::with_capacity(pattern.len());
-    let (mut escaped, mut class) = (false, false);
-    for ch in pattern.chars() {
-        let text = match ch {
-            '\n' => Some(if escaped { "n" } else { "\\n" }),
-            '\r' => Some(if escaped { "r" } else { "\\r" }),
-            '\u{2028}' => Some(if escaped { "u2028" } else { "\\u2028" }),
-            '\u{2029}' => Some(if escaped { "u2029" } else { "\\u2029" }),
-            '/' if !escaped && !class => Some("\\/"),
-            _ => None,
-        };
-        match text {
-            Some(text) => source.push_str(text),
-            None => source.push(ch),
+/// Whether every capturing group of `/pattern/flags` takes part in each of
+/// its matches (v38 `split` then types its parts `string`); `None` when the
+/// pattern does not compile.
+pub(crate) fn captures_always_take_part(pattern: &str, flags: &str) -> Option<bool> {
+    let flag_units: Vec<u16> = flags.encode_utf16().collect();
+    let flags = Flags::parse(&flag_units, true).ok()?;
+    let units: Vec<u16> = pattern.encode_utf16().collect();
+    let tree = parse::parse(&units, flags, true).ok()?;
+    Some(!optional_captures(&tree.node, false))
+}
+
+/// Whether a capturing group inside `node` may not take part in a match:
+/// one in an alternative, under a quantifier that may run zero times, or in
+/// a negative lookaround (`optional`: the context already may skip it).
+fn optional_captures(node: &parse::Node, optional: bool) -> bool {
+    use parse::Node;
+    match node {
+        Node::Group(inner, index) => {
+            (index.is_some() && optional) || optional_captures(inner, optional)
         }
-        if escaped {
-            escaped = false;
-        } else {
-            match ch {
-                '\\' => escaped = true,
-                '[' => class = true,
-                ']' => class = false,
-                _ => {}
-            }
-        }
+        Node::Alternation(nodes) => nodes.iter().any(|inner| optional_captures(inner, true)),
+        Node::Repeat {
+            node: inner,
+            min,
+            max,
+            ..
+        } => optional_captures(inner, optional || *min == 0 || *max == Some(0)),
+        Node::Look {
+            negative,
+            node: inner,
+            ..
+        } => optional_captures(inner, optional || *negative),
+        Node::Modified(_, inner) => optional_captures(inner, optional),
+        Node::Concat(nodes) => nodes.iter().any(|inner| optional_captures(inner, optional)),
+        Node::Empty
+        | Node::Char(_)
+        | Node::Class { .. }
+        | Node::Dot
+        | Node::Assert(_)
+        | Node::Backref(_) => false,
     }
-    source
 }

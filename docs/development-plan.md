@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with K9 D2 Symbol values and symbol-keyed properties, K9 D4 local-time `Date` with host zone and locale inputs, and the stack-frame fix, on top of the K9 C expression forms with object-literal accessors and top-level `await`, K9 D3 full RegExp, K9 A steps 1–3, K9 B declarations and classes, the K8 CSS engine's font-metric units, logical properties and selectors, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-07, the commit that records it: **4447 Rust tests passed, 0 failures, 25 ignored; 186 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261107-025634-207xufk2/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **208 passed, 4 known unsupported out of 212** after the K9 A (steps 1–3), B, C, D, D1, D2 (with integrity levels and symbol keys), D3 and D4 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures and full RegExp (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **210 passed, 4 known unsupported out of 214** after the K9 A (steps 1–3), B, C, D, D1, D2 (with integrity levels and symbol keys), D3 and D4 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures, full RegExp (2026-11-06) and the D3 follow-up (run-time patterns, match arrays, `matchAll` iterators, `split`, replacers and symbol protocols, 2026-11-07), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -3061,7 +3061,7 @@ inferred from the current regression suite.
 | CORE-03 | Functions and control flow | Partial | Typed functions, closures, control flow, generators, async functions and async generators | Complete receiver/binding/call behavior, general iterables and remaining generator forms |
 | CORE-04 | Exceptions | Partial | Typed exceptions, Error subclasses, unknown catches and rooted propagation across suspension/finally | General thrown-value admission and complete error-family/propagation inventory |
 | CORE-05 | Standard collections and binary values | Partial | Map/Set, tuples, Uint8Array, encoding/base64 and v38 Web byte APIs | Full typed-array/ArrayBuffer/DataView contracts and ownership/interop inventory; general tagged collection values |
-| CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, the v38 complete Date in the UTC zone, ES2025 Array/Set/iterator/JSON library methods (K9 D) and ahead-of-time RegExp with the full ES2025 pattern language (K9 D3) | General Math object/call semantics, host time zones, Intl, Symbol, weak references, run-time RegExp patterns and RegExp symbol protocols |
+| CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, the v38 complete Date in the UTC zone, ES2025 Array/Set/iterator/JSON library methods (K9 D) and RegExp with the full ES2025 pattern language, run-time patterns, array match results and lazy `matchAll` (K9 D3) | General Math object/call semantics, host time zones, Intl, Symbol, weak references and RegExp symbol protocols |
 | CORE-07 | Garbage collection and resource lifecycle | Partial; large-heap idle-work fix verified | Exact tracing, liveness frames, incremental collection/idle maintenance and bounded bitmap clearing before the root snapshot under v38 | Sustained retained-root/leak/cancellation validation, collector tuning and target peak-memory evidence remain open |
 | CORE-08 | Event loop and promise jobs | Partial; implemented checked scheduler | Bounded FIFO Promise jobs, adoption, microtask checkpoints, timer/network tasks and generation-checked tokens | Structural thenable support (currently rejected), remaining scheduling semantics and cross-host ordering beyond supported network replay |
 | CORE-09 | Async language and cancellation | Partial | Async/await, timers, abort listeners/timeout/any, async generators, for-await, cancellable fetch and focused v38 HTTP lifecycle checks including synchronous network waits | Top-level await, wider async iterable forms, broader host-call lifecycle and sustained owned shutdown acceptance |
@@ -3854,7 +3854,7 @@ The selectors are registered; the table records what each stream admits.
 | `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results. No ABI, value-layout or host change. Pending (owner decision): static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
 | `console_methods()` | K9 D1 console methods (2026-11-06): standard error and the rest of Node's console | Implemented ([contract](architecture.md#console-methods-console_methods), [record](#k9-d1-console-methods-and-standard-error--2026-11-06)): `log_stderr16` (host ABI 34), the console prelude, the linked `console_render` |
 | `node_console()` | K9 D1 console notation (2026-11-06): multi-argument `console.log`/`info`/`debug` printed as Node 24 prints them | Implemented ([contract](architecture.md#console-notation-node_console), [record](#k9-d1-console-notation--2026-11-06)): the linked `varta_intrinsics::inspect`; value18 record descriptors end with a display trailer (class name, engine layouts). No host import or value tag |
-| `full_regexp()` | K9 D3 full RegExp (2026-11-06): the ES2025 pattern language with a backtracking matcher bounded by fuel, match indices, the `v` flag | Implemented ([contract](architecture.md#full-regexp-full_regexp), [record](#k9--typescript-completeness-and-the-first-release-agreed-2026-11-06)): program format 2 and the linked `regexp_exec`; V37 keeps the linear-time subset. Pending: run-time patterns, `matchAll` iterators, match-array methods, symbol protocols |
+| `full_regexp()` | K9 D3 full RegExp (2026-11-06): the ES2025 pattern language with a backtracking matcher bounded by fuel, match indices, the `v` flag | Implemented ([contract](architecture.md#full-regexp-full_regexp), [record](#k9--typescript-completeness-and-the-first-release-agreed-2026-11-06)): program format 2, the linked `regexp_exec` and (follow-up, 2026-11-07, [record](#k9-d3-follow-up--2026-11-07)) the linked pattern compiler `regexp_compile` for run-time patterns, `RegExp.escape`, match arrays as arrays, lazy `matchAll`, `undefined` split captures and run-time replacer arguments, and (after K9 D2) the RegExp symbol protocols and custom matchers; V37 keeps the linear-time subset |
 | `symbol_values()` | K9 D2 Symbol values (2026-11-06): value18 tag 16, registry, well-known symbols | Implemented ([contract](architecture.md#symbol-values-symbol_values), [record](#k9-d2-value-layout-and-collector--2026-11-06)); symbol-keyed members and protocols |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module
@@ -8191,6 +8191,73 @@ split captures, and the `Symbol.match`/`replace`/`search`/`split`/
 `matchAll` protocols (waiting for symbol values). Owner decisions open:
 whether to admit run-time patterns (a guest pattern compiler under its own
 budget) and whether match arrays become real arrays.
+
+#### K9 D3 follow-up — 2026-11-07
+
+Owner rule (release): full implementation by the specification, no
+documented deviations without approval; Node 24 is the oracle. Closed in v38
+([contract](architecture.md#full-regexp-full_regexp),
+[rules](profile-rules.md#full-regexp-full_regexp-v38)):
+
+- **Run-time patterns.** The pattern parser and the format-2 compiler moved
+  from `varta-compiler` into `varta_intrinsics::regexp::pattern` (`no_std`,
+  UTF-16 patterns, structured errors without `core::fmt`), one
+  implementation for the ahead-of-time compiler and the new linked
+  intrinsic `regexp_compile` (`HostOperation::RegExpCompile`, imported by no
+  profile; host ABI unchanged, registry and generated tables updated).
+  `new RegExp`/`RegExp()` with run-time arguments, RegExp patterns with or
+  without flags, string patterns of `search`/`match`/`matchAll` and
+  `RegExp.escape`; a constructor's early error is its run-time
+  `SyntaxError` with V8's text (constant arguments included). Case classes
+  and emoji sequences became checked-in tables with generators and checks;
+  set unions became linear merges so run-time compiles stay cheap. Size:
+  `intrinsics.wasm` 3 631 108 → 4 288 991 bytes (on `main` with K9 D4; +657 883) (code +114 KB, data +276 KB,
+  the rest relocations); only modules that construct a pattern at run time
+  link the pattern compiler and its Unicode data. Fuel: about 37 000 for a
+  small pattern, 3.3 million for `\p{L}+`, 48 million for `\p{RGI_Emoji}`
+  (pinned bounds in `runtime_pattern_compilation_is_metered_and_linked_on_demand`).
+- **Match arrays are arrays.** Elements, `length` and every Array method of
+  `exec`/`match`/`matchAll` results and `indices` are their elements
+  array's; `Array.isArray`, `JSON.stringify` and `unknown` see that array;
+  `index`/`input`/`groups`/`indices` are writable own properties.
+- **`matchAll`** returns a lazy RegExp String Iterator (a guest generator;
+  `next()`, `for…of`, spreads, iterator helpers).
+- **`split`** keeps `undefined` for a group that did not take part: typed
+  `string[]` for a separator written in place whose groups always take part,
+  `(string | undefined)[]` otherwise (TypeScript types it `string[]`;
+  Varta keeps the element type sound, as for match elements).
+- **Replacers** of patterns built at run time, and replacers with rest
+  parameters, receive the arguments counted at run time, each parameter
+  checked against its annotation; `lastIndex` semantics pinned for every
+  regex method.
+- **Symbol protocols** (after the K9 D2 merge): the RegExp protocol symbols
+  became well-known member keys; `RegExp` has `[Symbol.match]`,
+  `[Symbol.matchAll]`, `[Symbol.replace]`, `[Symbol.search]` and
+  `[Symbol.split]`, and the String methods call a custom matcher's method
+  (`full_regexp_cases/protocols.ts`).
+
+Evidence: `full_regexp_cases` `runtime_patterns`, `match_arrays` and
+`replacers` (Node 24.20.0), the pattern-compiler table and message tests,
+the CLI smoke test `v38_runtime_regexp_patterns_run_in_dev_and_artifacts`
+and five conformance cases in five new feature rows (205 → 210 passing of
+209 → 214 after the K9 D2 and D4 merges). V37 keeps its prelude, programs and diagnostics (the v37
+`regexp_cases` and v37 rejections pass unchanged). Fuel goldens: v38 match
+arrays read element 0 live (one checked element read instead of a field
+read). Three v38 goldens moved down with the rebuilt `intrinsics.wasm` (the
+same programs and IR; LTO lays out the shared linked code differently once
+the pattern compiler joins the library): `json` 33 558 → 33 553 and
+`unknown assertions` 26 693 → 26 637 (`fuel_determinism_tests`,
+`codegen_v2_tests::COSTLIER_UNDER_V38`), and `value15_cases/values.ts`
+178 592 → 178 536 (`COSTLIER_UNDER_V38`). With `main`'s library both keep
+their old figures; production budgets are unchanged. Refused: `replaceAll`/`matchAll` with a custom matcher that also has
+`[Symbol.match]` (by name; its IsRegExp `flags` check), and
+`re[Symbol.replace]` called directly with a replacer function (a type
+error: the prelude method takes a template). Owner decisions open: Annex B
+`RegExp.prototype.compile` and legacy static properties (`RegExp.$1`), the
+`(string | undefined)[]` typing of `split` by a separator not written in
+place, a match array's identity as a callback's third argument (its
+elements array), and the program-size limit at run time (`Regular
+expression too large` beyond 65 535 units, where V8 has no such limit).
 
 **K9 A step 2 (2026-11-06).** Owner decisions: a lying predicate keeps its
 `TypeError` (an intentional deviation, like checked `as`); branded

@@ -220,3 +220,22 @@ pub extern "C" fn regexp_exec(
         }
     })
 }
+
+/// The v38 run-time RegExp pattern compiler (RegExpInitialize): a pattern and
+/// flags read in place, compiled into the construction record
+/// (`varta_common::regexp::construction`) as an owned string. Compiling runs
+/// here as guest code, metered as fuel, with its working memory in the
+/// per-call arena under the memory budget.
+#[unsafe(no_mangle)]
+pub extern "C" fn regexp_compile(
+    pattern_ptr: i32,
+    pattern_len: i32,
+    flags_ptr: i32,
+    flags_len: i32,
+) -> i32 {
+    entry(|| {
+        let pattern = checked(string::read(&Guest, pattern_ptr, pattern_len, STRING_BYTES));
+        let flags = checked(string::read(&Guest, flags_ptr, flags_len, STRING_BYTES));
+        owned(&regexp::pattern::encode_bytes(&pattern, &flags))
+    })
+}

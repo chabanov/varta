@@ -318,6 +318,51 @@
       "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-makematchindicesindexpairarray"
     },
     {
+      "id": "regexp-runtime-patterns",
+      "title": "RegExp constructor with run-time patterns and RegExp.escape",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-regexp-pattern-flags"
+    },
+    {
+      "id": "regexp-match-arrays",
+      "title": "RegExp match arrays are arrays",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-regexpbuiltinexec"
+    },
+    {
+      "id": "regexp-string-iterator",
+      "title": "matchAll RegExp String Iterator",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-%regexpstringiteratorprototype%.next"
+    },
+    {
+      "id": "regexp-split-replace",
+      "title": "RegExp split captures, replacer arguments and lastIndex",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-regexp.prototype-%symbol.split%"
+    },
+    {
+      "id": "regexp-symbol-protocols",
+      "title": "RegExp symbol protocols and custom matchers",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-regexp.prototype-%symbol.replace%"
+    },
+    {
       "id": "generators",
       "title": "Generator iteration",
       "core": [
@@ -1883,6 +1928,81 @@
         "varta log: true d",
         "varta log: 0-4 ~ 3",
         "varta log: 1-2;3-5;"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "regexp-runtime-patterns",
+      "feature": "regexp-runtime-patterns",
+      "path": "cases/regexp-runtime-patterns.ts",
+      "sha256": "4ccb028dde9e93383dc825b18ee0a12e11fa9b7bce735f9517c4a97120853d95",
+      "stdout": [
+        "varta log: \\b(\\w)\\w* g o t",
+        "varta log: \\b(\\w)\\w* iy true",
+        "varta log: \\x31\\.5\\*\\(x\\)",
+        "varta log: Invalid regular expression: /\\b(\\w)\\w*(/u: Unterminated group"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "regexp-match-arrays",
+      "feature": "regexp-match-arrays",
+      "path": "cases/regexp-match-arrays.ts",
+      "sha256": "d7dd3a7f7148261172049c2cdddee6a2b24c92dc3d6806d81ce87f5054136cf6",
+      "stdout": [
+        "varta log: 4 3 true",
+        "varta log: 42|~|abc",
+        "varta log: 3 abc [\"42-abc\",\"42\",null,\"abc\"]",
+        "varta log: 5 42-abc,42,,abc,tail"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "regexp-string-iterator",
+      "feature": "regexp-string-iterator",
+      "path": "cases/regexp-string-iterator.ts",
+      "sha256": "748064098c4c9f6313f537663193fd06bdef68a839073b494b60a9591a974c1f",
+      "stdout": [
+        "varta log: false a=1 0",
+        "varta log: b=2@4 b",
+        "varta log: c=3@8 c",
+        "varta log: 123 1,5 true"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "regexp-split-replace",
+      "feature": "regexp-split-replace",
+      "path": "cases/regexp-split-replace.ts",
+      "sha256": "474598fa50a05b5d555809684eb294b2c917a853132d59b77e0dda71be4c56f9",
+      "stdout": [
+        "varta log: a|1|b|~|c",
+        "varta log: 1a0 2b3",
+        "varta log: 1x;2y",
+        "varta log: a1:4 b2:4",
+        "varta log: aaba 0"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "regexp-symbol-protocols",
+      "feature": "regexp-symbol-protocols",
+      "path": "cases/regexp-symbol-protocols.ts",
+      "sha256": "ba73d6b437e4ac9d2db8b719ccc57fd2f4987cdfdeda392aef15c1b96c0b582f",
+      "stdout": [
+        "varta log: a#b# a|b|c",
+        "varta log: a<1>b<2> 2",
+        "varta log: 1,3"
       ],
       "baseline": {
         "status": "supported"

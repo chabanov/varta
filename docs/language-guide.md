@@ -6254,8 +6254,7 @@ A date-time string without an offset is local time, a date-only string UTC.
 The whole ECMAScript 2025 pattern language: backreferences, lookahead and
 lookbehind, pattern modifiers, duplicate named groups, Unicode property
 escapes, match indices (`d`) and the `v` flag's set notation and emoji
-properties of strings. Patterns are still written as literals or `new
-RegExp` with constant arguments:
+properties of strings, in literals and in patterns built at run time:
 
 ```ts
 export function main(): void {
@@ -6275,8 +6274,31 @@ export function main(): void {
 
 Matching backtracks like JavaScript engines do, and every step is fuel: a
 pattern that backtracks catastrophically ends the turn with the typed fuel
-exhaustion instead of hanging. `matchAll` returns an array, match arrays have
-no array methods, and `split` throws for a capture that did not take part.
+exhaustion instead of hanging.
+
+A pattern built at run time compiles in the program itself, also as fuel.
+Match results are arrays with every array method, `matchAll` is a lazy
+iterator, and `split` keeps `undefined` for a group that did not take part
+(its parts are `string` only when the separator is written in place and
+every group always takes part):
+
+```ts
+export function main(): void {
+  const words = ["cat", "dog"];
+  const animals = new RegExp(`\\b(${words.map((word) => RegExp.escape(word)).join("|")})s?\\b`, "gi");
+  console.log(animals.source); // \b(\x63at|\x64og)s?\b
+  const found = animals.exec("Dogs and a cat");
+  console.log(found?.slice(1).join(",")); // Dog
+  animals.lastIndex = 0; // exec advanced it
+  console.log([..."cats, dog".matchAll(animals)].map((match) => match.index).join(" ")); // 0 6
+  console.log("a1b-c".split(/(\d)|-/).map((part) => part ?? "~").join("|")); // a|1|b|~|c
+  try {
+    new RegExp("(", "u");
+  } catch (error) {
+    if (error instanceof SyntaxError) console.log(error.message); // Invalid regular expression: /(/u: Unterminated group
+  }
+}
+```
 
 #### Web bytes (opt-in v38)
 

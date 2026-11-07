@@ -13,11 +13,11 @@
 //! optional iteration (`?`, `{n,m}` beyond `n`) of a body that can match
 //! empty records its start in a register and fails an empty iteration with
 //! `CHECK`, as RepeatMatcher's empty check does.
-use super::RegExpError;
 use super::case;
 use super::parse::{Assertion, Flags, Node};
 use super::program::{self, assertion, op};
 use super::set::{self, Set};
+use super::{Compiled, RegExpError};
 
 /// Largest program, in code units of the data section.
 pub(crate) const MAX_PROGRAM_UNITS: usize = 16 * 1024;
@@ -250,19 +250,6 @@ impl Builder {
         }
         Ok(())
     }
-}
-
-/// A compiled pattern.
-#[derive(Debug)]
-pub(crate) struct Compiled {
-    /// The full program, with every capture.
-    pub units: Vec<u16>,
-    /// The program without group captures, empty checks or resets: the same
-    /// match bounds (slots 0 and 1) for operations that need nothing else.
-    pub lean: Vec<u16>,
-    pub groups: usize,
-    /// Named groups with their one-based indices, in index order.
-    pub names: Vec<(String, usize)>,
 }
 
 pub(crate) fn compile(

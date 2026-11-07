@@ -13,13 +13,13 @@ use super::case;
 use super::parse::{Node, Parser};
 use super::property;
 use super::set::{MAX_CODE_POINT, Set};
-use std::collections::BTreeSet;
+use alloc::{boxed::Box, collections::BTreeSet, string::String, vec::Vec};
 
 /// A class value: single characters, strings of any other length, and
 /// whether the class may contain strings (MayContainStrings, a syntactic
 /// property that decides whether it can be negated).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ClassValue {
+pub struct ClassValue {
     pub set: Set,
     pub strings: BTreeSet<Vec<u32>>,
     pub may_strings: bool,
@@ -54,7 +54,7 @@ impl ClassValue {
     }
     /// The class as a pattern node (CompileAtom with strings): its strings
     /// longest first, then its single characters, then the empty string.
-    pub(crate) fn into_node(self) -> Node {
+    pub fn into_node(self) -> Node {
         if self.strings.is_empty() {
             return Node::Class {
                 set: self.set,
@@ -96,7 +96,7 @@ fn is(ch: Option<u32>, text: char) -> bool {
     ch == Some(u32::from(text))
 }
 
-impl Parser<'_> {
+impl Parser {
     /// `\p{…}` or `\P{…}` with the cursor on the backslash.
     pub(super) fn property(&mut self) -> Result<ClassValue, RegExpError> {
         let negated = is(self.peek_at(1), 'P');

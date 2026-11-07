@@ -3118,12 +3118,24 @@ See the [contract](architecture.md#full-regexp-full_regexp).
   parser's `full` switch). Every v37 path (`regexp::compile`, format 1, the
   emitted Pike VM, the `Unsupported` names) stays byte- and
   diagnostic-identical; new grammar branches only under `full`.
+- The pattern compiler has one implementation,
+  `varta_intrinsics::regexp::pattern`, used by the ahead-of-time compiler
+  and linked into v38 guests (`regexp_compile`). It is `no_std`, reads
+  UTF-16 patterns and must stay free of `core::fmt` formatting, trait
+  objects and function pointers (the linker refuses a library with an
+  element section); its errors are structured (`RegExpError`) and callers
+  format V8's text. Keep set operations linear or `O(n log n)` (sorted
+  merges, `Set::from_ranges`), never one `add` per range in a loop: every
+  step of a run-time compile is fuel.
 - The v38 program format is owned by `varta_common::regexp` and shared by
-  `regexp::backtrack` (compiler) and `varta_intrinsics::regexp` (linked
-  matcher). Any format change bumps `regexp::FORMAT_VERSION` there, changes
-  both sides together and rebuilds `intrinsics.wasm`
-  (`scripts/build-intrinsics.py`); `regexp.rs` is part of the fingerprinted
-  common core.
+  `pattern::program` and the linked matcher `varta_intrinsics::regexp`. Any
+  format change bumps `regexp::FORMAT_VERSION` there, changes both sides
+  together and rebuilds `intrinsics.wasm` (`scripts/build-intrinsics.py`);
+  `regexp.rs` is part of the fingerprinted common core.
+- The construction record of `regexp_compile` is
+  `varta_common::regexp::construction`; `prelude/regexp_v38.ts` mirrors it
+  by name (`RECORD_*`), checked by
+  `the_regexp_prelude_mirrors_the_construction_record`.
 - Matching stays guest code: `regexp_exec` is linked in every v38 module and
   admitted as an import by no profile, so no host implements it and no host
   can run a pattern outside fuel. Never add a native handler or a host regex
@@ -3132,16 +3144,38 @@ See the [contract](architecture.md#full-regexp-full_regexp).
   lookaround markers live on the backtracking stack. A malformed program is
   `IntrinsicError::RegExpProgram`, never a panic path that depends on
   unchecked indexing of guest data.
-- Case-insensitive classes are widened at compile time; under `v` with `i`
-  fold operands before set operations and complement among folded code
-  points (`case::fold`, `case::universe`). Canonicalize has one
-  implementation (`varta_common::regexp::canonicalize`).
-- Property names match strictly through ICU4X (`regexp::property`); the
-  properties of strings come only from `regexp/emoji_sequences.txt`
-  (Unicode Emoji 17.0). Updating Unicode data is a recorded change pinned
-  against the Node version of the same Unicode version.
+- Case-insensitive classes are widened when the pattern compiles; under `v`
+  with `i` fold operands before set operations and complement among folded
+  code points (`case::fold`, `case::universe`). Canonicalize has one
+  implementation (`varta_common::regexp::canonicalize`); its classes and
+  foldings are `case_table.rs`, rewritten only by the ignored generator
+  `regenerate_case_table` and checked by `case_table_matches_canonicalize`.
+- Property names match strictly through ICU4X (`pattern::property`); the
+  properties of strings come only from `pattern/emoji_sequences.txt`
+  (Unicode Emoji 17.0), compiled into `emoji_table.rs` by
+  `regenerate_emoji_table` and checked by `emoji_table_matches_its_source`.
+  Updating Unicode data is a recorded change pinned against the Node version
+  of the same Unicode version.
 - Early errors keep V8's message text; add each new one with its Node output
-  to `full_grammar_early_errors_keep_v8_text`.
+  to `full_grammar_early_errors_keep_v8_text`. A literal's early error is a
+  compile-time diagnostic; a constructor's or string pattern's, even with
+  constant arguments, is the run-time `SyntaxError` (`RegExp.create`).
+- Match arrays are prelude classes whose elements live in `values`. In
+  program modules (never the prelude) every member other than `index`,
+  `input`, `groups` and `indices` lowers on the elements through a hidden
+  binding (`on_match_elements`), and element and `length` writes go to the
+  elements (`match_elements_place`); `Array.isArray`, `JSON.stringify` and
+  `unknown` see the elements array. Element 0 is read live with a non-null
+  assertion.
+- The RegExp protocol symbols are well-known member keys
+  (`symbol_keys::WELL_KNOWN_KEYS`); the RegExp prelude is the one prelude
+  whose symbol keys are rewritten. String methods call a custom matcher
+  only through `custom_matcher_call` (receiver, matcher, then the other
+  arguments, in that order).
+- `split` returns `string[]` only for a separator written in place whose
+  groups always take part (`captures_always_take_part`); otherwise
+  `(string | undefined)[]`. Never reintroduce a throwing or coercing path for
+  a capture that did not take part.
 - Behaviour tests (`full_regexp_cases`) pin Node 24.20.0 output; the
   differential corpus is regenerated only by its seeded generator and Node.
   Adversarial tests assert the typed fuel exhaustion of the turn.

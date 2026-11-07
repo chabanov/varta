@@ -1,84 +1,96 @@
 //! Sets of pattern characters (UTF-16 code units, or code points under `u`)
 //! as sorted, disjoint, non-adjacent inclusive ranges.
+use alloc::{vec, vec::Vec};
 
 /// The largest UTF-16 code unit.
-pub(crate) const MAX_UNIT: u32 = 0xFFFF;
+pub const MAX_UNIT: u32 = 0xFFFF;
 /// The largest Unicode code point.
-pub(crate) const MAX_CODE_POINT: u32 = 0x10_FFFF;
+pub const MAX_CODE_POINT: u32 = 0x10_FFFF;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Set {
+pub struct Set {
     ranges: Vec<(u32, u32)>,
 }
 
 impl Set {
-    pub(crate) fn single(value: u32) -> Self {
+    pub fn single(value: u32) -> Self {
         Self {
             ranges: vec![(value, value)],
         }
     }
-    pub(crate) fn from_ranges(ranges: impl IntoIterator<Item = (u32, u32)>) -> Self {
-        let mut set = Self::default();
-        for (low, high) in ranges {
-            set.add(low, high);
-        }
-        set
+    /// The set of every range (in any order, overlapping or not).
+    pub fn from_ranges(ranges: impl IntoIterator<Item = (u32, u32)>) -> Self {
+        Self::normalized(ranges.into_iter().collect())
     }
-    pub(crate) fn ranges(&self) -> &[(u32, u32)] {
+    /// Sorted, disjoint, non-adjacent ranges covering `ranges`, in
+    /// O(n log n): run-time patterns build large property sets in the guest.
+    fn normalized(mut ranges: Vec<(u32, u32)>) -> Self {
+        ranges.sort_unstable();
+        let mut merged: Vec<(u32, u32)> = Vec::with_capacity(ranges.len());
+        for (low, high) in ranges {
+            debug_assert!(low <= high);
+            match merged.last_mut() {
+                Some(last) if low <= last.1.saturating_add(1) => last.1 = last.1.max(high),
+                _ => merged.push((low, high)),
+            }
+        }
+        Self { ranges: merged }
+    }
+    pub fn ranges(&self) -> &[(u32, u32)] {
         &self.ranges
     }
     /// The only member, if the set has exactly one.
-    pub(crate) fn only(&self) -> Option<u32> {
+    pub fn only(&self) -> Option<u32> {
         match self.ranges.as_slice() {
             [(low, high)] if low == high => Some(*low),
             _ => None,
         }
     }
-    pub(crate) fn contains(&self, value: u32) -> bool {
+    pub fn contains(&self, value: u32) -> bool {
         self.ranges
             .binary_search_by(|(low, high)| {
                 if *high < value {
-                    std::cmp::Ordering::Less
+                    core::cmp::Ordering::Less
                 } else if *low > value {
-                    std::cmp::Ordering::Greater
+                    core::cmp::Ordering::Greater
                 } else {
-                    std::cmp::Ordering::Equal
+                    core::cmp::Ordering::Equal
                 }
             })
             .is_ok()
     }
-    pub(crate) fn add(&mut self, low: u32, high: u32) {
+    pub fn add(&mut self, low: u32, high: u32) {
         debug_assert!(low <= high);
-        let mut merged = Vec::with_capacity(self.ranges.len() + 1);
-        let (mut low, mut high) = (low, high);
-        let mut placed = false;
-        for &(a, b) in &self.ranges {
-            if b.saturating_add(1) < low {
-                merged.push((a, b));
-            } else if high.saturating_add(1) < a {
-                if !placed {
-                    merged.push((low, high));
-                    placed = true;
-                }
-                merged.push((a, b));
-            } else {
-                low = low.min(a);
-                high = high.max(b);
+        self.union(&Self {
+            ranges: vec![(low, high)],
+        });
+    }
+    /// Add every member of `other`: a linear merge of the two sorted range
+    /// lists.
+    pub fn union(&mut self, other: &Self) {
+        if other.ranges.is_empty() {
+            return;
+        }
+        let mine = core::mem::take(&mut self.ranges);
+        let mut merged: Vec<(u32, u32)> = Vec::with_capacity(mine.len() + other.ranges.len());
+        let (mut a, mut b) = (mine.iter().peekable(), other.ranges.iter().peekable());
+        loop {
+            let next = match (a.peek(), b.peek()) {
+                (Some(left), Some(right)) if left <= right => a.next(),
+                (Some(_), Some(_)) | (None, Some(_)) => b.next(),
+                (Some(_), None) => a.next(),
+                (None, None) => break,
+            };
+            let Some(&(low, high)) = next else { break };
+            match merged.last_mut() {
+                Some(last) if low <= last.1.saturating_add(1) => last.1 = last.1.max(high),
+                _ => merged.push((low, high)),
             }
         }
-        if !placed {
-            merged.push((low, high));
-        }
-        merged.sort_unstable();
         self.ranges = merged;
     }
-    pub(crate) fn union(&mut self, other: &Self) {
-        for &(low, high) in &other.ranges {
-            self.add(low, high);
-        }
-    }
     /// The members of both sets (v38 class intersection).
-    pub(crate) fn intersection(&self, other: &Self) -> Self {
+    pub fn intersection(&self, other: &Self) -> Self {
         let mut ranges = Vec::new();
         let (mut a, mut b) = (0, 0);
         while a < self.ranges.len() && b < other.ranges.len() {
@@ -97,11 +109,11 @@ impl Set {
         Self { ranges }
     }
     /// The members of `self` outside `other` (v38 class subtraction).
-    pub(crate) fn difference(&self, other: &Self) -> Self {
+    pub fn difference(&self, other: &Self) -> Self {
         self.intersection(&other.complement(MAX_CODE_POINT))
     }
     /// The complement within `0..=max`.
-    pub(crate) fn complement(&self, max: u32) -> Self {
+    pub fn complement(&self, max: u32) -> Self {
         let mut ranges = Vec::new();
         let mut next = 0;
         for &(low, high) in &self.ranges {
@@ -118,11 +130,11 @@ impl Set {
 }
 
 /// `\d`.
-pub(crate) fn digits() -> Set {
+pub fn digits() -> Set {
     Set::from_ranges([(u32::from(b'0'), u32::from(b'9'))])
 }
 /// `\w` without the `u`+`i` extra word characters.
-pub(crate) fn word() -> Set {
+pub fn word() -> Set {
     Set::from_ranges([
         (u32::from(b'0'), u32::from(b'9')),
         (u32::from(b'A'), u32::from(b'Z')),
@@ -133,9 +145,9 @@ pub(crate) fn word() -> Set {
 /// U+017F LATIN SMALL LETTER LONG S and U+212A KELVIN SIGN: the characters
 /// outside `\w` whose simple case folding is in `\w` (WordCharacters with
 /// `u` and `i`).
-pub(crate) const EXTRA_WORD: [u32; 2] = [0x017F, 0x212A];
+pub const EXTRA_WORD: [u32; 2] = [0x017F, 0x212A];
 /// ECMAScript WhiteSpace and LineTerminator (`\s`).
-pub(crate) fn space() -> Set {
+pub fn space() -> Set {
     Set::from_ranges([
         (0x09, 0x0D),
         (0x20, 0x20),
@@ -150,7 +162,7 @@ pub(crate) fn space() -> Set {
     ])
 }
 /// LineTerminator: LF, CR, LS and PS.
-pub(crate) const LINE_TERMINATORS: [u32; 4] = [0x0A, 0x0D, 0x2028, 0x2029];
-pub(crate) fn line_terminators() -> Set {
+pub const LINE_TERMINATORS: [u32; 4] = [0x0A, 0x0D, 0x2028, 0x2029];
+pub fn line_terminators() -> Set {
     Set::from_ranges(LINE_TERMINATORS.map(|unit| (unit, unit)))
 }

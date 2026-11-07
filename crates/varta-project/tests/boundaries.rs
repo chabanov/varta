@@ -32,9 +32,11 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
             "varta-launcher",
             ["varta-common", "varta-artifact", "varta-runtime"].as_slice(),
         ),
+        // The compiler shares the RegExp pattern compiler that v38 guests
+        // link (`varta_intrinsics::regexp::pattern`), an engine crate.
         (
             "varta-compiler",
-            ["varta-common", "varta-bigint"].as_slice(),
+            ["varta-common", "varta-bigint", "varta-intrinsics"].as_slice(),
         ),
         (
             "varta-runtime",

@@ -3291,8 +3291,9 @@ mod tests {
             // Linked serialization and the logged text of a value.
             H::JsonStringifyOwned,
             H::ValueFormatV12,
-            // K9 D3: the backtracking RegExp matcher.
+            // K9 D3: the backtracking RegExp matcher and pattern compiler.
             H::RegExpExec,
+            H::RegExpCompile,
         ] {
             assert!(operation.linked() && v38.links(operation), "{operation:?}");
             assert!(operation.capability().is_none(), "{operation:?}");
