@@ -31,8 +31,9 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("runtime_patterns"),
     case!("match_arrays"),
     case!("replacers"),
-    // The `docs/language-guide.md` example, verbatim.
+    // The `docs/language-guide.md` examples, verbatim.
     case!("guide"),
+    case!("guide_runtime"),
 ];
 
 fn compile_in(profile: LanguageProfile, source: &str) -> Vec<u8> {

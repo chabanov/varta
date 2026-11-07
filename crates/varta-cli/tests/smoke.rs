@@ -17223,6 +17223,46 @@ fn v38_full_regexp_runs_in_dev_and_artifacts() {
 }
 
 #[test]
+fn v38_runtime_regexp_patterns_run_in_dev_and_artifacts() {
+    // K9 D3 follow-up: a pattern built at run time compiles in the guest
+    // (the linked `regexp_compile`), match arrays are arrays, `matchAll` is
+    // a lazy iterator and `split` keeps `undefined` captures.
+    let source = r"export function main():void{const re=new RegExp(['(\\w)','(\\d)?'].join(''),'g');const m=re.exec('a1 b');const it='a1 b'.matchAll(re);const first=it.next().value;const parts='x1y-z'.split(/(\d)|-/).map((p)=>p??'~');let bad='';try{new RegExp('(','u');}catch(e){if(e instanceof SyntaxError){bad=e.message;}}console.log(`${m?.slice(1).join('+')??''} ${first?.[0]??''} ${[...it].length} ${parts.join('|')} ${RegExp.escape('a.b')} ${bad}`);}";
+    let project = RegressionProject::new(source, serde_json::json!({}));
+    project.language_profile("checked-f64-utf16-v38");
+    // Node 24 prints the same line.
+    let expected = [
+        r"varta log: a+1 b 0 x|1|y|~|z \x61\.b Invalid regular expression: /(/u: Unterminated group",
+    ];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            let output = command
+                .args(["run", artifact])
+                .current_dir(&project.0)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", combined(&output));
+            assert_eq!(logs(&output), expected);
+        }
+    }
+    project.language_profile("checked-f64-utf16-v37");
+    let rejected = project.command(&["dev"]);
+    assert!(!rejected.status.success());
+}
+
+#[test]
 fn v38_expression_forms_run_in_dev_and_artifacts() {
     let source = "import {Range} from './range.ts';\
          class Lock implements Disposable{[Symbol.dispose]():void{console.log('released');}}\

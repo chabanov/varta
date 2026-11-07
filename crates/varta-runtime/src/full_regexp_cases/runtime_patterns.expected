@@ -32,3 +32,7 @@ SyntaxError: Invalid regular expression: /\k<b>(?<a>x)/: Invalid named capture r
 SyntaxError: Invalid regular expression: /[a-z&&[aeiou]]/v: Invalid set operation in character class
 SyntaxError: Invalid regular expression: /a{2,1}/: numbers out of order in {} quantifier
 SyntaxError: Invalid regular expression: /�(/y: Unterminated group
+caught Invalid regular expression: /a)/g: Unmatched ')'
+caught Invalid regular expression: /[/: Unterminated character class
+1 bb
+1;4;

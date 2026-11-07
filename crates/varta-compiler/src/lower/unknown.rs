@@ -118,6 +118,7 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
     if collections::reaches_hidden(value.ty, types) {
         return Err(collections::opaque("conversion to unknown"));
     }
+    let value = regexp::elements_value(value, types);
     // A tuple (v37) is an ordinary array to every dynamic reader.
     let value = match value.ty {
         Type::Tuple(id) => Expr {

@@ -84,4 +84,27 @@ export function main(): void {
   ]) {
     console.log(attempt(pattern ?? '', flags ?? ''));
   }
+  // A constant pattern with an early error throws when it runs.
+  try {
+    new RegExp('a)', 'g');
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      console.log('caught ' + error.message);
+    }
+  }
+  try {
+    console.log(String('abc'.search('[')));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      console.log('caught ' + error.message);
+    }
+  }
+  // String patterns of search, match and matchAll are compiled at run time.
+  const needle = build(['b', '+']);
+  console.log(String('abbc'.search(needle)) + ' ' + ('abbcb'.match(needle)?.[0] ?? 'null'));
+  let positions = '';
+  for (const found of 'abbcb'.matchAll(needle)) {
+    positions = positions + String(found.index) + ';';
+  }
+  console.log(positions);
 }

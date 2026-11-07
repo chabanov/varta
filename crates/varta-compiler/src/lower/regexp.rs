@@ -457,10 +457,15 @@ impl Lower<'_> {
             }
             return Err(self.source.locate(unsupported(NON_CONSTANT), new.span));
         };
-        let compiled =
-            crate::regexp::constructed(&pattern, &flags, self.types.profile.full_regexp())
-                .map_err(|e| self.source.locate(self.regexp_error(e), new.span))?;
-        self.compiled_regexp(compiled, new.span)
+        let full = self.types.profile.full_regexp();
+        match crate::regexp::constructed(&pattern, &flags, full) {
+            Ok(compiled) => self.compiled_regexp(compiled, new.span),
+            // V38: the constructor throws its SyntaxError when it runs.
+            Err(crate::regexp::RegExpError::Syntax(_)) if full => {
+                self.regexp_runtime("create", args, new.span)
+            }
+            Err(error) => Err(self.source.locate(self.regexp_error(error), new.span)),
+        }
     }
     /// V38: `new RegExp(…)` (`create`) or `RegExp(…)` (`call`) whose
     /// pattern is compiled at run time by the linked pattern compiler.
@@ -502,13 +507,27 @@ impl Lower<'_> {
     /// The RegExp argument of `search`, `match` or `matchAll`: a RegExp
     /// value, or a string literal compiled like `new RegExp(text, flags)`.
     fn regexp_argument(&mut self, argument: &ast::Expr, flags: &str) -> Result<Expr> {
+        let full = self.types.profile.full_regexp();
+        let span = argument.span();
+        let profile = self.types.profile;
         if let Some(text) = constant_text(argument) {
-            let compiled =
-                crate::regexp::constructed(&text, flags, self.types.profile.full_regexp())
-                    .map_err(|e| self.source.locate(self.regexp_error(e), argument.span()))?;
-            return self.compiled_regexp(compiled, argument.span());
+            match crate::regexp::constructed(&text, flags, full) {
+                Ok(compiled) => return self.compiled_regexp(compiled, span),
+                // V38: RegExpCreate throws its SyntaxError when it runs.
+                Err(crate::regexp::RegExpError::Syntax(_)) if full => {
+                    let pattern = string(span, profile.string_bytes(&text));
+                    let flags = string(span, profile.string_bytes(flags));
+                    return self.regexp_static("create", vec![pattern, flags], span);
+                }
+                Err(error) => return Err(self.source.locate(self.regexp_error(error), span)),
+            }
         }
         let value = self.expr(argument)?;
+        // V38: a string pattern only known at run time (RegExpCreate).
+        if full && value.ty == Type::String {
+            let flags = string(span, profile.string_bytes(flags));
+            return self.regexp_static("create", vec![value, flags], span);
+        }
         self.require_regexp(value)
     }
     fn require_regexp(&self, value: Expr) -> Result<Expr> {
@@ -1049,6 +1068,29 @@ fn static_pattern(expression: &ast::Expr) -> Option<(String, String)> {
     }
 }
 
+/// V38 (`full_regexp`): a match array entering `unknown` is the array of
+/// its elements, as JavaScript readers see an array; other values are
+/// unchanged.
+pub(super) fn elements_value(value: Expr, types: &crate::ir::ValueTypes) -> Expr {
+    let Type::Class(class) = value.ty else {
+        return value;
+    };
+    let match_array = [EXEC_ARRAY_CLASS, MATCH_ARRAY_CLASS, INDICES_ARRAY_CLASS]
+        .iter()
+        .any(|name| types.classes.prelude_class(name) == Some(class));
+    let Some((slot, field)) = types.classes.field(class, VALUES) else {
+        return value;
+    };
+    if !types.profile.full_regexp() || !match_array {
+        return value;
+    }
+    Expr {
+        span: value.span,
+        ty: field.ty,
+        kind: E::Field(Box::new(value), slot),
+    }
+}
+
 fn ident(name: &str, span: swc_common::Span) -> ast::Ident {
     ast::Ident {
         span,
@@ -1322,4 +1364,42 @@ fn replacer_constant(
             definite: false,
         }],
     }))))
+}
+
+#[cfg(test)]
+mod tests {
+    /// The v38 RegExp prelude mirrors the construction record of
+    /// `regexp_compile` and the flag bits by name.
+    #[test]
+    fn the_regexp_prelude_mirrors_the_construction_record() {
+        use varta_common::regexp::{bits, construction};
+        const PRELUDE: &str = include_str!("../prelude/regexp_v38.ts");
+        let constant = |name: &str, value: usize| {
+            let line = format!("const {name} = {value};");
+            assert!(PRELUDE.contains(&line), "regexp_v38.ts lacks `{line}`");
+        };
+        for (name, value) in [
+            ("RECORD_STATUS", construction::STATUS),
+            ("RECORD_OK", construction::OK as usize),
+            ("RECORD_MESSAGE_UNIT", construction::MESSAGE_UNIT),
+            ("RECORD_BITS", construction::BITS),
+            ("RECORD_COUNT", construction::COUNT),
+            ("RECORD_PROGRAM_UNITS", construction::PROGRAM_UNITS),
+            ("RECORD_LEAN_UNITS", construction::LEAN_UNITS),
+            ("RECORD_NAMES_UNITS", construction::NAMES_UNITS),
+            ("RECORD_SOURCE_UNITS", construction::SOURCE_UNITS),
+            ("RECORD_FLAGS_UNITS", construction::FLAGS_UNITS),
+            ("RECORD_TEXT_UNIT", construction::TEXT_UNIT),
+            ("GLOBAL", bits::GLOBAL as usize),
+            ("IGNORE_CASE", bits::IGNORE_CASE as usize),
+            ("MULTILINE", bits::MULTILINE as usize),
+            ("DOT_ALL", bits::DOT_ALL as usize),
+            ("UNICODE", bits::UNICODE as usize),
+            ("STICKY", bits::STICKY as usize),
+            ("HAS_INDICES", bits::HAS_INDICES as usize),
+            ("UNICODE_SETS", bits::UNICODE_SETS as usize),
+        ] {
+            constant(name, value);
+        }
+    }
 }

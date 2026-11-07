@@ -11888,12 +11888,14 @@ prelude loads only for programs that name one of its methods
 
 #### Full RegExp (`full_regexp`)
 
-K9 D3 (2026-11-06), under the selector `LanguageProfile::full_regexp()`: the
-whole ECMAScript 2025 pattern language (§22.2) replaces the v37
-[linear-time subset](#regexp-regexp) in v38. Patterns are still compiled
-only ahead of time (literals and `new RegExp` with constant arguments, as in
-v37); V37 keeps its subset, its program format 1, its emitted Pike VM and
-its diagnostics and bytes unchanged.
+K9 D3 (2026-11-06, follow-up 2026-11-07), under the selector
+`LanguageProfile::full_regexp()`: the whole ECMAScript 2025 pattern
+language (§22.2) and the RegExp built-ins replace the v37
+[linear-time subset](#regexp-regexp) in v38. Literals and `new RegExp` with
+constant arguments compile ahead of time; every other pattern compiles at
+run time in the guest with the same pattern compiler. V37 keeps its subset,
+its program format 1, its emitted Pike VM and its diagnostics and bytes
+unchanged.
 
 - **Admitted syntax.** Everything v37 admits, plus numbered and named
   backreferences (`\1`, `\k<name>`, forward references match empty),
@@ -11908,21 +11910,34 @@ its diagnostics and bytes unchanged.
   classes, `&&`, `--`, `\q{…|…}` and the emoji properties of strings
   (`Basic_Emoji`, `Emoji_Keycap_Sequence`, `RGI_Emoji_Modifier_Sequence`,
   `RGI_Emoji_Flag_Sequence`, `RGI_Emoji_Tag_Sequence`,
-  `RGI_Emoji_ZWJ_Sequence`, `RGI_Emoji`). Early errors are compile-time
-  `invalid` diagnostics with V8's text (`Duplicate capture group name`,
-  `Invalid named capture referenced`, `Repeated flag in flag group`,
+  `RGI_Emoji_ZWJ_Sequence`, `RGI_Emoji`). Early errors carry V8's text
+  (`Invalid regular expression: /pattern/flags: Duplicate capture group
+  name`, `Invalid named capture referenced`, `Repeated flag in flag group`,
   `Invalid property name`, `Invalid set operation in character class`,
-  `Negated character class may contain strings`, …); `u` with `v` is
-  `Invalid flags supplied to RegExp constructor 'uv'`. Flags print in
-  `dgimsuvy` order.
+  `Negated character class may contain strings`, …; `u` with `v` is
+  `Invalid flags supplied to RegExp constructor 'uv'`): a regular
+  expression literal's is a compile-time `invalid` diagnostic (an early
+  error of the script), a `RegExp` constructor's or a string pattern's is
+  the `SyntaxError` it throws when it runs, constant arguments included.
+  Flags print in `dgimsuvy` order.
 - **Property data.** Code point properties come from the ICU4X 2.4 compiled
   data (`icu_properties`, already locked; strict name matching as the
-  specification requires), resolved at compile time into class ranges; the
-  properties of strings come from the Unicode Emoji 17.0 data
-  (`regexp/emoji_sequences.txt`, from `emoji-sequences.txt` and
-  `emoji-zwj-sequences.txt`). Node 24.20.0 ships ICU 78.3 with Unicode 17.0,
-  and every case pinned against it agrees.
-- **Programs (format 2).** The compiler (`regexp::backtrack`) emits a
+  specification requires), resolved when a pattern compiles into class
+  ranges; the properties of strings come from the Unicode Emoji 17.0 data
+  (`emoji_sequences.txt`, from `emoji-sequences.txt` and
+  `emoji-zwj-sequences.txt`, compiled into the checked-in table
+  `emoji_table.rs`). Case-insensitive equivalence classes and simple case
+  foldings are the checked-in tables `case_table.rs`, derived from
+  Canonicalize over every cased character. Generator tests rewrite both
+  tables and checks keep them equal to their sources. Node 24.20.0 ships
+  ICU 78.3 with Unicode 17.0, and every case pinned against it agrees.
+- **Pattern compiler.** One implementation, `varta_intrinsics::regexp::pattern`
+  (`no_std`): the parser (UTF-16 patterns, lone surrogates included), the
+  `v` class sets, properties, case closure and the format-2 program
+  compiler. The ahead-of-time compiler calls it for literals and constant
+  constructors (and keeps v37's format-1 compiler beside it); v38 modules
+  link it into the guest as `regexp_compile`.
+- **Programs (format 2).** The pattern compiler (`pattern::program`) emits a
   backtracking program, a static string of UTF-16 code units shared with the
   matcher through `varta_common::regexp`: a header (format version 2,
   `UNICODE`/`ANCHORED`/`PREFILTER` flags, capture and register counts, the
@@ -11932,7 +11947,10 @@ its diagnostics and bytes unchanged.
   `REPEAT`, `ENTER`, `REPEAT_END`, `STAR`) whose consuming instructions and
   backreferences carry a backward bit inside lookbehind, and sorted class
   range tables. Offsets are single code units, so a program has at most
-  65 535 units (`RegExp program larger than 65535 code units` beyond);
+  65 535 units (beyond: the compile-time diagnostic `RegExp program larger
+  than 65535 code units` for a literal, and the run-time `SyntaxError` V8
+  uses for its own limit, `Regular expression too large`, for a
+  constructor);
   counted repetitions use counters and are not expanded (`a{100000}` is
   small). Case-insensitive characters and classes are widened at compile
   time as in v37 (under `v` with `i`, operands are folded with simple case
@@ -11967,6 +11985,69 @@ its diagnostics and bytes unchanged.
   skipped input unit for a search led by a literal or a class (the prefilter
   skips units without a run), and about 160 fuel per unit for `/^(a+)+$/`
   on a matching input (v37: about 1 450). Production budgets are unchanged.
+- **Run-time patterns.** `new RegExp(pattern, flags)` and `RegExp(pattern,
+  flags)` (§22.2.4.1) with a pattern or flags the compiler cannot see, a
+  RegExp pattern (its [[OriginalSource]], with its [[OriginalFlags]] unless
+  flags are given), and the string patterns of `search`, `match` and
+  `matchAll` (RegExpCreate, `'g'` for `matchAll`) compile through the
+  linked `regexp_compile` (`HostOperation::RegExpCompile`, pure,
+  capability-free, linked and imported by no profile): RegExpInitialize as
+  guest code, every step metered as fuel and its working memory arena
+  memory under the memory budget. It returns the construction record of
+  `varta_common::regexp::construction` (32-bit words: status, flag bits,
+  capture count and five text lengths, then the program, the lean program,
+  the group names, `source` and `flags` as UTF-16; or V8's `SyntaxError`
+  message). `RegExp(regexp)` without flags returns `regexp` itself; `new
+  RegExp(regexp)` a new object with `lastIndex` 0. `source` is
+  EscapeRegExpPattern (`/` outside classes and line terminators escaped,
+  `(?:)` for the empty pattern), so `new RegExp(r.source, r.flags)`
+  round-trips. `RegExp.escape(text)` (ES2025 §22.2.5.1) is typed guest
+  code. A module links the pattern compiler and its Unicode data only when
+  it constructs a pattern at run time: the library grows from 530 368 to
+  1 184 163 bytes (code 348 KB to 462 KB, data 53 KB to 329 KB, the rest
+  relocations the linker drops), and the linked part joins only such
+  modules. Measured fuel (`full_regexp_tests`): about 37 000 for
+  `/a(b)+c/`, 228 000 for `/\w+@\w+\.com/iu`, 3.3 million for `/\p{L}+/u`
+  and 48 million for `/\p{RGI_Emoji}/v` (its program has 43 090 units).
+- **Match arrays.** The results of `exec`, `match` and `matchAll`, the
+  `indices` of a `d` match and the replacer match arrays are arrays
+  (§22.2.7.2): their elements, `length` (writable) and every Array method
+  are their elements array's (`values`; element reads, writes, methods,
+  spreads, destructuring and `for…of` of a program module reach it), while
+  `index`, `input`, `groups` and `indices` are their own writable data
+  properties. `Array.isArray` is `true`, `JSON.stringify` writes the
+  elements and a match array enters `unknown` as that array. Element 0 is typed `string` and read live: a program that
+  removed it reads `undefined`, which fails a `TypeError` assertion; other
+  elements are `string | undefined`. A callback's third argument is the
+  elements array.
+- **`matchAll`.** A RegExp String Iterator (§22.2.9): a guest generator over
+  a copy of the regex taken with its `lastIndex`, typed
+  `Generator<RegExpExecArray, void, undefined>`, so `next()`, `for…of`,
+  spreads, `Array.from` and the iterator helpers work and each step runs one
+  match lazily; a non-global regex throws the `TypeError` when `matchAll` is
+  called.
+- **`split`.** @@split (§22.2.6.14) splices the captures into the result,
+  `undefined` for a group that did not take part. The result is
+  `string[]` when the separator is written in place (a literal or a
+  constant `new RegExp`) and every capturing group always takes part
+  (none in an alternative, under a quantifier that may run zero times or in
+  a negative lookaround); otherwise `(string | undefined)[]`.
+- **Replacers.** A replacer receives the match, every capture, the
+  position, the input and, with named groups, the groups object
+  (§22.2.6.11). For a pattern written in place its parameters are typed
+  from the pattern (captures `string | undefined`, `string` when annotated
+  so, asserted); for a pattern built at run time, or a replacer with a rest
+  parameter, the arguments are counted at run time and each parameter is
+  checked against its annotation (`unknown` without one, `string` for the
+  match; a rest parameter takes the rest as `unknown[]`). A function binding
+  works in both forms when its parameter types are primitives or their
+  unions.
+- **`lastIndex`.** RegExpBuiltinExec reads `lastIndex` as ToLength only for
+  a global or sticky regex, fails and resets it to 0 beyond the input, and
+  writes the match end; `replace` and `match` with `g` start from 0 and end
+  at 0, `search` and `split` leave it unchanged, a sticky `replace` without
+  `g` advances it, and `matchAll` iterates a copy (pinned in
+  `full_regexp_cases/replacers.ts`).
 - **Prelude.** V38 compiles `prelude/regexp_v38.ts` in place of the v37
   prelude (`Prelude::lifted`): `hasIndices` and `unicodeSets` reflect their
   flags; `exec`, `match` without `g`, `matchAll` and replacer match arrays
@@ -11978,16 +12059,13 @@ its diagnostics and bytes unchanged.
   under `u` or `v`. A replacer's groups parameter is the (defined) groups
   object. Match arrays and indices arrays are read like v37 match arrays
   (index, destructuring, `for…of`).
-- **Deviations.** Patterns are compiled ahead of time only (a run-time
-  pattern, `new RegExp(regexp)`, `RegExp(…)` without `new`, `RegExp.escape`
-  and Annex B `compile` stay compile-time errors: a run-time pattern would
-  need the pattern compiler in the guest); `matchAll` returns an array;
-  match arrays have no array methods; `split` throws for a capture that did
-  not take part (its result is `string[]`); `Symbol.match`/`matchAll`/
-  `replace`/`search`/`split` protocols wait for symbol values; legacy static
-  properties are not modelled. Behaviour is pinned against Node 24.20.0
-  (`varta-runtime` `full_regexp_cases`, including a 600-pattern
-  differential corpus) and conformance cases `regexp-*`.
+- **Not modelled.** The `Symbol.match`/`matchAll`/`replace`/`search`/`split`
+  protocols wait for symbol values (track D2); Annex B
+  `RegExp.prototype.compile` and the legacy static properties (`RegExp.$1`)
+  are not modelled; a value whose type may be a match array or `null`
+  (`RegExpExecArray | null`) enters `unknown` only after narrowing. Behaviour is pinned
+  against Node 24.20.0 (`varta-runtime` `full_regexp_cases`, including a
+  600-pattern differential corpus) and conformance cases `regexp-*`.
 
 #### Type level (`type_level`)
 

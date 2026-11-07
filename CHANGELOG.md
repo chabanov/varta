@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- V38 K9 D3 follow-up (`full_regexp`): patterns built at run time compile in
+  the guest. The pattern parser and format-2 compiler moved into
+  `varta_intrinsics::regexp::pattern`, shared by the ahead-of-time compiler
+  and the new linked intrinsic `regexp_compile` (metered as fuel; linked
+  only into modules that construct a pattern at run time):
+  `new RegExp`/`RegExp()` with run-time arguments or a RegExp pattern,
+  string patterns of `search`/`match`/`matchAll`, `RegExp.escape`, and
+  run-time `SyntaxError`s with V8's text. Match results and `indices` are
+  arrays with every Array method; `matchAll` returns a lazy RegExp String
+  Iterator; `split` yields `undefined` for groups that did not take part;
+  replacers of run-time patterns or with rest parameters receive the
+  arguments counted at run time. Symbol protocols wait for symbol values.
+  Conformance: 205 passed, 5 known unsupported of 210.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
   2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as

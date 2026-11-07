@@ -92,8 +92,17 @@ function writes(): void {
   }
 }
 
+function describe(value: unknown): string {
+  return String(Array.isArray(value)) + ' ' + JSON.stringify(value);
+}
+
 export function main(): void {
   elements();
   receivers();
   writes();
+  // A match array enters `unknown` as an array.
+  const m = /(a)(b)?/.exec('xa');
+  if (m !== null) {
+    console.log(describe(m));
+  }
 }
