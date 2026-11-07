@@ -1,0 +1,36 @@
+4 42-abc|42||abc 3 id 42-abc!
+<42>~<abc> abc true
+3 2
+0:42-abc,1:42,2:~,3:abc
+3
+42-abc42_abc true true
+11
+4 4 true
+42-abc 42 abc
+{"word":"abc"} ["42-abc","42",null,"abc"] falsetrue
+<42><42-abc><abc>~ <abc>~<42><42-abc> false
+5 42-abc tail
+tail tail/abc//42/42-abc
+4 3-9,3-5,~,6-9
+1+22+333 undefined 3
+false a=1 0
+b=2@4 b
+c=3@8 c
+true
+1,2
+1;3
+<a><1><b>~<c><2><d>
+<a><,>~<b>~<;><c>
+3 one|two|three
+<1>~<2><x><3>
+<1>~
+ab|a|b
+x+y
+PQPQ
+2 true
+3 2 1
+a|z|y
+1 a
+7 changed
+w
+true ["a","a",null]

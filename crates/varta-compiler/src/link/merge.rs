@@ -22,6 +22,11 @@
 //! (`T` guest slots, `T..T+A` for `A` taken functions, in ascending library
 //! order) through one more active element segment, and the library's
 //! indirect calls use table 0.
+//!
+//! A module whose linked operations read locale data
+//! ([`super::intl`]) also gets the data's segments as passive data
+//! segments after every active one, the `varta.intl` manifest naming them
+//! and the `intl_data` accessor that copies ranges out of them.
 use super::library::{Closure, LINK_MODULE, Library, Placement};
 use std::collections::BTreeMap;
 use varta_common::{HostOperation, HostScalar, abi};
@@ -200,6 +205,9 @@ enum Accessor {
     /// `() -> i64`: the static region's extension pages (low word) and
     /// intrinsic pages (high word).
     StaticPages,
+    /// `(marker, offset, len, dst) -> i32`: copy a range of a linked
+    /// locale data segment ([`intl_accessor`]).
+    IntlData,
 }
 /// What the accessors read from the guest module and its placement.
 #[derive(Debug, Clone, Copy)]
@@ -238,6 +246,7 @@ impl Accessor {
             "exception_value" => Self::ExceptionValue,
             "raise" => Self::Raise,
             "static_pages" => Self::StaticPages,
+            "intl_data" => Self::IntlData,
             _ => return None,
         })
     }
@@ -258,6 +267,7 @@ impl Accessor {
             Self::Retain => (&[I64], &[I64]),
             Self::ExceptionValue | Self::StaticPages => (&[], &[I64]),
             Self::Raise => (&[I64], &[]),
+            Self::IntlData => (&[I32, I32, I32, I32], &[I32]),
         }
     }
     fn body(self, targets: AccessorTargets) -> Result<encoder::Function, String> {
@@ -292,6 +302,8 @@ impl Accessor {
         }
         match self {
             Self::Allocate | Self::Retain | Self::Roots | Self::SetRoots => {}
+            // Synthesized from the module's locale data (`intl_accessor`).
+            Self::IntlData => return Err("intl_data has no fixed body".into()),
             Self::ExceptionVersion | Self::ExceptionPending => {
                 let global = if matches!(self, Self::ExceptionVersion) {
                     targets.exceptions.0
@@ -379,6 +391,59 @@ impl Accessor {
         function.instruction(&I::End);
         Ok(function)
     }
+}
+
+/// `(marker, offset, len, dst) -> i32`: for the passive segment of
+/// `marker` (data segment `first + i` for the `i`-th of `segments`), when
+/// `offset + len` (without overflow) is within it, `memory.init` the range
+/// to `dst` and return the segment's length; otherwise -1 without a copy.
+fn intl_accessor(segments: &[(u32, Vec<u8>)], first: u32) -> Result<encoder::Function, String> {
+    use encoder::Instruction as I;
+    const MARKER: u32 = 0;
+    const OFFSET: u32 = 1;
+    const LEN: u32 = 2;
+    const DESTINATION: u32 = 3;
+    const MISSING: i32 = -1;
+    let mut function = encoder::Function::new([]);
+    for (index, (hash, bytes)) in segments.iter().enumerate() {
+        let len = i32::try_from(bytes.len()).map_err(|e| e.to_string())?;
+        let data_index = first
+            .checked_add(u32::try_from(index).map_err(|e| e.to_string())?)
+            .ok_or("locale data: segment index overflow")?;
+        for instruction in [
+            I::LocalGet(MARKER),
+            I::I32Const(*hash as i32),
+            I::I32Eq,
+            I::If(encoder::BlockType::Empty),
+            I::LocalGet(OFFSET),
+            I::I64ExtendI32U,
+            I::LocalGet(LEN),
+            I::I64ExtendI32U,
+            I::I64Add,
+            I::I64Const(i64::from(len)),
+            I::I64GtU,
+            I::If(encoder::BlockType::Empty),
+            I::I32Const(MISSING),
+            I::Return,
+            I::End,
+            I::LocalGet(DESTINATION),
+            I::LocalGet(OFFSET),
+            I::LocalGet(LEN),
+            I::MemoryInit {
+                mem: GUEST_MEMORY,
+                data_index,
+            },
+            I::I32Const(len),
+            I::Return,
+            I::End,
+        ] {
+            function.instruction(&instruction);
+        }
+    }
+    function
+        .instruction(&I::I32Const(MISSING))
+        .instruction(&I::End);
+    Ok(function)
 }
 
 /// `(i32) -> ()`: set the linked stack pointer, trapping below the region's
@@ -766,6 +831,8 @@ struct Plan<'a> {
     library_indices: LibraryIndices,
     /// Slots of the guest's table before the library's.
     table_base: u32,
+    /// The locale data's passive segments and manifest.
+    intl: Option<super::LinkedData>,
 }
 
 /// The current minimum size of the guest's one table (0 without one).
@@ -804,6 +871,7 @@ impl<'a> Plan<'a> {
         linked: &[(u32, HostOperation)],
         heap: Option<u32>,
         values: Option<super::GuestValues>,
+        intl: Option<super::LinkedData>,
     ) -> Result<Self, String> {
         let sections = Sections::read(bytes)?;
         let roots = roots(guest, library, linked)?;
@@ -917,6 +985,7 @@ impl<'a> Plan<'a> {
                 stack,
             },
             table_base,
+            intl,
         };
         plan.plan_types()?;
         Ok(plan)
@@ -1117,9 +1186,12 @@ impl<'a> Plan<'a> {
                 }
             }
             Kind::DataCount => {
-                if let Some(count) = self.sections.data_count {
+                // `memory.init` needs the count; other modules keep the
+                // guest's choice.
+                let passive = self.intl.as_ref().map_or(0, |intl| intl.0.len() as u32);
+                if self.sections.data_count.is_some() || passive > 0 {
                     module.section(&encoder::DataCountSection {
-                        count: count + self.closure.segments.len() as u32,
+                        count: self.active_segments()? + passive,
                     });
                 }
             }
@@ -1239,7 +1311,15 @@ impl<'a> Plan<'a> {
                     import.name
                 ));
             }
-            section.function(&accessor.body(self.targets)?);
+            match accessor {
+                Accessor::IntlData => {
+                    let segments = self.intl.as_ref().map_or(&[][..], |intl| &intl.0[..]);
+                    section.function(&intl_accessor(segments, self.active_segments()?)?);
+                }
+                _ => {
+                    section.function(&accessor.body(self.targets)?);
+                }
+            }
         }
         if let Some((stack_pointer, _)) = self.library_indices.stack {
             let merged = self.library_indices.globals[&stack_pointer];
@@ -1276,10 +1356,34 @@ impl<'a> Plan<'a> {
                 self.library.relocated_segment(segment, &self.placement)?,
             );
         }
+        if let Some((segments, _)) = &self.intl {
+            for (_, bytes) in segments {
+                section.passive(bytes.iter().copied());
+            }
+        }
         if !section.is_empty() {
             module.section(&section);
         }
+        if let Some((_, manifest)) = &self.intl {
+            module.section(&encoder::CustomSection {
+                name: varta_common::intl_data::SECTION.into(),
+                data: manifest.encode().into(),
+            });
+        }
         Ok(())
+    }
+
+    /// The active data segments: the guest's and the linked library's.
+    fn active_segments(&self) -> Result<u32, String> {
+        let guest = match (self.sections.data_count, &self.sections.data) {
+            (Some(count), _) => count,
+            (None, Some(reader)) => reader.count(),
+            (None, None) => 0,
+        };
+        u32::try_from(self.closure.segments.len())
+            .ok()
+            .and_then(|library| guest.checked_add(library))
+            .ok_or_else(|| "too many data segments".into())
     }
 }
 
@@ -1290,6 +1394,7 @@ pub(super) fn merge(
     linked: &[(u32, HostOperation)],
     heap: Option<u32>,
     values: Option<super::GuestValues>,
+    intl: Option<super::LinkedData>,
 ) -> Result<Vec<u8>, String> {
-    Plan::new(bytes, guest, library, linked, heap, values)?.emit()
+    Plan::new(bytes, guest, library, linked, heap, values, intl)?.emit()
 }

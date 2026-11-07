@@ -38,6 +38,7 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("keyed"),
     case!("protocols"),
     case!("guide_keys"),
+    case!("enumeration"),
 ];
 
 fn compile_in(profile: LanguageProfile, source: &str) -> Vec<u8> {
@@ -107,6 +108,11 @@ fn symbol_keyed_members_match_node() {
 #[test]
 fn symbol_protocols_match_node() {
     matches_node("protocols");
+}
+
+#[test]
+fn symbol_keys_in_enumeration_and_copies_match_node() {
+    matches_node("enumeration");
 }
 
 /// The `docs/language-guide.md` examples, verbatim.
@@ -195,14 +201,14 @@ fn symbol_keys_are_stable_across_modules() {
     );
 }
 
-/// Symbol-keyed members are refused where a string-key view would list
-/// them, and quoted keys cannot spell a symbol key.
+/// Quoted keys cannot spell a symbol key; the own symbols of a value held by
+/// `unknown` are not known statically.
 #[test]
 fn symbol_keys_stay_out_of_string_key_forms() {
     refused(
         V38,
-        "const K = Symbol('k');\nexport function main(): void { const o = { [K]: 1, a: 2 }; console.log(Object.keys(o).join()); }",
-        "Object.keys of an object with symbol-keyed members",
+        "export function main(): void { const o: unknown = {}; console.log(String(Object.getOwnPropertySymbols(o).length)); }",
+        "Object.getOwnPropertySymbols of a value of type unknown",
     );
     refused(
         V38,
@@ -228,5 +234,39 @@ fn symbol_forms_stay_refused_by_v37() {
         V38,
         "export function main(): void { const s = Symbol(true); }",
         "Symbol description must be a string, a number or undefined",
+    );
+}
+
+/// `JSON.stringify` keeps TypeScript's `string` result. An argument
+/// statically typed `symbol`, `undefined` or a function gives `undefined`
+/// as Node does; one held by `unknown` (or a union) without a JSON form
+/// makes the `string` a checked read: a discarded result (an expression
+/// statement, `void`) never throws, a read throws `TypeError`. Node 24.20.0
+/// prints the same lines: its `TypeError` comes from reading `length` of
+/// `undefined`, Varta's from the read of the `string` itself.
+#[test]
+fn json_stringify_without_json_form_is_a_checked_read() {
+    let source = "export function main(): void {\n\
+                    const s = Symbol('s');\n\
+                    console.log(String(JSON.stringify(s)));\n\
+                    console.log(String(JSON.stringify(undefined)));\n\
+                    const f = (): number => 1;\n\
+                    console.log(String(JSON.stringify(f)));\n\
+                    const held: unknown = s;\n\
+                    JSON.stringify(held);\n\
+                    void JSON.stringify(held, null, 2);\n\
+                    JSON.stringify(held, null, 2);\n\
+                    try {\n\
+                      const text: string = JSON.stringify(held);\n\
+                      console.log(String(text.length));\n\
+                    } catch (error) {\n\
+                      console.log(String(error instanceof TypeError));\n\
+                    }\n\
+                    const value: unknown = { a: 1, s };\n\
+                    console.log(JSON.stringify(value));\n\
+                  }";
+    assert_eq!(
+        logs(source),
+        ["undefined", "undefined", "undefined", "true", "{\"a\":1}"]
     );
 }

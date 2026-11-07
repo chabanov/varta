@@ -1,0 +1,47 @@
+true true false
+element: TypeError: Cannot assign to read only property '0' of object '[object Array]'
+append: TypeError: Cannot add property 5, object is not extensible
+push: TypeError: Cannot add property 3, object is not extensible
+push none: TypeError: Cannot assign to read only property 'length' of object '[object Array]'
+pop: TypeError: Cannot delete property '2' of [object Array]
+length: TypeError: Cannot assign to read only property 'length' of object '[object Array]'
+reverse: TypeError: Cannot assign to read only property '0' of object '[object Array]'
+fill: TypeError: Cannot assign to read only property '0' of object '[object Array]'
+fill empty range: ok
+sort: TypeError: Cannot assign to read only property '0' of object '[object Array]'
+splice: TypeError: Cannot assign to read only property '0' of object '[object Array]'
+shift: TypeError: Cannot assign to read only property '0' of object '[object Array]'
+unshift: TypeError: Cannot add property 3, object is not extensible
+copyWithin: TypeError: Cannot assign to read only property '0' of object '[object Array]'
+delete: TypeError: Cannot delete property '0' of [object Array]
+[1,2,3] 3
+pop empty: TypeError: Cannot assign to read only property 'length' of object '[object Array]'
+reverse empty: ok
+false true
+sealed element: ok
+sealed push: TypeError: Cannot add property 3, object is not extensible
+sealed pop: TypeError: Cannot delete property '2' of [object Array]
+sealed shrink: TypeError: Cannot delete property '2' of [object Array]
+[5,2,3] 3
+sealed grow: ok
+[5,2,3,_,_] 5
+sealed reverse: TypeError: Cannot delete property '0' of [object Array]
+[5,2,3,_,_] 5
+sealed shift: TypeError: Cannot delete property '2' of [object Array]
+[2,3,3,_,_] 5
+false false false
+bounded push: TypeError: Cannot add property 3, object is not extensible
+3
+bounded pop: ok
+bounded unshift: TypeError: Cannot add property 2, object is not extensible
+[1,2] 2
+bounded shrink: ok
+[] 0
+true
+fill hole: TypeError: Cannot add property 1, object is not extensible
+sparse reverse: ok
+[3,_,1] 3
+sealed sparse reverse: TypeError: Cannot add property 0, object is not extensible
+[_,_,3] 3
+false
+true a

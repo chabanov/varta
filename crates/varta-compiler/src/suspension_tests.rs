@@ -38,6 +38,29 @@ pub(crate) struct Host {
     /// Frame status observed inside that callback, and whether re-entry trapped.
     observed: Option<(u32, bool)>,
 }
+/// The logging callback: re-enter the frame of `reenter`, if any, and
+/// record its status and whether re-entry trapped.
+fn reenter(caller: &mut Caller<'_, Host>) {
+    let Some(token) = caller.data().reenter else {
+        return;
+    };
+    let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
+    let status =
+        FrameView::read_envelope(memory.data(&*caller), ResumeToken::from_bits(token).frame)
+            .unwrap()
+            .status;
+    let resume = caller
+        .get_export(frame::RESUME_EXPORT)
+        .unwrap()
+        .into_func()
+        .unwrap()
+        .typed::<(i64, i32, i64), i32>(&*caller)
+        .unwrap();
+    let trapped = resume
+        .call(&mut *caller, (token, Completion::Normal as i32, 0))
+        .is_err();
+    caller.data_mut().observed = Some((status, trapped));
+}
 pub(crate) struct Frames {
     pub(crate) store: Store<Host>,
     pub(crate) instance: Instance,
@@ -56,31 +79,24 @@ impl Frames {
             .func_wrap(
                 "varta",
                 varta_common::HostOperation::LogFloatV2.name(),
-                |mut caller: Caller<'_, Host>, _value: f64| {
-                    let Some(token) = caller.data().reenter else {
-                        return;
-                    };
-                    let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
-                    let status = FrameView::read_envelope(
-                        memory.data(&caller),
-                        ResumeToken::from_bits(token).frame,
-                    )
-                    .unwrap()
-                    .status;
-                    let resume = caller
-                        .get_export(frame::RESUME_EXPORT)
-                        .unwrap()
-                        .into_func()
-                        .unwrap()
-                        .typed::<(i64, i32, i64), i32>(&caller)
-                        .unwrap();
-                    let trapped = resume
-                        .call(&mut caller, (token, Completion::Normal as i32, 0))
-                        .is_err();
-                    caller.data_mut().observed = Some((status, trapped));
-                },
+                |mut caller: Caller<'_, Host>, _value: f64| reenter(&mut caller),
             )
             .unwrap();
+        // V38 (`node_console`) logs a number through the linked notation and
+        // `log_string16`: the callback re-enters there.
+        for import in module.imports() {
+            if import.module() == "varta"
+                && import.name() == varta_common::HostOperation::LogString16.name()
+                && let wasmtime::ExternType::Func(ty) = import.ty()
+            {
+                linker
+                    .func_new("varta", import.name(), ty, |mut caller, _, _| {
+                        reenter(&mut caller);
+                        Ok(())
+                    })
+                    .unwrap();
+            }
+        }
         linker.define_unknown_imports_as_traps(&module).unwrap();
         let mut store = Store::new(&engine, Host::default());
         let instance = linker.instantiate(&mut store, &module).unwrap();

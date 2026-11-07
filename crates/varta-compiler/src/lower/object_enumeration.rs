@@ -165,21 +165,14 @@ impl Lower<'_> {
         if self.types.profile.expression_forms() && matches!(kind, Kind::Values) {
             subtyping::note_values(shape, self.types).map_err(|e| self.source.locate(e, span))?;
         }
-        let fields = self.types.records[shape as usize].fields.clone();
-        // V38 (`symbol_values`): a symbol-keyed member is no string key, and
-        // the enumeration compacts by canonical slot; such records are
-        // refused rather than listed with their symbol keys.
-        if fields
+        // V38 (`symbol_values`): a symbol-keyed member is no string key; the
+        // emitted compaction skips its slot (`emit::object_enumeration`).
+        let fields: Vec<_> = self.types.records[shape as usize]
+            .fields
             .iter()
-            .any(|field| crate::modules::symbol_keys::is_symbol_key(&field.name))
-        {
-            return Err(self.source.locate(
-                unsupported(&format!(
-                    "{name} of an object with symbol-keyed members (string-key enumeration that skips them is not implemented)"
-                )),
-                value.span,
-            ));
-        }
+            .filter(|field| !crate::modules::symbol_keys::is_symbol_key(&field.name))
+            .cloned()
+            .collect();
         let element = match kind {
             Kind::Keys => Type::String,
             Kind::Values if fields.is_empty() => Type::Undefined,
@@ -243,6 +236,7 @@ impl Lower<'_> {
         ));
         let values = entries(self)?;
         body.push(S::RecordEnumerate {
+            symbols: false,
             source,
             target: output,
             shape,
@@ -463,6 +457,12 @@ impl Lower<'_> {
             .iter()
             .enumerate()
             .map(|(index, field)| match kind {
+                // Never listed: a placeholder keeps the slot indexes.
+                _ if crate::modules::symbol_keys::is_symbol_key(&field.name) => Ok(Expr {
+                    span,
+                    ty: element,
+                    kind: E::Zero,
+                }),
                 Kind::Keys => Ok(Expr {
                     span,
                     ty: Type::String,

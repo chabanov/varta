@@ -33,6 +33,28 @@ test("FIFO reactions and reentrant jobs share one checkpoint", () => {
   assert.equal(state.jobs, 4);
   assert.throws(() => op.promise_react(id, 5n), /unknown promise serial/);
 });
+test("the weak checkpoint runs once the queue is empty and its cleanup jobs drain in the same checkpoint", () => {
+  const { state, op, S } = scheduler();
+  op.scheduler_enqueue(1n);
+  const order = [];
+  let checkpoints = 0;
+  state.drain({ exports: {
+    [S.resumeExport](token) { order.push(token); return S.outcomes[1]; },
+    [S.weakCheckpointExport]() {
+      checkpoints++; order.push(`checkpoint ${checkpoints}`);
+      if (checkpoints === 1) op.scheduler_enqueue(2n);
+    },
+  } }, () => {});
+  assert.deepEqual(order, [1n, "checkpoint 1", 2n, "checkpoint 2"]);
+  // An unhandled rejection ends the checkpoint before the weak checkpoint.
+  const other = scheduler();
+  other.op.promise_unhandled(1n);
+  let called = false;
+  assert.throws(() => other.state.drain({ exports: {
+    [other.S.weakCheckpointExport]() { called = true; },
+  } }, () => {}), /unhandled promise rejection/);
+  assert.equal(called, false);
+});
 test("queue limit precedes duplicate detection and dispatched tokens release their holds", () => {
   const { state, op, S } = scheduler({ held: 2 });
   op.scheduler_enqueue(1n);

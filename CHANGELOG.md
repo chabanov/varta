@@ -96,6 +96,21 @@
   accessors may spread closed objects (CopyDataProperties: a later
   definition replaces an earlier one in its first position). Logging such
   objects waits for the console notation. Earlier profiles are unchanged.
+- V38 K9 D3 follow-up (`full_regexp`): patterns built at run time compile in
+  the guest. The pattern parser and format-2 compiler moved into
+  `varta_intrinsics::regexp::pattern`, shared by the ahead-of-time compiler
+  and the new linked intrinsic `regexp_compile` (metered as fuel; linked
+  only into modules that construct a pattern at run time):
+  `new RegExp`/`RegExp()` with run-time arguments or a RegExp pattern,
+  string patterns of `search`/`match`/`matchAll`, `RegExp.escape`, and
+  run-time `SyntaxError`s with V8's text. Match results and `indices` are
+  arrays with every Array method; `matchAll` returns a lazy RegExp String
+  Iterator; `split` yields `undefined` for groups that did not take part;
+  replacers of run-time patterns or with rest parameters receive the
+  arguments counted at run time. With K9 D2 symbol values, `RegExp` has
+  `[Symbol.match]`, `[Symbol.matchAll]`, `[Symbol.replace]`,
+  `[Symbol.search]` and `[Symbol.split]`, and the String methods call custom
+  matchers. Conformance: 210 passed, 4 known unsupported of 214.
 - K8 T2 S5 (second part), selectors: id and attribute selectors with every
   matcher and the `i`/`s` flags, `:has()` with bounded relative selectors,
   and the location, input and tree pseudo-classes (`:any-link`, `:empty`,
@@ -140,6 +155,20 @@
   dictionary behind a new property edge of every value18 closure, with
   `typeof`, JSON, identity and enumeration as in JavaScript.
   Conformance: 211 passed, 4 known unsupported of 215.
+- V38 K9 D2 integrity levels (selector `integrity_levels`):
+  `Object.freeze`, `Object.seal`, `Object.preventExtensions` and their
+  predicates over header flag bits added in place to value layout 18
+  (8192/16384/32768, masked by every value18 reader). A program that names
+  them checks every field, element, `length`, `push`/`pop`, deletion and
+  dictionary write between its right-hand side and its store and throws
+  V8's `TypeError`; array methods fail step by step as §23.1.3 specifies;
+  `Map`/`Set` entries and private names stay writable. Other programs keep
+  their bytes; the v38 `json` fuel golden rises from 33558 to 33580. Symbol
+  gaps: string-key enumeration skips symbol-keyed members, spreads and
+  `Object.assign` copy them, `Object.getOwnPropertySymbols` lists them.
+  `JSON.stringify` keeps its `string` type; a value without a JSON form held
+  by `unknown` makes it a checked read, and a discarded result never throws.
+  Conformance: 208 passed, 4 known unsupported of 212.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
   2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as
@@ -256,6 +285,32 @@
   `TypeError` at the narrowed read, and a copied array view does not alias.
   Callable objects with properties stay refused. Conformance: 160 passed, 5
   known unsupported of 165 (new row `ts-class-subtyping`).
+- V38 `Promise.any` rejects with an `AggregateError` of the elements'
+  reasons, and `String.prototype.normalize` (NFC/NFD/NFKC/NFKD, ICU4X data
+  linked into the guest) is admitted (K9 D1).
+- V38 console methods (K9 D1, `console_methods`): the standard-error host
+  operation `log_stderr16` (host ABI 34, levels `error`/`warn`; `varta` and
+  `varta-runtime` print those lines to standard error, the browser host
+  forwards them to `console.error`/`console.warn`), `console.error`,
+  `console.warn`, `console.dirxml`, `trace`, `assert`, `group`/
+  `groupCollapsed`/`groupEnd` indentation, `count`/`countReset`,
+  `time`/`timeEnd`/`timeLog` (`time.now`), `dir` with inspect options and
+  `table`, printed as Node 24 prints them; spread and `void` arguments in
+  every console method.
+- V38 console notation (K9 D1, `node_console`): `console.log`,
+  `console.info` and `console.debug` take any number of arguments and print
+  exactly what Node 24 prints (`util.formatWithOptions` with `%s %d %i %f
+  %j %o %O %c %%`, `util.inspect` depth, line breaking, column grouping,
+  quoting, circular references), including class instances, Error objects
+  as under `--stack-trace-limit=0`, `Map`, `Set`, `Date`, `Uint8Array` and
+  promises. **Changed v38 output:** booleans print `true`/`false` (not
+  `1`/`0`), aggregates print in Node's notation instead of compact JSON,
+  Errors print `[Error: message]`. Value layout 18 record descriptors end
+  with a display trailer naming class instances. Earlier profiles keep
+  their output.
+- V38 `SuppressedError` (ES2026 explicit resource management): an Error
+  class with `error`, `suppressed` and `message`, `instanceof` and catch
+  narrowing, printed as Node prints it.
 - K8 T2 font-relative units: the style engine computes font sizes and line
   heights, so `em`, `lh` and `rlh` work in every property on both hosts;
   registered length values compute to absolute lengths before they inherit;

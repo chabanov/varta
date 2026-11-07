@@ -11,11 +11,11 @@
 //! matched backward. Case-insensitive characters and classes are widened
 //! at compile time (`case`), so only backreferences compare by Canonicalize
 //! at run time. Pattern modifiers change `i`, `m` and `s` for their body.
-use super::RegExpError;
 use super::case;
-use super::compile::Compiled;
 use super::parse::{Assertion, Flags, Node};
 use super::set::{self, Set};
+use super::{Compiled, RegExpError};
+use alloc::{string::String, vec, vec::Vec};
 use varta_common::regexp::{
     BACKWARD, FORMAT_VERSION, MAX_PROGRAM_UNITS, UNBOUNDED, assertion, flag, header, look, op,
 };
@@ -27,16 +27,14 @@ const SUPPLEMENTARY: u32 = 0x1_0000;
 const SURROGATE_BITS: u32 = 10;
 
 fn too_large() -> RegExpError {
-    RegExpError::Unsupported(format!(
-        "RegExp program larger than {MAX_PROGRAM_UNITS} code units"
-    ))
+    RegExpError::TooLarge
 }
 fn unit(value: usize) -> Result<u16, RegExpError> {
     u16::try_from(value).map_err(|_| too_large())
 }
 
 /// Compile a parsed v38 pattern into its full and lean programs.
-pub(crate) fn compile(
+pub fn compile(
     node: &Node,
     groups: usize,
     names: &[Option<String>],
@@ -330,17 +328,17 @@ fn first(node: &Node, flags: Flags, unicode: bool) -> Option<Set> {
     let characters = |set: Set| {
         // Characters to their first code units: astral code points start
         // with their high surrogate.
-        let mut units = Set::default();
+        let mut units = Vec::with_capacity(set.ranges().len());
         for &(low, high) in set.ranges() {
             if low <= set::MAX_UNIT {
-                units.add(low, high.min(set::MAX_UNIT));
+                units.push((low, high.min(set::MAX_UNIT)));
             }
             if high >= SUPPLEMENTARY {
                 let lead = |ch: u32| HIGH_SURROGATE + ((ch - SUPPLEMENTARY) >> SURROGATE_BITS);
-                units.add(lead(low.max(SUPPLEMENTARY)), lead(high));
+                units.push((lead(low.max(SUPPLEMENTARY)), lead(high)));
             }
         }
-        units
+        Set::from_ranges(units)
     };
     match node {
         Node::Empty | Node::Assert(_) | Node::Look { .. } => Some(Set::default()),

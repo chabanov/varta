@@ -304,6 +304,10 @@ impl Scheduler {
         self.dispatched = 0;
     }
     /// The next microtask, counted against the per-execution job budget.
+    /// Whether a job waits in the microtask queue.
+    pub(crate) fn has_queued(&self) -> bool {
+        !self.queue.is_empty()
+    }
     pub(crate) fn next(&mut self) -> Result<Option<i64>, SchedulerError> {
         let Some(token) = self.queue.pop_front() else {
             return Ok(None);
@@ -949,12 +953,29 @@ fn beyond_lifetime(lifetime: Duration, due: f64) -> Option<SchedulerError> {
 
 /// The microtask checkpoint: every job through `varta_resume` with a
 /// `Normal` completion and an `undefined` input, until the queue is empty.
+/// V38 (`weak_references`): an empty queue then calls the module's weak
+/// checkpoint export, which clears the kept objects and may queue
+/// finalization cleanup jobs; the checkpoint drains those too.
 pub(crate) fn drain(
     instance: &Instance,
     store: &mut Store<RuntimeContext>,
 ) -> Result<(), RuntimeError> {
+    let checkpoint = weak_checkpoint(instance, store);
     let mut resume = None;
-    while let Some(token) = store.data_mut().scheduler.next().map_err(fatal)? {
+    loop {
+        let Some(token) = store.data_mut().scheduler.next().map_err(fatal)? else {
+            match &checkpoint {
+                Some(checkpoint) if store.data().scheduler.unhandled_rejection().is_none() => {
+                    checkpoint.call(&mut *store, ())?;
+                    crate::exceptions::finish(instance, store)?;
+                    if store.data().scheduler.has_queued() {
+                        continue;
+                    }
+                    break;
+                }
+                _ => break,
+            }
+        };
         if resume.is_none() {
             resume = Some(
                 instance
@@ -976,6 +997,17 @@ pub(crate) fn drain(
         crate::exceptions::finish(instance, store)?;
     }
     Ok(())
+}
+
+/// The weak checkpoint export of a module that uses weak references (v38
+/// `weak_references`), `() -> ()`.
+fn weak_checkpoint(
+    instance: &Instance,
+    store: &mut Store<RuntimeContext>,
+) -> Option<wasmtime::TypedFunc<(), ()>> {
+    instance
+        .get_typed_func::<(), ()>(&mut *store, varta_common::weak::CHECKPOINT_EXPORT)
+        .ok()
 }
 
 /// What ends [`checkpoint_until_async`]: its first microtask checkpoint, or
@@ -1093,8 +1125,22 @@ pub(crate) async fn drain_async(
     instance: &Instance,
     store: &mut Store<RuntimeContext>,
 ) -> Result<(), RuntimeError> {
+    let checkpoint = weak_checkpoint(instance, store);
     let mut resume = None;
-    while let Some(token) = store.data_mut().scheduler.next().map_err(fatal)? {
+    loop {
+        let Some(token) = store.data_mut().scheduler.next().map_err(fatal)? else {
+            match &checkpoint {
+                Some(checkpoint) if store.data().scheduler.unhandled_rejection().is_none() => {
+                    checkpoint.call_async(&mut *store, ()).await?;
+                    crate::exceptions::finish(instance, store)?;
+                    if store.data().scheduler.has_queued() {
+                        continue;
+                    }
+                    break;
+                }
+                _ => break,
+            }
+        };
         if resume.is_none() {
             resume = Some(
                 instance

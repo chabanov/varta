@@ -3127,12 +3127,24 @@ See the [contract](architecture.md#full-regexp-full_regexp).
   parser's `full` switch). Every v37 path (`regexp::compile`, format 1, the
   emitted Pike VM, the `Unsupported` names) stays byte- and
   diagnostic-identical; new grammar branches only under `full`.
+- The pattern compiler has one implementation,
+  `varta_intrinsics::regexp::pattern`, used by the ahead-of-time compiler
+  and linked into v38 guests (`regexp_compile`). It is `no_std`, reads
+  UTF-16 patterns and must stay free of `core::fmt` formatting, trait
+  objects and function pointers (the linker refuses a library with an
+  element section); its errors are structured (`RegExpError`) and callers
+  format V8's text. Keep set operations linear or `O(n log n)` (sorted
+  merges, `Set::from_ranges`), never one `add` per range in a loop: every
+  step of a run-time compile is fuel.
 - The v38 program format is owned by `varta_common::regexp` and shared by
-  `regexp::backtrack` (compiler) and `varta_intrinsics::regexp` (linked
-  matcher). Any format change bumps `regexp::FORMAT_VERSION` there, changes
-  both sides together and rebuilds `intrinsics.wasm`
-  (`scripts/build-intrinsics.py`); `regexp.rs` is part of the fingerprinted
-  common core.
+  `pattern::program` and the linked matcher `varta_intrinsics::regexp`. Any
+  format change bumps `regexp::FORMAT_VERSION` there, changes both sides
+  together and rebuilds `intrinsics.wasm` (`scripts/build-intrinsics.py`);
+  `regexp.rs` is part of the fingerprinted common core.
+- The construction record of `regexp_compile` is
+  `varta_common::regexp::construction`; `prelude/regexp_v38.ts` mirrors it
+  by name (`RECORD_*`), checked by
+  `the_regexp_prelude_mirrors_the_construction_record`.
 - Matching stays guest code: `regexp_exec` is linked in every v38 module and
   admitted as an import by no profile, so no host implements it and no host
   can run a pattern outside fuel. Never add a native handler or a host regex
@@ -3141,16 +3153,38 @@ See the [contract](architecture.md#full-regexp-full_regexp).
   lookaround markers live on the backtracking stack. A malformed program is
   `IntrinsicError::RegExpProgram`, never a panic path that depends on
   unchecked indexing of guest data.
-- Case-insensitive classes are widened at compile time; under `v` with `i`
-  fold operands before set operations and complement among folded code
-  points (`case::fold`, `case::universe`). Canonicalize has one
-  implementation (`varta_common::regexp::canonicalize`).
-- Property names match strictly through ICU4X (`regexp::property`); the
-  properties of strings come only from `regexp/emoji_sequences.txt`
-  (Unicode Emoji 17.0). Updating Unicode data is a recorded change pinned
-  against the Node version of the same Unicode version.
+- Case-insensitive classes are widened when the pattern compiles; under `v`
+  with `i` fold operands before set operations and complement among folded
+  code points (`case::fold`, `case::universe`). Canonicalize has one
+  implementation (`varta_common::regexp::canonicalize`); its classes and
+  foldings are `case_table.rs`, rewritten only by the ignored generator
+  `regenerate_case_table` and checked by `case_table_matches_canonicalize`.
+- Property names match strictly through ICU4X (`pattern::property`); the
+  properties of strings come only from `pattern/emoji_sequences.txt`
+  (Unicode Emoji 17.0), compiled into `emoji_table.rs` by
+  `regenerate_emoji_table` and checked by `emoji_table_matches_its_source`.
+  Updating Unicode data is a recorded change pinned against the Node version
+  of the same Unicode version.
 - Early errors keep V8's message text; add each new one with its Node output
-  to `full_grammar_early_errors_keep_v8_text`.
+  to `full_grammar_early_errors_keep_v8_text`. A literal's early error is a
+  compile-time diagnostic; a constructor's or string pattern's, even with
+  constant arguments, is the run-time `SyntaxError` (`RegExp.create`).
+- Match arrays are prelude classes whose elements live in `values`. In
+  program modules (never the prelude) every member other than `index`,
+  `input`, `groups` and `indices` lowers on the elements through a hidden
+  binding (`on_match_elements`), and element and `length` writes go to the
+  elements (`match_elements_place`); `Array.isArray`, `JSON.stringify` and
+  `unknown` see the elements array. Element 0 is read live with a non-null
+  assertion.
+- The RegExp protocol symbols are well-known member keys
+  (`symbol_keys::WELL_KNOWN_KEYS`); the RegExp prelude is the one prelude
+  whose symbol keys are rewritten. String methods call a custom matcher
+  only through `custom_matcher_call` (receiver, matcher, then the other
+  arguments, in that order).
+- `split` returns `string[]` only for a separator written in place whose
+  groups always take part (`captures_always_take_part`); otherwise
+  `(string | undefined)[]`. Never reintroduce a throwing or coercing path for
+  a capture that did not take part.
 - Behaviour tests (`full_regexp_cases`) pin Node 24.20.0 output; the
   differential corpus is regenerated only by its seeded generator and Node.
   Adversarial tests assert the typed fuel exhaustion of the turn.
@@ -4334,12 +4368,21 @@ Contract: [architecture.md](architecture.md#local-time-local_time).
   (`node_offsets.txt`, `node_zones.txt`, `node_names.txt`,
   `local_time_cases/*.expected`) with the matching Node, rebuild the
   intrinsic library, and keep every pinned difference explained.
+- Locale data is never baked into the intrinsic library: ICU4X reads it
+  through `varta_intl::data::Provider` from the module's passive segments
+  ([locale data](architecture.md#locale-data-intl_data)). A linked operation
+  that loads a marker lists it in `intl_data::OPERATION_MARKERS`, and its
+  `varta-intl` test proves the list complete and minimal (a source restricted
+  to the list, every listed marker read). Regenerate the blobs only with
+  `scripts/build-intl-data.py`; never edit them.
 - Linked code may call indirectly only through table 0
   ([linked intrinsics](architecture.md#linked-intrinsics-linked_intrinsics));
   the effect analysis treats such a call as reaching every table function.
 - Tests: `varta-intl` unit tests, `varta-runtime` `local_time_tests`, the
-  linker test `indirect_calls_of_linked_code_get_appended_table_slots`, the
-  browser registry facts and the conformance case `date-local-time`.
+  linker tests `indirect_calls_of_linked_code_get_appended_table_slots`,
+  `zone_names_link_their_locale_data_as_passive_segments` and
+  `intl_data_matches_its_generator`, the browser registry facts and the
+  conformance case `date-local-time`.
 
 ### Type level (`type_level`)
 
@@ -4485,6 +4528,66 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   `composed_class_names_follow_the_checker_types` scanner test, and the
   nine `typescript_handbook` conformance rows.
 
+### Console notation (`node_console`)
+
+Contract: [architecture.md](architecture.md#console-notation-node_console).
+
+- Gate on `node_console()`; earlier profiles keep the one-argument
+  `console.log` and their notation. `lower::console` only boxes the
+  arguments (`unknown::logged`) into an `unknown[]` array; every formatting
+  rule lives in `varta_intrinsics::inspect`, the one implementation for
+  native and browser hosts. Never format a value in the compiler or in a
+  host.
+- Keep `inspect` a step-for-step port of Node's `inspect.js` (the source is
+  in the pinned Node binary: `process.binding('natives')['internal/util/inspect']`);
+  regenerate expectations with Node 24 under `--stack-trace-limit=0`, never
+  by hand. A new value kind or record display gets its Node notation there
+  and a pinned case, or stays refused by `lower::console::logged_cell`.
+- Linked intrinsics have no function tables: no `core::fmt` (`format!`,
+  `{}`) in `inspect`; write digits with its helpers.
+- Every value18 descriptor carries its display trailer
+  (`emit::records::descriptor`, from `lower::record_displays`); readers
+  that do not display records keep reading the prefix
+  (`value::descriptor_bytes`). A new engine-owned layout that Node prints
+  specially gets a `RecordDisplay` kind, never a name test in `inspect`.
+- Private state is read only by name (`STATE`, `#time`, the promise
+  fields); `inspect` never resolves other private slots (they may hold
+  values no reader validates as a property).
+- `SuppressedError` lives in its own prelude (`SUPPRESSED`), so programs
+  that use only `AggregateError` keep their bytes; keep its fields typed
+  `unknown` and its constructor without options, as the spec defines it.
+- Tests: `varta-runtime` `console_tests` (`console_cases/*.ts` with Node
+  24.20.0 `--stack-trace-limit=0` expected files), the `inspect` unit tests,
+  the `display` trailer test, the conformance features `console-notation`
+  and `suppressed-error`.
+
+### Console methods (`console_methods`)
+
+Contract: [architecture.md](architecture.md#console-methods-console_methods).
+
+- Gate on `console_methods()`; `lower::console::Method::of` is the one map
+  from callee names to methods. V37 and earlier keep refusing every method
+  but `log`.
+- Standard error is only `log_stderr16` with a `console::StderrLevel` word;
+  never encode a stream in the text, and never add a level without a
+  registry entry (`StderrLevel::ALL`, the browser registry's `console`
+  section). Hosts route a captured line only by its prefix
+  (`console::is_standard_error`); the browser loader forwards and decides
+  nothing else.
+- Stateful and composite methods belong in the console prelude
+  (`prelude/console.ts`); its `varta.console.*` intrinsics exist only in
+  engine preludes. Every formatting rule stays in `varta_intrinsics::inspect`
+  (`render` for `dir` and `table`); the prelude never formats a value.
+- A program that never loads the console prelude must keep its bytes:
+  `log`, `error` and `warn` write directly unless the prelude is loaded,
+  and then all go through `consoleWrite` (group indentation).
+- New varta-common modules compiled into guest builds are listed in every
+  wasm build script's `COMMON_CORE` and in `link/tests.rs`.
+- Tests: `varta-runtime` `console_method_tests` (`console_method_cases/*.ts`
+  with Node 24.20.0 `.stdout`/`.stderr`), the `console::tests` units, the
+  CLI smoke `v38_console_standard_error_goes_to_stderr`, the browser
+  worker test of `log_stderr16`, the conformance feature `console-methods`.
+
 ### Bytes held by unknown (`byte_values`)
 
 Contract: [architecture.md](architecture.md#bytes-held-by-unknown-byte_values).
@@ -4573,14 +4676,93 @@ Contract: [architecture.md](architecture.md#symbol-values-symbol_values).
   rewrites before lowering: a key is `symbol_keys::key` (declaring module's
   graph index and name) or `well_known_key`, and `is_symbol_key` tells it
   apart. Never derive a key from a symbol value, never let a quoted key
-  spell one (`records::quoted_key`), and refuse every string-key view of a
-  record that has one (enumeration does). A new computed-key form adds its
+  spell one (`records::quoted_key`). String-key forms skip them (the
+  emitted enumeration filters `is_symbol_key` slots), and
+  `RecordEnumerate { symbols: true }` lists only them; a symbol's value for
+  its key comes from `ValueTypes::symbols.constants` or the well-known
+  symbol (`modules::symbol_keys::well_known_name`). A new computed-key form adds its
   case to the rewriter's visitor; a new protocol member adds its symbol to
   `WELL_KNOWN_KEYS` and its call to `lower::symbols`.
 - Tests: `varta-runtime` `symbol_tests` (`symbol_cases/*.ts` with Node
   24.20.0 expected files, collector stress builds, v37 denials), the KV
   refusal in `kv_tests`, the `language` test of the tag, the conformance
   feature `symbol`.
+
+### Integrity levels (`integrity_levels`)
+
+Contract: [architecture.md](architecture.md#integrity-levels-integrity_levels).
+
+- Gate every admission on `integrity_levels()`; v37 keeps refusing the six
+  members (`integrity_members_stay_refused_by_v37`).
+- The bits are `value::HEAP_INTEGRITY_FLAGS` in the header of the block a
+  handle's low word addresses (for an array, its vector cell). Only
+  `ir::Intrinsic::Integrity` sets or tests them (`emit::integrity`); they
+  are only ever added. A new object block kind either carries them or is
+  refused by name in `lower::integrity`. A reader of value layout 18 that
+  checks header flags masks them with `value::integrity_flags(version)`;
+  readers of earlier layouts keep exact checks. Rebuild `intrinsics.wasm`
+  and the browser `kv-codec.wasm` with every change of those readers, and
+  regenerate the browser registry.
+- Checks exist only in a program that loaded the integrity prelude
+  (`lower::integrity::enabled`); never emit one otherwise, so programs
+  without the members keep their bytes and fuel. Every write form goes
+  through `lower::integrity::guard` (statements `SetField`, `SetIndex`,
+  `ArrayLength`; expressions `ArrayPush`, `ArrayPop`, `ArrayDelete`,
+  `RecordDelete`), which runs after erasure and `subtyping::resolve` and
+  before suspension: the operands are evaluated into fresh locals, the check
+  runs, then the store. A new IR write form adds its case there. Dictionary
+  writes check in their shared helpers (`dictionary_write_checks`,
+  `dictionary_delete_checks`); a new array method that changes its receiver
+  either checks there or, when it can fail midway, runs the integrity
+  prelude's element-by-element form for a receiver with a level, so the
+  steps before the failing one take effect.
+- Failures throw through the prelude's functions with V8's messages; never
+  format one in Rust. Private names, engine-class private state and the
+  storage of a `Uint8Array` are not properties: never check them.
+- `isSealed`/`isFrozen` of a record or class instance is
+  `IntegrityOp::Level`, which the guard expands per layout
+  (`Views::shapes`, class families); it never reaches emission.
+- These helpers (`test`, `set`, `enabled`, `Level`) are the integrity state
+  that Proxy and Reflect invariants (K9 D6) build on; do not add a second
+  representation.
+- Tests: `varta-runtime` `integrity_tests` (`integrity_cases/*.ts` with Node
+  24.20.0 expected files, collector stress builds, v37 denials), the
+  `json` fuel golden, the conformance feature `integrity-levels`.
+
+### Weak references (`weak_references`)
+
+Contract: [architecture.md](architecture.md#weak-references-weak_references).
+
+- Gate every admission on `weak_references()`; v37 rejects the four names
+  (`v37_rejects_weak_references`).
+- The classes are typed guest code of `prelude/weak.ts`; only that prelude
+  calls the `varta.weak.*` intrinsics (`lower::weak`), and every table
+  access goes through them. Never store a weak key in an ordinary field,
+  array or closure of the prelude: that would be a strong edge. A value
+  that must die with its key goes into the key's own pair.
+- An ephemeron table is a `HEAP_WEAK_FLAG` block with no edge flag. Never
+  give it an edge flag, never let a value tag or host reader reach it, and
+  keep the table helpers' checks (position, identity, kind of the value) in
+  `emit::strings::weak`. A table of kind `KIND_VALUES` holds only
+  reference values; any other holds none.
+- Every collector path runs the weak phase between complete marking and the
+  first sweep step (`collect` after its worklist and scans, `step` when
+  nothing is gray, through `CollectWeak`). A new collector path must too;
+  a sweep that runs before the vacating pass frees blocks that tables
+  still name. The weak list is no root.
+- A store that removes or replaces a pair's value (or a kept key) while a
+  cycle marks shades the old one (`WeakPut`, `WeakRemove`, `WeakClear`).
+  `deref` and `new WeakRef` add the target to the kept objects; never read a
+  target out of a table without doing so.
+- Cleanup callbacks run only in the jobs the checkpoint export queues; never
+  call guest callbacks from the collector or from an allocation. Both hosts
+  call the export after every drained checkpoint without an unhandled
+  rejection (`scheduler::drain`, `drain_async`, browser `scheduler.js`).
+- Tests: `varta-runtime` `weak_reference_tests` (`weak_reference_cases/*.ts`
+  with Node 24.20.0 `--expose-gc` expected files, stress builds, the
+  bounded-memory churn, the fixed point's fuel, typing and validation), the
+  browser `scheduler.test.mjs` checkpoint test, the conformance feature
+  `weak-reference-lifecycle`.
 
 ### V38 linked intrinsics
 

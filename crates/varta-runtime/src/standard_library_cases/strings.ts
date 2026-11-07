@@ -14,4 +14,17 @@ export function main(): void {
   console.log("\udc00x\ud800".toWellFormed().split("").map((unit) => unit.charCodeAt(0).toString(16)).join(" "));
   console.log("a".concat("b", "c"));
   console.log(`${"Straße".toLocaleUpperCase()} ${"ÀB".toLocaleLowerCase()}`);
+  // String.prototype.normalize (§22.1.3.15): the four forms, the default
+  // form, lone surrogates as boundaries and the RangeError of a bad form.
+  const units = (value: string): string => value.split("").map((unit) => unit.charCodeAt(0).toString(16)).join(" ");
+  for (const form of ["NFC", "NFD", "NFKC", "NFKD"]) {
+    console.log(`${form} ${units("ẛ̣".normalize(form))} ${units("Åﬁ½".normalize(form))}`);
+  }
+  console.log(`${units("é".normalize())} ${units("a\ud800́".normalize())} ${units("Å\udc00́".normalize("NFC"))}`);
+  console.log(`${"한국어".normalize("NFD").length} ${String("한국어".normalize("NFD").normalize("NFC") === "한국어")}`);
+  try {
+    "a".normalize("nfc");
+  } catch (error) {
+    console.log(String(error));
+  }
 }

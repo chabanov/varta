@@ -4,15 +4,16 @@
 // (`prelude/regexp.ts`) under v38 and is loaded the same way; see
 // docs/architecture.md (Full RegExp).
 //
-// Patterns are compiled ahead of time into backtracking programs (format 2)
-// and constructed through `RegExp.compiled`. `varta.regexp.exec` is the
-// linked `regexp_exec` (guest code metered as fuel, no host call), `slot`
-// reads one capture position of its result and `unit` one code unit.
+// Literals and constant `new RegExp` calls are compiled ahead of time into
+// backtracking programs (format 2) and constructed through `RegExp.compiled`;
+// a pattern only known at run time is compiled by `varta.regexp.compile`, the
+// linked `regexp_compile` (the same pattern compiler, as guest code metered as
+// fuel). `varta.regexp.exec` is the linked `regexp_exec` (guest code metered
+// as fuel, no host call), `slot` reads one 32-bit word of a result (a capture
+// position) and `unit` one code unit.
 
 const NOT_GLOBAL_MATCH_ALL = 'String.prototype.matchAll called with a non-global RegExp argument';
 const NOT_GLOBAL_REPLACE_ALL = 'replaceAll must be called with a global RegExp';
-const SPLIT_UNDEFINED =
-  'RegExp split capture group did not participate (Varta types split results as string[])';
 const DOLLAR = 36;
 const AMPERSAND = 38;
 const BACKTICK = 96;
@@ -34,6 +35,114 @@ const UNICODE = 16;
 const STICKY = 32;
 const HAS_INDICES = 64;
 const UNICODE_SETS = 128;
+// The split limit when none is given (2^32 - 1).
+const NO_LIMIT = 4294967295;
+// The construction record of `varta.regexp.compile`
+// (`varta_common::regexp::construction`): words, then texts from TEXT_UNIT.
+const RECORD_STATUS = 0;
+const RECORD_OK = 0;
+const RECORD_MESSAGE_UNIT = 2;
+const RECORD_BITS = 1;
+const RECORD_COUNT = 2;
+const RECORD_PROGRAM_UNITS = 3;
+const RECORD_LEAN_UNITS = 4;
+const RECORD_NAMES_UNITS = 5;
+const RECORD_SOURCE_UNITS = 6;
+const RECORD_FLAGS_UNITS = 7;
+const RECORD_TEXT_UNIT = 16;
+// RegExp.escape (ES2025 §22.2.5.1).
+const HEX_DIGITS = '0123456789abcdef';
+const HEX = 16;
+const BYTE_LAST = 0xff;
+const SUPPLEMENTARY = 0x10000;
+const SURROGATE_BITS = 1024;
+// SyntaxCharacter and `/`, escaped with a backslash.
+const ESCAPE_SYNTAX = '^$\\.*+?()[]{}|/';
+// ControlEscape: TAB, LF, VT, FF and CR as `\t`, `\n`, `\v`, `\f`, `\r`.
+const ESCAPE_CONTROLS = '\t\n\v\f\r';
+const ESCAPE_LETTERS = 'tnvfr';
+// otherPunctuators, escaped as hexadecimal.
+const ESCAPE_PUNCTUATORS = ',-=<>#&!%:;@~\'`"';
+const ZWNBSP = 0xfeff;
+// WhiteSpace beyond the controls (USP, the Zs characters) and the line
+// terminators LS and PS.
+const TAB = 0x09;
+const LF = 0x0a;
+const VT = 0x0b;
+const FF = 0x0c;
+const CR = 0x0d;
+const SPACE = 0x20;
+const NBSP = 0xa0;
+const OGHAM_SPACE = 0x1680;
+const EN_QUAD = 0x2000;
+const HAIR_SPACE = 0x200a;
+const LINE_SEPARATOR = 0x2028;
+const PARAGRAPH_SEPARATOR = 0x2029;
+const NARROW_NBSP = 0x202f;
+const MATH_SPACE = 0x205f;
+const IDEOGRAPHIC_SPACE = 0x3000;
+const ASCII_END = 0x80;
+const DIGIT_FIRST = 0x30;
+const DIGIT_LAST = 0x39;
+const UPPER_FIRST = 0x41;
+const UPPER_LAST = 0x5a;
+const LOWER_FIRST = 0x61;
+const LOWER_LAST = 0x7a;
+const BYTE_DIGITS = 2;
+const UNIT_DIGITS = 4;
+
+// `digits` lowercase hexadecimal digits of `value`.
+function hex(value: number, digits: number): string {
+  let text = '';
+  let rest = value;
+  for (let index = 0; index < digits; index++) {
+    const digit = rest % HEX;
+    text = HEX_DIGITS.slice(digit, digit + 1) + text;
+    rest = (rest - digit) / HEX;
+  }
+  return text;
+}
+
+// WhiteSpace or LineTerminator (§12.2, §12.3).
+function space(code: number): boolean {
+  return (
+    code === TAB ||
+    code === LF ||
+    code === VT ||
+    code === FF ||
+    code === CR ||
+    code === SPACE ||
+    code === NBSP ||
+    code === OGHAM_SPACE ||
+    (code >= EN_QUAD && code <= HAIR_SPACE) ||
+    code === LINE_SEPARATOR ||
+    code === PARAGRAPH_SEPARATOR ||
+    code === NARROW_NBSP ||
+    code === MATH_SPACE ||
+    code === IDEOGRAPHIC_SPACE ||
+    code === ZWNBSP
+  );
+}
+
+// EncodeForRegExpEscape (§22.2.5.1.1) of the code point `code`, spelled `text`.
+function escapeCodePoint(code: number, text: string): string {
+  if (code < ASCII_END && ESCAPE_SYNTAX.indexOf(text) >= 0) {
+    return '\\' + text;
+  }
+  const control = code < ASCII_END ? ESCAPE_CONTROLS.indexOf(text) : -1;
+  if (control >= 0) {
+    return '\\' + ESCAPE_LETTERS.slice(control, control + 1);
+  }
+  if (
+    (code < ASCII_END && ESCAPE_PUNCTUATORS.indexOf(text) >= 0) ||
+    space(code) ||
+    (code >= HIGH_FIRST && code <= LOW_LAST)
+  ) {
+    // Every such code point is in the BMP: one code unit.
+    return code <= BYTE_LAST ? '\\x' + hex(code, BYTE_DIGITS) : '\\u' + hex(code, UNIT_DIGITS);
+  }
+  return text;
+}
 
 // AdvanceStringIndex.
 function advance(input: string, index: number, unicode: boolean): number {
@@ -244,12 +353,15 @@ function limitOf(limit: number): number {
   return limit >>> 0;
 }
 
-// The match indices of a `d` match: element 0 and every element are
-// `[start, end]` pairs (`undefined` for a group that did not take part).
+// Match arrays are arrays (ES2025 §22.2.7.2): the compiler reads and writes
+// their elements, `length` and every Array method on `values`, the elements
+// array, so `index`, `input`, `groups` and `indices` are their own data
+// properties. Element 0 of a match always took part.
+
+// The match indices of a `d` match: every element is a `[start, end]` pair
+// (`undefined` for a group that did not take part).
 export class RegExpIndicesArray {
-  readonly groups: Record<string, [number, number] | undefined> | undefined;
-  readonly length: number;
-  private readonly first: [number, number];
+  groups: Record<string, [number, number] | undefined> | undefined;
   private readonly values: ([number, number] | undefined)[];
 
   constructor(
@@ -257,27 +369,15 @@ export class RegExpIndicesArray {
     groups: Record<string, [number, number] | undefined> | undefined,
   ) {
     this.groups = groups;
-    this.length = values.length;
-    // Element 0 (the whole match) always took part.
-    let first: [number, number] = [0, 0];
-    const head = values[0];
-    if (head !== undefined) {
-      first = head;
-    }
-    this.first = first;
     this.values = values;
   }
 }
 
 export class RegExpExecArray {
-  readonly index: number;
-  readonly input: string;
-  readonly groups: Record<string, string | undefined> | undefined;
-  readonly indices: RegExpIndicesArray | undefined;
-  readonly length: number;
-  // Element 0, always a string, and every element (the compiler reads
-  // `match[0]` from `first` and other elements from `values`).
-  private readonly first: string;
+  index: number;
+  input: string;
+  groups: Record<string, string | undefined> | undefined;
+  indices: RegExpIndicesArray | undefined;
   private readonly values: (string | undefined)[];
 
   constructor(
@@ -291,19 +391,15 @@ export class RegExpExecArray {
     this.input = input;
     this.groups = groups;
     this.indices = indices;
-    this.length = values.length;
-    this.first = values[0] ?? '';
     this.values = values;
   }
 }
 
 export class RegExpMatchArray {
-  readonly index: number | undefined;
-  readonly input: string | undefined;
-  readonly groups: Record<string, string | undefined> | undefined;
-  readonly indices: RegExpIndicesArray | undefined;
-  readonly length: number;
-  private readonly first: string;
+  index: number | undefined;
+  input: string | undefined;
+  groups: Record<string, string | undefined> | undefined;
+  indices: RegExpIndicesArray | undefined;
   private readonly values: (string | undefined)[];
 
   constructor(
@@ -317,8 +413,6 @@ export class RegExpMatchArray {
     this.input = input;
     this.groups = groups;
     this.indices = indices;
-    this.length = values.length;
-    this.first = values[0] ?? '';
     this.values = values;
   }
 }
@@ -344,9 +438,12 @@ export class RegExp {
   private readonly names: string;
   private readonly count: number;
   private readonly bits: number;
+  // [[OriginalSource]]: the pattern as written (`source` escapes it).
+  private readonly pattern: string;
 
   // Construction is compiler-only: `RegExp.compiled` is the target of every
-  // literal and constant `new RegExp`.
+  // literal and constant `new RegExp`, `RegExp.create` and `RegExp.call` of
+  // every other `new RegExp(…)` and `RegExp(…)`.
   constructor(
     source: string,
     flags: string,
@@ -355,6 +452,7 @@ export class RegExp {
     lean: string,
     names: string,
     count: number,
+    pattern: string,
   ) {
     this.lastIndex = 0;
     this.source = source;
@@ -372,6 +470,7 @@ export class RegExp {
     this.names = names;
     this.count = count;
     this.bits = bits;
+    this.pattern = pattern;
   }
 
   private static compiled(
@@ -382,8 +481,107 @@ export class RegExp {
     lean: string,
     names: string,
     count: number,
+    pattern: string,
   ): RegExp {
-    return new RegExp(source, flags, bits, program, lean, names, count);
+    return new RegExp(source, flags, bits, program, lean, names, count, pattern);
+  }
+
+  // RegExpInitialize at run time (§22.2.3.3): the linked pattern compiler,
+  // or V8's SyntaxError.
+  private static initialize(pattern: string, flags: string): RegExp {
+    const record = varta.regexp.compile(pattern, flags);
+    if (varta.regexp.slot(record, RECORD_STATUS) !== RECORD_OK) {
+      throw new SyntaxError(record.slice(RECORD_MESSAGE_UNIT));
+    }
+    let at = RECORD_TEXT_UNIT;
+    const parts: string[] = [];
+    for (const word of [
+      RECORD_PROGRAM_UNITS,
+      RECORD_LEAN_UNITS,
+      RECORD_NAMES_UNITS,
+      RECORD_SOURCE_UNITS,
+      RECORD_FLAGS_UNITS,
+    ]) {
+      const end = at + varta.regexp.slot(record, word);
+      parts.push(record.slice(at, end));
+      at = end;
+    }
+    return new RegExp(
+      parts[3]!,
+      parts[4]!,
+      varta.regexp.slot(record, RECORD_BITS),
+      parts[0]!,
+      parts[1]!,
+      parts[2]!,
+      varta.regexp.slot(record, RECORD_COUNT),
+      pattern,
+    );
+  }
+
+  // A new RegExp with the same pattern and flags (`lastIndex` 0).
+  private copy(): RegExp {
+    return new RegExp(
+      this.source,
+      this.flags,
+      this.bits,
+      this.program,
+      this.lean,
+      this.names,
+      this.count,
+      this.pattern,
+    );
+  }
+
+  // `new RegExp(pattern, flags)` (§22.2.4.1) with arguments only known at
+  // run time: a RegExp pattern keeps its [[OriginalSource]] and, without
+  // flags, its [[OriginalFlags]].
+  private static create(pattern: string | RegExp, flags: string | undefined): RegExp {
+    if (pattern instanceof RegExp) {
+      return flags === undefined ? pattern.copy() : RegExp.initialize(pattern.pattern, flags);
+    }
+    return RegExp.initialize(pattern, flags ?? '');
+  }
+
+  // `RegExp(pattern, flags)` called as a function: a RegExp pattern without
+  // flags is returned itself (its constructor is `RegExp`).
+  private static call(pattern: string | RegExp, flags: string | undefined): RegExp {
+    if (pattern instanceof RegExp && flags === undefined) {
+      return pattern;
+    }
+    return RegExp.create(pattern, flags);
+  }
+
+  // RegExp.escape (ES2025 §22.2.5.1): `text` with every character that
+  // could be pattern syntax escaped; a leading digit or ASCII letter as
+  // `\x` hexadecimal.
+  static escape(text: string): string {
+    let escaped = '';
+    let index = 0;
+    while (index < text.length) {
+      const unit = varta.regexp.unit(text, index);
+      let code = unit;
+      let width = 1;
+      if (unit >= HIGH_FIRST && unit <= HIGH_LAST && index + 1 < text.length) {
+        const low = varta.regexp.unit(text, index + 1);
+        if (low >= LOW_FIRST && low <= LOW_LAST) {
+          code = (unit - HIGH_FIRST) * SURROGATE_BITS + (low - LOW_FIRST) + SUPPLEMENTARY;
+          width = 2;
+        }
+      }
+      const character = text.slice(index, index + width);
+      if (
+        index === 0 &&
+        ((code >= DIGIT_FIRST && code <= DIGIT_LAST) ||
+          (code >= UPPER_FIRST && code <= UPPER_LAST) ||
+          (code >= LOWER_FIRST && code <= LOWER_LAST))
+      ) {
+        escaped = '\\x' + hex(code, BYTE_DIGITS);
+      } else {
+        escaped = escaped + escapeCodePoint(code, character);
+      }
+      index = index + width;
+    }
+    return escaped;
   }
 
   // RegExpBuiltinExec up to the match: the matcher result (empty without a
@@ -431,6 +629,34 @@ export class RegExp {
     return this.hasIndices ? indicesOf(caps, this.names, this.count) : undefined;
   }
 
+  // RegExp.prototype[@@match] (§22.2.6.8): String.prototype.match.
+  [Symbol.match](input: string): RegExpMatchArray | null {
+    return RegExp.match(input, this);
+  }
+
+  // RegExp.prototype[@@matchAll] (§22.2.6.9): a RegExp String Iterator over
+  // a copy that starts at `lastIndex`.
+  [Symbol.matchAll](input: string): Generator<RegExpExecArray, void, undefined> {
+    const copy = this.copy();
+    copy.lastIndex = this.lastIndex;
+    return RegExp.iterate(copy, input);
+  }
+
+  // RegExp.prototype[@@replace] (§22.2.6.11) with a replacement template.
+  [Symbol.replace](input: string, replacement: string): string {
+    return RegExp.replace(input, this, replacement);
+  }
+
+  // RegExp.prototype[@@search] (§22.2.6.12).
+  [Symbol.search](input: string): number {
+    return RegExp.search(input, this);
+  }
+
+  // RegExp.prototype[@@split] (§22.2.6.14).
+  [Symbol.split](input: string, limit?: number): (string | undefined)[] {
+    return RegExp.splitParts(input, this, limit ?? NO_LIMIT);
+  }
+
   test(input: string): boolean {
     return this.run(input, true).length !== 0;
   }
@@ -474,44 +700,35 @@ export class RegExp {
     return found.length === 0 ? null : new RegExpMatchArray(undefined, undefined, found, undefined, undefined);
   }
 
-  // String.prototype.matchAll: every match of a copy of the regex that
-  // starts at the original's `lastIndex`, as a fresh array.
-  private static matchAll(input: string, regexp: RegExp): RegExpExecArray[] {
+  // String.prototype.matchAll (§22.1.3.14, §22.2.6.9): a RegExp String
+  // Iterator over a copy of the regex that starts at the original's
+  // `lastIndex`; each step runs one match.
+  private static matchAll(input: string, regexp: RegExp): Generator<RegExpExecArray, void, undefined> {
     if (!regexp.global) {
       throw new TypeError(NOT_GLOBAL_MATCH_ALL);
     }
-    const copy = new RegExp(
-      regexp.source,
-      regexp.flags,
-      regexp.bits,
-      regexp.program,
-      regexp.lean,
-      regexp.names,
-      regexp.count,
-    );
+    const copy = regexp.copy();
     copy.lastIndex = regexp.lastIndex;
-    const found: RegExpExecArray[] = [];
+    return RegExp.iterate(copy, input);
+  }
+
+  // %RegExpStringIteratorPrototype%.next (§22.2.9.2.1): every match of a
+  // global regex, the first match of another.
+  private static *iterate(regexp: RegExp, input: string): Generator<RegExpExecArray, void, undefined> {
     for (;;) {
-      const caps = copy.run(input, false);
-      if (caps.length === 0) {
-        break;
+      const match = regexp.exec(input);
+      if (match === null) {
+        return;
       }
-      const start = varta.regexp.slot(caps, 0);
-      const values = captures(caps, input, copy.count);
-      found.push(
-        new RegExpExecArray(
-          start,
-          input,
-          values,
-          groupsOf(values, copy.names, copy.count),
-          copy.indicesFor(caps),
-        ),
-      );
-      if (varta.regexp.slot(caps, 1) === start) {
-        copy.lastIndex = advance(input, copy.lastIndex, copy.full());
+      if (!regexp.global) {
+        yield match;
+        return;
       }
+      if (match.index === regexp.lastIndex) {
+        regexp.lastIndex = advance(input, regexp.lastIndex, regexp.full());
+      }
+      yield match;
     }
-    return found;
   }
 
   // The matcher results String.prototype.replace replaces: one, or all
@@ -594,6 +811,39 @@ export class RegExp {
     return result + input.slice(next);
   }
 
+  // String.prototype.replace with a replacer that takes the arguments
+  // computed at run time (§22.2.6.11 step 14.k): the match, every capture,
+  // the position, the input and, with named groups, the groups object.
+  private static replaceCall(
+    input: string,
+    regexp: RegExp,
+    replacer: (args: unknown[]) => string,
+  ): string {
+    return RegExp.replaceWith(input, regexp, (match: RegExpExecArray): string => {
+      const args: unknown[] = [];
+      for (const value of match) {
+        args.push(value);
+      }
+      args.push(match.index);
+      args.push(input);
+      if (regexp.names.length > 0) {
+        args.push(match.groups);
+      }
+      return replacer(args);
+    });
+  }
+
+  private static replaceAllCall(
+    input: string,
+    regexp: RegExp,
+    replacer: (args: unknown[]) => string,
+  ): string {
+    if (!regexp.global) {
+      throw new TypeError(NOT_GLOBAL_REPLACE_ALL);
+    }
+    return RegExp.replaceCall(input, regexp, replacer);
+  }
+
   private static replaceAll(input: string, regexp: RegExp, replacement: string): string {
     if (!regexp.global) {
       throw new TypeError(NOT_GLOBAL_REPLACE_ALL);
@@ -612,12 +862,23 @@ export class RegExp {
     return RegExp.replaceWith(input, regexp, replacer);
   }
 
-  // String.prototype.split with a regex separator. Matching resumes from
-  // each position like the sticky splitter of @@split; captures are spliced
-  // into the result.
+  // String.prototype.split with a regex separator whose groups always take
+  // part (the compiler selects it): every part is a string.
   private static split(input: string, regexp: RegExp, limit: number): string[] {
-    const lim = limitOf(limit);
     const parts: string[] = [];
+    for (const part of RegExp.splitParts(input, regexp, limit)) {
+      parts.push(part ?? '');
+    }
+    return parts;
+  }
+
+  // String.prototype.split with a regex separator (§22.2.6.14). Matching
+  // resumes from each position like the sticky splitter of @@split; the
+  // captures are spliced into the result, `undefined` for a group that did
+  // not take part.
+  private static splitParts(input: string, regexp: RegExp, limit: number): (string | undefined)[] {
+    const lim = limitOf(limit);
+    const parts: (string | undefined)[] = [];
     if (lim === 0) {
       return parts;
     }
@@ -655,11 +916,7 @@ export class RegExp {
       }
       p = end;
       for (let group = 1; group < regexp.count; group++) {
-        const start = varta.regexp.slot(caps, 2 * group);
-        if (start < 0) {
-          throw new TypeError(SPLIT_UNDEFINED);
-        }
-        parts.push(input.slice(start, varta.regexp.slot(caps, 2 * group + 1)));
+        parts.push(capture(caps, input, group));
         if (parts.length === lim) {
           return parts;
         }

@@ -1,0 +1,26 @@
+false false
+false true
+dictionary replace: ok
+dictionary add: TypeError: Cannot add property cy, object is not extensible
+dictionary delete: TypeError: Cannot delete property 'bob' of #<Object>
+dictionary delete absent: ok
+dictionary frozen: TypeError: Cannot assign to read only property 'ann' of object '#<Object>'
+dictionary frozen add: TypeError: Cannot add property 5, object is not extensible
+{"ann":3,"bob":2} ann,bob
+true true
+1 2 true false
+false false
+false false false
+true false
+true bad
+false
+true true
+true
+false
+false text
+narrowed: TypeError: Cannot assign to read only property 'n' of object '#<Object>'
+narrowed array: TypeError: Cannot add property 2, object is not extensible
+assign frozen target: TypeError: Cannot assign to read only property 'a' of object '#<Object>'
+assign non-extensible target: ok
+{"a":1,"b":3}
+{"a":9,"b":8} false

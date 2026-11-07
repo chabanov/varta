@@ -226,7 +226,7 @@ fn aggregate<M: Memory + ?Sized>(
     if cell.kind == ValueKind::Record {
         return read_record_in(data, cell.payload, version, &module, |_| {}, |_| {});
     }
-    let (ptr, length, header) = block(data, cell.payload, HEAP_ARRAY_FLAG)?;
+    let (ptr, length, header) = block(data, cell.payload, HEAP_ARRAY_FLAG, version)?;
     let meta = word(data, ptr)?;
     let count = word(data, ptr + 4)? as usize;
     if count > module.limits.data.array_elements
@@ -243,11 +243,13 @@ fn aggregate<M: Memory + ?Sized>(
     Ok(())
 }
 /// The `(pointer, length, header)` of a canonical managed record or legacy
-/// array block `payload` stamped `flag`.
+/// array block `payload` stamped `flag`, apart from the integrity-level bits
+/// of value layout `version` ([`integrity_flags`]).
 fn block<M: Memory + ?Sized>(
     data: &M,
     payload: u64,
     flag: i32,
+    version: u32,
 ) -> Result<(usize, usize, usize), ValueAbiError> {
     let ptr = payload as u32 as usize;
     let length = (payload >> i32::BITS) as usize;
@@ -263,7 +265,8 @@ fn block<M: Memory + ?Sized>(
         || length > size - abi::STRING_HEADER_BYTES
         || !size.is_multiple_of(HEAP_ALIGNMENT)
         || header.checked_add(size).is_none_or(|end| end > data.size())
-        || word(data, header + HEAP_FLAGS_OFFSET)? != HEAP_ALLOCATED_FLAG | flag as u32
+        || word(data, header + HEAP_FLAGS_OFFSET)? & !integrity_flags(version)
+            != HEAP_ALLOCATED_FLAG | flag as u32
     {
         return Err(invalid());
     }
@@ -431,13 +434,14 @@ impl RecordShape {
     }
 }
 
-/// The descriptor address and field count of the record block `payload`
-/// (`block` checked), for [`RecordShape::read`].
+/// The descriptor address and field count of the record block `payload` of
+/// value layout `version` (`block` checked), for [`RecordShape::read`].
 pub fn record_descriptor<M: Memory + ?Sized>(
     data: &M,
     payload: u64,
+    version: u32,
 ) -> Result<(usize, usize), ValueAbiError> {
-    let (ptr, _, _) = block(data, payload, HEAP_RECORD_FLAG)?;
+    let (ptr, _, _) = block(data, payload, HEAP_RECORD_FLAG, version)?;
     Ok((word(data, ptr)? as usize, word(data, ptr + 4)? as usize))
 }
 
@@ -455,7 +459,7 @@ pub fn read_record_in<M: Memory + ?Sized>(
     field: impl FnMut(RecordEntry),
     order: impl FnMut(usize),
 ) -> Result<(), ValueAbiError> {
-    let (descriptor, count) = record_descriptor(data, payload)?;
+    let (descriptor, count) = record_descriptor(data, payload, version)?;
     let shape = RecordShape::read(data, descriptor, count, version, module)?;
     read_record_with(data, payload, version, &shape, field, order)
 }
@@ -471,7 +475,7 @@ pub fn read_record_with<M: Memory + ?Sized>(
     mut field: impl FnMut(RecordEntry),
     mut order: impl FnMut(usize),
 ) -> Result<(), ValueAbiError> {
-    let (ptr, length, header) = block(data, payload, HEAP_RECORD_FLAG)?;
+    let (ptr, length, header) = block(data, payload, HEAP_RECORD_FLAG, version)?;
     let count = shape.count;
     if word(data, ptr)? as usize != shape.descriptor
         || word(data, ptr + 4)? as usize != count

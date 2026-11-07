@@ -34,7 +34,7 @@ fn prepared_browser_image_owns_original_and_policies_without_rewriting_them() {
             .inspection()
             .imports
             .iter()
-            .any(|import| import.name == "log_f64_v2")
+            .any(|import| import.name == "log_string16")
     );
     source.wasm.clear();
     source.manifest.abi_version = abi::VERSION;
@@ -134,7 +134,7 @@ fn browser_preparation_does_not_mount_host_filesystem_roots() {
 #[test]
 fn unknown_imports_and_reserved_private_markers_are_rejected() {
     let mut source = artifact(LanguageProfile::CheckedF64Utf16V38);
-    let name = b"log_f64_v2";
+    let name = b"log_string16";
     let at = source
         .wasm
         .windows(name.len())
@@ -779,6 +779,7 @@ fn kv_codec_matches_its_sources() {
             "src/abi.rs",
             "src/abi/static_region.rs",
             "src/bigint.rs",
+            "src/console.rs",
             "src/exceptions.rs",
             "src/fuel.rs",
             "src/json/mod.rs",

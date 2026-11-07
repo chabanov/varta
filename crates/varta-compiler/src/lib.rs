@@ -68,6 +68,15 @@ pub fn with_collector_stress<T>(units: u32, body: impl FnOnce() -> T) -> T {
     emit::with_collector_stress(units, body)
 }
 
+/// Test-only: compile inside `body` with a global `gc()` (v38
+/// `weak_references`) that runs a complete collection, as Node's
+/// `--expose-gc` does, so a weak-reference program states where its
+/// collections happen. Production dependents never use it.
+#[doc(hidden)]
+pub fn with_exposed_gc<T>(body: impl FnOnce() -> T) -> T {
+    lower::with_exposed_gc(body)
+}
+
 /// Defined functions the v38 collector (`incremental_collection`) adds to a
 /// module with a managed heap; tests that compare a v38 module's functions
 /// with v37's account for them.
@@ -245,7 +254,51 @@ pub fn compile_modules_with_profile(
     loader: &dyn ModuleLoader,
     profile: varta_common::language::LanguageProfile,
 ) -> Result<Compilation, CompilerError> {
-    compile_graph(entry, loader, profile, false)
+    compile_graph(entry, loader, profile, false, &Settings::default())
+}
+
+/// Project settings that change what a compilation links, not what the
+/// source means.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Settings {
+    /// The locales whose data `Intl` and local time link (ECMA-402
+    /// [[AvailableLocales]], `"locales"` in `varta.config.json`); empty
+    /// links every locale of the bundled data.
+    pub locales: Vec<String>,
+}
+
+/// [`compile_modules_with_profile`] with project [`Settings`].
+pub fn compile_modules_with_settings(
+    entry: ModuleSource,
+    loader: &dyn ModuleLoader,
+    profile: varta_common::language::LanguageProfile,
+    settings: &Settings,
+) -> Result<Compilation, CompilerError> {
+    compile_graph(entry, loader, profile, false, settings)
+}
+
+/// Compile one in-memory module (no imports) with project [`Settings`].
+pub fn compile_typescript_with_settings(
+    source: &str,
+    profile: varta_common::language::LanguageProfile,
+    settings: &Settings,
+) -> Result<Vec<u8>, CompilerError> {
+    compile_graph(
+        ModuleSource {
+            path: "input.ts".into(),
+            text: source.into(),
+        },
+        &modules::NoImports,
+        profile,
+        false,
+        settings,
+    )
+    .map(|c| c.wasm)
+}
+
+/// A project's locale selection in canonical form, or why it is invalid.
+pub fn canonical_locales(locales: &[String]) -> Result<Vec<String>, String> {
+    link::intl::canonical_locales(locales)
 }
 
 /// Compile a development fuel-profile build (`varta dev --profile-fuel`): the
@@ -257,7 +310,17 @@ pub fn compile_modules_for_fuel_profile(
     loader: &dyn ModuleLoader,
     profile: varta_common::language::LanguageProfile,
 ) -> Result<Compilation, CompilerError> {
-    compile_graph(entry, loader, profile, true)
+    compile_graph(entry, loader, profile, true, &Settings::default())
+}
+
+/// [`compile_modules_for_fuel_profile`] with project [`Settings`].
+pub fn compile_modules_for_fuel_profile_with_settings(
+    entry: ModuleSource,
+    loader: &dyn ModuleLoader,
+    profile: varta_common::language::LanguageProfile,
+    settings: &Settings,
+) -> Result<Compilation, CompilerError> {
+    compile_graph(entry, loader, profile, true, settings)
 }
 
 fn compile_graph(
@@ -265,6 +328,7 @@ fn compile_graph(
     loader: &dyn ModuleLoader,
     profile: varta_common::language::LanguageProfile,
     fuel_profile: bool,
+    settings: &Settings,
 ) -> Result<Compilation, CompilerError> {
     use swc_common::Spanned;
     let graph = modules::Graph::load_with_profile(entry, loader, profile)?;
@@ -279,7 +343,14 @@ fn compile_graph(
     }
     .and_then(|emitted| {
         let names = emitted.names;
-        link::link(emitted.bytes, profile, emitted.heap, emitted.values).map(|bytes| {
+        link::link(
+            emitted.bytes,
+            profile,
+            emitted.heap,
+            emitted.values,
+            &settings.locales,
+        )
+        .map(|bytes| {
             names.map_or_else(|| bytes.clone(), |names| emit::name_section(&bytes, &names))
         })
     })

@@ -28,6 +28,7 @@ pub(crate) const METHODS: &[&str] = &[
     "substr",
     "isWellFormed",
     "toWellFormed",
+    "normalize",
     "toLocaleUpperCase",
     "toLocaleLowerCase",
     "hasOwnProperty",
@@ -119,6 +120,11 @@ impl Lower<'_> {
                 if method == "from"
                     && matches!(stmt::unparen(&member.obj), ast::Expr::Ident(id) if id.sym == "Iterator" && self.binding("Iterator").is_err())
                 {
+                    return true;
+                }
+                // V38 (`full_regexp`): `text.matchAll(regexp)` is a RegExp
+                // String Iterator.
+                if method == "matchAll" && self.types.profile.full_regexp() {
                     return true;
                 }
                 if ITERATOR_RESULTS.contains(&method) {
@@ -236,6 +242,7 @@ impl Lower<'_> {
             "at" => "stringAt",
             "substr" => "stringSubstr",
             "isWellFormed" => "stringIsWellFormed",
+            "normalize" => "stringNormalize",
             "toWellFormed" => "stringToWellFormed",
             _ => {
                 return Err(self
@@ -915,7 +922,11 @@ impl Lower<'_> {
     /// `JSON.stringify(value, replacer, space?)` (§25.5.2.1) with a `null`
     /// or `undefined` replacer or a property list, and a number or string
     /// `space`: the compact serialization rewritten by the standard prelude.
-    pub(super) fn json_stringify_options(&mut self, call: &ast::CallExpr) -> Result<Expr> {
+    pub(super) fn json_stringify_options(
+        &mut self,
+        call: &ast::CallExpr,
+        checked: bool,
+    ) -> Result<Expr> {
         let span = call.span;
         if call.args.iter().any(|arg| arg.spread.is_some()) {
             return Err(self
@@ -934,6 +945,11 @@ impl Lower<'_> {
             args: vec![call.args[0].clone()],
             ..call.clone()
         };
+        // A discarded result: only the serialization's own effects remain
+        // (the other arguments are effect-free).
+        if !checked {
+            return self.json_stringify(&single, false);
+        }
         let mut text = self.expr(&ast::Expr::Call(single))?;
         if text.ty != Type::String {
             return Err(self.source.locate(
@@ -1000,7 +1016,6 @@ impl Lower<'_> {
 /// reasons name the missing value-model part (see the K9 D record in
 /// docs/development-plan.md).
 pub(super) fn refusal(name: &str) -> Option<&'static str> {
-    const INTEGRITY: &str = "object integrity levels (freeze, seal and preventExtensions need a per-object flag checked by every write, a value layout 18 change awaiting an owner decision)";
     const DESCRIPTORS: &str = "property descriptors and prototypes (closed checked values have fixed data properties and no mutable prototype)";
     Some(match name {
         "WeakMap" | "WeakSet" | "WeakRef" | "FinalizationRegistry" => {
@@ -1012,12 +1027,6 @@ pub(super) fn refusal(name: &str) -> Option<&'static str> {
         "structuredClone" => {
             "structuredClone (a type-directed deep copy preserving shared and cyclic references is not implemented)"
         }
-        "Object.freeze"
-        | "Object.isFrozen"
-        | "Object.seal"
-        | "Object.isSealed"
-        | "Object.preventExtensions"
-        | "Object.isExtensible" => INTEGRITY,
         "Object.defineProperty"
         | "Object.defineProperties"
         | "Object.getOwnPropertyDescriptor"
@@ -1115,6 +1124,14 @@ impl Lower<'_> {
             return Ok(None);
         }
         let span = call.span;
+        // V38 (`integrity_levels`): freeze, seal, preventExtensions and
+        // their predicates.
+        if self.types.profile.integrity_levels() && integrity::is_member(name) {
+            return self.integrity_static(call, name).map(Some);
+        }
+        if self.types.profile.symbol_values() && name == "Object.getOwnPropertySymbols" {
+            return self.object_own_symbols(call).map(Some);
+        }
         if let Some(reason) = refusal(name) {
             return Err(self.source.locate(unsupported(reason), span));
         }

@@ -179,9 +179,13 @@ impl Lower<'_> {
                     ),
                 })],
             );
+            // V38 (`integrity_levels`): the snapshot keeps the array's
+            // integrity level, so writes through it fail as they would on it.
+            let inherit =
+                integrity::inherit(local(span, array, any), local(span, out, any), self.types);
             body.push(S::If(
                 kind_test(kind),
-                vec![copy, S::Return(Some(local(span, out, any)))],
+                vec![copy, inherit, S::Return(Some(local(span, out, any)))],
                 Vec::new(),
             ));
         }

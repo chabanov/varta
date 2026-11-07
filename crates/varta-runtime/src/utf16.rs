@@ -2,7 +2,7 @@
 //! (also linked into v38 guests). Resource conversion lives in the
 //! privileged host path; logging stays a host effect.
 use crate::{RuntimeContext, host};
-use varta_common::{HostOperation as Host, abi};
+use varta_common::{HostOperation as Host, abi, console::StderrLevel};
 use varta_intrinsics::string;
 use wasmtime::{Caller, Extern, Linker};
 
@@ -48,6 +48,24 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             // Diagnostic output is Unicode text, never a round-trippable resource identifier.
             caller.data_mut().emit(format!(
                 "varta log: {}",
+                String::from_utf16_lossy(&string::units(&units).collect::<Vec<_>>())
+            ))
+        },
+    )?;
+    linker.func_wrap(
+        varta_common::abi::HOST_MODULE,
+        Host::LogStderr16.name(),
+        |mut caller: Caller<'_, RuntimeContext>, level: i32, ptr: i32, len: i32| {
+            caller.data_mut().tick()?;
+            // The level is checked before the text is read: an unknown word
+            // is a noncanonical call, never a third stream.
+            let level = StderrLevel::from_word(level)
+                .ok_or_else(|| wasmtime::Error::msg("invalid standard-error level"))?;
+            let limit = caller.data().module.limits.data.string_bytes;
+            let units = read_within(&mut caller, ptr, len, limit)?;
+            caller.data_mut().emit(format!(
+                "{}{}",
+                level.prefix(),
                 String::from_utf16_lossy(&string::units(&units).collect::<Vec<_>>())
             ))
         },

@@ -253,6 +253,7 @@ impl Emitter<'_> {
                 self.expr(value)?;
                 self.string_helper(strings::Helper::text_units(*op))?;
             }
+            E::Intrinsic(ir::Intrinsic::Weak(op), args) => self.weak(*op, args, expr.ty)?,
             E::Intrinsic(op, args) => {
                 for (at, arg) in args.iter().enumerate() {
                     self.expr(arg)?;
@@ -373,6 +374,13 @@ impl Emitter<'_> {
                             I::I32Const(signature as i32),
                             I::I32Eq,
                         ]);
+                    }
+                    ir::Intrinsic::Integrity(op) => {
+                        let cell = args.first().is_some_and(|arg| arg.ty.is_cell());
+                        self.integrity(*op, cell)?;
+                    }
+                    ir::Intrinsic::Weak(_) => {
+                        return Err(CompilerError::Internal("weak intrinsic operands".into()));
                     }
                 }
             }

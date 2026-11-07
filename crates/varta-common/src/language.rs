@@ -873,6 +873,30 @@ impl LanguageProfile {
     pub fn module_evaluation(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 D1 console stream: `console.log`, `console.info` and
+    /// `console.debug` take any number of arguments and print them as Node 24
+    /// does (`util.formatWithOptions`: `%` directives, `util.inspect` of every
+    /// non-string argument), and value18 record descriptors end with a
+    /// display trailer (`value::RecordDisplay`) naming class instances and
+    /// the engine's Error, `Map`, `Set` and `Date` layouts. Changes no host
+    /// ABI; `value_format_v12` formats the cell of the argument array.
+    #[must_use]
+    pub fn node_console(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
+    /// Batch v38, K9 D1 console methods (owner decision 2026-11-06): the
+    /// standard-error host operation `log_stderr16`
+    /// ([`crate::HostOperation::LogStderr16`], levels
+    /// [`crate::console::StderrLevel`]) behind `console.error` and
+    /// `console.warn`, and the rest of Node's console (`trace`, `assert`,
+    /// `table`, `dir`, `group`/`groupEnd` indentation, `count`/`countReset`,
+    /// `time`/`timeEnd`/`timeLog` under the `time.now` grant) in the engine
+    /// prelude `<varta>/builtins/console.ts`. Earlier profiles keep refusing
+    /// every console method but `log`.
+    #[must_use]
+    pub fn console_methods(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, wave-3 bytes stream: a `Uint8Array` carries its own value
     /// tag ([`crate::value::ValueKind::Bytes`], an additive tag of the
     /// in-development value layout 18) in record fields, array elements,
@@ -895,6 +919,27 @@ impl LanguageProfile {
     /// skips a symbol in JSON as Node does.
     #[must_use]
     pub fn symbol_values(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
+    /// Batch v38, K9 D2 integrity stream: `Object.freeze`, `Object.seal`,
+    /// `Object.preventExtensions` and their predicates (ECMA-262 §20.1.2)
+    /// over integrity-level header bits of value layout 18
+    /// ([`crate::value::HEAP_INTEGRITY_FLAGS`]), checked by every property
+    /// write, addition and deletion of a program that loads them; a failed
+    /// write throws V8's `TypeError` (modules are strict code).
+    #[must_use]
+    pub fn integrity_levels(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
+
+    /// Batch v38, K9 D5 weak references: `WeakMap`, `WeakSet`, `WeakRef`
+    /// and `FinalizationRegistry` over ephemeron tables (value layout 18
+    /// [`crate::weak::HEAP_WEAK_FLAG`]) that the collector processes after
+    /// marking; keys are objects and symbols that are not registered. A
+    /// module that uses them exports [`crate::weak::CHECKPOINT_EXPORT`],
+    /// which the host calls at the end of every microtask checkpoint.
+    #[must_use]
+    pub fn weak_references(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
     /// Batch v38, virtual-roots stream: `fs.*` paths and grants are virtual
@@ -3257,8 +3302,9 @@ mod tests {
             // Linked serialization and the logged text of a value.
             H::JsonStringifyOwned,
             H::ValueFormatV12,
-            // K9 D3: the backtracking RegExp matcher.
+            // K9 D3: the backtracking RegExp matcher and pattern compiler.
             H::RegExpExec,
+            H::RegExpCompile,
         ] {
             assert!(operation.linked() && v38.links(operation), "{operation:?}");
             assert!(operation.capability().is_none(), "{operation:?}");
@@ -3363,6 +3409,7 @@ mod tests {
                 profile.sdk_paths(),
                 profile.byte_values(),
                 profile.symbol_values(),
+                profile.weak_references(),
                 profile.file_roots(),
                 profile.json_decoders(),
                 profile.iteration_protocol(),

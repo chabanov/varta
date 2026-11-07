@@ -17,6 +17,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+pub use varta_common::console::is_standard_error;
 pub use varta_common::host_inputs::HostInputs;
 pub use varta_common::permission::DecisionFile;
 pub use varta_common::profile::{FuelProfile, FunctionFuel};
@@ -264,14 +265,21 @@ fn compile_attempt(
         if let Some(tailwind) = &config.tailwind {
             tailwind_stylesheet(loader, &tailwind.entry, &entry, config.language_profile)?;
         }
+        let settings = config.compiler_settings();
         let compilation = if fuel_profile {
-            varta_compiler::compile_modules_for_fuel_profile(
+            varta_compiler::compile_modules_for_fuel_profile_with_settings(
                 entry,
                 loader,
                 config.language_profile,
+                &settings,
             )?
         } else {
-            varta_compiler::compile_modules_with_profile(entry, loader, config.language_profile)?
+            varta_compiler::compile_modules_with_settings(
+                entry,
+                loader,
+                config.language_profile,
+                &settings,
+            )?
         };
         Ok((config, base, compilation))
     })();

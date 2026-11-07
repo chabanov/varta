@@ -190,6 +190,9 @@ prerequisite and its presence cannot change whether a project is accepted.
 With `"tailwind": {"entry": …}` (v38), the pipeline first generates the
 project's stylesheet and serves it as that entry's text resource
 ([build-time Tailwind stylesheets](#build-time-tailwind-stylesheets-k8-t1)).
+With `"locales": ["en", "uk"]` (v38), linking keeps only those locales' CLDR
+data and the module's [[AvailableLocales]] are that list
+([locale data](#locale-data-intl_data)); without it every locale is linked.
 
 The pipeline is:
 
@@ -9313,6 +9316,11 @@ history, both nonmoving with the exact roots and block layout of the
   marking; if … end`, two instructions per reference store while no cycle
   marks.
 
+A module with ephemeron tables runs the [weak phase](#weak-references-weak_references)
+when marking finds nothing gray: it may resume marking, and it vacates the
+pairs of dead keys before the sweep starts; a complete collection runs the
+same phase after its worklist.
+
 Collector stress builds (`varta_compiler::with_collector_stress`, test-only)
 run cycles back to back with a fixed small quantum, poison every block a
 sweep frees and verify every finished cycle with a complete collection whose
@@ -10702,7 +10710,9 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   global other than its stack pointer and the zero memory/table bases of
   position-independent code, an absolute linker symbol (such as
   `__heap_base`) or a 64-bit, TLS or location-relative memory relocation is
-  not linkable. Linking is deterministic, and a program without a linked
+  not linkable (the linker's own passive locale data segments are the
+  exception, see [locale data](#locale-data-intl_data)). Linking is
+  deterministic, and a program without a linked
   import is emitted byte for byte as before.
 - **Memory: the intrinsic region of memory 0.** A linked module has exactly
   one memory (owner decision: no multi-memory, so Safari and embedded engines
@@ -10931,8 +10941,10 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   memory budget admits the same values. `json_stringify_owned` retains its
   result, as the host import does; `value_format_v12` returns an unrooted
   owned text, and a string cell's own string without a copy.
-- **Logging.** V38 lowers `console.log` of a value cell to
-  `log_string16(value_format_v12(cell))`, so a v38 module imports no value
+- **Logging.** V38 lowers `console.log` of anything but one string to
+  `log_string16(value_format_v12(cell))`, where `cell` holds the `unknown[]`
+  argument list and the text is Node's ([console
+  notation](#console-notation-node_console)), so a v38 module imports no value
   renderer: `LanguageProfile::host_operation` maps the logging operations to
   `value_format_v12`, and no profile admits `value_log_v12` (the runtime
   keeps it for the compiler's `host_import_test_hook`). Under v38
@@ -12084,12 +12096,21 @@ prelude loads only for programs that name one of its methods
   `instanceof`, `cause`, `toString`). `Promise.all`/`allSettled`/`any`/`race`
   over an array literal that mixes `Promise.reject(...)` with promises of one
   type give the rejections that type (TypeScript's `Promise<never>`).
-  `Promise.any` still rejects with an `Error` named `Error`, not an
-  `AggregateError`.
+  `Promise.any` rejects with an `AggregateError` whose `errors` are the
+  elements' reasons in input order (ECMA-262 §27.2.4.3; the aggregate
+  prelude's `anyRejection`, loaded by `Promise.any`), and with an empty
+  one for an empty array (K9 D1, 2026-11-06). V37 keeps its `Error`.
 - **Math and strings.** `Math.max(...xs)`/`Math.min(...xs)` with spread
   `number[]` arguments (NaN wins, +0 above −0). `String.prototype.at`,
   `substr` (Annex B), `isWellFormed`, `toWellFormed` and locale-free
-  `toLocaleUpperCase`/`toLocaleLowerCase`.
+  `toLocaleUpperCase`/`toLocaleLowerCase`. `String.prototype.normalize`
+  (`NFC` by default, `NFD`, `NFKC`, `NFKD`; any other form throws
+  `RangeError`) through the linked `string_normalize16` (pure, never
+  imported; form word `text::NormalizationForm`) with ICU4X's compiled
+  normalization data (`icu_normalizer` 2.4.0, already locked through the
+  text stack). A lone surrogate is a normalization boundary kept as it is,
+  as V8 keeps it; the Unicode version is ICU4X's, which may differ from
+  Node's ICU for characters assigned after it.
 - **Date.** The v38 date prelude replaces the v37 class with the complete
   `Date` (§21.4): `Date.UTC`, the component constructor (local time,
   years 0–99 as 1900–1999), every local and UTC getter and setter (with
@@ -12150,7 +12171,9 @@ new.
   local) -> f64` returns the offset LocalTime(t) adds (`local` 0, the offset
   in effect at the instant) or UTC(t) subtracts (`local` 1: the offset of the
   earliest instant whose local time is `t`, and for a local time skipped by a
-  transition the offset before it, §21.4.1.26), in milliseconds.
+  transition the offset before it, §21.4.1.26), in milliseconds; `local` 2
+  answers the daylight flag the instant's zone name uses (1 or 0), by which
+  the date prelude memoizes the two names per instance.
   `varta-intl::zone` reads the IANA Time Zone Database as TZif (RFC 8536,
   versions 2–4) with its POSIX TZ footer (with the RFC 8536 extensions) for
   instants after the last explicit transition, and uses local time type 0
@@ -12166,7 +12189,8 @@ new.
   through the linked `date_zone_name (zone, locale, time) -> string`
   (`varta-intl::names`, ICU4X): the CLDR long specific name of the zone's
   metazone, or the zone's own name for that variant (`British Summer Time`),
-  in the default locale, else the localized GMT format of the zone's current
+  in the default locale (the host's locale input, resolved against a
+  project's locale selection), else the localized GMT format of the zone's current
   standard offset (or daylight offset, for a daylight name of a zone that
   observes daylight saving time now). The metazone and the current offsets
   are those of the reference instant `names::REFERENCE_SECONDS`
@@ -12184,7 +12208,8 @@ new.
   (2026e) in the *rearguard* form ICU compiles, from `jiff-tzdb` 0.1.9;
   the System V names that IANA 2024b turned into links (`EST5EDT`,
   `CST6CDT`, `MST7MDT`, `PST8PDT`) read their link targets' data. Zone names
-  come from ICU4X 2.4.0's compiled data (CLDR 49.0). Node 24.20.0 ships
+  come from ICU4X 2.4.0's CLDR 49.0 data, linked as
+  [locale data](#locale-data-intl_data). Node 24.20.0 ships
   tzdata 2026c and CLDR 48.0: offsets agree for every zone it lists up to
   2026 (Manitoba and Inuvik differ from 2027 under the newer rules), and
   names agree except where CLDR 49 renamed or newly translated a zone
@@ -12194,20 +12219,127 @@ new.
   metazone that no longer observes daylight saving time (Moscow and Türkiye
   summer time in 2000) and for `Africa/Casablanca` (`varta-intl`'s
   `names::tests` pins every difference).
+- **Accepted differences from Node 24.20.0** (coordinator decision of
+  2026-11-07 under the owner's delegated authority; owner review pending).
+  Data versions: CLDR 49.0 (ICU4X 2.4) instead of Node's CLDR 48.0, and IANA
+  tzdata 2026e instead of 2026c. Specification over V8: `getTimezoneOffset`
+  returns the fractional minutes of local mean time offsets that ECMA-262
+  §21.4.4.11 defines (V8 truncates). Every differing sample is pinned by its
+  cause: names in `varta-intl` `names::tests` (`DIFFERENT`,
+  `DIFFERENT_ZONES`, `DIFFERENT_SUMMERS`, `MISMATCHES`), offsets in
+  `zone::tests`, `getTimezoneOffset` in `varta-runtime`
+  `fractional_offsets_follow_the_specification`.
 - **Costs.** No budget changes. A program that uses local time links the
-  tzdata (about 225 KB of data in its intrinsic region); one that writes
-  `toString`/`toTimeString` also links the zone names of every CLDR locale
-  (about 2.5 MB). The data lives in the intrinsic region of memory 0 and
-  counts toward the memory budget.
+  tzdata (about 225 KB of data in its intrinsic region). One that writes
+  `toString`/`toTimeString` links the zone names as
+  [locale data](#locale-data-intl_data): passive segments that stay out of
+  memory until a call copies the parts it reads.
+
+#### Locale data (`intl_data`)
+
+K9 D4 (2026-11-07), part of the v38 [local time](#local-time-local_time) and
+`Intl` work: ICU4X's CLDR data is not compiled into the intrinsic library.
+Linked code reads it from **passive data segments** of the module, so the
+library carries no locale data (the checked-in library went from 3.6 MB to
+1.1 MB), a module carries only the data its linked operations read, and an
+instance's memory holds only the parts a call touches.
+
+- **Format** (`varta_common::intl_data`, format version
+  `intl_data::FORMAT_VERSION`). One versioned *blob per service*
+  (`crates/varta-compiler/src/link/intl/<service>.bin`: `zone`, `datetime`,
+  `decimal`, `compact`, `plurals`, `list`, `collator`, `segmenter`,
+  `casemap`, `relativetime`, `displaynames`, `currency`, `units`, `duration`,
+  `locale`), holding one *segment per ICU4X data marker*: a header (entry
+  count, ICU4X's checksum of the marker), sorted fixed-size entries (key and
+  payload ranges), the keys (`locale`, or `locale` U+001E `attributes`) and
+  the payloads (the data struct in postcard 1 form, equal payloads stored
+  once). Blobs are generated, never edited: `scripts/build-intl-data.py` runs
+  the standalone generator `scripts/intl-data` (its own lockfile; ICU4X's
+  `datagen` features never enter the engine), which loads every payload of
+  ICU4X 2.4.0's compiled data (CLDR 49.0.0, the same bytes the library baked
+  before) through the data crates' own baked macros. `intl.json` records the
+  versions, the per-marker sizes and the generator's source fingerprint
+  (`intl_data_matches_its_generator`).
+- **Linking.** `intl_data::OPERATION_MARKERS` lists the markers each linked
+  operation reads (`date_zone_name`: the IANA identifier map, metazone
+  periods, zone name essentials, location names, specific and standard long
+  names, decimal symbols and digits). The linker appends exactly those
+  markers' segments as passive data segments after every active segment,
+  sorted by marker id hash, adds a data count section, the `varta.intl`
+  custom section (`intl_data::Manifest`: format version, CLDR, ICU4X and
+  tzdata versions, the locale selection, the marker of each passive
+  segment) and synthesizes the accessor `intl_data (marker, offset, len, dst)
+  -> i32`: for a linked marker and a range inside its segment (checked in 64
+  bits), `memory.init` of that range to `dst` and the segment's length,
+  otherwise -1 without a copy. The runtime admits passive segments only in a
+  linked v38 module whose single manifest names exactly as many; a host
+  never reads them.
+- **Provider.** `varta_intl::data::Provider` is ICU4X's buffer provider over
+  the accessor: for each load it reads the segment header, binary-searches
+  the entries by copying only the probed entries and keys, walks ICU4X's
+  locale fallback for the marker's priority exactly as ICU4X's baked data
+  does (exact key, then the fallback chain to `und`, attribute prefix
+  matching included), copies the one payload into the call's arena and lets
+  ICU4X deserialize it; a marker the module does not link is
+  `MarkerNotFound`. The fallback algorithm's own data (CLDR parent locales
+  and fallback likely subtags, `icu_locale_fallback`) stays compiled in, so
+  the linker computes the same chains. Every `varta-intl` name test runs
+  through the provider over the generated blobs restricted to the
+  operation's marker list (complete: all 2,349 Node-pinned names unchanged;
+  minimal: every listed marker is read).
+- **Locale selection** (ECMA-402 [[AvailableLocales]]). `"locales": ["en",
+  "uk"]` in `varta.config.json` (v38 only; BCP 47 language tags without
+  extensions, at most `intl_data::MAX_LOCALES`, canonicalized; empty lists,
+  `und` and extensions are rejected) selects the locales a build links: each
+  segment keeps the entries of the selected locales' fallback chains for its
+  marker's priority, singletons stay whole, and the module gets the
+  available-locales segment (marker hash `intl_data::AVAILABLE_LOCALES_HASH`,
+  the tags joined by line feeds). Linked code resolves the host's locale
+  input against it: the host's tag when every locale is linked, else the
+  first selected locale on the host tag's CLDR fallback chain, else the
+  first selected locale (`varta_intl::data::default_locale`). The owner has
+  not chosen a default selection yet; without `"locales"` every locale is
+  linked (option A of the [plan record](development-plan.md#k9-d4-local-time--2026-11-06)).
+- **Costs** (macOS arm64, `zone_name_locale_data_costs`; the per-call memory
+  is the instance's memory after one `toString`):
+
+  | Program (`America/Los_Angeles`) | Module | Fuel | Memory |
+  | --- | --- | --- | --- |
+  | `getHours` only (no names) | 337 KB | 22,936 | 2,228,224 B |
+  | one `toString`, every locale, `en-US` | 3.10 MB | 771,983 | 2,228,224 B |
+  | one `toString`, every locale, `uk-UA` | 3.10 MB | 1,397,453 | 2,228,224 B |
+  | one `toString`, every locale, `ja-JP` | 3.10 MB | 921,584 | 2,228,224 B |
+  | one `toString`, `"locales": ["en", "uk"]`, `uk-UA` | 574 KB | 1,323,273 | 2,228,224 B |
+  | 100 `toString`, every locale, `uk-UA` | 3.10 MB | 9,108,210 | 2,228,224 B |
+
+  With the names baked into the library (before), the same one-`toString`
+  module was 5.44 MB with both data forms present, 2.85 MB alone, used
+  5,767,168 bytes of memory (the names occupied the intrinsic region) and
+  about 150,000 fuel per call. Now the first name of each daylight flag
+  costs 0.77–1.4 million fuel (copying and validating the payloads ICU4X
+  deserializes: the UTF-8 of the location and specific names dominates);
+  the date prelude memoizes the name per daylight flag per instance (the
+  name depends on the instant only through the flag, which
+  `date_zone_offset` mode 2 answers), so later calls cost no data loads
+  (100 calls: 9.1 million fuel against about 15 million before).
+
+  Per service, the generated blobs hold (bytes, every locale): `zone` 3.37 MB, `datetime` 3.22 MB, `displaynames` 5.06 MB, `currency` 3.74 MB, `segmenter` 3.54 MB, `units` 1.56 MB, `collator` 1.06 MB, `relativetime` 448 KB, `locale` 85 KB, `list` 38 KB, `compact` 32 KB, `casemap` 24 KB, `decimal` 10 KB, `plurals` 8.5 KB, `duration` 0.4 KB; 22.2 MB in all (the compiler embeds only the blobs a linked operation reads: `zone` and `decimal` today).
+  The per-call worst case of a service is bounded by the sum of its
+  markers' largest payloads plus ICU4X's working memory: about 108 KB for
+  zone names, 2.75 MB for the segmenter (its CJK dictionary and LSTM models)
+  and 360 KB for the collator, against the 8 MiB of an HTTP request
+  instance. No budget changed.
 
 #### Full RegExp (`full_regexp`)
 
-K9 D3 (2026-11-06), under the selector `LanguageProfile::full_regexp()`: the
-whole ECMAScript 2025 pattern language (§22.2) replaces the v37
-[linear-time subset](#regexp-regexp) in v38. Patterns are still compiled
-only ahead of time (literals and `new RegExp` with constant arguments, as in
-v37); V37 keeps its subset, its program format 1, its emitted Pike VM and
-its diagnostics and bytes unchanged.
+K9 D3 (2026-11-06, follow-up 2026-11-07), under the selector
+`LanguageProfile::full_regexp()`: the whole ECMAScript 2025 pattern
+language (§22.2) and the RegExp built-ins replace the v37
+[linear-time subset](#regexp-regexp) in v38. Literals and `new RegExp` with
+constant arguments compile ahead of time; every other pattern compiles at
+run time in the guest with the same pattern compiler. V37 keeps its subset,
+its program format 1, its emitted Pike VM and its diagnostics and bytes
+unchanged.
 
 - **Admitted syntax.** Everything v37 admits, plus numbered and named
   backreferences (`\1`, `\k<name>`, forward references match empty),
@@ -12222,21 +12354,34 @@ its diagnostics and bytes unchanged.
   classes, `&&`, `--`, `\q{…|…}` and the emoji properties of strings
   (`Basic_Emoji`, `Emoji_Keycap_Sequence`, `RGI_Emoji_Modifier_Sequence`,
   `RGI_Emoji_Flag_Sequence`, `RGI_Emoji_Tag_Sequence`,
-  `RGI_Emoji_ZWJ_Sequence`, `RGI_Emoji`). Early errors are compile-time
-  `invalid` diagnostics with V8's text (`Duplicate capture group name`,
-  `Invalid named capture referenced`, `Repeated flag in flag group`,
+  `RGI_Emoji_ZWJ_Sequence`, `RGI_Emoji`). Early errors carry V8's text
+  (`Invalid regular expression: /pattern/flags: Duplicate capture group
+  name`, `Invalid named capture referenced`, `Repeated flag in flag group`,
   `Invalid property name`, `Invalid set operation in character class`,
-  `Negated character class may contain strings`, …); `u` with `v` is
-  `Invalid flags supplied to RegExp constructor 'uv'`. Flags print in
-  `dgimsuvy` order.
+  `Negated character class may contain strings`, …; `u` with `v` is
+  `Invalid flags supplied to RegExp constructor 'uv'`): a regular
+  expression literal's is a compile-time `invalid` diagnostic (an early
+  error of the script), a `RegExp` constructor's or a string pattern's is
+  the `SyntaxError` it throws when it runs, constant arguments included.
+  Flags print in `dgimsuvy` order.
 - **Property data.** Code point properties come from the ICU4X 2.4 compiled
   data (`icu_properties`, already locked; strict name matching as the
-  specification requires), resolved at compile time into class ranges; the
-  properties of strings come from the Unicode Emoji 17.0 data
-  (`regexp/emoji_sequences.txt`, from `emoji-sequences.txt` and
-  `emoji-zwj-sequences.txt`). Node 24.20.0 ships ICU 78.3 with Unicode 17.0,
-  and every case pinned against it agrees.
-- **Programs (format 2).** The compiler (`regexp::backtrack`) emits a
+  specification requires), resolved when a pattern compiles into class
+  ranges; the properties of strings come from the Unicode Emoji 17.0 data
+  (`emoji_sequences.txt`, from `emoji-sequences.txt` and
+  `emoji-zwj-sequences.txt`, compiled into the checked-in table
+  `emoji_table.rs`). Case-insensitive equivalence classes and simple case
+  foldings are the checked-in tables `case_table.rs`, derived from
+  Canonicalize over every cased character. Generator tests rewrite both
+  tables and checks keep them equal to their sources. Node 24.20.0 ships
+  ICU 78.3 with Unicode 17.0, and every case pinned against it agrees.
+- **Pattern compiler.** One implementation, `varta_intrinsics::regexp::pattern`
+  (`no_std`): the parser (UTF-16 patterns, lone surrogates included), the
+  `v` class sets, properties, case closure and the format-2 program
+  compiler. The ahead-of-time compiler calls it for literals and constant
+  constructors (and keeps v37's format-1 compiler beside it); v38 modules
+  link it into the guest as `regexp_compile`.
+- **Programs (format 2).** The pattern compiler (`pattern::program`) emits a
   backtracking program, a static string of UTF-16 code units shared with the
   matcher through `varta_common::regexp`: a header (format version 2,
   `UNICODE`/`ANCHORED`/`PREFILTER` flags, capture and register counts, the
@@ -12246,7 +12391,10 @@ its diagnostics and bytes unchanged.
   `REPEAT`, `ENTER`, `REPEAT_END`, `STAR`) whose consuming instructions and
   backreferences carry a backward bit inside lookbehind, and sorted class
   range tables. Offsets are single code units, so a program has at most
-  65 535 units (`RegExp program larger than 65535 code units` beyond);
+  65 535 units (beyond: the compile-time diagnostic `RegExp program larger
+  than 65535 code units` for a literal, and the run-time `SyntaxError` V8
+  uses for its own limit, `Regular expression too large`, for a
+  constructor);
   counted repetitions use counters and are not expanded (`a{100000}` is
   small). Case-insensitive characters and classes are widened at compile
   time as in v37 (under `v` with `i`, operands are folded with simple case
@@ -12281,6 +12429,69 @@ its diagnostics and bytes unchanged.
   skipped input unit for a search led by a literal or a class (the prefilter
   skips units without a run), and about 160 fuel per unit for `/^(a+)+$/`
   on a matching input (v37: about 1 450). Production budgets are unchanged.
+- **Run-time patterns.** `new RegExp(pattern, flags)` and `RegExp(pattern,
+  flags)` (§22.2.4.1) with a pattern or flags the compiler cannot see, a
+  RegExp pattern (its [[OriginalSource]], with its [[OriginalFlags]] unless
+  flags are given), and the string patterns of `search`, `match` and
+  `matchAll` (RegExpCreate, `'g'` for `matchAll`) compile through the
+  linked `regexp_compile` (`HostOperation::RegExpCompile`, pure,
+  capability-free, linked and imported by no profile): RegExpInitialize as
+  guest code, every step metered as fuel and its working memory arena
+  memory under the memory budget. It returns the construction record of
+  `varta_common::regexp::construction` (32-bit words: status, flag bits,
+  capture count and five text lengths, then the program, the lean program,
+  the group names, `source` and `flags` as UTF-16; or V8's `SyntaxError`
+  message). `RegExp(regexp)` without flags returns `regexp` itself; `new
+  RegExp(regexp)` a new object with `lastIndex` 0. `source` is
+  EscapeRegExpPattern (`/` outside classes and line terminators escaped,
+  `(?:)` for the empty pattern), so `new RegExp(r.source, r.flags)`
+  round-trips. `RegExp.escape(text)` (ES2025 §22.2.5.1) is typed guest
+  code. A module links the pattern compiler and its Unicode data only when
+  it constructs a pattern at run time: the library grows by 657 883 bytes
+  (3 631 108 to 4 288 991; about 114 KB of code, 276 KB of data and the
+  rest relocations the linker drops), and the linked part joins only such
+  modules. Measured fuel (`full_regexp_tests`): about 37 000 for
+  `/a(b)+c/`, 228 000 for `/\w+@\w+\.com/iu`, 3.3 million for `/\p{L}+/u`
+  and 48 million for `/\p{RGI_Emoji}/v` (its program has 43 090 units).
+- **Match arrays.** The results of `exec`, `match` and `matchAll`, the
+  `indices` of a `d` match and the replacer match arrays are arrays
+  (§22.2.7.2): their elements, `length` (writable) and every Array method
+  are their elements array's (`values`; element reads, writes, methods,
+  spreads, destructuring and `for…of` of a program module reach it), while
+  `index`, `input`, `groups` and `indices` are their own writable data
+  properties. `Array.isArray` is `true`, `JSON.stringify` writes the
+  elements and a match array enters `unknown` as that array. Element 0 is typed `string` and read live: a program that
+  removed it reads `undefined`, which fails a `TypeError` assertion; other
+  elements are `string | undefined`. A callback's third argument is the
+  elements array.
+- **`matchAll`.** A RegExp String Iterator (§22.2.9): a guest generator over
+  a copy of the regex taken with its `lastIndex`, typed
+  `Generator<RegExpExecArray, void, undefined>`, so `next()`, `for…of`,
+  spreads, `Array.from` and the iterator helpers work and each step runs one
+  match lazily; a non-global regex throws the `TypeError` when `matchAll` is
+  called.
+- **`split`.** @@split (§22.2.6.14) splices the captures into the result,
+  `undefined` for a group that did not take part. The result is
+  `string[]` when the separator is written in place (a literal or a
+  constant `new RegExp`) and every capturing group always takes part
+  (none in an alternative, under a quantifier that may run zero times or in
+  a negative lookaround); otherwise `(string | undefined)[]`.
+- **Replacers.** A replacer receives the match, every capture, the
+  position, the input and, with named groups, the groups object
+  (§22.2.6.11). For a pattern written in place its parameters are typed
+  from the pattern (captures `string | undefined`, `string` when annotated
+  so, asserted); for a pattern built at run time, or a replacer with a rest
+  parameter, the arguments are counted at run time and each parameter is
+  checked against its annotation (`unknown` without one, `string` for the
+  match; a rest parameter takes the rest as `unknown[]`). A function binding
+  works in both forms when its parameter types are primitives or their
+  unions.
+- **`lastIndex`.** RegExpBuiltinExec reads `lastIndex` as ToLength only for
+  a global or sticky regex, fails and resets it to 0 beyond the input, and
+  writes the match end; `replace` and `match` with `g` start from 0 and end
+  at 0, `search` and `split` leave it unchanged, a sticky `replace` without
+  `g` advances it, and `matchAll` iterates a copy (pinned in
+  `full_regexp_cases/replacers.ts`).
 - **Prelude.** V38 compiles `prelude/regexp_v38.ts` in place of the v37
   prelude (`Prelude::lifted`): `hasIndices` and `unicodeSets` reflect their
   flags; `exec`, `match` without `g`, `matchAll` and replacer match arrays
@@ -12292,16 +12503,21 @@ its diagnostics and bytes unchanged.
   under `u` or `v`. A replacer's groups parameter is the (defined) groups
   object. Match arrays and indices arrays are read like v37 match arrays
   (index, destructuring, `for…of`).
-- **Deviations.** Patterns are compiled ahead of time only (a run-time
-  pattern, `new RegExp(regexp)`, `RegExp(…)` without `new`, `RegExp.escape`
-  and Annex B `compile` stay compile-time errors: a run-time pattern would
-  need the pattern compiler in the guest); `matchAll` returns an array;
-  match arrays have no array methods; `split` throws for a capture that did
-  not take part (its result is `string[]`); `Symbol.match`/`matchAll`/
-  `replace`/`search`/`split` protocols wait for symbol values; legacy static
-  properties are not modelled. Behaviour is pinned against Node 24.20.0
-  (`varta-runtime` `full_regexp_cases`, including a 600-pattern
-  differential corpus) and conformance cases `regexp-*`.
+- **Symbol protocols.** With [symbol values](#symbol-values-symbol_values),
+  `RegExp` has `[Symbol.match]`, `[Symbol.matchAll]` (an iterator over a
+  copy, one match for a non-global regex), `[Symbol.replace]` (a
+  replacement template), `[Symbol.search]` and `[Symbol.split]`
+  (§22.2.6.8–14), and the String methods `match`, `matchAll`, `replace`,
+  `replaceAll`, `search` and `split` call a custom matcher's method of the
+  same symbol with the string first (§22.1.3), typed by that method. A
+  custom matcher that also has `[Symbol.match]` is a regular expression to
+  IsRegExp, so `replaceAll` and `matchAll` would first read its `flags`;
+  that combination is refused by name at compile time.
+- **Not modelled.** Annex B `RegExp.prototype.compile` and the legacy static properties (`RegExp.$1`)
+  are not modelled; a value whose type may be a match array or `null`
+  (`RegExpExecArray | null`) enters `unknown` only after narrowing. Behaviour is pinned
+  against Node 24.20.0 (`varta-runtime` `full_regexp_cases`, including a
+  600-pattern differential corpus) and conformance cases `regexp-*`.
 
 #### Own-property overflow storage
 
@@ -13069,6 +13285,152 @@ evaluation, as `await main();` appended to it would. Refused with top-level
 entry points`); a throw of a synchronous module during the initial walk
 ends the execution as an uncaught exception.
 
+#### Console notation (`node_console`)
+
+K9 D1 (2026-11-06). V38 prints what Node 24 prints: `console.log`,
+`console.info` and `console.debug` take any number of arguments and log one
+line of `util.formatWithOptions` text with the default `util.inspect`
+options (depth 2, `compact: 3`, `breakLength: 80`, `maxArrayLength: 100`,
+`maxStringLength: 10000`, no colors). Earlier profiles keep their notation
+and their one-argument rule.
+
+- **Lowering.** One string argument is logged as it is (`log_string16`).
+  Every other call boxes each argument into an `unknown` cell, collects the
+  cells in an `unknown[]` array and logs the text the linked
+  `value_format_v12` returns for the array's cell. Under v38
+  `value_format_v12` therefore takes the cell of the *argument list*, not of
+  one value; it stays a linked intrinsic with no host import. A spread
+  argument contributes its elements in source order (the array literal
+  path, so its elements box as `unknown` values do), and a call of a `void`
+  function logs `undefined` after the call (`console_methods`). Logging
+  admits every value `unknown` holds and, for logging only, `Map` and `Set`
+  values, `Date` instances and class instances with `#private` fields;
+  values that may reach a URL, a RegExp match array or another builtin
+  object without a Node notation stay refused (`unsupported logging of a
+  value holding a URL, …`).
+- **Formatting.** The linked `varta_intrinsics::inspect` follows Node's
+  `lib/internal/util/inspect.js` step for step: `%s %d %i %f %j %o %O %c %%`
+  directives of a leading string (`%s` inspects objects at depth 0, `%o` with
+  `showHidden` at depth 4, `%j` is `JSON.stringify` with `[Circular]`),
+  strings unquoted at the top level and quoted in aggregates by Node's quote
+  choice and escapes, `-0`, BigInts with `n`, `true`/`false`, depth elision
+  (`[Object]`, `[Array]`, `[ClassName]`), single-line output up to 80
+  columns with three nesting levels, column grouping of arrays of more than
+  six entries, `... n more items`, `<n empty items>`, long strings split
+  after line breaks, `<ref *n>`/`[Circular *n]`, `ClassName { … }`,
+  `Map(n) { k => v }`, `Set(n) { v }`, `Uint8Array(n) [ … ]`, the ISO text of
+  a `Date` (`Invalid Date`), `Promise { … }` and Error objects. As in Node,
+  the text has no length limit of its own: fuel, memory and the output
+  budget bound it. The literal-format case uses the same linked path as a
+  dynamic format string.
+- **Test builds.** A build that hosts `value_format_v12`
+  (`host_import_test_hook`) lowers logging as v37 does, through the host's
+  `value_log_v12` renderer; the corpus comparisons with v37 and of linked
+  JSON serialization use it, and `console_tests` pins the linked notation
+  against Node.
+- **Errors.** Varta records no stack frames, so an Error prints as Node
+  prints it under `--stack-trace-limit=0`: `[Name: message]` (`[Name]` for
+  an empty message), the constructor named by `improveStack`
+  (`[Plain [Error]: m]`), then its own enumerable fields, `[cause]` and
+  `AggregateError`'s `[errors]`. A cause that is `undefined` is not shown
+  (an instance does not record whether its options had one).
+- **`SuppressedError`** (owner decision 2026-11-06; ECMA-262 2026
+  §20.5.8, explicit resource management). The engine prelude
+  `<varta>/builtins/suppressed.ts` (`modules::engine::SUPPRESSED`, admitted
+  by `node_console()`) declares `class SuppressedError extends Error` with
+  the constructor `(error: unknown, suppressed: unknown, message?: string)`:
+  `name` is `"SuppressedError"`, `error` and `suppressed` hold the given
+  values as `unknown`, an `undefined` message leaves no own message and
+  there is no options argument. It is an Error class like `AggregateError`
+  (prototype chain to `Error`, `instanceof`, catch narrowing, the exception
+  channel); its fields are not own enumerable properties to `JSON.stringify`
+  or the console notation, which prints `[SuppressedError: message]` as
+  Node 24 does. `typeof SuppressedError` is `"function"`; v37 does not know
+  the name. Track K9 C throws it from `using`/`await using` when a disposal
+  throws after the body threw.
+- **Record display trailers (value layout 18).** Every value18 record
+  descriptor ends, after its entries and a wide record's edge bitmap, with
+  a display trailer: a kind word (`value::RecordDisplay`: 0 object, 1
+  class, 2 Error class, 3 `AggregateError`, 4 `Map` storage, 5 `Set`
+  storage, 6 `Date`), a name length word and the UTF-8 name (none for an
+  object; at most 256 bytes otherwise; a generic class instance carries its
+  template's name). `value::record_display` validates it inside the static
+  region. Readers that do not display records read the descriptor prefix
+  (`value::descriptor_bytes`) unchanged; earlier layouts have no trailer.
+  This is the only layout change of the stream; it adds no value tag.
+- **Deviations from Node** (documented, not silent): functions carry no
+  name or source text, so every function prints `[Function (anonymous)]`
+  and `%s` of a function prints the same; `%s`, `%d`, `%i` and `%f` never
+  call program code (a class's own `toString`/`valueOf` is not used; objects
+  convert as `[object Object]`, arrays by their elements, a `Date` by its
+  time value); `%o` of a function or a typed array shows no hidden
+  properties; the column width of non-ASCII entries uses Node's non-ICU
+  width tables instead of ICU's; `%j` of a value holding a BigInt ends the
+  execution with the serializer's failure where Node throws. Standard error
+  and the rest of Node's console: [console methods](#console-methods-console_methods).
+
+#### Console methods (`console_methods`)
+
+K9 D1, owner decision 2026-11-06. V38 has the whole Node 24 console of
+`lib/internal/console/constructor.js`, printed as Node prints it; earlier
+profiles keep refusing every method but `log`.
+
+- **Standard error (host ABI 34, additive).** `log_stderr16(level, ptr,
+  len)` (`HostOperation::LogStderr16`) writes one standard-error line of
+  the UTF-16 text at `ptr`/`len`. The level word
+  (`console::StderrLevel`: 0 `error`, 1 `warn`) names the console method
+  that wrote it; any other word traps before the text is read. It is
+  capability-free and bounded like `log_string16`: the module's string limit,
+  one host call, fair fuel per byte and the shared output budget. The native
+  runtime records the line in the execution's ordered output with the
+  level's prefix (`varta error: `, `varta warn: `; standard output keeps
+  `varta log: `), so a host routes a line by its prefix alone
+  (`console::is_standard_error`); `varta` and `varta-runtime` print those
+  lines to standard error. The official browser host's worker implements
+  the same import, and its loader only forwards each standard-error line to
+  the page's `console.error` or `console.warn` (the registry's `console`
+  section names prefixes and methods); the line stays in the ordered output.
+  Validation admits the import only under host ABI 34 profiles.
+- **Methods.** `console.error` and `console.warn` format as `console.log`
+  does and write standard error at their level; `console.dirxml` is
+  `console.log`. The other methods live in the engine prelude
+  `<varta>/builtins/console.ts` (`modules::engine::CONSOLE`), which a
+  program loads by naming one of them: `trace` (the stack of a `Trace`
+  error without frames: `Trace: message`, or `Trace`), `assert` (a falsy
+  condition writes `Assertion failed[: first string]` and the remaining
+  arguments through `warn`), `group`/`groupCollapsed`/`groupEnd` (two
+  spaces of indentation before every line, standard error included, as
+  `kWriteToConsole` indents), `count`/`countReset`, `time`/`timeEnd`/
+  `timeLog` (`formatTime` of `internal/util/debuglog`), `dir` and `table`.
+  A program that loads the prelude writes every console call through its
+  `consoleWrite`, so the indentation applies to all of them; a program
+  that names none of these methods writes directly and keeps its bytes.
+- **`dir` and `table`.** The linked intrinsic `console_render(mode, cell)`
+  (`HostOperation::ConsoleRender`, `console::RenderMode`, never imported)
+  renders the request array the prelude builds:
+  `util.inspect(value, options)` for `dir` with `depth` (`null` unbounded),
+  `showHidden`, `breakLength`, `compact` (a number, `false` or `true`),
+  `maxArrayLength`, `maxStringLength`, `sorted` (`true`) and
+  `numericSeparator`, and `Console.prototype.table` with
+  `internal/cli_table` for `table` (index, column and `Values` columns,
+  `Map` and `Set` iteration tables, `properties` filters, cells inspected
+  at depth 0 or `-1` with `maxArrayLength` 3 and no line breaking, column
+  widths by `getStringWidth`). A primitive or a function given to `table`
+  is logged as `console.log` logs it.
+- **Clock.** `time`, `timeEnd` and `timeLog` read the `time.now` clock of
+  `Date.now` (its grant decides; a denial reports itself as `Date.now`
+  does). Durations therefore have whole milliseconds.
+- **Deviations from Node** (documented, not silent): Node writes its process
+  warnings (`countReset` of an unknown label, a repeated `time` label, an
+  unknown `timeEnd`/`timeLog` label) asynchronously as `(node:PID) Warning:
+  …` with a one-time `--trace-warnings` hint; Varta writes them at once as
+  one `Warning: …` line on standard error (`warn` level, outside the group
+  indentation). Timer durations come from the millisecond `time.now` clock,
+  not a monotonic high-resolution one. `dir` ignores `colors`,
+  `customInspect`, `getters` and `showProxy` (no ANSI colors, no custom
+  inspection or accessor properties exist) and admits only `sorted: true`
+  (a comparator function is a type error of its typed options).
+
 #### Bytes held by unknown (`byte_values`)
 
 Wave 3 of v38, selector `LanguageProfile::byte_values()` (owner decision of
@@ -13248,7 +13610,9 @@ every form below (`symbol_forms_stay_refused_by_v37`).
   `unique symbol` constant (`const k = Symbol(…)` or annotated `unique
   symbol`, declared, imported, re-exported or renamed) or one of
   `Symbol.toPrimitive`, `Symbol.toStringTag` and `Symbol.hasInstance` names a
-  statically known member, as tsc types it: in object literals, interfaces
+  statically known member, as tsc types it (K9 D3 adds the RegExp protocol
+  keys `Symbol.match`, `matchAll`, `replace`, `search` and `split`, which
+  the v38 RegExp prelude also defines): in object literals, interfaces
   and type literals (property, method and getter signatures), class fields,
   methods and accessors, and member reads, writes and calls
   (`modules::symbol_keys`, run when the module graph is built, after the
@@ -13258,10 +13622,14 @@ every form below (`symbol_forms_stay_refused_by_v37`).
   key may spell one (`reserved for symbol keys`). The key never depends on
   the symbol value, which is created once per instance. A constant shadowed
   by any other binding of its name in the module keeps the computed-key
-  rules. `Object.keys`/`values`/`entries` and `for...in` of a record with a
-  symbol-keyed member are refused by name (the string-key enumeration that
-  skips them is not implemented); `Object.getOwnPropertySymbols` and
-  symbol keys known only at run time stay refused.
+  rules. `Object.keys`/`values`/`entries`, `for...in` and
+  `Object.getOwnPropertyNames` list string keys only and skip a symbol-keyed
+  member; spreads and `Object.assign` copy it (§7.3.25
+  CopyDataProperties); `Object.getOwnPropertySymbols` lists the symbols of
+  a record's present symbol-keyed members in insertion order (a primitive,
+  array, dictionary or engine object has none; a value typed `unknown` or a
+  class instance with symbol-keyed fields is refused by name). Symbol keys
+  known only at run time stay refused.
 - **Protocols.** A class instance converts through its
   `[Symbol.toPrimitive](hint)` method (§7.1.1) in `String`, `Number`,
   template literals and unary `+`/`-` (hints `"string"` and `"number"`; the
@@ -13269,10 +13637,200 @@ every form below (`symbol_forms_stay_refused_by_v37`).
   an instance without one but with a `[Symbol.toStringTag]` getter give
   `[object <tag>]` (§20.1.3.6); `x instanceof C` calls a class's static
   `[Symbol.hasInstance](x)` and applies ToBoolean (§13.10.2).
-  `JSON.stringify(symbol)` statically typed `symbol` is `undefined`; a value
-  of type `unknown` (or a union) that holds no JSON form keeps Varta's
-  `TypeError`, because the result is typed `string` as in TypeScript's lib
-  (see the K9 D2 record for the owner question).
+  `JSON.stringify(x)` of an `x` statically typed `symbol`, `undefined` or a
+  function is `undefined`, as in Node. **Checked read at TypeScript
+  unsoundness:** for any other argument the result is typed `string`, as in
+  TypeScript's lib (`lib.es5.d.ts`), so when an `x` of type `unknown` or a
+  union holds no JSON form (a symbol, a function, `undefined`) the read of
+  that `string` throws `TypeError` (`JSON.stringify produced undefined: the
+  value has no JSON form`) where Node would continue with `undefined`. A
+  discarded result (an expression statement or `void`, with or without
+  property list and indentation) is never read and never throws
+  (`Lower::discarded`). Coordinator decision of 2026-11-07 under the
+  owner-approved checked-read category, pending the owner's confirmation
+  (K9 D2 record).
+
+#### Integrity levels (`integrity_levels`)
+
+K9 track D2 (owner decision of 2026-11-06, replacing the earlier refusal),
+selector `LanguageProfile::integrity_levels()`: `Object.preventExtensions`,
+`Object.seal`, `Object.freeze` and `Object.isExtensible`, `Object.isSealed`,
+`Object.isFrozen` ([ECMA-262 §7.3.15 SetIntegrityLevel, §7.3.16
+TestIntegrityLevel, §20.1.2](https://tc39.es/ecma262/2025/#sec-setintegritylevel))
+with Node 24.20.0 as the oracle. No host import, budget or ABI number
+changes; v37 and earlier keep value layout 17 and refuse the six members.
+
+- **Value layout.** The value ABI number stays 18. An object block carries
+  its level in three header flag bits (`value::HEAP_NON_EXTENSIBLE_FLAG`
+  8192, `HEAP_SEALED_FLAG` 16384, `HEAP_FROZEN_FLAG` 32768): a record, class
+  instance, dictionary, error or promise block, or the vector cell of an
+  array (its identity; the element storage never carries them). They are
+  only ever added (`preventExtensions` sets the first, `seal` the first two,
+  `freeze` all three), the collector keeps them and a fresh block starts
+  without them. Readers of value layout 18 ignore them
+  (`value::integrity_flags`): the shared record, array and error readers
+  (`value::reference`, `value::vector`, `value::error`, so the host JSON
+  encoder, the linked serializer and both KV stagers), the runtime's JSON
+  object reader and the browser's rejection reader; readers of earlier
+  layouts keep their exact flag checks. The linked serializer's mask raises
+  the v38 `json` fuel golden of `fuel_determinism_tests` from 33558 to 33580.
+- **Operations.** `preventExtensions`, `seal` and `freeze` return their
+  argument: a primitive unchanged, an object after setting its bits
+  (`ir::Intrinsic::Integrity`); a value of type `unknown` or a reference
+  union sets the bits of the object it holds. The predicates answer as
+  §7.3.16 does: a primitive is frozen, sealed and not extensible; an object
+  is sealed when it is not extensible and sealed or has no own property,
+  and frozen when it is not extensible and frozen, or sealed (or without
+  own properties) with no own data property. Own properties are the
+  string- and symbol-keyed members a record or class instance has present
+  (by the object's layout, so a view of a wider object or a subclass
+  instance counts its own; an accessor property of an object literal is no
+  data property), the entries of a dictionary, an array's elements and its
+  `length` (writable, so an array is frozen only by `freeze`), an `Error`'s
+  `stack` accessor and own `message`; engine collections (`Map`, `Set`)
+  and promises have none, and their internal slots stay writable, as the
+  specification requires. Private names (`#x`) are no properties and stay
+  writable.
+- **Write checks.** A program that names one of the six members loads the
+  integrity prelude (`<varta>/builtins/integrity.ts`) and checks every
+  write; any other program gets no check, so its code and fuel are
+  unchanged. Each check runs after the right-hand side was evaluated and
+  before the store (`lower::integrity::guard`): a field write fails on a
+  frozen object (`Cannot assign to read only property 'k' of object
+  '#<Name>'`, the class name of the instance's own layout), the write of an
+  absent optional member on a non-extensible one (`Cannot add property k,
+  object is not extensible`), a deletion of a present member on a sealed
+  one (`Cannot delete property 'k' of #<Name>`); element writes, holes and
+  `length` follow §10.4.2 (a sealed array's shrink stops at its last
+  element, `Cannot delete property 'i' of [object Array]`); `push` and
+  `pop` check before they change the array; `reverse`, `fill`, `sort`,
+  `splice`, `shift`, `unshift` and `copyWithin` of an array with a level run
+  step by step, so the first failing step throws after the earlier steps
+  took effect; dictionary writes and deletions check in their shared
+  helpers; a derived class whose base constructor made `this`
+  non-extensible fails defining its first own field (`Cannot define property
+  f, object is not extensible`, §7.3.33). A symbol key prints as
+  `Symbol(description)`. Writes through a setter are calls, not checked
+  stores. A constructor may pass `this` to the six members of the
+  unshadowed `Object` (they read and set only the header bits). The
+  `unknown[]` snapshot of `Array.isArray` narrowing keeps the array's level.
+- **Refused by name.** A function or generator (no own-property storage
+  yet; a function or `Uint8Array` held by `unknown` throws a recoverable
+  `TypeError` naming the gap), a `Uint8Array` (its elements stay
+  configurable and freezing a non-empty one throws; not modelled), an
+  `Error` subclass instance in the predicates, and `isSealed`/`isFrozen` of
+  a value typed `unknown` or a reference union (its layout is not known
+  statically). `Reflect` and `Proxy` invariants over these bits belong to
+  K9 D6.
+- **Specification over V8.** Node 24.20.0 deviates from §7.3.16 for empty
+  arrays (`Object.isFrozen(Object.preventExtensions([]))` is `true` there;
+  `length` is a writable data property, so it is `false`) and from §23.1.3.30
+  for a frozen one-element array (`sort` writes its element back, so it
+  throws). Varta follows the specification in both; the cases are pinned
+  against the specification, not Node (owner question in the K9 D2
+  record).
+
+#### Weak references (`weak_references`)
+
+K9 track D5 (owner decision of 2026-11-06: weak collections get real weak
+semantics in the exact-root collector), selector
+`LanguageProfile::weak_references()`: `WeakMap`, `WeakSet`, `WeakRef` and
+`FinalizationRegistry`
+([ECMA-262 §24.3, §24.4, §26.1, §26.2](https://tc39.es/ecma262/2025/multipage/managing-memory.html))
+with Node 24.20.0 (`--expose-gc`) as the oracle. No host import, budget or
+ABI number changes; v37 and earlier reject every name below
+(`v37_rejects_weak_references`).
+
+- **Language.** The four classes are generic classes of the builtin weak
+  prelude (`prelude/weak.ts`) with TypeScript's lib signatures:
+  `WeakMap<K extends WeakKey, V>` (`get`, `set` returning the map, `has`,
+  `delete`, a constructor of `[key, value]` pairs), `WeakSet<T extends
+  WeakKey>` (`add`, `has`, `delete`, a constructor of values),
+  `WeakRef<T extends WeakKey>` (`deref`) and `FinalizationRegistry<T>`
+  (`register(target, heldValue, unregisterToken?)`, `unregister(token)`).
+  `WeakKey` is `lib.es2023`'s `object | symbol` and is exported for
+  annotations. A constraint `WeakKey` (or a union of only `object` and
+  `symbol`) admits the object kinds and symbols, and an argument keeps its
+  own type when a type argument is inferred from it, as tsc infers it.
+  CanBeHeldWeakly (§9.13) rejects a registered symbol (`Symbol.for`) and,
+  through an `unknown`-like `WeakKey` cell, any primitive with V8's
+  `TypeError` messages (`Invalid value used as weak map key`, `Invalid value
+  used in weak set`, `WeakRef: invalid target`,
+  `FinalizationRegistry.prototype.register: invalid target`, `Invalid
+  unregisterToken ('Symbol(…)')`); `register` refuses a held value that is
+  its target (`target and holdings must not be same`). Unregistered and
+  well-known symbols are keys. Their instances are opaque builtins like
+  `Map`'s: logging, JSON and `unknown` refuse a value holding one.
+- **Value layout.** The value ABI number stays 18. An **ephemeron table**
+  (`varta_common::weak`) is a heap block with the additive value18 heap flag
+  `weak::HEAP_WEAK_FLAG` and no edge flag, so ordinary tracing marks it and
+  never reads its slots, and no value tag names it (no host reader can meet
+  one). Its header link word chains it into the module's weak list (a
+  global, no root); its payload holds the capacity, kind bits
+  (`KIND_VALUES`: value slots are references, `KIND_STRONG`: keys are
+  strong, `KIND_NOTIFY`: a vacated key raises the pending flag), the pairs
+  in use, the pairs the collector vacated, and `capacity` pairs of a key
+  slot (the identity address of the key's block, or `KEY_EMPTY`/
+  `KEY_VACATED`) and a value slot. The table helpers trap on a position
+  out of range, on a key that is no identity address, on occupying a pair
+  that holds another key and on a value whose kind does not match the
+  table's.
+- **Collector.** Once marking has traced every strong edge (the worklist and
+  any overflow scans of a complete collection; nothing gray in an
+  incremental cycle), the weak phase runs with no guest code in between:
+  the **ephemeron pass** marks and pushes the value of every occupied pair
+  of a marked table whose key is marked (a static key always is) and every
+  key of a kept-objects table; while a pass marks anything, marking resumes
+  and the pass repeats, giving the least fixed point. Then the **vacating
+  pass** vacates every pair of a marked table whose key stayed unmarked
+  (counting it, and raising the pending flag for a notifying table) and
+  unlinks every unmarked table, before the sweep frees any block, so no
+  table ever names a freed or reused block. Both passes cost guest fuel in
+  proportion to the pairs of the live tables; a chain of `n` ephemerons
+  whose keys are reachable only through earlier values may take `n` passes
+  (quadratic work), all charged to the turn or idle period that collects:
+  a turn whose fuel cannot pay for it fails with its fuel budget
+  (`the_ephemeron_fixed_point_is_charged_to_the_turn`). In an incremental
+  cycle the final pass runs in one step, outside the per-allocation
+  quantum. Removing or replacing a pair shades its old value (and a kept
+  key) while a cycle marks (the deletion barrier); creating a `WeakRef` or
+  a successful `deref` adds its target to the kept objects, which the
+  ephemeron pass marks, so a target read during a cycle survives it.
+- **KeepDuringJob and cleanup jobs.** A module that uses weak references
+  exports `varta.weak.checkpoint` (`weak::CHECKPOINT_EXPORT`, `() -> ()`,
+  validated by the runtime to that signature and profile). The host calls
+  it whenever a microtask checkpoint has drained its queue and no rejection
+  is unhandled (the native runtime in `scheduler::drain` and its async
+  form, the official browser host in `scheduler.js`): the guest empties the
+  kept objects (ClearKeptObjects, so a target stays alive until the end of
+  the turn that created or dereferenced it) and, when a collection vacated
+  a registered target since the last call, every live registry with a
+  collected cell queues one cleanup job (HostEnqueueFinalizationRegistry
+  CleanupJob), in the order of their first registrations; the checkpoint
+  then drains those jobs as part of the same turn, and calls the export
+  again. A cleanup job removes each collected cell, the most recently
+  registered first, and calls the callback with its held value; a
+  collection during a callback adds cells the job then also cleans up. A
+  callback never runs during an allocation, never in the job whose
+  `deref` observed its target (the target is kept until that turn ends) and
+  never for a cell unregistered before the job ran. A callback that throws
+  fails the instance with that exception uncaught, as a timer callback
+  does. A registry that is itself collected runs no callbacks. Collections
+  happen at defined points (allocations, idle periods, the test-only
+  `gc()`), so the same program and inputs give the same cleanups on every
+  run; a collection of an idle period is cleaned up after the next turn's
+  checkpoint.
+- **Deviations from V8 that the specification leaves open.** V8 cleans up
+  several registries in separate tasks that later timers may overtake, and
+  its order of one registry's cells depends on its heap (cells with
+  unregister tokens and symbol targets come apart); Varta's order is the
+  one above. Varta's frames keep only live bindings, so a registry that a
+  suspended async function no longer uses may be collected where V8 keeps
+  every captured binding of the function alive.
+- **Test-only `gc()`.** `varta_compiler::with_exposed_gc` compiles a
+  global `gc()` (where no binding shadows it) as one complete collection,
+  the equivalent of Node's `--expose-gc`, for oracle programs; no
+  production build has it.
 
 #### Virtual file roots (`file_roots`)
 

@@ -271,6 +271,10 @@ pub(crate) const DATE: Prelude = Prelude {
     required: None,
 };
 pub(crate) const DATE_CLASS: &str = "Date";
+/// The class [`AGGREGATE`] exports.
+pub(crate) const AGGREGATE_ERROR_CLASS: &str = "AggregateError";
+/// The class [`SUPPRESSED`] exports.
+pub(crate) const SUPPRESSED_ERROR_CLASS: &str = "SuppressedError";
 /// The v38 date prelude (`standard_library`): the v37 parser and calendar
 /// helpers, `Date.parse` extended to the legacy `toString` forms, and the
 /// complete `Date` class of `prelude/date_local.ts` in place of the v37 one.
@@ -338,10 +342,53 @@ pub(crate) const AGGREGATE: Prelude = Prelude {
     triggers: &[],
     admitted: LanguageProfile::standard_library,
     extended: None,
+    // `Promise.any` rejects with an `AggregateError` (`anyRejection`).
+    loads: &["Promise.any"],
+    lifted: None,
+};
+/// `SuppressedError` (ES2026 explicit resource management; v38, K9 D1), an
+/// `Error` subclass of typed guest code like [`AGGREGATE`].
+pub(crate) const SUPPRESSED: Prelude = Prelude {
+    path: "<varta>/builtins/suppressed.ts",
+    source: include_str!("../prelude/suppressed.ts"),
+    exports: &[(SUPPRESSED_ERROR_CLASS, Namespace::Class)],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::node_console,
+    extended: None,
     loads: &[],
     lifted: None,
     required: None,
 };
+/// Node's console methods beyond `log` (v38 `console_methods`): group
+/// indentation, counters, timers, `trace`, `assert`, `dir` and `table`.
+/// The compiler calls its functions by name (`lower::console`).
+pub(crate) const CONSOLE: Prelude = Prelude {
+    path: "<varta>/builtins/console.ts",
+    source: include_str!("../prelude/console.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::console_methods,
+    extended: None,
+    loads: CONSOLE_LOADS,
+    lifted: None,
+};
+/// The console methods whose reference loads [`CONSOLE`].
+pub(crate) const CONSOLE_LOADS: &[&str] = &[
+    "console.trace",
+    "console.assert",
+    "console.dir",
+    "console.table",
+    "console.group",
+    "console.groupCollapsed",
+    "console.groupEnd",
+    "console.count",
+    "console.countReset",
+    "console.time",
+    "console.timeEnd",
+    "console.timeLog",
+];
 /// `Symbol` values (v38 `symbol_values`, K9 D2): the symbol record class,
 /// the global symbol registry and the well-known symbols, called by
 /// `lower::symbols`; a builtin, so its instances stay opaque to every host
@@ -354,10 +401,57 @@ pub(crate) const SYMBOL: Prelude = Prelude {
     triggers: &[],
     admitted: LanguageProfile::symbol_values,
     extended: None,
-    loads: &[SYMBOL_GLOBAL],
+    // `Object.getOwnPropertySymbols` gives a `symbol[]` without naming
+    // `Symbol`.
+    loads: &[SYMBOL_GLOBAL, ".getOwnPropertySymbols"],
     lifted: None,
     required: None,
 };
+/// Integrity levels (v38 `integrity_levels`, K9 D2): the failures of writes
+/// to an object with an integrity level and the element-by-element array
+/// methods, called by `lower::integrity`; loaded by the six static members
+/// of `Object` that set and test a level.
+pub(crate) const INTEGRITY: Prelude = Prelude {
+    path: "<varta>/builtins/integrity.ts",
+    source: include_str!("../prelude/integrity.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::integrity_levels,
+    extended: None,
+    loads: &[
+        ".freeze",
+        ".seal",
+        ".preventExtensions",
+        ".isFrozen",
+        ".isSealed",
+        ".isExtensible",
+    ],
+    lifted: None,
+};
+/// `WeakMap`, `WeakSet`, `WeakRef` and `FinalizationRegistry` (v38
+/// `weak_references`, K9 D5) over the ephemeron tables of `lower::weak`; a
+/// builtin, so their instances stay opaque to every host value reader.
+pub(crate) const WEAK: Prelude = Prelude {
+    path: "<varta>/builtins/weak.ts",
+    source: include_str!("../prelude/weak.ts"),
+    exports: &[
+        ("WeakMap", Namespace::Class),
+        ("WeakSet", Namespace::Class),
+        ("WeakRef", Namespace::Class),
+        ("FinalizationRegistry", Namespace::Class),
+        ("WeakKey", Namespace::Type),
+    ],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::weak_references,
+    extended: None,
+    loads: &[],
+    lifted: None,
+};
+/// The weak prelude function the synthesized checkpoint export calls
+/// (`varta_common::weak::CHECKPOINT_EXPORT`).
+pub(crate) const WEAK_CHECKPOINT: &str = "weakCheckpoint";
 /// The global that loads [`SYMBOL`].
 pub(crate) const SYMBOL_GLOBAL: &str = "Symbol";
 /// The class of a symbol's private record in [`SYMBOL`].
@@ -384,6 +478,7 @@ pub(crate) const STANDARD_LOADS: &[&str] = &[
     ".substr",
     ".isWellFormed",
     ".toWellFormed",
+    ".normalize",
     ".toLocaleUpperCase",
     ".toLocaleLowerCase",
     ".getOwnPropertyNames",
@@ -908,7 +1003,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 24] = [
+pub(crate) const PRELUDES: [&Prelude; 28] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -919,7 +1014,11 @@ pub(crate) const PRELUDES: [&Prelude; 24] = [
     &DATE,
     &STANDARD,
     &AGGREGATE,
+    &SUPPRESSED,
+    &CONSOLE,
     &SYMBOL,
+    &INTEGRITY,
+    &WEAK,
     &REGEXP,
     &BLOB,
     &FETCH,
@@ -998,7 +1097,7 @@ pub(crate) fn is_prelude_source(source: &crate::source::Source) -> bool {
 
 /// The v37 builtin preludes (`collections`), whose class instances are
 /// private to every host value reader.
-pub(crate) const BUILTINS: [&Prelude; 7] = [
+pub(crate) const BUILTINS: [&Prelude; 8] = [
     &TEXT,
     &COLLECTIONS,
     &BINARY,
@@ -1006,6 +1105,8 @@ pub(crate) const BUILTINS: [&Prelude; 7] = [
     &DATE,
     &STANDARD,
     &SYMBOL,
+    &INTEGRITY,
+    &WEAK,
 ];
 
 /// Whether `source` is a v37 builtin prelude module.
@@ -1313,12 +1414,13 @@ const PENDING: &[(&str, &[&str], &str)] = &[
         &["toString"],
         "RegExp.prototype.toString (class members cannot override the inherited toString; build '/' + source + '/' + flags)",
     ),
-    (
-        REGEXP_CLASS,
-        &["escape"],
-        "RegExp.escape (its result could only be compiled at run time; v37 compiles every pattern ahead of time)",
-    ),
 ];
+/// Members the v37 RegExp prelude lacks and the v38 one (`full_regexp`) has.
+const PENDING_V37_REGEXP: &[(&str, &[&str], &str)] = &[(
+    REGEXP_CLASS,
+    &["escape"],
+    "RegExp.escape (its result could only be compiled at run time; v37 compiles every pattern ahead of time)",
+)];
 
 /// Array methods a match array does not have: its elements are read by
 /// index, destructuring or `for…of` (v37 `regexp`).
@@ -1382,7 +1484,13 @@ pub(crate) fn pending(class: &str, name: &str, profile: LanguageProfile) -> Opti
     {
         return Some(reason);
     }
-    find(PENDING).or_else(|| find(PENDING_MATCH_ARRAYS))
+    // V38: match arrays have every array method and `RegExp.escape` exists.
+    if profile.full_regexp() {
+        return find(PENDING);
+    }
+    find(PENDING)
+        .or_else(|| find(PENDING_V37_REGEXP))
+        .or_else(|| find(PENDING_MATCH_ARRAYS))
 }
 
 /// Replace the one declaration `from` of a prelude source with `to`.

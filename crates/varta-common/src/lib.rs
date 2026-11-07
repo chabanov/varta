@@ -27,6 +27,8 @@ mod capability;
 /// Idle and incremental collection (v38 `incremental_collection`).
 #[cfg(feature = "std")]
 pub mod collector;
+/// Console output streams (v38 `console_methods`).
+pub mod console;
 #[cfg(feature = "std")]
 mod diagnostic;
 /// Host event sources and host tasks (v38 `turn_budgets`).
@@ -46,6 +48,9 @@ mod host;
 pub mod host_inputs;
 #[cfg(feature = "std")]
 pub mod http;
+/// The v38 locale data format of `Intl` (K9 D4): blobs, segments and the
+/// module manifest shared by the generator, the linker and linked code.
+pub mod intl_data;
 #[cfg(feature = "std")]
 mod invocation;
 /// Checked JSON schemas and decoding; without `std` the schema model, its
@@ -91,6 +96,9 @@ pub mod value;
 /// `view`, which `std` implies).
 #[cfg(feature = "view")]
 pub mod view;
+/// Ephemeron tables and the checkpoint export of v38 weak references.
+#[cfg(feature = "std")]
+pub mod weak;
 #[cfg(feature = "std")]
 pub use capability::*;
 #[cfg(feature = "std")]

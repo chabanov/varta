@@ -1,0 +1,1350 @@
+{
+  "cldr": "49.0.0",
+  "format": 1,
+  "icu4x": "2.4.0",
+  "services": {
+    "casemap": {
+      "bytes": 24228,
+      "markers": [
+        {
+          "bytes": 963,
+          "entries": 1,
+          "hash": 4287946589,
+          "largestPayload": 928,
+          "name": "CaseMapUnfoldV1"
+        },
+        {
+          "bytes": 23197,
+          "entries": 1,
+          "hash": 4124300273,
+          "largestPayload": 23162,
+          "name": "CaseMapV1"
+        }
+      ]
+    },
+    "collator": {
+      "bytes": 1058573,
+      "markers": [
+        {
+          "bytes": 574,
+          "entries": 4,
+          "hash": 3376885027,
+          "largestPayload": 160,
+          "name": "CollationDiacriticsV1"
+        },
+        {
+          "bytes": 1061,
+          "entries": 1,
+          "hash": 1722947944,
+          "largestPayload": 1026,
+          "name": "CollationJamoV1"
+        },
+        {
+          "bytes": 2225,
+          "entries": 112,
+          "hash": 3897489527,
+          "largestPayload": 2,
+          "name": "CollationMetadataV1"
+        },
+        {
+          "bytes": 9219,
+          "entries": 59,
+          "hash": 1674811163,
+          "largestPayload": 276,
+          "name": "CollationReorderingV1"
+        },
+        {
+          "bytes": 134344,
+          "entries": 1,
+          "hash": 11217646,
+          "largestPayload": 134309,
+          "name": "CollationRootV1"
+        },
+        {
+          "bytes": 77,
+          "entries": 1,
+          "hash": 1669353662,
+          "largestPayload": 42,
+          "name": "CollationSpecialPrimariesV1"
+        },
+        {
+          "bytes": 910811,
+          "entries": 102,
+          "hash": 1807858582,
+          "largestPayload": 220732,
+          "name": "CollationTailoringV1"
+        }
+      ]
+    },
+    "compact": {
+      "bytes": 32433,
+      "markers": [
+        {
+          "bytes": 21356,
+          "entries": 218,
+          "hash": 2833769953,
+          "largestPayload": 360,
+          "name": "DecimalCompactLongV1"
+        },
+        {
+          "bytes": 10992,
+          "entries": 211,
+          "hash": 1046948297,
+          "largestPayload": 237,
+          "name": "DecimalCompactShortV1"
+        }
+      ]
+    },
+    "currency": {
+      "bytes": 3735236,
+      "markers": [
+        {
+          "bytes": 1539747,
+          "entries": 32067,
+          "hash": 3105530928,
+          "largestPayload": 152,
+          "name": "CurrencyDisplaynameV1"
+        },
+        {
+          "bytes": 6588,
+          "entries": 271,
+          "hash": 4090556825,
+          "largestPayload": 67,
+          "name": "CurrencyEssentialsV1"
+        },
+        {
+          "bytes": 2129005,
+          "entries": 31993,
+          "hash": 2783565123,
+          "largestPayload": 325,
+          "name": "CurrencyExtendedDataV1"
+        },
+        {
+          "bytes": 398,
+          "entries": 1,
+          "hash": 1644771823,
+          "largestPayload": 363,
+          "name": "CurrencyFractionsV1"
+        },
+        {
+          "bytes": 3710,
+          "entries": 164,
+          "hash": 4063656800,
+          "largestPayload": 39,
+          "name": "CurrencyPatternsNoCurrencyV1"
+        },
+        {
+          "bytes": 327,
+          "entries": 13,
+          "hash": 3095093554,
+          "largestPayload": 21,
+          "name": "CurrencyPatternsDataV1"
+        },
+        {
+          "bytes": 460,
+          "entries": 11,
+          "hash": 170738595,
+          "largestPayload": 21,
+          "name": "CurrencyDecimalSymbolsV1"
+        },
+        {
+          "bytes": 54688,
+          "entries": 1976,
+          "hash": 1804004057,
+          "largestPayload": 37,
+          "name": "CurrencySymbolsV1"
+        }
+      ]
+    },
+    "datetime": {
+      "bytes": 3217849,
+      "markers": [
+        {
+          "bytes": 146,
+          "entries": 1,
+          "hash": 1235819934,
+          "largestPayload": 111,
+          "name": "CalendarJapaneseModernV1"
+        },
+        {
+          "bytes": 215,
+          "entries": 9,
+          "hash": 1334268455,
+          "largestPayload": 1,
+          "name": "CalendarPreferredV1"
+        },
+        {
+          "bytes": 1639,
+          "entries": 73,
+          "hash": 1113281958,
+          "largestPayload": 2,
+          "name": "CalendarWeekV1"
+        },
+        {
+          "bytes": 34593,
+          "entries": 1094,
+          "hash": 3394443293,
+          "largestPayload": 114,
+          "name": "DatetimeNamesDayperiodV1"
+        },
+        {
+          "bytes": 84288,
+          "entries": 1139,
+          "hash": 740468263,
+          "largestPayload": 441,
+          "name": "DatetimeNamesMonthBuddhistV1"
+        },
+        {
+          "bytes": 25174,
+          "entries": 212,
+          "hash": 2951918669,
+          "largestPayload": 1185,
+          "name": "DatetimeNamesMonthChineseV1"
+        },
+        {
+          "bytes": 14603,
+          "entries": 227,
+          "hash": 1184626665,
+          "largestPayload": 341,
+          "name": "DatetimeNamesMonthCopticV1"
+        },
+        {
+          "bytes": 24968,
+          "entries": 202,
+          "hash": 673770559,
+          "largestPayload": 1185,
+          "name": "DatetimeNamesMonthDangiV1"
+        },
+        {
+          "bytes": 13947,
+          "entries": 220,
+          "hash": 2820031163,
+          "largestPayload": 377,
+          "name": "DatetimeNamesMonthEthiopianV1"
+        },
+        {
+          "bytes": 84288,
+          "entries": 1139,
+          "hash": 586036241,
+          "largestPayload": 441,
+          "name": "DatetimeNamesMonthGregorianV1"
+        },
+        {
+          "bytes": 15680,
+          "entries": 233,
+          "hash": 536916039,
+          "largestPayload": 377,
+          "name": "DatetimeNamesMonthHebrewV1"
+        },
+        {
+          "bytes": 29267,
+          "entries": 289,
+          "hash": 93438617,
+          "largestPayload": 507,
+          "name": "DatetimeNamesMonthHijriV1"
+        },
+        {
+          "bytes": 17360,
+          "entries": 258,
+          "hash": 1603737525,
+          "largestPayload": 327,
+          "name": "DatetimeNamesMonthIndianV1"
+        },
+        {
+          "bytes": 84288,
+          "entries": 1139,
+          "hash": 294830297,
+          "largestPayload": 441,
+          "name": "DatetimeNamesMonthJapaneseV1"
+        },
+        {
+          "bytes": 15058,
+          "entries": 243,
+          "hash": 3514076484,
+          "largestPayload": 318,
+          "name": "DatetimeNamesMonthPersianV1"
+        },
+        {
+          "bytes": 84288,
+          "entries": 1139,
+          "hash": 509118455,
+          "largestPayload": 441,
+          "name": "DatetimeNamesMonthRocV1"
+        },
+        {
+          "bytes": 67825,
+          "entries": 1485,
+          "hash": 2354625578,
+          "largestPayload": 300,
+          "name": "DatetimeNamesWeekdayV1"
+        },
+        {
+          "bytes": 3519,
+          "entries": 124,
+          "hash": 2741291409,
+          "largestPayload": 69,
+          "name": "DatetimeNamesYearBuddhistV1"
+        },
+        {
+          "bytes": 9576,
+          "entries": 37,
+          "hash": 2323334983,
+          "largestPayload": 1771,
+          "name": "DatetimeNamesYearChineseV1"
+        },
+        {
+          "bytes": 1006,
+          "entries": 29,
+          "hash": 4203599026,
+          "largestPayload": 77,
+          "name": "DatetimeNamesYearCopticV1"
+        },
+        {
+          "bytes": 11045,
+          "entries": 37,
+          "hash": 598404501,
+          "largestPayload": 1775,
+          "name": "DatetimeNamesYearDangiV1"
+        },
+        {
+          "bytes": 552,
+          "entries": 12,
+          "hash": 3838394112,
+          "largestPayload": 104,
+          "name": "DatetimeNamesYearEthiopianV1"
+        },
+        {
+          "bytes": 20919,
+          "entries": 508,
+          "hash": 3704436711,
+          "largestPayload": 131,
+          "name": "DatetimeNamesYearGregorianV1"
+        },
+        {
+          "bytes": 1594,
+          "entries": 56,
+          "hash": 2818961689,
+          "largestPayload": 38,
+          "name": "DatetimeNamesYearHebrewV1"
+        },
+        {
+          "bytes": 3642,
+          "entries": 120,
+          "hash": 2354655906,
+          "largestPayload": 88,
+          "name": "DatetimeNamesYearHijriV1"
+        },
+        {
+          "bytes": 3681,
+          "entries": 150,
+          "hash": 1141009280,
+          "largestPayload": 29,
+          "name": "DatetimeNamesYearIndianV1"
+        },
+        {
+          "bytes": 57326,
+          "entries": 508,
+          "hash": 2363120638,
+          "largestPayload": 297,
+          "name": "DatetimeNamesYearJapaneseV1"
+        },
+        {
+          "bytes": 1777,
+          "entries": 63,
+          "hash": 491572247,
+          "largestPayload": 37,
+          "name": "DatetimeNamesYearPersianV1"
+        },
+        {
+          "bytes": 7126,
+          "entries": 200,
+          "hash": 2182950203,
+          "largestPayload": 120,
+          "name": "DatetimeNamesYearRocV1"
+        },
+        {
+          "bytes": 142846,
+          "entries": 1439,
+          "hash": 881593205,
+          "largestPayload": 764,
+          "name": "DatetimePatternsRangeDateBuddhistV1"
+        },
+        {
+          "bytes": 11546,
+          "entries": 183,
+          "hash": 528597361,
+          "largestPayload": 165,
+          "name": "DatetimePatternsRangeDateChineseV1"
+        },
+        {
+          "bytes": 141084,
+          "entries": 1435,
+          "hash": 1061336943,
+          "largestPayload": 504,
+          "name": "DatetimePatternsRangeDateCopticV1"
+        },
+        {
+          "bytes": 11832,
+          "entries": 188,
+          "hash": 1059993290,
+          "largestPayload": 165,
+          "name": "DatetimePatternsRangeDateDangiV1"
+        },
+        {
+          "bytes": 141078,
+          "entries": 1433,
+          "hash": 2338868972,
+          "largestPayload": 504,
+          "name": "DatetimePatternsRangeDateEthiopianV1"
+        },
+        {
+          "bytes": 260698,
+          "entries": 1601,
+          "hash": 3673688451,
+          "largestPayload": 872,
+          "name": "DatetimePatternsRangeDateGregorianV1"
+        },
+        {
+          "bytes": 140422,
+          "entries": 1408,
+          "hash": 4234323507,
+          "largestPayload": 560,
+          "name": "DatetimePatternsRangeDateHebrewV1"
+        },
+        {
+          "bytes": 141963,
+          "entries": 1433,
+          "hash": 3695236025,
+          "largestPayload": 504,
+          "name": "DatetimePatternsRangeDateHijriV1"
+        },
+        {
+          "bytes": 141425,
+          "entries": 1435,
+          "hash": 4198141874,
+          "largestPayload": 504,
+          "name": "DatetimePatternsRangeDateIndianV1"
+        },
+        {
+          "bytes": 137261,
+          "entries": 1399,
+          "hash": 1860615980,
+          "largestPayload": 504,
+          "name": "DatetimePatternsRangeDateJapaneseV1"
+        },
+        {
+          "bytes": 141372,
+          "entries": 1433,
+          "hash": 293271104,
+          "largestPayload": 504,
+          "name": "DatetimePatternsRangeDatePersianV1"
+        },
+        {
+          "bytes": 141092,
+          "entries": 1435,
+          "hash": 733890123,
+          "largestPayload": 504,
+          "name": "DatetimePatternsRangeDateRocV1"
+        },
+        {
+          "bytes": 1608,
+          "entries": 70,
+          "hash": 3231123089,
+          "largestPayload": 31,
+          "name": "DatetimePatternsRangeGlueV1"
+        },
+        {
+          "bytes": 13578,
+          "entries": 369,
+          "hash": 4031280908,
+          "largestPayload": 176,
+          "name": "DatetimePatternsRangeTimeV1"
+        },
+        {
+          "bytes": 79335,
+          "entries": 1335,
+          "hash": 3622091979,
+          "largestPayload": 209,
+          "name": "DatetimePatternsDateBuddhistV1"
+        },
+        {
+          "bytes": 26661,
+          "entries": 446,
+          "hash": 2028490002,
+          "largestPayload": 230,
+          "name": "DatetimePatternsDateChineseV1"
+        },
+        {
+          "bytes": 79721,
+          "entries": 1349,
+          "hash": 2443405505,
+          "largestPayload": 197,
+          "name": "DatetimePatternsDateCopticV1"
+        },
+        {
+          "bytes": 26656,
+          "entries": 439,
+          "hash": 3881545205,
+          "largestPayload": 230,
+          "name": "DatetimePatternsDateDangiV1"
+        },
+        {
+          "bytes": 79805,
+          "entries": 1350,
+          "hash": 916154112,
+          "largestPayload": 197,
+          "name": "DatetimePatternsDateEthiopianV1"
+        },
+        {
+          "bytes": 133675,
+          "entries": 1540,
+          "hash": 757603334,
+          "largestPayload": 320,
+          "name": "DatetimePatternsDateGregorianV1"
+        },
+        {
+          "bytes": 77398,
+          "entries": 1289,
+          "hash": 2650107211,
+          "largestPayload": 197,
+          "name": "DatetimePatternsDateHebrewV1"
+        },
+        {
+          "bytes": 78976,
+          "entries": 1336,
+          "hash": 1913221190,
+          "largestPayload": 197,
+          "name": "DatetimePatternsDateHijriV1"
+        },
+        {
+          "bytes": 79636,
+          "entries": 1349,
+          "hash": 91217425,
+          "largestPayload": 197,
+          "name": "DatetimePatternsDateIndianV1"
+        },
+        {
+          "bytes": 73805,
+          "entries": 1243,
+          "hash": 3403522473,
+          "largestPayload": 197,
+          "name": "DatetimePatternsDateJapaneseV1"
+        },
+        {
+          "bytes": 79912,
+          "entries": 1349,
+          "hash": 3407416355,
+          "largestPayload": 197,
+          "name": "DatetimePatternsDatePersianV1"
+        },
+        {
+          "bytes": 79128,
+          "entries": 1347,
+          "hash": 1437214980,
+          "largestPayload": 197,
+          "name": "DatetimePatternsDateRocV1"
+        },
+        {
+          "bytes": 23649,
+          "entries": 792,
+          "hash": 4258600281,
+          "largestPayload": 55,
+          "name": "DatetimePatternsGlueV1"
+        },
+        {
+          "bytes": 9800,
+          "entries": 317,
+          "hash": 3967745801,
+          "largestPayload": 94,
+          "name": "DatetimePatternsTimeV1"
+        }
+      ]
+    },
+    "decimal": {
+      "bytes": 10220,
+      "markers": [
+        {
+          "bytes": 1467,
+          "entries": 23,
+          "hash": 4191242137,
+          "largestPayload": 50,
+          "name": "DecimalDigitsV1"
+        },
+        {
+          "bytes": 6909,
+          "entries": 282,
+          "hash": 2219131697,
+          "largestPayload": 35,
+          "name": "DecimalSymbolsV1"
+        },
+        {
+          "bytes": 1737,
+          "entries": 68,
+          "hash": 1245826809,
+          "largestPayload": 31,
+          "name": "DecimalPercentV1"
+        }
+      ]
+    },
+    "displaynames": {
+      "bytes": 5055653,
+      "markers": [
+        {
+          "bytes": 617,
+          "entries": 23,
+          "hash": 159149061,
+          "largestPayload": 15,
+          "name": "LocaleNamesEssentialsV1"
+        },
+        {
+          "bytes": 48,
+          "entries": 1,
+          "hash": 2737827042,
+          "largestPayload": 11,
+          "name": "LocaleNamesLanguageLongHeavyV1"
+        },
+        {
+          "bytes": 19352,
+          "entries": 280,
+          "hash": 3748773163,
+          "largestPayload": 102,
+          "name": "LocaleNamesLanguageLongLightV1"
+        },
+        {
+          "bytes": 2245791,
+          "entries": 65698,
+          "hash": 968320143,
+          "largestPayload": 99,
+          "name": "LocaleNamesLanguageMediumHeavyV1"
+        },
+        {
+          "bytes": 232593,
+          "entries": 5586,
+          "hash": 2900715635,
+          "largestPayload": 115,
+          "name": "LocaleNamesLanguageMediumLightV1"
+        },
+        {
+          "bytes": 12851,
+          "entries": 373,
+          "hash": 2756751617,
+          "largestPayload": 38,
+          "name": "LocaleNamesLanguageMediumTinyV1"
+        },
+        {
+          "bytes": 15759,
+          "entries": 320,
+          "hash": 4231326221,
+          "largestPayload": 82,
+          "name": "LocaleNamesLanguageMenuMediumHeavyV1"
+        },
+        {
+          "bytes": 7161,
+          "entries": 145,
+          "hash": 3573399182,
+          "largestPayload": 88,
+          "name": "LocaleNamesLanguageMenuMediumLightV1"
+        },
+        {
+          "bytes": 3128,
+          "entries": 102,
+          "hash": 1442650820,
+          "largestPayload": 33,
+          "name": "LocaleNamesLanguageShortHeavyV1"
+        },
+        {
+          "bytes": 11051,
+          "entries": 219,
+          "hash": 3914516720,
+          "largestPayload": 89,
+          "name": "LocaleNamesLanguageShortLightV1"
+        },
+        {
+          "bytes": 1595599,
+          "entries": 44457,
+          "hash": 3533695201,
+          "largestPayload": 172,
+          "name": "LocaleNamesRegionMediumLightV1"
+        },
+        {
+          "bytes": 18934,
+          "entries": 565,
+          "hash": 1847172700,
+          "largestPayload": 64,
+          "name": "LocaleNamesRegionMediumTinyV1"
+        },
+        {
+          "bytes": 20706,
+          "entries": 714,
+          "hash": 1232543210,
+          "largestPayload": 47,
+          "name": "LocaleNamesRegionShortLightV1"
+        },
+        {
+          "bytes": 769,
+          "entries": 27,
+          "hash": 1736743675,
+          "largestPayload": 14,
+          "name": "LocaleNamesRegionShortTinyV1"
+        },
+        {
+          "bytes": 605275,
+          "entries": 16092,
+          "hash": 354698380,
+          "largestPayload": 206,
+          "name": "LocaleNamesScriptMediumHeavyV1"
+        },
+        {
+          "bytes": 50282,
+          "entries": 1251,
+          "hash": 2675404557,
+          "largestPayload": 306,
+          "name": "LocaleNamesScriptMediumLightV1"
+        },
+        {
+          "bytes": 8550,
+          "entries": 245,
+          "hash": 1584415345,
+          "largestPayload": 88,
+          "name": "LocaleNamesScriptMediumTinyV1"
+        },
+        {
+          "bytes": 81,
+          "entries": 2,
+          "hash": 1742467439,
+          "largestPayload": 14,
+          "name": "LocaleNamesScriptShortHeavyV1"
+        },
+        {
+          "bytes": 206213,
+          "entries": 4173,
+          "hash": 3994200993,
+          "largestPayload": 281,
+          "name": "LocaleNamesVariantMediumHeavyV1"
+        }
+      ]
+    },
+    "duration": {
+      "bytes": 436,
+      "markers": [
+        {
+          "bytes": 386,
+          "entries": 17,
+          "hash": 2832525828,
+          "largestPayload": 9,
+          "name": "UnitsDurationDigitalV1"
+        }
+      ]
+    },
+    "list": {
+      "bytes": 38198,
+      "markers": [
+        {
+          "bytes": 13656,
+          "entries": 407,
+          "hash": 3434755982,
+          "largestPayload": 1105,
+          "name": "ListAndV1"
+        },
+        {
+          "bytes": 12510,
+          "entries": 403,
+          "hash": 3097423752,
+          "largestPayload": 1314,
+          "name": "ListOrV1"
+        },
+        {
+          "bytes": 11945,
+          "entries": 334,
+          "hash": 3606354617,
+          "largestPayload": 1026,
+          "name": "ListUnitV1"
+        }
+      ]
+    },
+    "locale": {
+      "bytes": 85392,
+      "markers": [
+        {
+          "bytes": 8074,
+          "entries": 1,
+          "hash": 2083284834,
+          "largestPayload": 8039,
+          "name": "LocaleAliasesV1"
+        },
+        {
+          "bytes": 73146,
+          "entries": 1,
+          "hash": 3393075164,
+          "largestPayload": 73111,
+          "name": "LocaleLikelySubtagsExtendedV1"
+        },
+        {
+          "bytes": 3237,
+          "entries": 1,
+          "hash": 3204809466,
+          "largestPayload": 3202,
+          "name": "LocaleLikelySubtagsScriptRegionV1"
+        },
+        {
+          "bytes": 759,
+          "entries": 1,
+          "hash": 4010285286,
+          "largestPayload": 724,
+          "name": "LocaleScriptDirectionV1"
+        }
+      ]
+    },
+    "plurals": {
+      "bytes": 8549,
+      "markers": [
+        {
+          "bytes": 5181,
+          "entries": 120,
+          "hash": 2604370046,
+          "largestPayload": 188,
+          "name": "PluralsCardinalV1"
+        },
+        {
+          "bytes": 2674,
+          "entries": 42,
+          "hash": 1140359470,
+          "largestPayload": 257,
+          "name": "PluralsOrdinalV1"
+        },
+        {
+          "bytes": 586,
+          "entries": 28,
+          "hash": 744323222,
+          "largestPayload": 12,
+          "name": "PluralsRangesV1"
+        }
+      ]
+    },
+    "relativetime": {
+      "bytes": 447948,
+      "markers": [
+        {
+          "bytes": 21934,
+          "entries": 175,
+          "hash": 2380014902,
+          "largestPayload": 288,
+          "name": "DatetimeRelativeDayLongV1"
+        },
+        {
+          "bytes": 20544,
+          "entries": 180,
+          "hash": 811639414,
+          "largestPayload": 288,
+          "name": "DatetimeRelativeDayNarrowV1"
+        },
+        {
+          "bytes": 21335,
+          "entries": 179,
+          "hash": 2334276229,
+          "largestPayload": 288,
+          "name": "DatetimeRelativeDayShortV1"
+        },
+        {
+          "bytes": 15691,
+          "entries": 149,
+          "hash": 31145474,
+          "largestPayload": 331,
+          "name": "DatetimeRelativeHourLongV1"
+        },
+        {
+          "bytes": 12641,
+          "entries": 155,
+          "hash": 1190909525,
+          "largestPayload": 229,
+          "name": "DatetimeRelativeHourNarrowV1"
+        },
+        {
+          "bytes": 13158,
+          "entries": 155,
+          "hash": 4212898656,
+          "largestPayload": 229,
+          "name": "DatetimeRelativeHourShortV1"
+        },
+        {
+          "bytes": 16214,
+          "entries": 151,
+          "hash": 2324864544,
+          "largestPayload": 307,
+          "name": "DatetimeRelativeMinuteLongV1"
+        },
+        {
+          "bytes": 12393,
+          "entries": 155,
+          "hash": 2746861300,
+          "largestPayload": 235,
+          "name": "DatetimeRelativeMinuteNarrowV1"
+        },
+        {
+          "bytes": 12895,
+          "entries": 155,
+          "hash": 1053589083,
+          "largestPayload": 235,
+          "name": "DatetimeRelativeMinuteShortV1"
+        },
+        {
+          "bytes": 23659,
+          "entries": 165,
+          "hash": 115686190,
+          "largestPayload": 381,
+          "name": "DatetimeRelativeMonthLongV1"
+        },
+        {
+          "bytes": 19663,
+          "entries": 169,
+          "hash": 1750900524,
+          "largestPayload": 332,
+          "name": "DatetimeRelativeMonthNarrowV1"
+        },
+        {
+          "bytes": 20339,
+          "entries": 167,
+          "hash": 2083206572,
+          "largestPayload": 332,
+          "name": "DatetimeRelativeMonthShortV1"
+        },
+        {
+          "bytes": 25656,
+          "entries": 149,
+          "hash": 3652930056,
+          "largestPayload": 420,
+          "name": "DatetimeRelativeQuarterLongV1"
+        },
+        {
+          "bytes": 20206,
+          "entries": 153,
+          "hash": 271233109,
+          "largestPayload": 406,
+          "name": "DatetimeRelativeQuarterNarrowV1"
+        },
+        {
+          "bytes": 21088,
+          "entries": 153,
+          "hash": 1717597465,
+          "largestPayload": 406,
+          "name": "DatetimeRelativeQuarterShortV1"
+        },
+        {
+          "bytes": 15672,
+          "entries": 152,
+          "hash": 3434037170,
+          "largestPayload": 244,
+          "name": "DatetimeRelativeSecondLongV1"
+        },
+        {
+          "bytes": 11077,
+          "entries": 158,
+          "hash": 2909251383,
+          "largestPayload": 222,
+          "name": "DatetimeRelativeSecondNarrowV1"
+        },
+        {
+          "bytes": 11695,
+          "entries": 155,
+          "hash": 4039013931,
+          "largestPayload": 222,
+          "name": "DatetimeRelativeSecondShortV1"
+        },
+        {
+          "bytes": 25628,
+          "entries": 166,
+          "hash": 1043986460,
+          "largestPayload": 413,
+          "name": "DatetimeRelativeWeekLongV1"
+        },
+        {
+          "bytes": 20925,
+          "entries": 171,
+          "hash": 3469376584,
+          "largestPayload": 348,
+          "name": "DatetimeRelativeWeekNarrowV1"
+        },
+        {
+          "bytes": 21439,
+          "entries": 171,
+          "hash": 3546241139,
+          "largestPayload": 349,
+          "name": "DatetimeRelativeWeekShortV1"
+        },
+        {
+          "bytes": 22805,
+          "entries": 172,
+          "hash": 4248866647,
+          "largestPayload": 329,
+          "name": "DatetimeRelativeYearLongV1"
+        },
+        {
+          "bytes": 19642,
+          "entries": 176,
+          "hash": 2600906965,
+          "largestPayload": 273,
+          "name": "DatetimeRelativeYearNarrowV1"
+        },
+        {
+          "bytes": 20584,
+          "entries": 176,
+          "hash": 2306785,
+          "largestPayload": 269,
+          "name": "DatetimeRelativeYearShortV1"
+        }
+      ]
+    },
+    "segmenter": {
+      "bytes": 3535344,
+      "markers": [
+        {
+          "bytes": 10381,
+          "entries": 1,
+          "hash": 3587002730,
+          "largestPayload": 10346,
+          "name": "SegmenterBreakGraphemeClusterV1"
+        },
+        {
+          "bytes": 12317,
+          "entries": 1,
+          "hash": 932566961,
+          "largestPayload": 12282,
+          "name": "SegmenterBreakGraphemeClusterV2"
+        },
+        {
+          "bytes": 838,
+          "entries": 7,
+          "hash": 1366774721,
+          "largestPayload": 91,
+          "name": "SegmenterBreakLineOverrideV2"
+        },
+        {
+          "bytes": 19790,
+          "entries": 1,
+          "hash": 1524800390,
+          "largestPayload": 19755,
+          "name": "SegmenterBreakLineV1"
+        },
+        {
+          "bytes": 30523,
+          "entries": 1,
+          "hash": 333618054,
+          "largestPayload": 30488,
+          "name": "SegmenterBreakLineV2"
+        },
+        {
+          "bytes": 26507,
+          "entries": 1,
+          "hash": 3437403014,
+          "largestPayload": 26472,
+          "name": "SegmenterBreakLineV3"
+        },
+        {
+          "bytes": 307,
+          "entries": 1,
+          "hash": 289960936,
+          "largestPayload": 273,
+          "name": "SegmenterBreakSentenceOverrideV1"
+        },
+        {
+          "bytes": 37,
+          "entries": 1,
+          "hash": 3393745896,
+          "largestPayload": 3,
+          "name": "SegmenterBreakSentenceOverrideV2"
+        },
+        {
+          "bytes": 14733,
+          "entries": 1,
+          "hash": 4235927838,
+          "largestPayload": 14698,
+          "name": "SegmenterBreakSentenceV1"
+        },
+        {
+          "bytes": 18275,
+          "entries": 1,
+          "hash": 3514507550,
+          "largestPayload": 18240,
+          "name": "SegmenterBreakSentenceV2"
+        },
+        {
+          "bytes": 16,
+          "entries": 0,
+          "hash": 750493671,
+          "largestPayload": 0,
+          "name": "SegmenterBreakWordOverrideV1"
+        },
+        {
+          "bytes": 16692,
+          "entries": 1,
+          "hash": 2627619787,
+          "largestPayload": 16657,
+          "name": "SegmenterBreakWordV1"
+        },
+        {
+          "bytes": 18384,
+          "entries": 1,
+          "hash": 3349040075,
+          "largestPayload": 18349,
+          "name": "SegmenterBreakWordV2"
+        },
+        {
+          "bytes": 2007156,
+          "entries": 1,
+          "hash": 1822758146,
+          "largestPayload": 2007114,
+          "name": "SegmenterDictionaryAutoV2"
+        },
+        {
+          "bytes": 1036040,
+          "entries": 4,
+          "hash": 1169834558,
+          "largestPayload": 472231,
+          "name": "SegmenterDictionaryExtendedV2"
+        },
+        {
+          "bytes": 309582,
+          "entries": 4,
+          "hash": 2520330643,
+          "largestPayload": 91070,
+          "name": "SegmenterLstmAutoV1"
+        },
+        {
+          "bytes": 13055,
+          "entries": 1,
+          "hash": 592078692,
+          "largestPayload": 13020,
+          "name": "SegmenterUnihanRadicalV1"
+        }
+      ]
+    },
+    "units": {
+      "bytes": 1564872,
+      "markers": [
+        {
+          "bytes": 65628,
+          "entries": 1113,
+          "hash": 3168865140,
+          "largestPayload": 187,
+          "name": "UnitsNamesAreaCoreV1"
+        },
+        {
+          "bytes": 67903,
+          "entries": 1316,
+          "hash": 415715686,
+          "largestPayload": 147,
+          "name": "UnitsNamesAreaExtendedV1"
+        },
+        {
+          "bytes": 26972,
+          "entries": 558,
+          "hash": 2017152643,
+          "largestPayload": 139,
+          "name": "UnitsNamesAreaOutlierV1"
+        },
+        {
+          "bytes": 103959,
+          "entries": 2307,
+          "hash": 918347246,
+          "largestPayload": 110,
+          "name": "UnitsNamesDurationCoreV1"
+        },
+        {
+          "bytes": 16,
+          "entries": 0,
+          "hash": 4167557416,
+          "largestPayload": 0,
+          "name": "UnitsNamesDurationExtendedV1"
+        },
+        {
+          "bytes": 113309,
+          "entries": 2673,
+          "hash": 853394379,
+          "largestPayload": 126,
+          "name": "UnitsNamesDurationOutlierV1"
+        },
+        {
+          "bytes": 71492,
+          "entries": 1677,
+          "hash": 2213161073,
+          "largestPayload": 100,
+          "name": "UnitsNamesLengthCoreV1"
+        },
+        {
+          "bytes": 95809,
+          "entries": 2187,
+          "hash": 1126835599,
+          "largestPayload": 173,
+          "name": "UnitsNamesLengthExtendedV1"
+        },
+        {
+          "bytes": 173370,
+          "entries": 3292,
+          "hash": 3292623783,
+          "largestPayload": 211,
+          "name": "UnitsNamesLengthOutlierV1"
+        },
+        {
+          "bytes": 76224,
+          "entries": 1653,
+          "hash": 3135831429,
+          "largestPayload": 159,
+          "name": "UnitsNamesMassCoreV1"
+        },
+        {
+          "bytes": 38945,
+          "entries": 937,
+          "hash": 951203712,
+          "largestPayload": 127,
+          "name": "UnitsNamesMassExtendedV1"
+        },
+        {
+          "bytes": 69768,
+          "entries": 1466,
+          "hash": 3043776266,
+          "largestPayload": 147,
+          "name": "UnitsNamesMassOutlierV1"
+        },
+        {
+          "bytes": 76759,
+          "entries": 1539,
+          "hash": 2542672599,
+          "largestPayload": 187,
+          "name": "UnitsNamesVolumeCoreV1"
+        },
+        {
+          "bytes": 181739,
+          "entries": 3555,
+          "hash": 1330353993,
+          "largestPayload": 213,
+          "name": "UnitsNamesVolumeExtendedV1"
+        },
+        {
+          "bytes": 294160,
+          "entries": 5518,
+          "hash": 1262012020,
+          "largestPayload": 221,
+          "name": "UnitsNamesVolumeOutlierV1"
+        },
+        {
+          "bytes": 98958,
+          "entries": 256,
+          "hash": 987043956,
+          "largestPayload": 1084,
+          "name": "UnitsEssentialsV1"
+        },
+        {
+          "bytes": 4495,
+          "entries": 157,
+          "hash": 3428445203,
+          "largestPayload": 2,
+          "name": "UnitsIdV1"
+        },
+        {
+          "bytes": 4670,
+          "entries": 1,
+          "hash": 468224752,
+          "largestPayload": 4635,
+          "name": "UnitsInfoV1"
+        }
+      ]
+    },
+    "zone": {
+      "bytes": 3368227,
+      "markers": [
+        {
+          "bytes": 274533,
+          "entries": 178,
+          "hash": 290639784,
+          "largestPayload": 7911,
+          "name": "TimezoneNamesCitiesOverrideV1"
+        },
+        {
+          "bytes": 174430,
+          "entries": 84,
+          "hash": 1660663395,
+          "largestPayload": 8622,
+          "name": "TimezoneNamesCitiesRootV1"
+        },
+        {
+          "bytes": 1792,
+          "entries": 51,
+          "hash": 362074782,
+          "largestPayload": 56,
+          "name": "TimezoneNamesEssentialsV1"
+        },
+        {
+          "bytes": 314320,
+          "entries": 185,
+          "hash": 676934067,
+          "largestPayload": 5630,
+          "name": "TimezoneNamesGenericLongV1"
+        },
+        {
+          "bytes": 5675,
+          "entries": 156,
+          "hash": 3475345801,
+          "largestPayload": 246,
+          "name": "TimezoneNamesGenericShortV1"
+        },
+        {
+          "bytes": 1036810,
+          "entries": 235,
+          "hash": 1608637937,
+          "largestPayload": 20924,
+          "name": "TimezoneNamesLocationsOverrideV1"
+        },
+        {
+          "bytes": 456712,
+          "entries": 84,
+          "hash": 3399399503,
+          "largestPayload": 19679,
+          "name": "TimezoneNamesLocationsRootV1"
+        },
+        {
+          "bytes": 764146,
+          "entries": 211,
+          "hash": 2562505620,
+          "largestPayload": 12616,
+          "name": "TimezoneNamesSpecificLongV1"
+        },
+        {
+          "bytes": 7093,
+          "entries": 157,
+          "hash": 3048143190,
+          "largestPayload": 405,
+          "name": "TimezoneNamesSpecificShortV1"
+        },
+        {
+          "bytes": 305956,
+          "entries": 222,
+          "hash": 540700114,
+          "largestPayload": 5692,
+          "name": "TimezoneNamesStandardLongV1"
+        },
+        {
+          "bytes": 6834,
+          "entries": 1,
+          "hash": 1789140649,
+          "largestPayload": 6799,
+          "name": "TimezonePeriodsV1"
+        },
+        {
+          "bytes": 9583,
+          "entries": 1,
+          "hash": 3722220228,
+          "largestPayload": 9548,
+          "name": "TimezoneIdentifiersIanaCoreV1"
+        },
+        {
+          "bytes": 9770,
+          "entries": 1,
+          "hash": 2846192479,
+          "largestPayload": 9735,
+          "name": "TimezoneIdentifiersIanaExtendedV1"
+        }
+      ]
+    }
+  },
+  "sourceFingerprint": "f6882dae9e666aed"
+}

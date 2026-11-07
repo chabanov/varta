@@ -367,6 +367,7 @@ fn lower_pass(
         );
     }
     let view_event = view::event_function(&types);
+    let weak_checkpoint = weak::checkpoint_function(&types);
     let mut program = ir::Program {
         functions,
         main: evaluator.unwrap_or(main),
@@ -375,6 +376,7 @@ fn lower_pass(
         http_async,
         http_stream,
         view_event,
+        weak_checkpoint,
         types,
         constants: constants.stored,
         initializers: constants.initializers,
@@ -392,8 +394,11 @@ fn lower_pass(
         literal_erasure::erase_program(&mut program)?;
         classes::hide_prelude_state(&mut program.types);
     }
-    super::suspension::prepare(&mut program, graph)?;
+    // V38 (`integrity_levels`): after erasure, so engine collections are
+    // their private storage and a `Uint8Array` its own array type.
     let entry = &graph.units[&graph.entry];
+    integrity::guard(&mut program).map_err(|e| entry.source.locate(e, entry.ast.span()))?;
+    super::suspension::prepare(&mut program, graph)?;
     prune::prune(&mut program).map_err(|e| entry.source.locate(e, entry.ast.span()))?;
     if crate::codegen_v2(profile) {
         simplify::simplify(&mut program);
@@ -499,6 +504,15 @@ fn link_values(
         )?;
         let empty = module_constants::Scope::new();
         let visible = constants.scopes.get(path).unwrap_or(&empty);
+        // V38 (`symbol_values`): the stored constant behind each symbol key.
+        for (name, key) in &unit.symbol_constants {
+            if let Some(stored) = visible
+                .get(name)
+                .and_then(module_constants::Constant::stored)
+            {
+                types.symbols.constants.insert(key.clone(), stored);
+            }
+        }
         // A declared constant may not take the name of an imported function.
         if let Some(binding) = function_imports
             .iter()

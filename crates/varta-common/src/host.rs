@@ -11,6 +11,23 @@ macro_rules! operations {
     };
 }
 operations! {
+    /// v38 (`console_methods`): write one standard-error console line of
+    /// the UTF-16 text at `ptr`/`len`; the level word
+    /// (`crate::console::StderrLevel`) names the console method. Bounded by
+    /// the module's string limit and the output budget like `log_string16`;
+    /// capability-free.
+    LogStderr16,
+    /// v38 (`standard_library`), linked: `String.prototype.normalize` of
+    /// the UTF-16 string at `ptr`/`len` into the form numbered by the
+    /// binary64 word (`text::NormalizationForm`: 0 NFC, 1 NFD, 2 NFKC,
+    /// 3 NFKD), as an owned string; lone surrogates stay as they are. Pure
+    /// and capability-free.
+    StringNormalize16,
+    /// v38 (`console_methods`), linked: the text of a console render
+    /// request (`crate::console::RenderMode`: `console.dir` or
+    /// `console.table`) held by an `unknown[]` cell, as an owned string like
+    /// `value_format_v12`. Pure and capability-free.
+    ConsoleRender,
     /// v38 (`view_protocol`): validate one L0 view batch (draft v0,
     /// `crate::view`) in guest memory as a whole and apply it atomically to
     /// the instance's view tree; at most one commit per turn. An invalid batch
@@ -334,6 +351,13 @@ operations! {
     /// capability-free; always linked (`varta_intrinsics::regexp`), so its
     /// matching is guest code metered as fuel.
     RegExpExec,
+    /// V38 (`full_regexp`) run-time RegExp construction: parse and compile a
+    /// UTF-16 pattern and flags (RegExpInitialize) into the
+    /// `crate::regexp::construction` record (the programs, names, `source`
+    /// and flags, or V8's SyntaxError message) as an owned string. Pure and
+    /// capability-free; always linked (`varta_intrinsics::regexp::pattern`),
+    /// so compiling is guest code metered as fuel.
+    RegExpCompile,
     /// V37 (`collections`) `Date.now()`: milliseconds since the Unix epoch as
     /// binary64, under the exact `time.now` grant (a denial is fatal).
     DateNow,
@@ -502,7 +526,11 @@ impl HostOperation {
         }
         if matches!(
             self,
-            Self::PrimitiveStringV2 | Self::ValueTypeOfV7 | Self::ValueFormatV12
+            Self::PrimitiveStringV2
+                | Self::ValueTypeOfV7
+                | Self::ValueFormatV12
+                | Self::ConsoleRender
+                | Self::StringNormalize16
         ) {
             return true;
         }
@@ -542,6 +570,7 @@ impl HostOperation {
                 | Self::StringToUpperCase16
                 | Self::StringToLowerCase16
                 | Self::RegExpExec
+                | Self::RegExpCompile
                 | Self::EnvGet
                 | Self::FsRead
                 | Self::NetGet
@@ -574,6 +603,7 @@ impl HostOperation {
                 | Self::PrimitiveStringV2
                 | Self::ValueTypeOfV7
                 | Self::ValueFormatV12
+                | Self::ConsoleRender
         ) {
             return true;
         }
@@ -634,6 +664,9 @@ impl HostOperation {
             Self::PrimitiveNumberV6 => "primitive_to_number_v6",
             Self::BigIntFromValueV5 => "bigint_from_value_v5",
 
+            Self::LogStderr16 => "log_stderr16",
+            Self::StringNormalize16 => "string_normalize16",
+            Self::ConsoleRender => "console_render",
             Self::ViewCommit => crate::view::COMMIT_IMPORT,
             Self::PermissionQuery => "permission_query",
             Self::PermissionRequest => "permission_request",
@@ -814,6 +847,7 @@ impl HostOperation {
             Self::StringToUpperCase16 => "string_to_upper_case16",
             Self::StringToLowerCase16 => "string_to_lower_case16",
             Self::RegExpExec => "regexp_exec",
+            Self::RegExpCompile => "regexp_compile",
             Self::LogFloatV2 => "log_f64_v2",
             Self::LogFloat => "log_f64",
             Self::FloatRemainder => "number_remainder",
@@ -920,8 +954,9 @@ impl HostOperation {
                 | Self::StringCharCodeAt16
                 | Self::StringToUpperCase16
                 | Self::StringToLowerCase16
-                // The v38 backtracking RegExp matcher.
+                // The v38 backtracking RegExp matcher and pattern compiler.
                 | Self::RegExpExec
+                | Self::RegExpCompile
                 // The value18 primitive conversions and the primitive
                 // comparisons (`varta_intrinsics::bigint`): codegen v2 answers
                 // their common cases inline (integral Numbers, strings,
@@ -969,6 +1004,11 @@ impl HostOperation {
                 // which v38 then logs through `log_string16`.
                 | Self::JsonStringifyOwned
                 | Self::ValueFormatV12
+                // The console render requests of `console.dir` and
+                // `console.table` (`varta_intrinsics::inspect::render`).
+                | Self::ConsoleRender
+                // `String.prototype.normalize` (`varta_intrinsics::string`).
+                | Self::StringNormalize16
                 // Local time (`varta_intl`): zone offsets and names from the
                 // bundled tzdata and CLDR data.
                 | Self::DateZoneOffset
@@ -1076,7 +1116,15 @@ impl HostOperation {
             || self.web_bytes()
             || self.kv()
             || self.local_time()
-            || matches!(self, Self::ViewCommit | Self::RegExpExec)
+            || matches!(
+                self,
+                Self::ViewCommit
+                    | Self::LogStderr16
+                    | Self::ConsoleRender
+                    | Self::StringNormalize16
+                    | Self::RegExpExec
+                    | Self::RegExpCompile
+            )
         {
             return crate::abi::PROGRAM_LIMITS_VERSION;
         }
@@ -1367,6 +1415,9 @@ impl HostOperation {
         match self {
             Self::PrimitiveCompare => (&[I64, I64], &[F64]),
             Self::ViewCommit => (&crate::view::COMMIT_PARAMS, &crate::view::COMMIT_RESULTS),
+            Self::LogStderr16 => (&[I32, I32, I32], &[]),
+            Self::StringNormalize16 => (&[I32, I32, F64], &[I32]),
+            Self::ConsoleRender => (&[I32, I64], &[I32]),
             Self::PermissionQuery => (&[I32, I32], &[I32]),
             Self::PermissionRequest | Self::EventSourceOpen => (&[I32, I32], &[F64]),
             Self::EventWatch => (&[F64, F64], &[]),
@@ -1585,6 +1636,7 @@ impl HostOperation {
             Self::StringCharCodeAt16 => (&[I32, I32, F64], &[F64]),
             Self::StringToUpperCase16 | Self::StringToLowerCase16 => (&[I32, I32], &[I32]),
             Self::RegExpExec => (&[I32, I32, I32, I32, F64, I32], &[I32]),
+            Self::RegExpCompile => (&[I32, I32, I32, I32], &[I32]),
             Self::DateNow => (&[], &[F64]),
             Self::IntlTimeZone | Self::IntlLocale => (&[], &[I32]),
             Self::DateZoneOffset => (&[I32, I32, F64, F64], &[F64]),
@@ -1642,6 +1694,9 @@ impl HostOperation {
             "bigint_from_value_v5" => Self::BigIntFromValueV5,
 
             "view_commit" => Self::ViewCommit,
+            "log_stderr16" => Self::LogStderr16,
+            "string_normalize16" => Self::StringNormalize16,
+            "console_render" => Self::ConsoleRender,
             "permission_query" => Self::PermissionQuery,
             "permission_request" => Self::PermissionRequest,
             "event_source_open" => Self::EventSourceOpen,
@@ -1817,6 +1872,7 @@ impl HostOperation {
             "string_to_upper_case16" => Self::StringToUpperCase16,
             "string_to_lower_case16" => Self::StringToLowerCase16,
             "regexp_exec" => Self::RegExpExec,
+            "regexp_compile" => Self::RegExpCompile,
             "log_f64_v2" => Self::LogFloatV2,
             "log_f64" => Self::LogFloat,
             "number_remainder" => Self::FloatRemainder,
@@ -1875,6 +1931,9 @@ impl HostOperation {
     pub fn capability(self) -> Option<&'static str> {
         Some(match self {
             Self::ViewCommit
+            | Self::LogStderr16
+            | Self::ConsoleRender
+            | Self::StringNormalize16
             | Self::ValueLogV11
             | Self::ValueLogV12
             | Self::ValueFormatV12
@@ -2060,6 +2119,7 @@ impl HostOperation {
             | Self::StringToUpperCase16
             | Self::StringToLowerCase16
             | Self::RegExpExec
+            | Self::RegExpCompile
             | Self::LogInt
             | Self::LogFloatV2
             | Self::LogFloat

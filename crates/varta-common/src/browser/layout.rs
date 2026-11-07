@@ -11,6 +11,7 @@ pub(super) fn scheduler() -> Value {
         "reasonUnits":s::MAX_REJECTION_REASON_UNITS,"reasonBytes":s::MAX_REJECTION_REASON_BYTES,
         "truncated":s::REJECTION_TRUNCATION_MARKER,"notRetained":s::REJECTION_NOT_RETAINED,
         "resumeExport":frame::RESUME_EXPORT,"normal":frame::Completion::Normal as i32,
+        "weakCheckpointExport":crate::weak::CHECKPOINT_EXPORT,
         "outcomes":[frame::Outcome::Suspended as i32,frame::Outcome::Returned as i32],
         "errors":{"jobs":E::JobBudget.to_string(),"serials":E::SerialBudget.to_string(),
             "duplicate":E::DuplicateToken.to_string(),"unknown":E::UnknownSerial.to_string(),
@@ -28,7 +29,7 @@ pub(super) fn values() -> Value {
         .filter_map(v::ValueKind::from_tag)
         .map(|kind| (format!("{kind:?}"), kind as u32))
         .collect();
-    json!({
+    let mut values = json!({
         "tags":tags,"references":(0..=v::ValueKind::LAST as u32).filter_map(v::ValueKind::from_tag).filter(|k|k.is_reference()).map(|k|k as u32).collect::<Vec<_>>(),
         "ownedBase":abi::OWNED_STRING_BASE,"headerBytes":abi::STRING_HEADER_BYTES,
         "alignment":v::HEAP_ALIGNMENT,"flagsOffset":v::HEAP_FLAGS_OFFSET,"linkOffset":v::HEAP_LINK_OFFSET,
@@ -48,5 +49,10 @@ pub(super) fn values() -> Value {
         })).collect::<Vec<_>>(),
         "bigint":{"flag":bigint::HEAP_FLAG,"meta":bigint::META_BYTES,"digitBytes":bigint::DIGIT_BYTES,"maxBytes":bigint::MAX_PAYLOAD_BYTES,
             "zero":bigint::Sign::Zero as u32,"positive":bigint::Sign::Positive as u32,"negative":bigint::Sign::Negative as u32}
-    })
+    });
+    // Value18 integrity-level header bits (`Object.freeze`), which the
+    // reasons reader ignores in an object block of that layout.
+    values["integrity"] =
+        json!({"flags":v::HEAP_INTEGRITY_FLAGS,"version":v::HASHED_DICTIONARY_VALUE_VERSION});
+    values
 }

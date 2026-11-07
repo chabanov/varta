@@ -107,7 +107,9 @@ pub(super) fn member_function(
     {
         let (declaration, signature, init) = match member {
             Member::Init => {
-                let declaration = constructors::declaration(class, types)?;
+                let object_global =
+                    !symbols.contains_key("Object") && !constants.contains_key("Object");
+                let declaration = constructors::declaration(class, types, object_global)?;
                 let signature = types.classes.list[class as usize]
                     .init
                     .clone()

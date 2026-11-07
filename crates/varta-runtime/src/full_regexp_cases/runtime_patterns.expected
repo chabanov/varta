@@ -1,0 +1,38 @@
+/a(b)+/g 0
+abbb 2 6
+2026/11
+8-10
+/a\/b\n[/]\u2028/ 0
+/(?:)/ 0
+/xy/ 0
+/a(b)+/g 0 false
+/a(b)+/iy 0
+true false
+/a\//u 0
+/[/]\/x/gimsuy 0 true
+/\p{L}+(?<=a)/dv 0 true
+/(?:)/ 0 true
+/\n\u2028/s 0 true
+\x61\.b\x2dc\x201 \$100\x20\(net\)
+😀\xa0\u2028\ud800x\x2c\x3d\x3c\x3e\x23\x26\x21\x25\x3a\x3b\x40\x7e\x27\x60\x22 _1\t\n\v\f\r
+|\x39|ä\^\$\\\.\*\+\?\(\)\[\]\{\}\|\/
+<1+1=2?> and <1+1=2?>
+|αβγ|👍🏽|🇺🇦
+true true true
+true false
+SyntaxError: Invalid regular expression: /(/: Unterminated group
+SyntaxError: Invalid regular expression: /a/(/gi: Unterminated group
+SyntaxError: Invalid regular expression: /[/v: Unterminated character class
+SyntaxError: Invalid flags supplied to RegExp constructor 'gg'
+SyntaxError: Invalid flags supplied to RegExp constructor 'uv'
+SyntaxError: Invalid flags supplied to RegExp constructor 'x'
+SyntaxError: Invalid regular expression: /\p{Nope}/u: Invalid property name
+SyntaxError: Invalid regular expression: /(?<a>x)(?<a>y)/: Duplicate capture group name
+SyntaxError: Invalid regular expression: /\k<b>(?<a>x)/: Invalid named capture referenced
+SyntaxError: Invalid regular expression: /[a-z&&[aeiou]]/v: Invalid set operation in character class
+SyntaxError: Invalid regular expression: /a{2,1}/: numbers out of order in {} quantifier
+SyntaxError: Invalid regular expression: /�(/y: Unterminated group
+caught Invalid regular expression: /a)/g: Unmatched ')'
+caught Invalid regular expression: /[/: Unterminated character class
+1 bb
+1;4;

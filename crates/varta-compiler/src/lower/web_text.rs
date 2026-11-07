@@ -41,6 +41,9 @@ impl Lower<'_> {
         if let Some(value) = self.engine_intrinsic(call, name)? {
             return Ok(Some(value));
         }
+        if let Some(value) = self.console_intrinsic(call, name)? {
+            return Ok(Some(value));
+        }
         let Some((_, op)) = INTRINSICS.iter().find(|(intrinsic, _)| *intrinsic == name) else {
             return Ok(None);
         };
@@ -108,6 +111,24 @@ impl Lower<'_> {
                 kind: E::Host(*host, vec![value]),
             }));
         }
+        if name == "varta.text.normalize" && self.types.profile.standard_library() {
+            let [text, form] = call.args.as_slice() else {
+                return Err(invalid(format!("{name} expects a string and a form word")));
+            };
+            if text.spread.is_some() || form.spread.is_some() {
+                return Err(invalid(format!("{name} takes plain arguments")));
+            }
+            let text = self.expr(&text.expr)?;
+            let form = self.expr(&form.expr)?;
+            if text.ty != Type::String || form.ty != self.types.number() {
+                return Err(type_error(format!("{name} requires a string and a number")));
+            }
+            return Ok(Some(Expr {
+                span: call.span,
+                ty: Type::String,
+                kind: E::Host(Host::StringNormalize16, vec![text, form]),
+            }));
+        }
         if name == "varta.date.now" {
             if !call.args.is_empty() {
                 return Err(invalid(format!("{name} expects no arguments")));
@@ -149,6 +170,9 @@ impl Lower<'_> {
             return Ok(Some(value));
         }
         if let Some(value) = self.collection_table(call, name)? {
+            return Ok(Some(value));
+        }
+        if let Some(value) = self.weak_intrinsic(call, name)? {
             return Ok(Some(value));
         }
         if name == "varta.text.units" && self.types.profile.web_bytes() {

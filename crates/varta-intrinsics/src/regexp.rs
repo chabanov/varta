@@ -16,6 +16,8 @@
 //! [`IntrinsicError::RegExpProgram`], never undefined behaviour.
 use crate::IntrinsicError;
 use alloc::vec::Vec;
+
+pub mod pattern;
 pub use varta_common::regexp::canonicalize;
 use varta_common::regexp::{
     BACKWARD, FORMAT_VERSION, OP_MASK, RANGE_UNITS, UNBOUNDED, UNSET, assertion, flag, header,

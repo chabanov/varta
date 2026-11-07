@@ -25,8 +25,18 @@ pub(crate) type Keys = BTreeMap<String, String>;
 const SYMBOL_GLOBAL: &str = crate::modules::engine::SYMBOL_GLOBAL;
 /// The well-known symbols whose computed keys name ordinary members here;
 /// `Symbol.iterator` and `Symbol.asyncIterator` keep their method names
-/// (`lower::classes::ITERATOR_METHOD`).
-pub(crate) const WELL_KNOWN_KEYS: [&str; 3] = ["toPrimitive", "toStringTag", "hasInstance"];
+/// (`lower::classes::ITERATOR_METHOD`). The RegExp protocol symbols (K9 D3)
+/// name the methods of `RegExp` and of custom matchers.
+pub(crate) const WELL_KNOWN_KEYS: [&str; 8] = [
+    "toPrimitive",
+    "toStringTag",
+    "hasInstance",
+    "match",
+    "matchAll",
+    "replace",
+    "search",
+    "split",
+];
 
 /// The member key of the `unique symbol` constant `name` declared by the
 /// module at graph index `module`.
@@ -94,13 +104,14 @@ fn bindings(module: &ast::Module) -> BTreeMap<String, usize> {
 }
 
 /// Rewrite the symbol-keyed members of the module at graph index `index`
-/// and return its exported keys. `units` holds every dependency.
+/// and return its exported keys and its own `unique symbol` constants (by
+/// local name). `units` holds every dependency.
 pub(crate) fn rewrite(
     module: &mut ast::Module,
     index: usize,
     (imports, exports): (&[Dependency], &[Export]),
     units: &BTreeMap<PathBuf, Unit>,
-) -> Keys {
+) -> (Keys, Keys) {
     let counts = bindings(module);
     let bound_once = |name: &str| counts.get(name).copied().unwrap_or_default() <= 1;
     let symbol_shadowed = counts.contains_key(SYMBOL_GLOBAL);
@@ -129,6 +140,7 @@ pub(crate) fn rewrite(
         }
     }
     let declared: BTreeSet<String> = local.keys().cloned().collect();
+    let own: Keys = local.clone();
     for import in imports {
         let Some(target) = units.get(&import.target) else {
             continue;
@@ -169,7 +181,17 @@ pub(crate) fn rewrite(
         keys: &local,
         well_known: !symbol_shadowed,
     });
-    exported
+    (exported, own)
+}
+
+/// The well-known symbol a member key names (`Symbol.<name>`), if any.
+#[must_use]
+pub(crate) fn well_known_name(key: &str) -> Option<&str> {
+    key.strip_prefix(varta_common::value::PRIVATE_KEY_PREFIX)?
+        .strip_prefix('[')?
+        .strip_prefix(SYMBOL_GLOBAL)?
+        .strip_prefix('.')?
+        .strip_suffix(']')
 }
 
 struct Rewriter<'a> {

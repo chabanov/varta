@@ -4,8 +4,9 @@
 //!
 //! - `varta.date.timeZone()` and `varta.date.locale()`: the host's zone
 //!   identifier and default locale (`intl_time_zone`, `intl_locale`);
-//! - `varta.date.zoneOffset(zone, time, local)`: the offset LocalTime
-//!   (`local` 0) or UTC(t) (`local` 1) applies (`date_zone_offset`);
+//! - `varta.date.zoneOffset(zone, time, mode)`: the offset LocalTime
+//!   (`mode` 0) or UTC(t) (`mode` 1) applies, or (`mode` 2) the daylight
+//!   flag of the instant's zone name (`date_zone_offset`);
 //! - `varta.date.zoneName(zone, locale, time)`: the localized zone name of
 //!   `Date.prototype.toString` (`date_zone_name`).
 use super::*;

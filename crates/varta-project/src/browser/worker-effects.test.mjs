@@ -238,3 +238,19 @@ test('an exit in a later turn of an application ends it before any later turn',{
     onEvent:(op,token)=>{if(token===2n)op.process_exit_f64(4);if(token===3n)third=true;}}).deliver();
   assert.equal(result.status,'ok');assert.equal(result.exitCode,4);assert.equal(result.turns,3);assert.equal(third,false);
 });
+
+test('log_stderr16 writes standard-error lines by level after the shared budget checks',{timeout:2000},async()=>{
+  const C=registry.console;
+  const f=fixture({importNames:['log_string16','log_stderr16'],start(op,memory){
+    const len=put(memory,'text');
+    op.log_string16(0,len);
+    for(const level of C.stderr)op.log_stderr16(level.word,0,len);
+  }});
+  await f.running;assert.equal(f.result().status,'ok',f.result().error);
+  assert.deepEqual(f.logs(),[C.logPrefix+'text',...C.stderr.map(level=>level.prefix+'text')]);
+  assert.deepEqual(C.stderr.map(level=>level.method),['error','warn']);
+  // An unknown level word is a noncanonical call: nothing is written.
+  const bad=fixture({importNames:['log_stderr16'],start(op){op.log_stderr16(7,0,0);}});
+  await bad.running;assert.equal(bad.result().status,'failed');assert.match(bad.result().error,/standard-error level/);
+  assert.deepEqual(bad.logs(),[]);
+});

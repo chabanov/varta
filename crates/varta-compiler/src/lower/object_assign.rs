@@ -389,6 +389,75 @@ impl Lower<'_> {
             props,
         })
     }
+    /// The writes of the present symbol-keyed members of the record in
+    /// `source` into `target`, in their insertion order.
+    fn assign_symbols(
+        &mut self,
+        span: swc_common::Span,
+        (target, target_ty): (u32, Type),
+        (source, source_ty): (u32, Type),
+        scope: &mut Vec<u32>,
+    ) -> Result<Vec<S>> {
+        let Type::Record(shape) = source_ty else {
+            return Ok(vec![]);
+        };
+        let fields: Vec<_> = self.types.records[shape as usize]
+            .fields
+            .iter()
+            .enumerate()
+            .filter(|(_, field)| crate::modules::symbol_keys::is_symbol_key(&field.name))
+            .map(|(slot, field)| (slot, field.clone()))
+            .collect();
+        if fields.is_empty() {
+            return Ok(vec![]);
+        }
+        let symbols = self.own_symbols(local(span, source, source_ty), span)?;
+        let symbols_ty = symbols.ty;
+        let symbol = Type::Symbol;
+        let array = self.hidden(symbols_ty);
+        let at = self.hidden(Type::Float64);
+        let current = self.hidden(symbol);
+        scope.extend([array, at, current]);
+        let mut step = vec![S::Set(current, index(span, array, symbols_ty, at, symbol))];
+        for (slot, field) in fields {
+            let value = Expr {
+                span,
+                ty: field.ty,
+                kind: E::Field(Box::new(local(span, source, source_ty)), slot as u32),
+            };
+            let write = if let Type::Record(destination) = target_ty {
+                self.assign_record_field(span, target, destination, &field.name, value)?
+            } else {
+                self.assign_array_named(span, target, target_ty, &field.name, value)?
+            };
+            let key = self.key_symbol(&field.name, span)?;
+            step.push(S::If(
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::Binary(
+                        ast::BinaryOp::EqEqEq,
+                        Box::new(local(span, current, symbol)),
+                        Box::new(key),
+                    ),
+                },
+                vec![write],
+                vec![],
+            ));
+        }
+        let mut body = vec![S::Init(array, symbols)];
+        body.extend(copy_loop(
+            span,
+            at,
+            Expr {
+                span,
+                ty: Type::Float64,
+                kind: E::Length(Box::new(local(span, array, symbols_ty))),
+            },
+            step,
+        ));
+        Ok(body)
+    }
     fn assign_source(
         &mut self,
         span: swc_common::Span,
@@ -452,7 +521,16 @@ impl Lower<'_> {
                 },
                 step,
             ));
-            return Ok(vec![S::Scope(vec![key_array, at, key], body)]);
+            let mut scope = vec![key_array, at, key];
+            // V38 (`symbol_values`): then the symbol-keyed members, in their
+            // insertion order (§7.3.25 CopyDataProperties).
+            body.extend(self.assign_symbols(
+                span,
+                (target, target_ty),
+                (source, source_ty),
+                &mut scope,
+            )?);
+            return Ok(vec![S::Scope(scope, body)]);
         }
         if let Type::Array(id) = target_ty {
             let (array, array_ty, element, mut body) = if let Type::Array(id) = source_ty {

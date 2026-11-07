@@ -4339,8 +4339,8 @@ export async function main(): Promise<void> {
 ```
 
 `await` of `T | Promise<T>` waits for the promise when there is one.
-`Promise.any` rejects with an `Error("All promises were rejected")` (there is
-no `AggregateError`), an `allSettled` result's `value` is typed
+`Promise.any` rejects with an `Error("All promises were rejected")` (v38:
+an `AggregateError` of every reason), an `allSettled` result's `value` is typed
 `T | undefined`, and awaiting a promise hidden in `unknown` throws a
 `TypeError`: keep promises typed as `Promise<T>`.
 
@@ -6144,6 +6144,53 @@ export function main(): void {
 }
 ```
 
+`Object.keys`, `for...in` and the other string-key forms skip
+symbol-keyed members, spreads and `Object.assign` copy them, and
+`Object.getOwnPropertySymbols` lists them.
+
+#### Integrity levels (opt-in v38)
+
+`Object.freeze`, `Object.seal`, `Object.preventExtensions` and their
+predicates work on records, class instances, arrays, dictionaries and
+`Map`/`Set` (whose entries stay writable, as in JavaScript). A write,
+addition or deletion the level forbids throws the `TypeError` Node throws:
+
+```ts
+interface Settings {
+  theme: string;
+  zoom?: number;
+}
+
+class Point {
+  readonly x: number;
+  constructor(x: number) {
+    this.x = x;
+    Object.freeze(this);
+  }
+}
+
+export function main(): void {
+  const settings: Settings = Object.freeze({ theme: 'dark' });
+  try {
+    settings.theme = 'light';
+  } catch (error) {
+    console.log(String(error)); // TypeError: Cannot assign to read only property 'theme' of object '#<Object>'
+  }
+  const list = Object.seal([1, 2, 3]);
+  list[0] = 10;
+  try {
+    list.pop();
+  } catch (error) {
+    console.log(String(error)); // TypeError: Cannot delete property '2' of [object Array]
+  }
+  console.log(`${Object.isFrozen(settings)} ${Object.isSealed(list)} ${list.join()}`); // true true 10,2,3
+  console.log(String(Object.isFrozen(new Point(1)))); // true
+}
+```
+
+Functions, generators and `Uint8Array` values cannot be frozen yet, and
+`Object.isFrozen`/`isSealed` need a value narrowed from `unknown`.
+
 #### Standard library (opt-in v38)
 
 The ECMAScript 2025 library methods typed code uses most: `sort` and
@@ -6186,8 +6233,119 @@ Local time is the host's time zone (below); with the default inputs of a
 library run it is UTC, so this `Date` prints what Node prints with `TZ=UTC`. Sorting
 without a comparator needs primitive elements, `flat` needs a literal
 depth, and `JSON.stringify` takes property lists but no replacer
-function. `Symbol()`, `WeakMap`/`WeakSet`/`WeakRef`, `Proxy`, `Reflect`,
-`structuredClone`, `Object.freeze` and `Intl` are refused with the reason.
+function. `WeakMap`/`WeakSet`/`WeakRef`, `Proxy`, `Reflect`,
+`structuredClone` and `Intl` are refused with the reason (`Symbol()` values
+and `Object.freeze` have sections of their own).
+
+#### Console output like Node (opt-in v38)
+
+`console.log`, `console.info` and `console.debug` take any number of
+arguments and print exactly what Node 24 prints: strings as they are, every
+other value in `util.inspect` notation, and `%s %d %i %f %j %o %O %c %%`
+directives in a leading string. Class instances print with their class
+name, and `Map`, `Set`, `Date`, `Uint8Array`, promises, Error objects and
+circular references print in Node's notation:
+
+```ts
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+interface Item { name: string; next: Item | null }
+export function main(): void {
+  console.log("total", 3, true, 10n, -0); // total 3 true 10n -0
+  console.log({ id: 7, tags: ["a", "b"], ok: false }); // { id: 7, tags: [ 'a', 'b' ], ok: false }
+  console.log(new Point(1, 2)); // Point { x: 1, y: 2 }
+  console.log(new Map([["k", [1, 2]]]), new Set(["x"])); // Map(1) { 'k' => [ 1, 2 ] } Set(1) { 'x' }
+  console.log({ a: { b: { c: { d: 1 } } } }); // { a: { b: { c: [Object] } } }
+  console.log("%s is %d%%", "progress", 42.5); // progress is 42.5%
+  console.log(new Error("failed", { cause: "disk" })); // [Error: failed] { [cause]: 'disk' }
+  const first: Item = { name: "first", next: null };
+  first.next = { name: "second", next: first };
+  console.log(first);
+  // <ref *1> {
+  //   name: 'first',
+  //   next: { name: 'second', next: [Circular *1] }
+  // }
+}
+```
+
+Varta records no stack frames, so an Error prints as Node prints it with
+`--stack-trace-limit=0`, and functions print as `[Function (anonymous)]`
+because function values carry no name. `SuppressedError` (ES2026) is
+available as well: `new SuppressedError(error, suppressed, "message")` is an
+`Error` whose `error` and `suppressed` fields are `unknown`, narrowed by
+`instanceof` in a `catch`. Earlier profiles keep one argument
+per `console.log` (and print booleans as `1`/`0`).
+
+The rest of Node's console works as well. `console.error`, `console.warn`,
+`console.trace` and a failed `console.assert` write standard error (`varta`
+prints those lines to standard error; the browser host forwards them to the
+page's `console.error`/`console.warn`); groups indent every line; counters,
+timers (under the `time.now` grant), `console.dir` options and
+`console.table` print as in Node:
+
+```ts
+export function main(): void {
+  const parts = ["a", 1];
+  console.error("failed:", ...parts); // standard error: failed: a 1
+  console.group("request");
+  console.warn("slow");      // standard error:   slow
+  console.count();           //   default: 1
+  console.groupEnd();
+  console.assert(1 > 2, "math"); // standard error: Assertion failed: math
+  console.dir({ a: { b: { c: 1 } } }, { depth: 0 }); // { a: [Object] }
+  console.table([{ a: 1, b: "x" }]);
+  // ┌─────────┬───┬─────┐
+  // │ (index) │ a │ b   │
+  // ├─────────┼───┼─────┤
+  // │ 0       │ 1 │ 'x' │
+  // └─────────┴───┴─────┘
+}
+```
+
+Node prints its process warnings (`console.countReset` of an unknown
+label, a repeated `console.time` label) later and with its process id;
+Varta prints them at once as `Warning: …` on standard error.
+
+#### Weak references (opt-in v38)
+
+`WeakMap`, `WeakSet`, `WeakRef` and `FinalizationRegistry` follow
+TypeScript's lib types: keys, members and targets are objects or symbols that
+`Symbol.for` did not register (`WeakKey`). A `WeakMap` value lives as long as
+its key and keeps nothing else alive, even when it refers back to the key; a
+`WeakRef` keeps its target until the end of the turn that created or read it;
+a `FinalizationRegistry` calls its callback in a job of its own after a
+collection found a target dead, never for an unregistered cell. When
+collections run is the engine's choice (as in every JavaScript engine), but in
+Varta it is a deterministic function of the program and its inputs
+([contract](architecture.md#weak-references-weak_references)).
+
+```ts
+class Session {
+  readonly user: string;
+  constructor(user: string) {
+    this.user = user;
+  }
+}
+
+const cache = new WeakMap<Session, string>();
+const registry = new FinalizationRegistry<string>((user) => {
+  console.log(`session of ${user} collected`);
+});
+
+export function main(): void {
+  const session = new Session('ada');
+  cache.set(session, 'profile');
+  registry.register(session, session.user);
+  const ref = new WeakRef(session);
+  console.log(`${cache.get(session)} ${ref.deref()?.user}`);
+}
+```
 
 #### Local time (opt-in v38)
 
@@ -6215,8 +6373,7 @@ A date-time string without an offset is local time, a date-only string UTC.
 The whole ECMAScript 2025 pattern language: backreferences, lookahead and
 lookbehind, pattern modifiers, duplicate named groups, Unicode property
 escapes, match indices (`d`) and the `v` flag's set notation and emoji
-properties of strings. Patterns are still written as literals or `new
-RegExp` with constant arguments:
+properties of strings, in literals and in patterns built at run time:
 
 ```ts
 export function main(): void {
@@ -6236,8 +6393,31 @@ export function main(): void {
 
 Matching backtracks like JavaScript engines do, and every step is fuel: a
 pattern that backtracks catastrophically ends the turn with the typed fuel
-exhaustion instead of hanging. `matchAll` returns an array, match arrays have
-no array methods, and `split` throws for a capture that did not take part.
+exhaustion instead of hanging.
+
+A pattern built at run time compiles in the program itself, also as fuel.
+Match results are arrays with every array method, `matchAll` is a lazy
+iterator, and `split` keeps `undefined` for a group that did not take part
+(its parts are `string` only when the separator is written in place and
+every group always takes part):
+
+```ts
+export function main(): void {
+  const words = ["cat", "dog"];
+  const animals = new RegExp(`\\b(${words.map((word) => RegExp.escape(word)).join("|")})s?\\b`, "gi");
+  console.log(animals.source); // \b(\x63at|\x64og)s?\b
+  const found = animals.exec("Dogs and a cat");
+  console.log(found?.slice(1).join(",")); // Dog
+  animals.lastIndex = 0; // exec advanced it
+  console.log([..."cats, dog".matchAll(animals)].map((match) => match.index).join(" ")); // 0 6
+  console.log("a1b-c".split(/(\d)|-/).map((part) => part ?? "~").join("|")); // a|1|b|~|c
+  try {
+    new RegExp("(", "u");
+  } catch (error) {
+    if (error instanceof SyntaxError) console.log(error.message); // Invalid regular expression: /(/u: Unterminated group
+  }
+}
+```
 
 #### Web bytes (opt-in v38)
 

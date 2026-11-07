@@ -25,10 +25,14 @@ fn zero(bytes: &[u8]) -> bool {
 fn word<M: Memory + ?Sized>(data: &M, at: usize) -> Result<u32, ValueAbiError> {
     data.u32_at(at).ok_or_else(invalid)
 }
+/// The `(pointer, length)` of the managed block `handle` stamped `flag`,
+/// apart from the header bits in `ignored` (the integrity-level bits of a
+/// value18 vector cell, [`integrity_flags`]).
 fn managed<M: Memory + ?Sized>(
     data: &M,
     handle: u64,
     flag: i32,
+    ignored: u32,
 ) -> Result<(usize, usize), ValueAbiError> {
     let ptr = handle as u32 as usize;
     let length = (handle >> i32::BITS) as usize;
@@ -43,7 +47,7 @@ fn managed<M: Memory + ?Sized>(
         || !size.is_multiple_of(HEAP_ALIGNMENT)
         || length > size - abi::STRING_HEADER_BYTES
         || header.checked_add(size).is_none_or(|end| end > data.size())
-        || word(data, header + HEAP_FLAGS_OFFSET)? != HEAP_ALLOCATED_FLAG | flag as u32
+        || word(data, header + HEAP_FLAGS_OFFSET)? & !ignored != HEAP_ALLOCATED_FLAG | flag as u32
     {
         return Err(invalid());
     }
@@ -108,7 +112,9 @@ impl Vector {
         ) {
             return Err(invalid());
         }
-        let (ptr, bytes) = managed(data, handle, HEAP_VECTOR_FLAG)?;
+        // A vector cell is the array's identity: it carries the integrity
+        // bits, its storage never does.
+        let (ptr, bytes) = managed(data, handle, HEAP_VECTOR_FLAG, integrity_flags(version))?;
         if bytes != VECTOR_BYTES
             || word(data, ptr - abi::STRING_HEADER_BYTES + HEAP_LINK_OFFSET)? != 1
         {
@@ -134,6 +140,7 @@ impl Vector {
             data,
             storage_handle,
             HEAP_ARRAY_FLAG | if sparse { HEAP_SPARSE_FLAG } else { 0 },
+            0,
         )?;
         let capacity = if sparse {
             module

@@ -126,6 +126,10 @@ pub fn registry() -> Value {
         "maxTurnFuel":crate::budget::MAX_FUEL_PER_TURN,
         "scheduler":layout::scheduler(),"values":layout::values(),"network":network::registry(),"view":view::registry(),
         "permissions":permissions::registry(),"effects":effects::registry(),"kv":kv::registry(),
+        "console":{
+            "logPrefix":crate::console::LOG_PREFIX,
+            "stderr":crate::console::StderrLevel::ALL.iter().map(|level|json!({"word":*level as i32,"prefix":level.prefix(),"method":level.method()})).collect::<Vec<_>>()
+        },
         "environment":{
             "maxNameBytes":crate::MAX_ENV_NAME_BYTES,
             "maxInputBytes":abi::MAX_INPUT_BYTES,

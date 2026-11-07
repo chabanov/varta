@@ -167,6 +167,24 @@ fn case(ptr: i32, len: i32, upper: bool) -> i32 {
         result as i32
     })
 }
+/// `string_normalize16 (ptr, len, form) -> ptr`: `String.prototype.normalize`
+/// ([`string::normalize`]) as an owned string; a noncanonical form word
+/// traps.
+#[unsafe(no_mangle)]
+pub extern "C" fn string_normalize16(ptr: i32, len: i32, form: f64) -> i32 {
+    let Some(form) = varta_common::text::NormalizationForm::from_word(form) else {
+        guest::trap();
+    };
+    entry(|| {
+        let input = checked(string::read(&Guest, ptr, len, STRING_BYTES));
+        let units: alloc::vec::Vec<u16> = string::units(&input).collect();
+        let normalized = string::normalize(&units, form);
+        let handle = filled(normalized.len(), |fill| fill.units(&normalized));
+        let (result, bytes) = varta_common::value::string_range(handle);
+        guest::set_result_len(bytes as i32);
+        result as i32
+    })
+}
 #[unsafe(no_mangle)]
 pub extern "C" fn string_to_upper_case16(ptr: i32, len: i32) -> i32 {
     case(ptr, len, true)
@@ -200,5 +218,24 @@ pub extern "C" fn regexp_exec(
             }
             None => owned(&[]),
         }
+    })
+}
+
+/// The v38 run-time RegExp pattern compiler (RegExpInitialize): a pattern and
+/// flags read in place, compiled into the construction record
+/// (`varta_common::regexp::construction`) as an owned string. Compiling runs
+/// here as guest code, metered as fuel, with its working memory in the
+/// per-call arena under the memory budget.
+#[unsafe(no_mangle)]
+pub extern "C" fn regexp_compile(
+    pattern_ptr: i32,
+    pattern_len: i32,
+    flags_ptr: i32,
+    flags_len: i32,
+) -> i32 {
+    entry(|| {
+        let pattern = checked(string::read(&Guest, pattern_ptr, pattern_len, STRING_BYTES));
+        let flags = checked(string::read(&Guest, flags_ptr, flags_len, STRING_BYTES));
+        owned(&regexp::pattern::encode_bytes(&pattern, &flags))
     })
 }

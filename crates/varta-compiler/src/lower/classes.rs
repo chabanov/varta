@@ -239,6 +239,14 @@ impl Classes {
     pub(super) fn count(&self) -> u32 {
         self.list.len() as u32
     }
+    /// The laid-out classes with instances (no generic templates), by id.
+    pub(super) fn laid_out(&self) -> impl Iterator<Item = (u32, &Class)> {
+        self.list
+            .iter()
+            .enumerate()
+            .filter(|(_, class)| class.state == State::Ready && !class.is_template())
+            .map(|(id, class)| (id as u32, class))
+    }
     /// Whether some class declares a method of this name. Native intrinsic
     /// member calls of the same name are then no longer provably user-code free.
     pub(super) fn has_method(&self, name: &str) -> bool {
@@ -320,6 +328,24 @@ impl Classes {
         (0..self.list.len() as u32)
             .filter(|id| self.descends(*id, ancestor))
             .map(|id| self.shape(id))
+            .collect()
+    }
+    /// The record shape and source name of `ancestor` and of each laid-out
+    /// descendant (a generic class instance under its template's name), as
+    /// V8 names an instance's constructor in `#<Name>`.
+    pub(super) fn family_names(&self, ancestor: u32) -> Vec<(u32, String)> {
+        (0..self.list.len() as u32)
+            .filter(|id| {
+                let class = &self.list[*id as usize];
+                !class.is_template() && class.state == State::Ready && self.descends(*id, ancestor)
+            })
+            .map(|id| {
+                let class = &self.list[id as usize];
+                let name = class
+                    .template
+                    .map_or(&class.name, |template| &self.list[template as usize].name);
+                (class.shape, name.clone())
+            })
             .collect()
     }
     pub(super) fn field(&self, class: u32, name: &str) -> Option<(u32, &Field)> {

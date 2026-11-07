@@ -201,12 +201,62 @@ fn satisfies(
             _ => {}
         }
     }
+    // V38 (`weak_references`): `WeakKey` (`object | symbol`, whose cell
+    // type admits every value) admits the object kinds and symbols.
+    if types.profile.weak_references() && weak_key_constraint(constraint, source, types) {
+        return Ok(unions::members(ty, types).iter().all(|member| {
+            matches!(
+                member,
+                Type::Record(_)
+                    | Type::Dictionary(_)
+                    | Type::Class(_)
+                    | Type::Array(_)
+                    | Type::Tuple(_)
+                    | Type::Function(_)
+                    | Type::Error
+                    | Type::NativeError(_)
+                    | Type::Promise(_)
+                    | Type::Generator(_)
+                    | Type::Collection(..)
+                    | Type::Symbol
+                    | Type::Object(false)
+                    | Type::Unknown
+            )
+        }));
+    }
     let bound = with_frame(types, scope.clone(), |t| keyword_type(constraint, t))
         .map_err(|e| source.locate(e, constraint.span()))?;
     // V38 (`type_level`): constraints use TypeScript's assignability (a
     // tuple satisfies `unknown[]`), which needs no value conversion.
     Ok(arguments::accepts(bound, ty, types)
         || types.profile.type_level() && type_level::extends(ty, bound, types))
+}
+
+/// Whether a constraint is TypeScript's `WeakKey` (the weak prelude's alias,
+/// unless the program declares the name) or a union of only the `object`
+/// and `symbol` keywords. Its own lowering is the `unknown` cell (the cell
+/// of `object | symbol`), which would admit primitives.
+fn weak_key_constraint(constraint: &ast::TsType, source: &Source, types: &ir::ValueTypes) -> bool {
+    match constraint {
+        ast::TsType::TsTypeRef(ast::TsTypeRef {
+            type_name: ast::TsEntityName::Ident(name),
+            type_params: None,
+            ..
+        }) => {
+            name.sym == "WeakKey"
+                && (crate::modules::engine::is_prelude_source(source)
+                    || !named::declared(types, "WeakKey"))
+        }
+        ast::TsType::TsUnionOrIntersectionType(ast::TsUnionOrIntersectionType::TsUnionType(
+            union,
+        )) => union.types.iter().all(|member| {
+            matches!(&**member, ast::TsType::TsKeywordType(keyword) if matches!(
+                keyword.kind,
+                ast::TsKeywordTypeKind::TsObjectKeyword | ast::TsKeywordTypeKind::TsSymbolKeyword
+            ))
+        }),
+        _ => false,
+    }
 }
 
 /// The constraint of a type parameter as a contextual type for an argument,
@@ -220,7 +270,19 @@ pub(super) fn constraint_hint(
     if matches!(constraint, ast::TsType::TsKeywordType(_)) {
         return None;
     }
-    with_frame(types, scope.clone(), |t| keyword_type(constraint, t)).ok()
+    let hint = with_frame(types, scope.clone(), |t| keyword_type(constraint, t)).ok()?;
+    // V38 (`weak_references`): a constraint that admits every object (as the
+    // keywords `object` and `unknown` do, or `WeakKey`, which is `object |
+    // symbol`) gives no contextual type either: an object argument keeps its
+    // own type instead of entering the cell, as TypeScript infers it.
+    if types.profile.weak_references()
+        && unions::members(hint, types)
+            .iter()
+            .any(|member| matches!(member, Type::Object(_) | Type::Unknown))
+    {
+        return None;
+    }
+    Some(hint)
 }
 
 /// Lower the body of a named declaration with its bound type parameters.

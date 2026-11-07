@@ -69,6 +69,13 @@ pub struct VartaConfig {
     /// `"tailwind": {"entry": "src/app.css"}`.
     #[serde(default)]
     pub tailwind: Option<TailwindConfig>,
+    /// The locales whose data `Intl` and local time link
+    /// (checked-f64-utf16-v38, ECMA-402 [[AvailableLocales]]): BCP 47 tags
+    /// without extensions, e.g. `["en", "uk"]`. Omitted, every locale of the
+    /// bundled CLDR data is linked; the host's default locale resolves
+    /// through CLDR fallback to the best selected one.
+    #[serde(default)]
+    pub locales: Option<Vec<String>>,
 }
 
 /// `"tailwind": {"entry": "…"}`: a CSS-first Tailwind entry stylesheet
@@ -114,6 +121,14 @@ pub(crate) fn default_policy() -> String {
 }
 
 impl VartaConfig {
+    /// The compiler settings of this configuration.
+    #[must_use]
+    pub fn compiler_settings(&self) -> varta_compiler::Settings {
+        varta_compiler::Settings {
+            locales: self.locales.clone().unwrap_or_default(),
+        }
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.entry.trim().is_empty() || self.out.trim().is_empty() {
             return Err(VartaError::InvalidManifest(
@@ -167,6 +182,15 @@ impl VartaConfig {
                     ));
                 }
             }
+        }
+        if let Some(locales) = &self.locales {
+            if !self.language_profile.local_time() || locales.is_empty() {
+                return Err(VartaError::InvalidManifest(
+                    "locales must list at least one locale and require languageProfile checked-f64-utf16-v38".into(),
+                ));
+            }
+            varta_compiler::canonical_locales(locales)
+                .map_err(|error| VartaError::InvalidManifest(format!("locales: {error}")))?;
         }
         crate::artifact::validate_fonts(self)?;
         crate::artifact::validate_images(self)?;
@@ -291,6 +315,39 @@ mod tests {
             config(serde_json::json!({"env":{"get":[]},"time":{"now":false}}))
                 .validate()
                 .is_ok()
+        );
+    }
+    #[test]
+    fn locale_selections_need_v38_and_language_tags() {
+        let with = |profile: &str, locales: serde_json::Value| -> VartaConfig {
+            serde_json::from_value(serde_json::json!({"entry":"src/main.ts","target":"native",
+                "out":"dist/app","languageProfile":profile,"locales":locales}))
+            .unwrap()
+        };
+        let v38 = "checked-f64-utf16-v38";
+        let selected = with(v38, serde_json::json!(["en", "uk-UA", "sr-Latn"]));
+        selected.validate().unwrap();
+        assert_eq!(
+            selected.compiler_settings().locales,
+            ["en", "uk-UA", "sr-Latn"]
+        );
+        for (profile, locales) in [
+            ("checked-f64-utf16-v37", serde_json::json!(["en"])),
+            (v38, serde_json::json!([])),
+            (v38, serde_json::json!(["en-u-ca-buddhist"])),
+            (v38, serde_json::json!(["und"])),
+            (v38, serde_json::json!(["not a tag"])),
+        ] {
+            assert!(
+                with(profile, locales.clone()).validate().is_err(),
+                "{profile} {locales}"
+            );
+        }
+        assert!(
+            config(serde_json::json!({}))
+                .compiler_settings()
+                .locales
+                .is_empty()
         );
     }
     #[test]

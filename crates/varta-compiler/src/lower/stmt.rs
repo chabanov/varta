@@ -139,7 +139,7 @@ impl Lower<'_> {
                 } else if let ast::Expr::Assign(assign) = unparen(&statement.expr) {
                     self.assignment(assign)?
                 } else {
-                    let value = S::Expr(self.expr(&statement.expr)?);
+                    let value = S::Expr(self.discarded(&statement.expr)?);
                     // An assertion function call narrows its argument (v38).
                     self.assertion_effect(&statement.expr)?;
                     value

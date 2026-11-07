@@ -20,6 +20,21 @@ export async function main(): Promise<void> {
   }
   const winner = await Promise.race([Promise.resolve("fast"), Promise.reject(new Error("slow"))]);
   console.log(winner);
+  // Every element rejected: an AggregateError of the reasons in input order.
+  try {
+    await Promise.any([Promise.reject(new Error("a")), Promise.reject("b"), Promise.reject(3)]);
+  } catch (error) {
+    console.log(error);
+    if (error instanceof AggregateError) {
+      console.log(error.name, error.message, error.errors.length, error.errors[1]);
+    }
+  }
+  try {
+    const none: Promise<number>[] = [];
+    await Promise.any(none);
+  } catch (error) {
+    console.log(error instanceof AggregateError, error instanceof Error, String(error));
+  }
   const { promise, resolve } = Promise.withResolvers<number>();
   void Promise.resolve(40).then((value) => resolve(value + 2));
   console.log(await promise);

@@ -265,6 +265,9 @@ pub(crate) struct Program {
     /// V38 view protocol: the view prelude's event dispatcher, called by the
     /// synthesized `varta.view_abi.event` export with the copied record.
     pub view_event: Option<usize>,
+    /// V38 (`weak_references`): the weak prelude's checkpoint, called by the
+    /// synthesized `varta.weak.checkpoint` export.
+    pub weak_checkpoint: Option<usize>,
     pub types: ValueTypes,
     /// Stored module constants (v32): permanent root slots, initialized by the
     /// `initializers` (dependency order) before `main` runs.
@@ -1012,6 +1015,76 @@ pub(crate) enum Intrinsic {
     /// signature is the static function type of the operand (a checked
     /// conversion of a function held by `unknown`). Allocation-free.
     FunctionSignature,
+    /// V38 (`integrity_levels`, K9 D2): an operation on the integrity-level
+    /// header bits of an object (`varta_common::value::HEAP_INTEGRITY_FLAGS`).
+    /// The operand is an object handle, or a union or `unknown` cell whose
+    /// object payload carries the bits (a primitive payload has none).
+    /// Allocation-free.
+    Integrity(IntegrityOp),
+    /// V38 (`weak_references`, K9 D5): an ephemeron-table operation of the
+    /// weak prelude (`lower::weak`).
+    Weak(WeakOp),
+}
+/// The [`Intrinsic::Integrity`] operations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum IntegrityOp {
+    /// `(object) -> object`: add these bits (`Object.freeze`, `seal`,
+    /// `preventExtensions`) and give the operand back.
+    Set(u32),
+    /// `(object) -> boolean`: whether any of these bits is set.
+    Test(u32),
+    /// `(record or class instance) -> boolean`: `Object.isFrozen` (`frozen`)
+    /// or `Object.isSealed` of an object whose own properties depend on its
+    /// layout; `lower::integrity::guard` expands it per layout before
+    /// emission.
+    Level { frozen: bool },
+}
+/// The ephemeron-table operations of the v38 weak prelude
+/// (`weak_references`, `varta_common::weak`). A table is a `WeakTable`
+/// handle; positions are numbers the prelude keeps below the capacity (a
+/// stray one traps); a key is a value of an object or symbol type, stored
+/// as the identity address of its heap block (a cell's member).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum WeakOp {
+    /// `(capacity) -> table`: a fresh table of empty pairs of these kind
+    /// bits (`weak::KIND_*`), linked into the weak list. Allocates.
+    Table(u32),
+    /// `(table, capacity) -> table`: as [`Self::Table`] with the kind of
+    /// `table`. Allocates.
+    Like,
+    /// `(table) -> number`: one payload word (`weak::CAPACITY_WORD`,
+    /// `USED_WORD`).
+    Word(u32),
+    /// `(table, position) -> number`: 0 empty, 1 vacated, 2 occupied.
+    State,
+    /// `(key) -> number`: the identity hash of a key.
+    Hash,
+    /// `(table, position) -> number`: the identity hash of an occupied
+    /// pair's key.
+    SlotHash,
+    /// `(table, position, key) -> boolean`: whether the pair holds `key`.
+    Holds,
+    /// `(table, position) -> V`: an occupied pair's value, of the result
+    /// type.
+    Value,
+    /// `(table, position, key, value) -> void`: occupy an empty or vacated
+    /// pair, or replace the value of the pair holding `key`.
+    Put,
+    /// `(table, position) -> void`: vacate an occupied pair.
+    Remove,
+    /// `(from, position, to, position) -> void`: copy an occupied pair into
+    /// an empty pair of a table of the same kind.
+    Move,
+    /// `(table) -> void`: empty every pair (the kept objects).
+    Clear,
+    /// `() -> boolean`: whether a collection vacated a notifying pair since
+    /// the last call; resets the flag.
+    Pending,
+    /// `(first: WeakKey, second) -> boolean`: whether `second` is the same
+    /// object or symbol as `first` (SameValue for a weak key).
+    Same,
+    /// `() -> void`: a complete collection (the test-only `gc()`).
+    Collect,
 }
 impl Intrinsic {
     /// The operand that a [`Self::Collection`] probe takes as a key slot
@@ -1349,6 +1422,9 @@ pub(crate) enum Statement {
         shape: u32,
         slots: [u32; 4],
         values: Vec<Expr>,
+        /// V38 (`symbol_values`): the symbol-keyed members instead of the
+        /// string-keyed ones (`Object.getOwnPropertySymbols`).
+        symbols: bool,
     },
     /// V38: rewrite the insertion order of the fresh record in local
     /// `target` (of record `shape`): append, in order and skipping slots

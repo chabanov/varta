@@ -9,13 +9,16 @@ fn word(offset: usize) -> wasm_encoder::MemArg {
     }
 }
 impl Emitter<'_> {
+    /// The present members of `shape` in `source`, compacted into `target`
+    /// in own-key order: integer keys ascending, then string keys in
+    /// insertion order, or (`symbols`) the symbol-keyed members in insertion
+    /// order (§10.1.11.1 OrdinaryOwnPropertyKeys).
     pub(super) fn record_enumerate(
         &mut self,
-        source: u32,
-        target: u32,
-        shape: u32,
+        (source, target, shape): (u32, u32, u32),
         slots: [u32; 4],
         entries: &[Expr],
+        symbols: bool,
     ) -> Result<()> {
         let source = self.local_slots[source as usize];
         let target = self.local_slots[target as usize];
@@ -47,6 +50,14 @@ impl Emitter<'_> {
             // V38 (`object_accessors`): getter and setter fields of an object
             // with accessors are not properties.
             if crate::lower::object_accessors::hidden_field(&field.name) {
+                continue;
+            }
+            // V38 (`symbol_values`): a symbol-keyed member is no string key.
+            if crate::modules::symbol_keys::is_symbol_key(&field.name) != symbols {
+                continue;
+            }
+            if symbols {
+                names.push(slot);
                 continue;
             }
             let integer = field

@@ -1,0 +1,5 @@
+\b(\x63at|\x64og)s?\b
+Dog
+0 6
+a|1|b|~|c
+Invalid regular expression: /(/u: Unterminated group

@@ -14,6 +14,21 @@ export const registry = freeze({
     "time.now",
     "time.timer"
   ],
+  "console": {
+    "logPrefix": "varta log: ",
+    "stderr": [
+      {
+        "method": "error",
+        "prefix": "varta error: ",
+        "word": 0
+      },
+      {
+        "method": "warn",
+        "prefix": "varta warn: ",
+        "word": 1
+      }
+    ]
+  },
   "effects": {
     "clock": {
       "capability": "time.now",
@@ -910,6 +925,26 @@ export const registry = freeze({
       ],
       "scheduler": false,
       "stringResult": false,
+      "timerBookkeeping": false
+    },
+    {
+      "admittedUnder": [],
+      "capability": null,
+      "instanceBookkeeping": false,
+      "kvBookkeeping": false,
+      "minHostAbi": 34,
+      "name": "console_render",
+      "networkBookkeeping": false,
+      "params": [
+        "i32",
+        "i64"
+      ],
+      "resultGlobals": true,
+      "results": [
+        "i32"
+      ],
+      "scheduler": false,
+      "stringResult": true,
       "timerBookkeeping": false
     },
     {
@@ -2817,6 +2852,27 @@ export const registry = freeze({
       "name": "log_i32",
       "networkBookkeeping": false,
       "params": [
+        "i32"
+      ],
+      "resultGlobals": false,
+      "results": [],
+      "scheduler": false,
+      "stringResult": false,
+      "timerBookkeeping": false
+    },
+    {
+      "admittedUnder": [
+        "checked-f64-utf16-v38"
+      ],
+      "capability": null,
+      "instanceBookkeeping": false,
+      "kvBookkeeping": false,
+      "minHostAbi": 34,
+      "name": "log_stderr16",
+      "networkBookkeeping": false,
+      "params": [
+        "i32",
+        "i32",
         "i32"
       ],
       "resultGlobals": false,
@@ -5118,6 +5174,28 @@ export const registry = freeze({
       "instanceBookkeeping": false,
       "kvBookkeeping": false,
       "minHostAbi": 34,
+      "name": "regexp_compile",
+      "networkBookkeeping": false,
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "resultGlobals": true,
+      "results": [
+        "i32"
+      ],
+      "scheduler": false,
+      "stringResult": true,
+      "timerBookkeeping": false
+    },
+    {
+      "admittedUnder": [],
+      "capability": null,
+      "instanceBookkeeping": false,
+      "kvBookkeeping": false,
+      "minHostAbi": 34,
       "name": "regexp_exec",
       "networkBookkeeping": false,
       "params": [
@@ -5275,6 +5353,27 @@ export const registry = freeze({
       ],
       "scheduler": false,
       "stringResult": false,
+      "timerBookkeeping": false
+    },
+    {
+      "admittedUnder": [],
+      "capability": null,
+      "instanceBookkeeping": false,
+      "kvBookkeeping": false,
+      "minHostAbi": 34,
+      "name": "string_normalize16",
+      "networkBookkeeping": false,
+      "params": [
+        "i32",
+        "i32",
+        "f64"
+      ],
+      "resultGlobals": true,
+      "results": [
+        "i32"
+      ],
+      "scheduler": false,
+      "stringResult": true,
       "timerBookkeeping": false
     },
     {
@@ -9681,7 +9780,7 @@ export const registry = freeze({
           18
         ]
       },
-      "admittedImports": 54,
+      "admittedImports": 55,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v9",
@@ -9761,7 +9860,8 @@ export const registry = freeze({
       "stateError": "invalid timer operation",
       "unref": 2
     },
-    "truncated": " [reason truncated]"
+    "truncated": " [reason truncated]",
+    "weakCheckpointExport": "varta.weak.checkpoint"
   },
   "schemaVersion": 1,
   "values": {
@@ -9797,6 +9897,10 @@ export const registry = freeze({
     "firstPageEnd": 65536,
     "flagsOffset": 4,
     "headerBytes": 16,
+    "integrity": {
+      "flags": 57344,
+      "version": 18
+    },
     "legacyStringBytes": 1048576,
     "linkOffset": 8,
     "maxKeyBytes": 256,

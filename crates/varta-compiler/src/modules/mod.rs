@@ -91,6 +91,9 @@ pub(crate) struct Unit {
     /// V38 (`symbol_values`): the module's exported `unique symbol`
     /// constants with their member keys ([`symbol_keys`]).
     pub symbols: symbol_keys::Keys,
+    /// V38 (`symbol_values`): the module's own `unique symbol` constants, by
+    /// local name, with their member keys.
+    pub symbol_constants: symbol_keys::Keys,
     /// TSX `class`/`className` expressions that compose a class name from
     /// parts at run time (see [`crate::classes`]).
     pub class_compositions: Vec<crate::classes::Composition>,
@@ -288,16 +291,19 @@ impl Builder<'_> {
         text::check_stylesheets(&ast, &imports, &self.graph.units)?;
         // V38 (`symbol_values`): members keyed by `unique symbol` constants
         // and well-known symbols become ordinary members with stable keys.
-        let symbols = if self.profile.symbol_values() && !engine::is_prelude(&input.path) {
-            symbol_keys::rewrite(
-                &mut ast,
-                self.graph.order.len(),
-                (&imports, &exports),
-                &self.graph.units,
-            )
-        } else {
-            symbol_keys::Keys::new()
-        };
+        // The RegExp prelude defines symbol-keyed protocol methods too.
+        let symbol_keyed = !engine::is_prelude(&input.path) || input.path == Path::new(engine::REGEXP.path);
+        let (symbols, symbol_constants) =
+            if self.profile.symbol_values() && symbol_keyed {
+                symbol_keys::rewrite(
+                    &mut ast,
+                    self.graph.order.len(),
+                    (&imports, &exports),
+                    &self.graph.units,
+                )
+            } else {
+                (symbol_keys::Keys::new(), symbol_keys::Keys::new())
+            };
         self.graph.order.push(input.path.clone());
         self.graph.units.insert(
             input.path,
@@ -311,6 +317,7 @@ impl Builder<'_> {
                 declarations,
                 class_compositions,
                 symbols,
+                symbol_constants,
             },
         );
         Ok(())

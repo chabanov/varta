@@ -30,14 +30,18 @@ pub(super) fn canonical_layout(id: u32, shapes: &[ir::RecordShape]) -> LayoutKey
 }
 
 /// The static descriptor of layout `key` under value layout `version`;
-/// `byte_array` is the `Uint8Array` array type id (v38 `byte_values`),
-/// whose fields carry the byte-array tag.
+/// `tags` names the types with their own value tags (the `Uint8Array`
+/// array type, v38 `byte_values`; the symbol class, `symbol_values`).
+/// Under value18 the descriptor ends
+/// with the display trailer of its shape (`displays`, v38 `node_console`;
+/// a shape missing from it is a structural record).
 pub(super) fn descriptor(
     key: &LayoutKey,
     shapes: &[ir::RecordShape],
     strings: &BTreeMap<Vec<u8>, u32>,
     version: u32,
     tags: ir::OwnTags,
+    displays: &BTreeMap<u32, (abi::RecordDisplay, String)>,
 ) -> Result<Vec<u8>> {
     let shape = &shapes[key.0 as usize];
     let mut bytes = Vec::new();
@@ -89,6 +93,14 @@ pub(super) fn descriptor(
         for word in 0..abi::presence_words(count) {
             bytes.extend(((edges >> (word * abi::PRESENCE_WORD_BITS)) as u32).to_le_bytes());
         }
+    }
+    if abi::display_layout(version) {
+        let (display, name) = displays
+            .get(&key.0)
+            .map_or((abi::RecordDisplay::Object, ""), |(display, name)| {
+                (*display, name.as_str())
+            });
+        bytes.extend(abi::display_trailer(display, name));
     }
     Ok(bytes)
 }

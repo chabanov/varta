@@ -5,6 +5,40 @@ use alloc::{string::String, vec::Vec};
 #[error("invalid string encoding")]
 pub struct TextError;
 
+/// The forms of `String.prototype.normalize` (ECMA-262 §22.1.3.15), by the
+/// form word of `HostOperation::StringNormalize16`; the standard prelude's
+/// `stringNormalize` numbers them alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NormalizationForm {
+    Nfc = 0,
+    Nfd = 1,
+    Nfkc = 2,
+    Nfkd = 3,
+}
+
+impl NormalizationForm {
+    pub const ALL: [Self; 4] = [Self::Nfc, Self::Nfd, Self::Nfkc, Self::Nfkd];
+
+    /// The form of a binary64 form word; any other word is noncanonical.
+    #[must_use]
+    pub fn from_word(word: f64) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|form| *form as u8 as f64 == word)
+    }
+
+    /// The form's name, as `normalize` takes it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Nfc => "NFC",
+            Self::Nfd => "NFD",
+            Self::Nfkc => "NFKC",
+            Self::Nfkd => "NFKD",
+        }
+    }
+}
+
 #[must_use]
 pub fn encode(text: &str) -> Vec<u8> {
     text.encode_utf16().flat_map(u16::to_le_bytes).collect()

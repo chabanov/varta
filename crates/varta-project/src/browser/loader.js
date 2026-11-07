@@ -359,7 +359,12 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
         if (data?.type === "log" && typeof data.line === "string") {
           streamedBytes += new TextEncoder().encode(data.line).byteLength + 1;
           if (streamedBytes > budgets.outputBytes) { finish(new Error("invalid worker output")); return; }
-          logs.push(data.line); try{onLog(data.line);}catch(error){finish(error);} return;
+          logs.push(data.line);
+          // V38 standard error: forward the text to the page console method
+          // of its level; the line itself stays in the ordered output.
+          const stderr=registry.console.stderr.find((entry)=>data.line.startsWith(entry.prefix));
+          if(stderr!==undefined)console[stderr.method](data.line.slice(stderr.prefix.length));
+          try{onLog(data.line);}catch(error){finish(error);} return;
         }
         if (data?.type !== "result" || !["ok", "failed"].includes(data.status)) { finish(new Error("invalid browser worker message")); return; }
         finish(null, data);
