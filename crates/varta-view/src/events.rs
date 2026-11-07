@@ -1053,6 +1053,7 @@ impl View {
             .element(node)
             .is_some_and(|element| element.focusable() && !element.disabled())
             && self.tree.displayed(node, &self.environment)
+            && crate::style::visible(&self.tree, &self.environment, node)
             && !self.tree.inert(node);
         if focusable {
             for record in focus_records(&mut self.tree, Some(node)) {
@@ -1202,6 +1203,25 @@ impl View {
 
     /// Fire a host event at `node` with the field state as its payload.
     fn fire(&mut self, node: u32, kind: EventKind, trusted: bool) -> Result<(), ViewError> {
+        // HTML §4.10.18.4.1: a trusted `change` and a form's submission set
+        // the user validity of the control and of the form's controls.
+        if trusted {
+            let controls = match kind {
+                EventKind::Change => vec![node],
+                EventKind::Submit => self.tree.subtree_order(node),
+                _ => Vec::new(),
+            };
+            for control in controls {
+                if let Some(element) = self.tree.element_mut(control)
+                    && matches!(
+                        element.tag,
+                        Tag::Input | Tag::Textarea | Tag::Select | Tag::Button
+                    )
+                {
+                    element.editor.user_validity = true;
+                }
+            }
+        }
         let mut record = EventRecord::occurrence(kind, node);
         if let Some(element) = self.tree.element(node) {
             record.seq = element.seq;
@@ -1610,6 +1630,7 @@ impl View {
             .into_iter()
             .filter(|id| {
                 !self.tree.inert(*id)
+                    && crate::style::visible(&self.tree, &self.environment, *id)
                     && self.tree.element(*id).is_some_and(|e| {
                         e.focusable()
                             && !e.disabled()

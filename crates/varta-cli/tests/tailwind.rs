@@ -165,7 +165,8 @@ export function main(): void {
 /// stored, but the engine's selector subset rejects it. Since the first
 /// part of T2 S5 (complex selectors, `:root, :host`) landed, its first
 /// violation is Preflight's pseudo-elements (`::after`, `::before`,
-/// `::backdrop`, `::file-selector-button`), the rest of S5. This asserts
+/// `::backdrop`): since the second part they parse, and the engine refuses
+/// the first one the renderers do not draw yet, the rest of S5. This asserts
 /// that precise violation (it moves as T2 stages land); afterwards
 /// `full_tailwind_application_applies_after_t2` takes over.
 #[test]
@@ -186,10 +187,9 @@ export function main(): void {
         "{diagnostic}"
     );
     assert!(
-        diagnostic["message"]
-            .as_str()
-            .unwrap()
-            .starts_with("invalid stylesheet for View.stylesheet: expected a selector"),
+        diagnostic["message"].as_str().unwrap().starts_with(
+            "invalid stylesheet for View.stylesheet: a pseudo-element the renderers do not draw yet"
+        ),
         "{diagnostic}"
     );
     assert_eq!(

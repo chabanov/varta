@@ -122,7 +122,9 @@ pub(crate) fn initial_override(
         P::FontSize => "medium",
         P::FontWeight | P::FontStyle | P::LineHeight | P::WhiteSpace | P::OverflowWrap => "normal",
         P::TextAlign => "start",
-        P::Cursor => "auto",
+        P::Cursor | P::PointerEvents => "auto",
+        P::Visibility => "visible",
+        P::TextTransform => "none",
         _ => {
             let element = tree.element(id)?;
             let ua = ua_defaults(element.tag).is_some() || ControlKind::of(element).is_some();
@@ -142,11 +144,19 @@ pub(crate) fn initial_override(
                 | P::PaddingRight
                 | P::PaddingBottom
                 | P::PaddingLeft
-                | P::BorderRadius => "0",
+                | P::BorderRadius
+                | P::BorderTopLeftRadius
+                | P::BorderTopRightRadius
+                | P::BorderBottomRightRadius
+                | P::BorderBottomLeftRadius => "0",
                 P::Border | P::BorderTop | P::BorderRight | P::BorderBottom | P::BorderLeft => {
                     "none"
                 }
-                P::BorderStyle => "none",
+                P::BorderStyle
+                | P::BorderTopStyle
+                | P::BorderRightStyle
+                | P::BorderBottomStyle
+                | P::BorderLeftStyle => "none",
                 P::BackgroundColor => "transparent",
                 _ => return None,
             }
@@ -558,8 +568,178 @@ const THEME_BREAKING: &[varta_common::view::CssProperty] = {
         P::BorderStyle,
         P::BorderColor,
         P::BorderRadius,
+        P::BorderTopWidth,
+        P::BorderRightWidth,
+        P::BorderBottomWidth,
+        P::BorderLeftWidth,
+        P::BorderTopStyle,
+        P::BorderRightStyle,
+        P::BorderBottomStyle,
+        P::BorderLeftStyle,
+        P::BorderTopColor,
+        P::BorderRightColor,
+        P::BorderBottomColor,
+        P::BorderLeftColor,
+        P::BorderTopLeftRadius,
+        P::BorderTopRightRadius,
+        P::BorderBottomRightRadius,
+        P::BorderBottomLeftRadius,
     ]
 };
+
+/// An `overflow` keyword (CSS Overflow 3 §3.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Overflow {
+    Visible,
+    Hidden,
+    Clip,
+    Scroll,
+    Auto,
+}
+impl Overflow {
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "visible" => Self::Visible,
+            "hidden" => Self::Hidden,
+            "clip" => Self::Clip,
+            "scroll" => Self::Scroll,
+            "auto" => Self::Auto,
+            _ => return None,
+        })
+    }
+    /// Whether the box is a scroll container on this axis.
+    pub(crate) fn scrolls(self) -> bool {
+        matches!(self, Self::Hidden | Self::Scroll | Self::Auto)
+    }
+}
+
+/// The used `overflow` of each axis, `[x, y]`, of computed values:
+/// `overflow-x`/`overflow-y` (each the component of `overflow` when only
+/// the shorthand is declared; the style engine gives a longhand the
+/// shorthand's component where the shorthand wins), with the rule of
+/// CSS Overflow 3 §3.1: when one axis is a scroll container, `visible` on
+/// the other computes to `auto` and `clip` to `hidden`. `None` for a value
+/// outside the grammar.
+pub(crate) fn overflow(
+    values: &BTreeMap<varta_common::view::CssProperty, String>,
+) -> Option<[Overflow; 2]> {
+    use varta_common::view::CssProperty as P;
+    let shorthand = match values.get(&P::Overflow) {
+        Some(value) => varta_common::view::mapped::split(value)?,
+        None => Vec::new(),
+    };
+    let axis = |longhand: P, index: usize| -> Option<Overflow> {
+        let value = values
+            .get(&longhand)
+            .cloned()
+            .or_else(|| shorthand.get(index).or(shorthand.first()).cloned());
+        value.map_or(Some(Overflow::Visible), |value| Overflow::parse(&value))
+    };
+    let mut axes = [axis(P::OverflowX, 0)?, axis(P::OverflowY, 1)?];
+    if axes.iter().any(|axis| axis.scrolls()) {
+        for axis in &mut axes {
+            *axis = match *axis {
+                Overflow::Visible => Overflow::Auto,
+                Overflow::Clip => Overflow::Hidden,
+                other => other,
+            };
+        }
+    }
+    Some(axes)
+}
+
+/// The radii of each corner (top-left, top-right, bottom-right,
+/// bottom-left) as one `border-radius` value, with `/` and the vertical
+/// radii when a corner is elliptical: each corner's longhand, else its
+/// `border-radius` component. `None` when no corner is declared or a value
+/// is outside the grammar.
+pub(crate) fn border_radius(
+    values: &BTreeMap<varta_common::view::CssProperty, String>,
+) -> Option<String> {
+    use varta_common::view::CssProperty as P;
+    const CORNERS: [P; 4] = [
+        P::BorderTopLeftRadius,
+        P::BorderTopRightRadius,
+        P::BorderBottomRightRadius,
+        P::BorderBottomLeftRadius,
+    ];
+    let shorthand = values.get(&P::BorderRadius);
+    if CORNERS.iter().all(|corner| !values.contains_key(corner)) {
+        return shorthand.cloned();
+    }
+    let mut horizontal = Vec::with_capacity(CORNERS.len());
+    let mut vertical = Vec::with_capacity(CORNERS.len());
+    for (side, corner) in (0u8..).zip(CORNERS) {
+        let value = match (values.get(&corner), shorthand) {
+            (Some(value), _) => value.clone(),
+            (None, Some(shorthand)) => crate::layout::box_component(shorthand, side)?,
+            (None, None) => "0".to_owned(),
+        };
+        let parts = varta_common::view::mapped::split(&value)?;
+        let (h, v) = match parts.as_slice() {
+            [h] => (h.clone(), h.clone()),
+            [h, v] => (h.clone(), v.clone()),
+            _ => return None,
+        };
+        horizontal.push(h);
+        vertical.push(v);
+    }
+    Some(if horizontal == vertical {
+        horizontal.join(" ")
+    } else {
+        format!("{} / {}", horizontal.join(" "), vertical.join(" "))
+    })
+}
+
+/// The used value of an inherited keyword property of node `id` (a text
+/// node takes its parent's): the nearest declared value up its ancestors,
+/// else `initial`.
+pub(crate) fn inherited_keyword(
+    tree: &crate::tree::Tree,
+    env: &Environment,
+    id: u32,
+    property: varta_common::view::CssProperty,
+    initial: &'static str,
+) -> String {
+    let mut at = Some(id);
+    while let Some(node) = at {
+        if tree.element(node).is_some()
+            && let Some(value) = tree.computed_property(node, env, property)
+            && value != INHERIT
+        {
+            return value;
+        }
+        at = tree.nodes.get(&node).and_then(|node| node.parent);
+    }
+    initial.to_owned()
+}
+
+/// Whether node `id` is visible (CSS Display 3 §4.1: `visibility: hidden`
+/// makes a box invisible, and `collapse` is `hidden` outside tables (CSS 2
+/// §11.2); its descendants may be visible again).
+pub(crate) fn visible(tree: &crate::tree::Tree, env: &Environment, id: u32) -> bool {
+    inherited_keyword(
+        tree,
+        env,
+        id,
+        varta_common::view::CssProperty::Visibility,
+        "visible",
+    ) == "visible"
+}
+
+/// Whether node `id` can be the target of pointer events (CSS UI 4 §5.1
+/// with the HTML values of SVG 2 §16.6: `none` never is; an invisible box
+/// is not either).
+pub(crate) fn pointer_target(tree: &crate::tree::Tree, env: &Environment, id: u32) -> bool {
+    visible(tree, env, id)
+        && inherited_keyword(
+            tree,
+            env,
+            id,
+            varta_common::view::CssProperty::PointerEvents,
+            "auto",
+        ) != "none"
+}
 
 /// Whether a control with these cascaded author properties keeps Chrome's
 /// native theme (none of [`THEME_BREAKING`] is declared).

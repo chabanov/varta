@@ -2,14 +2,22 @@
 
 ## Unreleased
 
+- V38 K9 C generator closures and layout spreads, continued: `function*`
+  and `async function*` expressions and (async) generator methods of object
+  literals, with or without `this`, are closures that share their captured
+  bindings; parameter defaults and the method receiver are taken at the
+  call. `Object.assign` into a fresh literal is that spread literal;
+  `Object.values`/`entries` of a view list the object's own values with
+  checked reads; layout spreads reach dictionaries of every value type
+  (values checked at the entry type) and literals with accessors (widened
+  objects keep their accessors). A spread of a value that may hold a
+  widened object now copies its extra properties (they were dropped).
 - V38 K9 C layout spreads, continued: a literal may have several spreads
   of views of other layouts; `Object.keys` and `for...in` of such a view
   list the object's own keys; a class instance held by a record type is
   copied by its declared fields; a spread into a dictionary of `unknown`
   copies every own entry; literals whose methods use `this` and literals
   with accessors may spread closed objects (optional members included).
-  `Object.values`/`entries` and `Object.assign` sources of views of other
-  layouts stay refused by name.
 - V38 K9 C layout spreads and receivers: a spread or rest of a value that
   may hold an object of another layout copies that object's own properties
   in its own-key order, as CopyDataProperties does (lowering runs in a
@@ -38,6 +46,33 @@
   accessors may spread closed objects (CopyDataProperties: a later
   definition replaces an earlier one in its first position). Logging such
   objects waits for the console notation. Earlier profiles are unchanged.
+- K8 T2 S5 (second part), selectors: id and attribute selectors with every
+  matcher and the `i`/`s` flags, `:has()` with bounded relative selectors,
+  and the location, input and tree pseudo-classes (`:any-link`, `:empty`,
+  `:read-write`, `:placeholder-shown`, `:default`, `:indeterminate`,
+  `:valid`/`:invalid` with HTML constraint validation, `:user-valid`/
+  `:user-invalid`, `:open`, `:modal`, `:dir()`, `:lang()`, …) on both hosts;
+  the engine session mirrors attributes, field values, text data and
+  element states. Pseudo-elements parse and are refused until rendered,
+  except `::file-selector-button`. Tailwind acceptance 261 → 275 of 312.
+- K8 T2 S4 remainder (first part), borders, corners, overflow and text:
+  per-side `border-*-width`/`-style`/`-color` and per-corner radius
+  longhands (registry codes 85–100), `<line-width>` keywords and one to four
+  `border-width`/`-style`/`-color` values, `border-style: hidden`, the
+  flow-relative border and corner properties of Logical 1 as mapped
+  properties, `overflow-x`/`overflow-y` (codes 101–102) with `clip` and
+  `scroll` and the Overflow 3 axis rule, `visibility` (103), `text-transform`
+  (104, case, `full-width` and `full-size-kana` natively), `pointer-events`
+  (105), `user-select` (106, with `-webkit-user-select`) and `box-sizing`
+  (107). Natively: borders and corners per side, elliptical radii, one-axis
+  `clip`, classic gutters for `scroll`, invisible boxes skipped for paint,
+  hits, focus and accessibility, hits passing through `pointer-events:
+  none`, and transformed text. Shorthands that win over registered
+  longhands (`border`, the side shorthands, `border-width`/`-style`/
+  `-color`, `border-radius`, `outline`, `overflow`) now give the longhand
+  their component in the computed values, so the browser bridge applies
+  the cascade's result.
+  Tailwind acceptance 251 → 261 of 312 candidates.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
   2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as

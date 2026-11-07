@@ -15909,13 +15909,9 @@ oracle, not the definition.
   `.` and an ident token (Selectors 4 §6.6), so Tailwind's escaped classes
   (`.sm\:flex`, `.w-1\/2`, `.p-0\.5`, `.\[…\]`, `.\!p-1`, `.\32 xl\:…`)
   match the decoded names; class names are case-sensitive.
-- **Selectors (Selectors 4).** Compound selectors (§3.1) of class
-  selectors and the pseudo-classes `:hover` (§9.1), `:active` (§9.2),
-  `:focus-visible` (§9.4), `:disabled` (§12.1.1) and `:checked` (§12.2.1), in
-  any order, with at least one class, or `:root` alone (§13.1); pseudo-class
-  names are ASCII case-insensitive. Specificity is §15 (every admitted
-  simple selector is in the B component). Combinators, type, id,
-  attribute, functional pseudo-classes and pseudo-elements are K8 S5.
+- **Selectors (Selectors 4).** Selector lists of complex selectors, with
+  pseudo-class names ASCII case-insensitive and Selectors 4 §17
+  specificity; the admitted selectors are the S5 items below.
 - **Cascade (Cascade 5 §6).** Declarations are sorted by importance
   (§6.1): normal author declarations by layer, then specificity, then sheet
   id and source order, with inline `set_style` values (element-attached,
@@ -16121,9 +16117,9 @@ oracle, not the definition.
   properties (`border-radius`, `transform`, `object-position`, grid tracks),
   and values of the specifications that native layout lacks
   (`display: inline-block` and the other inner/outer display types,
-  `position: sticky`, intrinsic sizes, `overflow: scroll | clip`,
+  `position: sticky`, intrinsic sizes,
   `white-space: pre-line | break-spaces`, `text-align: justify`, border
-  styles other than `solid`).
+  styles other than `none`, `hidden` and `solid`).
 - **Layout and text properties (S4).** Mapped properties are expanded
   when a stylesheet is parsed (`view::mapped`): the flow-relative box
   properties of CSS Logical 1 §4 (`padding-`, `margin-` and `inset-`
@@ -16150,6 +16146,52 @@ oracle, not the definition.
   `translate`, then `scale`, then `transform` list (Transforms 2 §6.1)
   around the `transform-origin`; letter spacing is added after every
   typographic character unit by the shaper.
+- **Borders, corners, overflow and visibility (S4 remainder).** The
+  per-side longhands `border-{top,right,bottom,left}-{width,style,color}`
+  and `border-{top-left,top-right,bottom-right,bottom-left}-radius`
+  (Backgrounds 3 §3.1–§3.3, §5.1: one or two radii, horizontal then
+  vertical) are registered properties; `border-width`, `border-style` and
+  `border-color` take one to four values by the box rule, `border` and the
+  side shorthands `[<line-width>] || <line-style> || <color>` in any order,
+  `<line-width>` keywords `thin`, `medium`, `thick` lowering to Chrome's
+  1px, 3px and 5px, and the styles `none`, `hidden` (no border) and `solid`
+  (other styles are unrenderable). The flow-relative border and corner
+  properties of Logical 1 §4.4 and §4.6 (`border-inline`, `border-block`,
+  their `-start`/`-end` sides and `-width`/`-style`/`-color` longhands,
+  `border-start-start-radius` and the other three corners) are mapped
+  properties. `overflow-x` and `overflow-y` (Overflow 3 §3.1: `visible`,
+  `hidden`, `clip`, `scroll`, `auto`) are registered and `overflow` takes
+  one or two values; the used values follow §3.1 (when one axis is a scroll
+  container, `visible` on the other becomes `auto` and `clip` `hidden`).
+  Natively `clip` clips its axis at the padding box without a scroll
+  container, `scroll` reserves a classic gutter whether or not the content
+  overflows (an overlay bar takes no space either way), and a curved clip
+  of one axis only (`clip` beside `visible` with `border-radius`) is
+  refused. Native scroll offsets remain vertical: a horizontal scroll
+  container clips its overflow without scrolling it (unchanged from
+  `overflow: auto` before). `visibility` (Display 3 §4.1, inherited;
+  `collapse` is `hidden` outside tables, CSS 2 §11.2) makes a box paint
+  nothing of its own (background, border, outline, glyphs, scrollbars),
+  take no pointer, focus or accessibility node, and name nothing; its
+  visible descendants paint, hit and are exposed. `pointer-events: auto |
+  none` (UI 4 §5.1 with SVG 2 §16.6's HTML values, inherited) lets hits
+  pass through. `text-transform` (Text 3 §2.1, inherited: `capitalize`,
+  `uppercase`, `lowercase`, `full-width`, `full-size-kana`) is applied to
+  the text a box renders after white-space collapsing, case transforms with
+  the Unicode default full mappings (SpecialCasing, the final sigma, the
+  titlecase of `capitalize` at UAX #29 word starts with the preceding text
+  of the inline formatting context as context), then the inverse `<wide>`
+  and `<narrow>` decompositions, then Appendix G's kana; form controls get
+  the user-agent `text-transform: none`, and a transform of a text field's
+  or select's own text is refused natively (its editing offsets are not
+  mapped). `user-select` (UI 4 §6.1) and its legacy alias
+  `-webkit-user-select` are admitted; the native renderer has no document
+  text selection, so they change nothing there. Chrome 156 implements
+  neither `full-width`, `full-size-kana` nor `user-select: contain`: the
+  browser host, which applies computed values to the DOM, renders those
+  values as Chrome does (ignored), a recorded deviation of Chrome.
+  `box-sizing: content-box | border-box` (Box Sizing 3 §4.1) chooses the
+  box `width` and `height` size natively as in CSS.
 - **Selectors (S5, first part; Selectors 4).** Selector lists of complex
   selectors (`stylesheet::selector`): type and universal selectors (the view
   tags), classes, the descendant, child, next-sibling and
@@ -16174,13 +16216,53 @@ oracle, not the definition.
   (`margin`, `padding`, `gap`) gives the longhand its component in the
   computed values, so the bridge's inline order cannot reverse the
   cascade. Native style reads are recomputed when an element's children
-  change order. Refused: pseudo-elements, attribute and id selectors,
-  `:has()`, `:nth-child(… of S)` and the form-validity pseudo-classes.
+  change order. Refused: `:nth-child(… of S)`.
+- **Selectors (S5, second part).** Id selectors (§6.7, exact) and
+  attribute selectors (§6.1–§6.3) with `[att]`, `=`, `~=`, `|=`, `^=`, `$=`,
+  `*=` and the `i`/`s` flags (by default HTML's list of attributes whose
+  values match ASCII case-insensitively; names always do), over the
+  attributes the view protocol carries, which the browser view model
+  mirrors into the engine session as it admits them. `:has()` (§4.5: a
+  relative selector list, not forgiving, no `:has()` or pseudo-element
+  inside) matches when an element in its anchor's subtree (`>`, ` `) or a
+  later sibling's subtree (`+`, `~`) matches the relative selector anchored
+  by its leading combinator; its search is charged to the cascade work
+  estimate as compounds × the elements of the anchor's parent (or of the
+  document when `:has()` is not in the subject compound) × the subtree
+  height, ancestors and siblings. The location, input and tree
+  pseudo-classes: `:any-link`, `:link` (`a` with `href`), `:visited`,
+  `:target`, `:target-within` (never: no history, no fragment navigation),
+  `:empty` (no element child and no text with data), `:scope` (the root),
+  `:defined` (every element), `:dir()` (`ltr` only), `:lang()` (never: no
+  content language), `:read-write`/`:read-only` (a text-like `input` or a
+  `textarea` neither read-only nor disabled), `:placeholder-shown`,
+  `:optional`, `:required`, `:in-range`, `:out-of-range`, `:autofill`
+  (the subset has no `required`, `min`, `max` or autofill), `:default`
+  (a `selected` option, a form's first submit button), `:indeterminate`
+  (a radio group without a checked button, a `progress` without `value`),
+  `:valid`, `:invalid` and `:user-valid`, `:user-invalid` (HTML
+  §4.10.20.3 constraint validation of the subset's controls: a number
+  field is invalid with bad input or a step mismatch against step 1, exact
+  in decimal; a form with an invalid control; disabled and read-only
+  controls are barred), `:open` and `:modal` (a shown dialog). Engine
+  inputs: each element's attributes, a form control's value, whether a
+  text node has data, and the host's element states (open and modal
+  dialogs from the view model; a number field's bad input and the user
+  validity from the DOM bridge, which reads `validity.badInput` and
+  `:user-valid`/`:user-invalid`, and natively from the field's text and a
+  trusted `change` or form submission). Pseudo-elements parse
+  (`::before`, `::after`, `::placeholder`, `::marker`, `::selection`,
+  `::backdrop`, `::file-selector-button`, `::first-line`, `::first-letter`,
+  and the CSS 2 single-colon forms) with specificity of a type selector,
+  and the cascade of an element takes no selector with a pseudo-element.
+  A rule with a pseudo-element the renderers do not draw yet is refused
+  (`PseudoElement`); `::file-selector-button` is admitted and applies to
+  nothing (the view has no file inputs).
 - **Not yet admitted:** `@keyframes`, `@container`, nesting, the rest of
-  S4 (per-side border longhands, `overflow-x`/`-y`, `visibility`,
-  `text-transform`, `rotate`, and the display types and sizes native
+  S4 (`rotate`, line clamping, and the display types and sizes native
   layout lacks: `inline-block`, `inline-flex`, `fit-content`, `sticky`),
-  the rest of S5 (above), and the paint stages S6–S8.
+  the pseudo-elements other than `::file-selector-button` (S5), and the
+  paint stages S6–S8.
 
 **Browser bridge (K8 T3).** The official browser host runs the engine as
 `view-engine.wasm`: `varta-style-wasm`, a `wasm32` shim of `varta-style`

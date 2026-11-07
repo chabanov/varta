@@ -5,7 +5,9 @@
 //! and the cross-host tests drive the native build the same way, so both
 //! hosts decide every style input with this code.
 use crate::prelude::*;
-use crate::{BudgetExceeded, Computed, Document, Element, Environment, SheetError, Styles};
+use crate::{
+    BudgetExceeded, Computed, Document, Element, ElementState, Environment, SheetError, Styles,
+};
 use varta_common::view::{
     CssProperty, DRAFT_MAX_CASCADE_WORK, DRAFT_MAX_EXPANDED_VALUE_BYTES, ROOT_NODE, Tag, css,
 };
@@ -41,6 +43,14 @@ struct Node {
     style: BTreeMap<CssProperty, String>,
     disabled: bool,
     checked: bool,
+    /// Attributes by ASCII-lowercase name (the selectors' inputs).
+    attributes: BTreeMap<String, String>,
+    /// A form control's current value.
+    value: String,
+    /// A text node's data is nonempty.
+    data: bool,
+    /// [`ElementState`] bits.
+    states: u32,
 }
 
 /// The mirrored tree and the selector state.
@@ -126,7 +136,28 @@ impl Document for Mirror {
     fn active(&self, id: u32) -> bool {
         self.contains(self.active, id)
     }
+    fn attribute(&self, id: u32, name: &str) -> Option<&str> {
+        self.nodes
+            .get(&id)?
+            .attributes
+            .get(name)
+            .map(String::as_str)
+    }
+    fn value(&self, id: u32) -> Option<&str> {
+        self.nodes.get(&id).map(|node| node.value.as_str())
+    }
+    fn text_data(&self, id: u32) -> Option<bool> {
+        let node = self.nodes.get(&id)?;
+        node.tag.is_none().then_some(node.data)
+    }
+    fn state(&self, id: u32) -> ElementState {
+        ElementState::from_bits(self.nodes.get(&id).map_or(0, |node| node.states))
+    }
 }
+
+/// At most this many bytes in a mirrored attribute name (the longest name
+/// of the view's attributes is far shorter).
+pub const MAX_ATTRIBUTE_NAME_BYTES: usize = 256;
 
 /// Per-transaction allowances, as a native batch counts them.
 #[derive(Debug, Clone, Copy, Default)]
@@ -314,6 +345,73 @@ impl Session {
             Some(node) => {
                 node.disabled = disabled;
                 node.checked = checked;
+                status::OK
+            }
+            None => status::MISUSE,
+        }
+    }
+    /// `set_attribute`: the attribute `name` (matched ASCII
+    /// case-insensitively) of element `id`; the host has validated it.
+    pub fn set_attribute(&mut self, id: u32, name: &str, value: &str) -> u32 {
+        let Some(tree) = self.tree() else {
+            return status::MISUSE;
+        };
+        if name.is_empty() || name.len() > MAX_ATTRIBUTE_NAME_BYTES {
+            return status::MISUSE;
+        }
+        match tree.nodes.get_mut(&id) {
+            Some(node) if node.tag.is_some() => {
+                node.attributes
+                    .insert(name.to_ascii_lowercase(), value.to_owned());
+                status::OK
+            }
+            _ => status::MISUSE,
+        }
+    }
+    /// `remove_attribute`.
+    pub fn remove_attribute(&mut self, id: u32, name: &str) -> u32 {
+        let Some(tree) = self.tree() else {
+            return status::MISUSE;
+        };
+        match tree.nodes.get_mut(&id) {
+            Some(node) => {
+                node.attributes.remove(&name.to_ascii_lowercase());
+                status::OK
+            }
+            None => status::MISUSE,
+        }
+    }
+    /// A form control's current value (`set_value`, or a user's edit
+    /// outside a transaction), or a text node's data (`create_text`,
+    /// `set_text`), of which only its emptiness is kept.
+    pub fn set_value(&mut self, id: u32, value: &str) -> u32 {
+        let tree = match self.working.as_mut() {
+            Some((mirror, _)) => mirror,
+            None => &mut self.committed,
+        };
+        match tree.nodes.get_mut(&id) {
+            Some(node) if node.tag.is_some() => {
+                node.value = value.to_owned();
+                status::OK
+            }
+            Some(node) => {
+                node.data = !value.is_empty();
+                status::OK
+            }
+            None => status::MISUSE,
+        }
+    }
+    /// The [`ElementState`] bits of `mask` of element `id`, in the
+    /// transaction or, outside one, in the committed tree (the host's
+    /// recorded states).
+    pub fn set_states(&mut self, id: u32, bits: u32, mask: u32) -> u32 {
+        let tree = match self.working.as_mut() {
+            Some((mirror, _)) => mirror,
+            None => &mut self.committed,
+        };
+        match tree.nodes.get_mut(&id) {
+            Some(node) => {
+                node.states = (node.states & !mask) | (bits & mask);
                 status::OK
             }
             None => status::MISUSE,

@@ -92,7 +92,13 @@ try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engin
       const app=globalThis.app=bridge.createViewDom({viewEngine,container:host,interactive:false,...(faces.length?{fonts,fontFaces}:{})});
       const ops=[{name:'stylesheet',sheet:1,text:${JSON.stringify(fixture.sheet)}}];let next=2;
       const texts=${JSON.stringify(fixture.texts??[])};let textId=${TEXT_IDS};
-      const build=(parent,list)=>{for(const n of list){const id=next++;ops.push({name:'create_element',node:id,tag:'div'},{name:'set_class',node:id,text:n.class},{name:'insert',parent,node:id,before:0});build(id,n.children);
+      const extras=${JSON.stringify(fixture.elements??[])};
+      const build=(parent,list)=>{for(const n of list){const id=next++,extra=extras.find(e=>e.class===n.class);
+        ops.push({name:'create_element',node:id,tag:extra?.tag??'div'},{name:'set_class',node:id,text:n.class},{name:'insert',parent,node:id,before:0});
+        for(const [attribute,text] of extra?.attributes??[])ops.push({name:'set_attribute',node:id,attribute,text});
+        if(extra?.value!=null)ops.push({name:'set_value',node:id,text:extra.value,base_seq:0});
+        if(extra?.checked)ops.push({name:'set_checked',node:id,checked:1,base_seq:0});
+        build(id,n.children);
         for(const [owner,text] of texts)if(owner===n.class){const node=textId++;ops.push({name:'create_text',node,text},{name:'insert',parent:id,node,before:0});}}};
       build(1,${JSON.stringify(fixture.nodes)});
       app.apply(codec.encodeViewBatch(ops));
@@ -108,7 +114,12 @@ try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engin
       const root=document.createElement('div');root.setAttribute('data-l0-root','');root.style.cssText=${JSON.stringify(registry.view.defaults.rootStyle)};shadow.append(root);
       let next=2;const nodes=new Map();
       const texts=${JSON.stringify(fixture.texts??[])};
-      const build=(parent,list)=>{for(const n of list){const e=document.createElement('div');e.className=n.class;nodes.set(next++,e);parent.append(e);build(e,n.children);
+      const extras=${JSON.stringify(fixture.elements??[])};
+      const build=(parent,list)=>{for(const n of list){const extra=extras.find(x=>x.class===n.class),e=document.createElement(extra?.tag??'div');e.className=n.class;
+        for(const [attribute,text] of extra?.attributes??[])e.setAttribute(attribute,text);
+        if(extra?.value!=null)e.value=extra.value;
+        if(extra?.checked)e.checked=true;
+        nodes.set(next++,e);parent.append(e);build(e,n.children);
         for(const [owner,text] of texts)if(owner===n.class)e.append(document.createTextNode(text));}};
       build(root,${JSON.stringify(fixture.nodes)});
       return Object.fromEntries([...nodes].map(([id,e])=>{const r=e.getBoundingClientRect();return [id,{x:r.x,y:r.y,width:r.width,height:r.height}];}));

@@ -90,6 +90,9 @@ pub struct FrameMetadata {
     scroll_sources: BTreeMap<u32, scroll::Source>,
     /// Overlay scrollbar frames by scroll container, in paint order.
     overlay_scrollbars: Vec<(u32, BoxRect)>,
+    /// Elements that are never a pointer target (`pointer-events: none` or
+    /// not visible, CSS UI 4 §5.1): hit testing passes through their regions.
+    untargetable: std::collections::BTreeSet<u32>,
 }
 
 /// The four cursor values admitted by the checked CSS subset.
@@ -176,6 +179,7 @@ impl FrameMetadata {
             && self.scroll_layout == other.scroll_layout
             && self.scroll_sources == other.scroll_sources
             && self.overlay_scrollbars == other.overlay_scrollbars
+            && self.untargetable == other.untargetable
     }
     #[must_use]
     pub fn cursor_at(&self, x: f32, y: f32) -> PointerCursor {
@@ -364,7 +368,8 @@ impl FrameMetadata {
             .enumerate()
             .rev()
             .find_map(|(index, (id, rect))| {
-                (x >= rect.x
+                (!self.untargetable.contains(id)
+                    && x >= rect.x
                     && y >= rect.y
                     && x < rect.x + rect.width
                     && y < rect.y + rect.height
@@ -471,6 +476,11 @@ struct Surface<'a> {
     relative_clips: BTreeMap<(usize, usize), groups::RelativeClip>,
     isolation_required: bool,
     capture: Option<inline_groups::Capture>,
+    /// Nodes whose `visibility` is not `visible` (CSS Display 3 §4.1):
+    /// their own boxes and glyphs draw nothing, their visible descendants do.
+    invisible: std::collections::BTreeSet<u32>,
+    /// Whether the node now painting is invisible: its draws are dropped.
+    suppressed: bool,
 }
 impl Surface<'_> {
     fn push_clip(
@@ -529,6 +539,7 @@ impl Surface<'_> {
         mask: Option<&ClipMask>,
     ) {
         if self.failure.is_some()
+            || self.suppressed
             || self.groups.last().is_some_and(|scope| scope.hidden)
             || self
                 .active_clip
@@ -682,7 +693,10 @@ impl Surface<'_> {
         transform: Transform,
         mask: Option<&ClipMask>,
     ) {
-        if self.failure.is_some() || self.groups.last().is_some_and(|scope| scope.hidden) {
+        if self.failure.is_some()
+            || self.suppressed
+            || self.groups.last().is_some_and(|scope| scope.hidden)
+        {
             return;
         }
         if self.capture.is_some() || self.commands.is_some() {
@@ -753,7 +767,10 @@ impl Surface<'_> {
         transform: Transform,
         mask: Option<&ClipMask>,
     ) {
-        if self.failure.is_some() || self.groups.last().is_some_and(|scope| scope.hidden) {
+        if self.failure.is_some()
+            || self.suppressed
+            || self.groups.last().is_some_and(|scope| scope.hidden)
+        {
             return;
         }
         if self.capture.is_some() || self.commands.is_some() {
@@ -996,28 +1013,30 @@ fn border_colors(
     }
     let mut values = std::array::from_fn::<_, 4, _>(|_| "currentcolor".to_owned());
     let variables = style::Variables::new(tree, id, env);
-    let set = |values: &mut [String; 4], property, raw: &str, sides: &[u8]| {
-        let substituted = variables.property(property, raw);
-        let value = substituted.as_deref().map_or("currentcolor", |v| {
-            if property == CssProperty::BorderColor {
-                v
-            } else {
-                shorthand_color(v)
-            }
-        });
+    let set = |values: &mut [String; 4], property, raw: Option<&str>, sides: &[u8]| {
+        let substituted = raw.and_then(|raw| variables.property(property, raw));
         for side in sides {
-            values[usize::from(*side)] = value.to_owned();
+            // `border-color` takes its side's component by the box rule.
+            let value = substituted.as_deref().and_then(|v| match property {
+                CssProperty::BorderColor => layout::box_component(v, *side),
+                CssProperty::BorderTopColor
+                | CssProperty::BorderRightColor
+                | CssProperty::BorderBottomColor
+                | CssProperty::BorderLeftColor => Some(v.to_owned()),
+                _ => Some(shorthand_color(v).to_owned()),
+            });
+            values[usize::from(*side)] = value.unwrap_or_else(|| "currentcolor".to_owned());
         }
     };
     // Cascade 5 §6.1: rule declarations, inline values, important rules.
     let cascade = tree.cascade_refs(id, env);
     for declared in &cascade.normal {
-        if let Name::Property(property) = declared.name {
+        if let Some((property, value)) = layout::declared_value(&variables, declared) {
             set(
                 &mut values,
-                *property,
-                declared.value,
-                border_color_sides(*property),
+                property,
+                value.as_deref(),
+                border_color_sides(property),
             );
         }
     }
@@ -1026,15 +1045,15 @@ fn border_colors(
         .ok_or(PaintError::Unsupported(id))?
         .border_color_inline
     {
-        set(&mut values, *property, raw, &[side]);
+        set(&mut values, *property, Some(raw), &[side]);
     }
     for declared in &cascade.important {
-        if let Name::Property(property) = declared.name {
+        if let Some((property, value)) = layout::declared_value(&variables, declared) {
             set(
                 &mut values,
-                *property,
-                declared.value,
-                border_color_sides(*property),
+                property,
+                value.as_deref(),
+                border_color_sides(property),
             );
         }
     }
@@ -1163,9 +1182,10 @@ fn outline(
                 if property == CssProperty::Outline {
                     CssProperty::Border
                 } else {
-                    CssProperty::BorderWidth
+                    CssProperty::BorderTopWidth
                 },
                 raw,
+                0,
                 units,
                 |p, v| tree.render_reads.validate(env, p, v),
             )
@@ -1181,9 +1201,10 @@ fn outline(
                 if property == CssProperty::Outline {
                     CssProperty::Border
                 } else {
-                    CssProperty::BorderStyle
+                    CssProperty::BorderTopStyle
                 },
                 raw,
+                0,
                 units,
                 |p, v| tree.render_reads.validate(env, p, v),
             )
@@ -1236,8 +1257,8 @@ fn default_focus_ring(
     };
     let properties = tree.computed_read(id, env);
     let paint_bounds = snap::rect(bounds);
-    let radii = properties
-        .get(&CssProperty::BorderRadius)
+    let radii = style::border_radius(&properties)
+        .as_deref()
         .map(|raw| {
             Corners::resolve_paint(raw, bounds, paint_bounds, units)
                 .ok_or(PaintError::Unsupported(id))
@@ -1328,7 +1349,7 @@ fn paint_border(
             Transform::identity(),
             mask.as_ref(),
         );
-    } else if !pixmap.groups.last().is_some_and(|scope| scope.hidden) {
+    } else if !pixmap.suppressed && !pixmap.groups.last().is_some_and(|scope| scope.hidden) {
         // Keep a streamed ordinary prefix, then capture this bounded software
         // operation and following draws exactly as for isolated subtrees.
         pixmap.isolation_required = true;
@@ -1588,9 +1609,13 @@ fn paint_shaped_with(
     } else {
         Some(pixmap.mask(clip)?)
     };
+    // Each glyph draws only when its owner is visible (CSS Display 3 §4.1);
+    // the painting node's own state comes back afterwards.
+    let outer_suppressed = pixmap.suppressed;
     let mut paint = Paint::default();
     let mut glyph_count = 0usize;
     for (line_index, line) in layout.lines().enumerate() {
+        pixmap.suppressed = outer_suppressed;
         if let Some((plan, _)) = underlines.as_mut() {
             plan.paint_line(pixmap, line_index, mask.as_ref());
         }
@@ -1645,6 +1670,9 @@ fn paint_shaped_with(
                     if capture.hidden.contains(&owner) {
                         continue;
                     }
+                }
+                if flow.is_some() {
+                    pixmap.suppressed = pixmap.invisible.contains(&owner);
                 }
                 if pixmap.groups.last().is_some_and(|group| group.hidden) {
                     continue;
@@ -1856,6 +1884,7 @@ fn paint_shaped_with(
             }
         }
     }
+    pixmap.suppressed = outer_suppressed;
     Ok(())
 }
 
@@ -2554,8 +2583,8 @@ fn clip_scopes(
         }
         let properties = tree.computed_read(id, env);
         let bounds = geometry[&id];
-        let radii = properties
-            .get(&CssProperty::BorderRadius)
+        let radii = style::border_radius(&properties)
+            .as_deref()
             .map(|value| {
                 Corners::resolve(value, bounds.rect, units).ok_or(PaintError::Unsupported(id))
             })
@@ -2566,19 +2595,25 @@ fn clip_scopes(
         } else {
             snap::rect(bounds.rect)
         };
-        let paint_radii = properties
-            .get(&CssProperty::BorderRadius)
+        let paint_radii = style::border_radius(&properties)
+            .as_deref()
             .map(|raw| {
                 Corners::resolve_paint(raw, bounds.rect, paint_rect, units)
                     .ok_or(PaintError::Unsupported(id))
             })
             .transpose()?
             .unwrap_or_default();
-        if !radii.is_square()
-            && properties
-                .get(&CssProperty::Overflow)
-                .is_some_and(|value| value != "visible")
-        {
+        let axes = style::overflow(&properties).ok_or(PaintError::Unsupported(id))?;
+        let clipped_axes = axes
+            .iter()
+            .filter(|axis| **axis != style::Overflow::Visible)
+            .count();
+        // A curved clip of one axis only (`clip` beside `visible`) is not
+        // modelled: refused rather than clipped on both axes.
+        if !radii.is_square() && clipped_axes == 1 {
+            return Err(PaintError::Unsupported(id));
+        }
+        if !radii.is_square() && clipped_axes == 2 {
             let widths = layout::border_widths(tree, env, id)?;
             let (padding, inner) = radii.inset(bounds.rect, widths);
             let (paint_padding, paint_inner) = paint_radii.inset(paint_rect, widths);
@@ -2720,6 +2755,12 @@ fn rasterize_inner_scoped(
         isolation_required: false,
         affines: Vec::new(),
         capture: None,
+        invisible: geometry
+            .keys()
+            .copied()
+            .filter(|id| !style::visible(tree, &env, *id))
+            .collect(),
+        suppressed: false,
     };
     let mut pending = order::Order::new(tree, &env, &geometry, |id| {
         flows.get(&id).map(|frame| frame.atoms.as_slice())
@@ -2744,6 +2785,9 @@ fn rasterize_inner_scoped(
     // its transform in CSS pixels.
     let mut transform_scopes: Vec<(u32, usize, usize, crate::transform::Affine)> = Vec::new();
     while let Some((id, phase)) = pending.next() {
+        // An invisible box draws nothing of its own; a backdrop belongs to
+        // its dialog's visibility.
+        pixmap.suppressed = pixmap.invisible.contains(&id);
         if phase == order::Phase::InlineOutline {
             inline_programs.paint_outlines(id, &mut pixmap)?;
             continue;
@@ -2841,9 +2885,8 @@ fn rasterize_inner_scoped(
                     width: paint_bounds.width + 2.0 * expansion_x,
                     height: paint_bounds.height + 2.0 * expansion_y,
                 };
-                let radii = tree
-                    .computed_read(id, &env)
-                    .get(&CssProperty::BorderRadius)
+                let radii = style::border_radius(&tree.computed_read(id, &env))
+                    .as_deref()
                     .map(|raw| {
                         Corners::resolve_paint(raw, bounds.rect, paint_bounds, units)
                             .ok_or(PaintError::Unsupported(id))
@@ -3117,7 +3160,7 @@ fn rasterize_inner_scoped(
                 && properties.contains_key(&CssProperty::Color)
                 && (properties.contains_key(&CssProperty::Outline)
                     || properties.contains_key(&CssProperty::OutlineStyle))
-                && properties.contains_key(&CssProperty::BorderRadius));
+                && style::border_radius(&properties).is_some());
         let input_ready = !matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
             || (themed && element.tag != Tag::Select)
             // An author-styled text field takes user-agent defaults for the
@@ -3138,9 +3181,9 @@ fn rasterize_inner_scoped(
                     .all(|property| properties.contains_key(property)))
                 && (properties.contains_key(&CssProperty::Outline)
                     || properties.contains_key(&CssProperty::OutlineStyle))
-                && properties.contains_key(&CssProperty::BorderRadius));
-        let radii = properties
-            .get(&CssProperty::BorderRadius)
+                && style::border_radius(&properties).is_some());
+        let radii = style::border_radius(&properties)
+            .as_deref()
             .map(|value| {
                 Corners::resolve(value, geometry[&id].rect, units)
                     .ok_or(PaintError::Unsupported(id))
@@ -3157,8 +3200,8 @@ fn rasterize_inner_scoped(
         } else {
             snap::rect(geometry[&id].rect)
         };
-        let paint_radii = properties
-            .get(&CssProperty::BorderRadius)
+        let paint_radii = style::border_radius(&properties)
+            .as_deref()
             .map(|raw| {
                 Corners::resolve_paint(raw, geometry[&id].rect, paint_rect, units)
                     .ok_or(PaintError::Unsupported(id))
@@ -3356,6 +3399,11 @@ fn rasterize_inner_scoped(
             .flatten()
         });
     }
+    let untargetable = geometry
+        .keys()
+        .copied()
+        .filter(|id| tree.element(*id).is_some() && !style::pointer_target(tree, &env, *id))
+        .collect();
     let pixels = pixmap.finish(scene)?;
     Ok(RasterImage {
         pixels,
@@ -3377,6 +3425,7 @@ fn rasterize_inner_scoped(
             scroll_sources: scroll::sources(tree, &geometry, &pending),
             scroll_layout: layout::visual(tree, geometry),
             overlay_scrollbars: overlay_frames,
+            untargetable,
         },
     })
 }
@@ -3456,6 +3505,8 @@ mod flow_text_tests {
             isolation_required: false,
             affines: Vec::new(),
             capture: None,
+            invisible: std::collections::BTreeSet::new(),
+            suppressed: false,
         };
         let result = paint_flow_text(
             &mut surface,
@@ -3533,6 +3584,8 @@ mod retained_tests {
                 isolation_required: false,
                 affines: Vec::new(),
                 capture: None,
+                invisible: std::collections::BTreeSet::new(),
+                suppressed: false,
             };
             let mut reference = Surface {
                 glyphs: None,
@@ -3549,6 +3602,8 @@ mod retained_tests {
                 isolation_required: false,
                 affines: Vec::new(),
                 capture: None,
+                invisible: std::collections::BTreeSet::new(),
+                suppressed: false,
             };
             if complex {
                 let bounds = BoxRect {
