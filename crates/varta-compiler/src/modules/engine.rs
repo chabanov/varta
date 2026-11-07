@@ -539,6 +539,21 @@ pub(crate) const URI: Prelude = Prelude {
     loads: &[],
     lifted: None,
 };
+/// The run-time test of pattern template literal types (v38 `type_level`):
+/// `patternMatches`, called by the checked assertions of `lower::unknown`.
+/// Loaded by a template literal type with a placeholder or an intrinsic
+/// string type ([`TEMPLATE_TYPE`]), the only sources of a pattern type.
+pub(crate) const PATTERNS: Prelude = Prelude {
+    path: "<varta>/builtins/patterns.ts",
+    source: include_str!("../prelude/patterns.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::type_level,
+    extended: None,
+    loads: &[TEMPLATE_TYPE],
+    lifted: None,
+};
 /// The recoverable denial of v37 timer starts (`permissionDenied`, a
 /// `NotAllowedError` `DOMException`); it imports the abort prelude.
 pub(crate) const PERMISSION: Prelude = Prelude {
@@ -826,7 +841,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 22] = [
+pub(crate) const PRELUDES: [&Prelude; 23] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -849,6 +864,7 @@ pub(crate) const PRELUDES: [&Prelude; 22] = [
     &KV,
     &URI,
     &VIEW,
+    &PATTERNS,
 ];
 /// The `fetch` prelude's stream class and its engine-internal members, which
 /// only engine prelude modules may call.
@@ -884,6 +900,12 @@ pub(crate) const INDICES_ARRAY_CLASS: &str = "RegExpIndicesArray";
 /// The reference key of a regular expression literal; no identifier or
 /// property can spell it.
 const REGEXP_LITERAL: &str = "/regexp/";
+/// The reference key of a template literal type with a placeholder or of an
+/// intrinsic string type (`Uppercase<…>` and the others): the types that may
+/// describe a pattern template literal type (v38 `type_level`).
+const TEMPLATE_TYPE: &str = "/template-type/";
+/// The intrinsic string types.
+const INTRINSIC_STRING_TYPES: [&str; 4] = ["Uppercase", "Lowercase", "Capitalize", "Uncapitalize"];
 /// The member name under which [`pending`] lists a constructor.
 pub(crate) const CONSTRUCTOR: &str = "constructor";
 
@@ -1041,6 +1063,24 @@ impl Visit for References<'_> {
         self.found
             .entry(REGEXP_LITERAL.into())
             .or_insert(regex.span);
+    }
+    fn visit_ts_tpl_lit_type(&mut self, template: &ast::TsTplLitType) {
+        if !template.types.is_empty() {
+            self.found
+                .entry(TEMPLATE_TYPE.into())
+                .or_insert(template.span);
+        }
+        template.visit_children_with(self);
+    }
+    fn visit_ts_type_ref(&mut self, reference: &ast::TsTypeRef) {
+        if let ast::TsEntityName::Ident(name) = &reference.type_name
+            && INTRINSIC_STRING_TYPES.contains(&name.sym.as_ref())
+        {
+            self.found
+                .entry(TEMPLATE_TYPE.into())
+                .or_insert(reference.span);
+        }
+        reference.visit_children_with(self);
     }
 }
 

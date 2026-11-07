@@ -4317,16 +4317,65 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   `BTreeSet::contains` alone; `exhausted_by` never counts a pattern as
   covered. A reader that needs a finite text (`string_units`,
   `string_members`, `constants`) gets `None`/skips the pattern and must
-  refuse it by name or fall back to a string index signature; checked
-  assertions and JSON targets refuse patterns (`has_pattern`,
-  `contains_pattern`).
+  refuse it by name or handle it as below. A checked assertion tests each
+  pattern member with `Lower::pattern_test` (the patterns prelude's
+  `patternMatches`, loaded by the `/template-type/` reference key of every
+  template literal type with a placeholder and intrinsic string type; keep
+  its algorithm identical to `patterns::text_matches`); a JSON target with
+  a pattern never takes the direct decoder (`contains_pattern`).
+- Step 4 (2026-11-06): a pattern index signature is a dictionary whose
+  `MixedMembers::keys` holds the pattern key set (`mixed_records::
+  intern_keyed`, built by `dictionaries::index_signature`, `Record` and
+  mapped types through `index_keys::split_patterns`). Every static or
+  computed member access of a dictionary checks its key with
+  `Lower::index_key` after `dictionary_key` (which keeps the key's literal
+  type under v38) and every object literal property with `literal_key`; a
+  new dictionary access form must do the same. The storage is the plain
+  dictionary's: never give a keyed type its own layout.
+- Overload sets (step 4) may hold generic overloads (`FunctionType::generic`,
+  merged through their erased signatures: `merge` makes a position with an
+  erased `unknown` `unknown`) and `this` parameters (the merged receiver is
+  the union). `overloaded_call` takes the call's receiver: plain calls,
+  function field calls (`function_field_call`) and receiver field calls
+  (`receiver_field_call`) all route an overloaded callee there; a generic
+  candidate is instantiated with `erased_instance` and its result checked
+  with `erased_result`.
+- Generic construct signatures (step 4) are `FunctionType::constructors`
+  entries of `type_level::generic_constructors`; their values are selector
+  functions `(number) => unknown`. Only `generic_constructor_value` makes
+  one from a class, only `generic_construct` invokes one, and
+  `fill_constructors` (called by `link` in a fixpoint with
+  `generics::bodies`) is the only place that builds a table. Instance
+  closures are unboxed at their exact instantiated function type, which
+  `fill` guarantees; never widen a selector result to another function
+  type. A conversion between generic construct types goes through
+  `generic_constructors::convert` (it joins the families).
+- Callable objects (step 4): `FunctionType::properties` is the keyed
+  dictionary view (`MixedMembers::keys` = the declared names) of a
+  function's own properties; build it only with `callables::with_properties`.
+  Every value18 closure is `function::PROPERTY_CLOSURE_BYTES` with the
+  properties edge (emitted zero, mask bit always set); read and install the
+  storage only through `Lower::function_property_storage`
+  (`Intrinsic::FunctionProperties`/`SetFunctionProperties`, the latter with
+  the write barrier). Member access reaches it through `class_index` (every
+  read, write, update and `delete` site calls it) and object enumeration
+  through `object_value` (`function_object`); a new member or enumeration
+  form of function values must go through one of them. Closure envelope
+  readers take the value layout version; rebuild `intrinsics.wasm` when the
+  envelope changes. Expando statements are rewritten by `desugar::expandos`
+  and typed by `queries::expando_fields`.
+- `Map`/`Set` probes of a key vector stored as union cells use
+  `KeyHash::Cell` (set by `covariance`); the probe helpers read the cell
+  payload before hashing and comparing.
 - Predicate narrowing of a class instance to a subclass reads through
   `checked_downcast` (descriptor test, `TypeError`), of `unknown` to an
   object type through `assert_value`; `this is T` predicates are recorded per
   (declaring class, method) by `member_signature`.
 - Tests: `varta-runtime` `type_level_tests` with the Node 24 logs of
-  `type_level_cases` (each also rejected by v37), the deviation test
-  `checked_predicates_and_shared_array_reads_deviate_from_node`, the compiler's
+  `type_level_cases` (each also rejected by v37, the step 4 cases with the
+  tsc 5.9 rejections of their invalid forms), the deviation tests
+  `checked_predicates_and_shared_array_reads_deviate_from_node` and the
+  pattern mismatches of `checked_assertions_test_pattern_template_types`, the compiler's
   `composed_class_names_follow_the_checker_types` scanner test, and the
   nine `typescript_handbook` conformance rows.
 

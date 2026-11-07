@@ -303,6 +303,85 @@ fn run_accepted(hole: Hole, run: &[Symbol]) -> bool {
     units.is_some_and(|units| hole_accepts(hole, &units))
 }
 
+/// The placeholder code of `hole` in the patterns prelude
+/// (`prelude/patterns.ts`, `STRING_HOLE` …).
+fn hole_code(hole: Hole) -> f64 {
+    match hole {
+        Hole::String => 0.0,
+        Hole::Number => 1.0,
+        Hole::BigInt => 2.0,
+        Hole::Mapped(Intrinsic::Uppercase) => 3.0,
+        Hole::Mapped(Intrinsic::Lowercase) => 4.0,
+        Hole::Mapped(Intrinsic::Capitalize) => 5.0,
+        Hole::Mapped(Intrinsic::Uncapitalize) => 6.0,
+    }
+}
+
+impl Lower<'_> {
+    /// Whether the string `text` is a value of `pattern` at run time (a
+    /// checked assertion to a pattern type): the patterns prelude's
+    /// `patternMatches(text, texts, holes)`, the test `text_matches` makes
+    /// at compile time.
+    pub(in crate::lower) fn pattern_test(
+        &mut self,
+        text: Expr,
+        pattern: &[Piece],
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        let mut texts: Vec<Vec<u16>> = vec![Vec::new()];
+        let mut holes = Vec::new();
+        for piece in pattern {
+            match piece {
+                Piece::Text(units) => texts.last_mut().map_or((), |last| last.extend(units)),
+                Piece::Hole(hole) => {
+                    holes.push(hole_code(*hole));
+                    texts.push(Vec::new());
+                }
+            }
+        }
+        let profile = self.types.profile;
+        let text_values = texts
+            .iter()
+            .map(|units| {
+                let LiteralValue::String(bytes) = literals::string_value(units, profile) else {
+                    return Err(invalid("missing pattern text"));
+                };
+                Ok(Some(Expr {
+                    span,
+                    ty: Type::String,
+                    kind: E::String(bytes),
+                }))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let number = self.types.number();
+        let hole_values = holes
+            .into_iter()
+            .map(|code| {
+                Some(Expr {
+                    span,
+                    ty: number,
+                    kind: E::Float64(code),
+                })
+            })
+            .collect();
+        let texts = Expr {
+            span,
+            ty: arrays::intern(Type::String, self.types)?,
+            kind: E::Array(text_values),
+        };
+        let holes = Expr {
+            span,
+            ty: arrays::intern(number, self.types)?,
+            kind: E::Array(hole_values),
+        };
+        self.engine_apply(
+            (&crate::modules::engine::PATTERNS, "patternMatches", &[]),
+            vec![text, texts, holes],
+            span,
+        )
+    }
+}
+
 /// Whether the literal value `value` is a value of the literal set `set`:
 /// a member, a string matched by a pattern member, or a pattern covered by
 /// one.

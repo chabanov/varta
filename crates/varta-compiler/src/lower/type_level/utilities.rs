@@ -337,13 +337,12 @@ fn key_names_lenient(keys: Type, types: &mut ir::ValueTypes) -> Result<Option<Ve
 /// `Record<K, V>`: one required `V` property per literal key, or the string
 /// index signature for `string`.
 fn record(keys: Type, value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
-    // A pattern key type (`` `on${string}` ``) is a string index signature
-    // here: its keys are not checked against the pattern.
-    if keys == Type::String
-        || matches!(keys, Type::Literal(LiteralBase::String, id) if types.literals.has_pattern(id))
-    {
+    if split(keys, types).contains(&Type::String) {
         return dictionaries::intern(value, types);
     }
+    // A pattern key type (`` `on${string}` ``) is an index signature of
+    // that key type, beside a property per literal key.
+    let (patterns, keys) = index_keys::split_patterns(keys, types)?;
     let names = key_names(keys, "Record", types)?;
     let fields = names
         .into_iter()
@@ -355,7 +354,10 @@ fn record(keys: Type, value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    records::intern(fields, types)
+    match patterns {
+        Some(patterns) => mixed_records::intern_keyed(value, fields, false, Some(patterns), types),
+        None => records::intern(fields, types),
+    }
 }
 
 /// `Exclude<T, U>` (`keep` false) and `Extract<T, U>` (`keep` true).

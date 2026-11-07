@@ -267,17 +267,11 @@ impl Lower<'_> {
             return Ok(None);
         }
         self.refuse_byte_target("JSON.parse(text) as", name, target, span)?;
-        if literals::contains_pattern(target, self.types) {
-            return Err(self.source.locate(
-                unsupported(
-                    "JSON.parse(text) as a type with a pattern template literal type; parse \
-                     string and match the pattern explicitly",
-                ),
-                span,
-            ));
-        }
+        // A pattern template literal type (v38) is tested by the general
+        // assertion of the parsed graph, never by the direct decoder.
         if self.types.profile.json_decoders()
             && literals::contains(target, self.types)
+            && !literals::contains_pattern(target, self.types)
             // Only the original checked graph conversion may be accelerated.
             // Views, tuples and nominal collections keep their existing path.
             && declared_fields::convertible(target, self.types)

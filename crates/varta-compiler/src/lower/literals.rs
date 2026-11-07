@@ -135,6 +135,16 @@ impl LiteralTypes {
             .iter()
             .any(|value| matches!(value, LiteralValue::Pattern(_)))
     }
+    /// The patterns of a literal set, in set order.
+    pub(super) fn set_patterns(&self, id: u32) -> Vec<type_level::Pattern> {
+        self.set(id)
+            .iter()
+            .filter_map(|value| match value {
+                LiteralValue::Pattern(pattern) => Some(self.pattern(*pattern).clone()),
+                _ => None,
+            })
+            .collect()
+    }
     fn kind(&self, id: u32) -> LiteralKind {
         self.kinds.get(id as usize).copied().unwrap_or_default()
     }

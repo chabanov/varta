@@ -43,6 +43,8 @@ pub(super) fn intern_marked(
         generic,
         construct: false,
         overloads: None,
+        constructors: None,
+        properties: None,
     };
     if let Some(index) = types.functions.iter().position(|ty| ty == &signature) {
         return Ok(Type::Function(index as u32));
@@ -152,7 +154,7 @@ impl Lower<'_> {
         }
         // An overloaded function value (v38 `type_level`).
         if let Some(set) = signature.overloads {
-            return self.overloaded_call(call, callee, set);
+            return self.overloaded_call(call, callee, set, None);
         }
         // A generic function value (v38 `type_level`): its erased signature.
         if let Some(generic) = signature.generic
@@ -251,6 +253,7 @@ impl Lower<'_> {
     }
     pub(super) fn arrow(&mut self, arrow: &ast::ArrowExpr, expected: Option<Type>) -> Result<Expr> {
         required(self.types)?;
+        let expected = type_level::callable_context(expected, self.types)?;
         let original = expected;
         let asynchronous = arrow.is_async && self.types.profile.async_methods();
         if arrow.is_async && !asynchronous && self.types.profile.async_functions() {

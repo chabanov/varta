@@ -149,7 +149,7 @@ impl ReferenceBox {
             // binding cells) is checked; captured payloads stay opaque, and
             // no value reader invokes or decodes the function. Value14 cells
             // still need their owner catalog (`read_with_catalog`).
-            crate::function::check_closure_envelope(data, cell.payload, &module.limits)?;
+            crate::function::check_closure_envelope(data, cell.payload, &module.limits, version)?;
         } else if cell.kind == ValueKind::Bytes {
             // Value18 `Uint8Array` (v38 `byte_values`): its byte storage,
             // every element checked.

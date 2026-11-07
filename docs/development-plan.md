@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with K9 D2 Symbol values and symbol-keyed properties, K9 D4 local-time `Date` with host zone and locale inputs, and the stack-frame fix, on top of the K9 C expression forms with object-literal accessors and top-level `await`, K9 D3 full RegExp, K9 A steps 1–3, K9 B declarations and classes, the K8 CSS engine's font-metric units, logical properties and selectors, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-07, the commit that records it: **4447 Rust tests passed, 0 failures, 25 ignored; 186 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261107-025634-207xufk2/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **205 passed, 4 known unsupported out of 209** after the K9 A (steps 1–3), B, C, D, D2, D3 and D4 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures and full RegExp (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **211 passed, 4 known unsupported out of 215** after the K9 A (steps 1–4), B, C, D, D2, D3 and D4 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures and full RegExp (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -8102,6 +8102,52 @@ signatures (each needs a design decision, recorded in the report), and
 three new Node-pinned `type_level_cases` (each rejected by v37), the shared
 array deviation test, the pattern rejection test and conformance 190 → 193
 passing of 195 → 198 cases (on top of K9 C).
+
+**K9 A step 4 (2026-11-06).** Decisions taken by the coordinator under
+the owner's delegated authority: (1) callable objects with properties give
+function values their own property storage, preferably as an addition to
+the unreleased value layout 18, with `name`/`length` shared with track D1b;
+(2) generic construct signatures get a whole-program pass that gives each
+constructor value a table of the instantiations the program uses, with
+static dispatch where the type arguments are known; (3) overloads with
+`this` or type parameters resolve per call through the overload set, as
+tsc's overload resolution does; (4) the step-3 leniencies close: pattern
+keys of `Record`/mapped types are checked as in tsc, `x as T` and
+`JSON.parse(text) as T` to pattern types test the string at run time
+(`TypeError` on a mismatch, consistent with checked `as`), and `Map`/`Set`
+keyed by re-laid-out covariant class arrays are admitted; (5) `unique
+symbol` and symbol-keyed types wait for track D2's Symbol values in main.
+Admitted in this batch (same selector): index signatures of pattern key
+types (`type_level::index_keys`, `MixedMembers::keys`), run-time pattern
+tests (the patterns prelude, `Lower::pattern_test`), generic and `this`
+overloads (`overloads::overloaded_call` with `erased_instance`), generic
+construct signatures (`type_level::generic_constructors`, selector-function
+tables filled in a fixpoint with the generic bodies) and `KeyHash::Cell`
+probes for collections whose key vector holds union cells; and callable
+objects with properties (`type_level::callables`): every value18 closure
+gains a property storage edge (32 bytes, an addition to the unreleased
+value layout 18, so no new value ABI), which holds an ordinary dictionary
+storage record of the function's own properties; callable object types,
+function/object intersections, `Object.assign(fn, …)` and module-level
+expando assignments type it. No value ABI or host import changes;
+`intrinsics.wasm` is rebuilt for the closure envelope check. Still refused
+by name: a construct signature with properties, the own `name`/`length` of
+a callable object (coordinated with track D1b, which gives functions their
+spec `name`), expando assignments in function bodies, overload sets where
+only some overloads declare `this`, overloaded generic construct
+signatures. Decision (5) is met by track D2's merge: `unique symbol` is a
+`symbol` and unique symbols key members (symbol stream).
+Console output of a function's own properties is left to track D1's
+inspector. Open item to close (a type-checking gap, not a deviation): a
+class converted to a generic construct type is checked only for the
+instantiations the program constructs, where tsc checks the conversion for
+every instantiation, so Varta accepts some programs tsc rejects. Owner
+list: the `TypeError` of a checked assertion of a function held by
+`unknown` to another signature, under the approved checked reads at
+TypeScript's unsoundness. Evidence: six Node-pinned `type_level_cases` (each rejected by
+v37) with the tsc 5.9 rejections of their invalid forms, the pattern and
+function assertion deviation tests and six conformance cases (205 → 211
+passing of 209 → 215, after track D2 and D4).
 
 **Release readiness** additionally needs, after K9 and K8 merge: the release
 profile frozen (v38 becomes a released profile; later admissions go to a new

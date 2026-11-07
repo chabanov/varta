@@ -140,7 +140,12 @@ impl Walker<'_> {
         depth: usize,
     ) -> Result<(), ValueAbiError> {
         self.node(depth)?;
-        let view = ClosureView::read_envelope_within(self.data, handle, &self.module.limits)?;
+        let view = ClosureView::read_envelope_within(
+            self.data,
+            handle,
+            &self.module.limits,
+            crate::value::FUNCTION_VALUE_VERSION,
+        )?;
         let catalog = self.catalog;
         self.charge(catalog.functions.len() as u64 + MAX_CAPTURES as u64 * 8)?;
         let schema = catalog

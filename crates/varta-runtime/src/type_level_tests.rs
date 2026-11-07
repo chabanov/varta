@@ -337,6 +337,238 @@ fn class_arrays_viewed_as_ancestor_arrays_are_one_array() {
     );
 }
 
+#[test]
+fn checked_assertions_test_pattern_template_types() {
+    case(
+        include_str!("type_level_cases/pattern_checks.ts"),
+        &[
+            "onClick on onon",
+            "12px 1e3px  px 0x1fpx -.5px",
+            "id-42 HELLO WORLD Click:3",
+            "id-0x1F id-0 id--5 id-0b101",
+            "Click:1 Ab:3 \u{c9}: 2 1:1",
+            "auto #fff #",
+            "onKey 1px,2.5px -",
+            "onA  id-7",
+        ],
+    );
+    // A string that does not match the pattern fails the checked assertion
+    // with `TypeError`, like every checked `as` (Node continues with the
+    // value, so each line would print the values themselves).
+    let mismatches = r#"type Handler = `on${string}`;
+type Size = `${number}px`;
+type Id = `id-${bigint}`;
+type Event = `${Capitalize<string>}:${number}`;
+interface Config { handler: Handler; sizes: Size[] }
+function attempt(read: () => string): string {
+  try {
+    return read();
+  } catch (error) {
+    return error instanceof TypeError ? "TypeError" : "other";
+  }
+}
+export function main(): void {
+  const values: unknown[] = ["click", "", "On", 3];
+  console.log(values.map((value) => attempt(() => value as Handler)).join(" "));
+  const sizes: unknown[] = ["px", "abcpx", "Infinitypx", "1pxpx"];
+  console.log(sizes.map((value) => attempt(() => value as Size)).join(" "));
+  const ids: unknown[] = ["id-042", "id-", "id-1.5", "id-0x"];
+  console.log(ids.map((value) => attempt(() => value as Id)).join(" "));
+  const events: unknown[] = ["click:1", "A:B:3", "a:2", "A:"];
+  console.log(events.map((value) => attempt(() => value as Event)).join(" "));
+  console.log(attempt(() => (JSON.parse('{"handler":"key","sizes":[]}') as Config).handler));
+  console.log(attempt(() => (JSON.parse('{"handler":"onA","sizes":["2em"]}') as Config).handler));
+}"#;
+    let refused = "TypeError TypeError TypeError TypeError";
+    assert_eq!(
+        run(mismatches),
+        logs(&[refused, refused, refused, refused, "TypeError", "TypeError"])
+    );
+}
+
+#[test]
+fn pattern_index_signatures_admit_only_their_keys() {
+    case(
+        include_str!("type_level_cases/pattern_keys.ts"),
+        &[
+            "1 onClick,onFocus,onBlur 8 true",
+            "onA=5&a=1",
+            r#"1 none {"data-x":"1","data-y":"2"}"#,
+            "main Main 3",
+            "aria-live",
+            "saved doc",
+        ],
+    );
+    // Each is an error in tsc 5.x (TS2353, TS2339, TS7053, TS2741).
+    let prelude = "type H = Record<`on${string}`, number>;\n\
+                   type P = Record<\"id\" | `aria-${string}`, string>;\n";
+    for (statement, wanted) in [
+        (
+            "const h: H = { foo: 1 };",
+            "object literal may only specify known properties, and foo does not exist in type H",
+        ),
+        (
+            "const h: H = { onA: 1 }; console.log(h.foo);",
+            "property foo does not exist on type H",
+        ),
+        (
+            "const h: H = { onA: 1 }; h.zz = 3;",
+            "property zz does not exist on type H",
+        ),
+        (
+            "const h: H = { onA: 1 }; const k = String(1); console.log(h[k]);",
+            "an expression of type string cannot index type H",
+        ),
+        (
+            "const p: P = { \"aria-x\": \"1\" }; console.log(p.id);",
+            "missing the required declared property id",
+        ),
+        (
+            "const h: H = { onA: 1 }; delete h.off;",
+            "property off does not exist on type H",
+        ),
+    ] {
+        let source = format!("{prelude}export function main(): void {{\n  {statement}\n}}");
+        let error = rejected(&source, V38);
+        assert!(error.contains(wanted), "{source}\n{error}");
+    }
+}
+
+#[test]
+fn overloads_with_type_and_this_parameters_resolve_per_call() {
+    case(
+        include_str!("type_level_cases/generic_overloads.ts"),
+        &["[a] 42 true", "3 #2 x", "> hits=2 @ada", "3 4px -1"],
+    );
+    // Each is an error in tsc 5.x (TS2769 no overload matches, TS2684 the
+    // `this` context).
+    let prelude = "interface Pick { <T>(value: T, fallback: T): T; (count: number): string; }\n\
+                   interface Counter { count: number }\n\
+                   interface Counts { (this: Counter): number; (this: Counter, by: number): number; }\n";
+    for statement in [
+        "const pick = ((v: unknown, f?: unknown) => v) as Pick; console.log(pick(\"a\", 1));",
+        "const pick = ((v: unknown, f?: unknown) => v) as Pick; console.log(pick(true));",
+        "const count = function (this: Counter, by?: number): number { return this.count; } as Counts; \
+         const other = { size: 1, count }; console.log(other.count(1));",
+    ] {
+        let source = format!("{prelude}export function main(): void {{\n  {statement}\n}}");
+        let error = rejected(&source, V38);
+        assert!(error.contains("no overload of"), "{source}\n{error}");
+    }
+}
+
+#[test]
+fn generic_construct_signatures_construct_every_used_instantiation() {
+    case(
+        include_str!("type_level_cases/generic_constructors.ts"),
+        &[
+            "Box(3) Box(ada) true 6",
+            "Box(3) Box(ada) true 6",
+            "one 1",
+            "2 3",
+            "3 x true false function",
+        ],
+    );
+    // Each is an error in tsc 5.x (TS2345, TS2322).
+    let prelude = "class Box<T> { value: T; constructor(value: T) { this.value = value; } }\n\
+                   class NumberBox { value: number; constructor(value: number) { this.value = value; } }\n\
+                   interface BoxConstructor { new <T>(value: T): Box<T>; }\n";
+    for (statement, wanted) in [
+        (
+            "const make: BoxConstructor = Box; console.log(new make<number>(\"x\").value);",
+            "mismatch",
+        ),
+        (
+            "const make: BoxConstructor = NumberBox; console.log(new make(\"x\").value);",
+            "mismatch",
+        ),
+    ] {
+        let source = format!("{prelude}export function main(): void {{\n  {statement}\n}}");
+        let error = rejected(&source, V38);
+        assert!(error.contains(wanted), "{source}\n{error}");
+    }
+}
+
+#[test]
+fn collections_keyed_by_shared_class_arrays_hash_the_instances() {
+    case(
+        include_str!("type_level_cases/shared_keys.ts"),
+        &["3", "2 3 false", "2 true", "1 3", "1 2", "1 2"],
+    );
+}
+
+#[test]
+fn callable_objects_hold_own_properties() {
+    case(
+        include_str!("type_level_cases/callable_objects.ts"),
+        &[
+            "5 none function",
+            "count,label true 5",
+            "Hi, Ada",
+            r#"count {"n":1} [null]"#,
+            "2 ms calls,unit",
+            "6px 2 suffix,scale",
+            "8px 10px true",
+            "true true calls,unit,extra",
+            "suffix",
+            "scale",
+        ],
+    );
+    // Each is an error in tsc 5.x (TS2741, TS2339).
+    let prelude = "interface Counter { (step: number): number; count: number }\n";
+    for (statement, wanted) in [
+        ("const c: Counter = (step: number) => step;", "mismatch"),
+        (
+            "const c = ((s: number) => s) as Counter; console.log(c.missing);",
+            "property missing does not exist",
+        ),
+        (
+            "const c = ((s: number) => s) as Counter; c.other = 1;",
+            "property other does not exist",
+        ),
+    ] {
+        let source = format!("{prelude}export function main(): void {{\n  {statement}\n}}");
+        let error = rejected(&source, V38);
+        assert!(error.contains(wanted), "{source}\n{error}");
+    }
+    // A function held by `unknown` asserted to another signature throws
+    // `TypeError`, like every checked assertion (Node calls it: `xpx`).
+    let mismatch = r#"export function main(): void {
+  const held: unknown = (value: number) => `${value}px`;
+  try {
+    const wrong = held as (value: string) => string;
+    console.log(wrong("x"));
+  } catch (error) {
+    console.log(error instanceof TypeError ? "TypeError" : "other");
+  }
+}"#;
+    assert_eq!(run(mismatch), logs(&["TypeError"]));
+}
+
+/// Symbol-keyed own properties of a function share its own-property
+/// storage; the string-key enumerations skip them (Node 24.20.0 output).
+#[test]
+fn callable_objects_hold_symbol_keyed_properties() {
+    let source = r#"const TAG: unique symbol = Symbol("tag");
+interface Tagged {
+  (n: number): number;
+  [TAG]: string;
+  count: number;
+}
+export function main(): void {
+  const f = ((n: number) => n + 1) as Tagged;
+  f[TAG] = "t";
+  f.count = 2;
+  console.log(`${f[TAG]} ${f.count} ${f(1)}`);
+  console.log(Object.keys(f).join(","));
+  console.log(`${"count" in f} ${JSON.stringify([f])}`);
+  for (const key in f) {
+    console.log(key);
+  }
+}"#;
+    case(source, &["t 2 2", "count", "true [null]", "count"]);
+}
+
 /// Intentional deviations from Node (recorded in the type-level contract):
 /// a lying type predicate throws `TypeError` at the narrowed read, where
 /// Node continues with the mistyped value; and an element of a shared class

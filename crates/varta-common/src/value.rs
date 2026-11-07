@@ -49,6 +49,14 @@ pub const HASHED_DICTIONARY_VALUE_VERSION: u32 = 18;
 pub fn bytes_layout(version: u32) -> bool {
     version == HASHED_DICTIONARY_VALUE_VERSION
 }
+/// Whether `version` lays out closures with a property storage edge
+/// (`function::PROPERTY_CLOSURE_BYTES`, v38 `type_level`: functions are
+/// objects with own properties): an addition of the in-development value18
+/// layout, which no earlier layout admits.
+#[must_use]
+pub fn function_properties_layout(version: u32) -> bool {
+    version == HASHED_DICTIONARY_VALUE_VERSION
+}
 /// Whether `version` tags a `Symbol` value with [`ValueKind::Symbol`]
 /// (value18, v38 `symbol_values`, K9 D2): an additive tag of the
 /// in-development value18 layout, which no earlier layout admits.

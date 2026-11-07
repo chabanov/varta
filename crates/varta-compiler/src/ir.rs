@@ -478,6 +478,12 @@ pub(crate) struct MixedMembers {
     /// TypeScript's `object` narrowed by `in` guards: only the proven keys may
     /// be read by name, and dynamic keys are rejected (they would be `any`).
     pub object: bool,
+    /// The key type of a template literal index signature (v38 `type_level`,
+    /// `Record<`on${string}`, T>`): a string literal set of patterns. Only
+    /// the declared fields and keys that are values of this type may be named
+    /// (TypeScript's index signatures of pattern key types); `None` for a
+    /// `string` index signature.
+    pub keys: Option<u32>,
 }
 /// `Promise<T>` (v34): the value type and the private record shape of its
 /// objects; see `lower::promises`.
@@ -648,6 +654,15 @@ pub(crate) struct FunctionType {
     /// overload sets of `lower::type_level`; the physical signature merges
     /// every overload's parameter and result types.
     pub overloads: Option<u32>,
+    /// A generic construct signature (v38 `type_level`, `new <T>(v: T) =>
+    /// Box<T>`): an index into the generic constructors of
+    /// `lower::type_level`. Physically `(selector: number) => unknown`, the
+    /// table of the program's instantiations (`generic_constructors`).
+    pub constructors: Option<u32>,
+    /// A callable object (v38 `type_level`, `{ (): R; count: number }`): the
+    /// dictionary type of its declared own properties, read and written
+    /// through the closure's property storage (`type_level::callables`).
+    pub properties: Option<u32>,
 }
 impl FunctionType {
     pub(crate) fn physical_params(&self) -> Vec<Type> {
@@ -955,6 +970,17 @@ pub(crate) enum Intrinsic {
     /// BigInt keys use the dictionary probes where one exists).
     /// Allocation-free.
     Collection(CollectionProbe, KeyHash),
+    /// V38 (`type_level`, value18 closures): `(function) -> storage`, the
+    /// handle of a function's own-property dictionary storage, zero while it
+    /// has none. Allocation-free.
+    FunctionProperties,
+    /// V38: `(function, storage) -> void`, install a function's own-property
+    /// dictionary storage (with the incremental write barrier).
+    SetFunctionProperties,
+    /// V38: `(function) -> boolean`, whether the closure's semantic
+    /// signature is the static function type of the operand (a checked
+    /// conversion of a function held by `unknown`). Allocation-free.
+    FunctionSignature,
 }
 impl Intrinsic {
     /// The operand that a [`Self::Collection`] probe takes as a key slot
@@ -999,6 +1025,12 @@ pub(crate) enum KeyHash {
     /// Booleans and references: the slot bits themselves (a reference's
     /// stable heap address), compared by identity.
     Identity,
+    /// References whose key vector holds them in union cells (v38
+    /// `type_level`: a class array type that shares arrays with an array of
+    /// a union admitting `null` or `undefined`, `type_level::covariance`):
+    /// the cell's payload, the reference itself, hashed and compared by
+    /// identity against an instance key.
+    Cell,
 }
 /// The most code units one `Intrinsic::Units` call packs.
 pub(crate) const MAX_PACKED_UNITS: usize = 16;

@@ -74,6 +74,10 @@ impl Lower<'_> {
         if call.type_args.is_some() {
             return Err(invalid("Object.assign has no type arguments"));
         }
+        // V38 (`type_level`): own properties onto a function.
+        if let Some(value) = self.function_assign(call)? {
+            return Ok(value);
+        }
         let span = call.span;
         let mut roots = Vec::new();
         let mut body = Vec::new();

@@ -143,10 +143,8 @@ pub(in crate::lower) fn resolve(program: &mut ir::Program) -> Result<()> {
         thrown,
         message,
         locals: Vec::new(),
-        source: None,
     };
     for function in &mut program.functions {
-        rewriter.source = Some(function.source.clone());
         rewriter.locals = std::mem::take(&mut function.locals);
         let rewritten = rewriter.statements(&mut function.body);
         function.locals = std::mem::take(&mut rewriter.locals);
@@ -248,9 +246,8 @@ struct Rewriter<'a> {
     /// The exception channel union and the `string | undefined` message type.
     thrown: Type,
     message: Type,
-    /// The locals and source of the function being rewritten.
+    /// The locals of the function being rewritten.
     locals: Vec<Type>,
-    source: Option<Source>,
 }
 
 fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
@@ -273,12 +270,6 @@ impl Rewriter<'_> {
     fn hidden(&mut self, ty: Type) -> u32 {
         self.locals.push(ty);
         self.locals.len() as u32 - 1
-    }
-    fn locate(&self, error: CompilerError, span: swc_common::Span) -> CompilerError {
-        match &self.source {
-            Some(source) => source.locate(error, span),
-            None => error,
-        }
     }
     /// `throw new TypeError(…)` of a mismatching element read.
     fn mismatch(&self, span: swc_common::Span) -> Result<S> {
@@ -612,18 +603,27 @@ impl Rewriter<'_> {
                     None => Ok(()),
                 }
             }
+            // A `Map`/`Set` keyed by a class whose key vector holds union
+            // cells (the class array type shares arrays with a union array
+            // admitting `null`/`undefined`): its probes read each entry's
+            // payload (`KeyHash::Cell`).
+            E::Intrinsic(ir::Intrinsic::Collection(_, hash), args)
+                if *hash == ir::KeyHash::Identity
+                    && args.first().and_then(array_id).is_some_and(|id| {
+                        matches!(self.plan.stored.get(&id), Some(Stored::Cells(_)))
+                    }) =>
+            {
+                *hash = ir::KeyHash::Cell;
+                Ok(())
+            }
             E::Intrinsic(_, args) => {
                 if args
                     .iter()
                     .filter_map(array_id)
                     .any(|id| self.plan.stored.contains_key(&id))
                 {
-                    return Err(self.locate(
-                        unsupported(
-                            "a collection whose key vector is a class array shared with an array \
-                             of another element representation",
-                        ),
-                        value.span,
+                    return Err(CompilerError::Internal(
+                        "a probe of a key vector with a changed element representation".into(),
                     ));
                 }
                 Ok(())

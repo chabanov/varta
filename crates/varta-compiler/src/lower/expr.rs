@@ -273,7 +273,11 @@ impl Lower<'_> {
                 if self.binding(name.sym.as_ref()).is_err()
                     && let Some(signature) = self.functions.get(name.sym.as_ref()).cloned()
                 {
-                    return self.function_reference(&signature, expression.span());
+                    return self.named_function_value(
+                        name.sym.as_ref(),
+                        &signature,
+                        expression.span(),
+                    );
                 }
                 if let Some(global) = self.global_object(name.sym.as_ref(), expression.span())? {
                     return Ok(global);
@@ -933,7 +937,7 @@ impl Lower<'_> {
         {
             return Ok(value);
         }
-        if call.type_args.is_some() {
+        if call.type_args.is_some() && !self.generic_value_callee(call) {
             return Err(unsupported("generic call"));
         }
         let ast::Callee::Expr(callee) = &call.callee else {

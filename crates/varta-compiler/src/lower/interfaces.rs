@@ -75,6 +75,10 @@ pub(super) fn collect(
     Ok(())
 }
 
+/// An index signature's value type and, for a pattern key type (v38
+/// `type_level`), its pattern key set.
+type IndexSignature = (Type, Option<u32>);
+
 impl Interface {
     pub(super) fn span(&self) -> Span {
         self.parts[0].span
@@ -125,8 +129,8 @@ impl Interface {
                 let (base_name, fields, base_index) = self
                     .base(base, types)
                     .map_err(|e| self.source.locate(e, base.span))?;
-                if let Some(value) = base_index {
-                    self.merge_index(&mut index, value, &base_name)
+                if let Some(signature) = base_index {
+                    self.merge_index(&mut index, signature, &base_name)
                         .map_err(|e| self.source.locate(e, base.span))?;
                 }
                 for field in fields {
@@ -159,7 +163,7 @@ impl Interface {
         match index {
             // A string index signature, own or inherited, makes the interface
             // a mixed index record (v35 `mixed_index_records`).
-            Some(value) => mixed_records::intern(value, fields, false, types),
+            Some((value, keys)) => mixed_records::intern_keyed(value, fields, false, keys, types),
             None => records::intern(fields, types),
         }
         .map_err(|e| self.source.locate(e, self.span()))
@@ -177,10 +181,19 @@ impl Interface {
     /// Combine an own or inherited string index signature. Every merged and
     /// inherited signature must have the same value type: a narrower one would
     /// need another dictionary storage than its base's.
-    fn merge_index(&self, index: &mut Option<Type>, value: Type, from: &str) -> Result<()> {
+    fn merge_index(
+        &self,
+        index: &mut Option<IndexSignature>,
+        value: IndexSignature,
+        from: &str,
+    ) -> Result<()> {
         match *index {
-            Some(existing) if existing != value => Err(unsupported(&format!(
+            Some(existing) if existing.0 != value.0 => Err(unsupported(&format!(
                 "interface {} with index signatures of different value types ({from})",
+                self.name
+            ))),
+            Some(existing) if existing.1 != value.1 => Err(unsupported(&format!(
+                "interface {} with index signatures of different key types ({from})",
                 self.name
             ))),
             _ => {
@@ -193,7 +206,10 @@ impl Interface {
     /// Own members of every declaration with their member spans, and the own
     /// index signature's value type (v35). A merged redeclaration must repeat
     /// the field exactly (TypeScript rule).
-    fn own_fields(&self, types: &mut ir::ValueTypes) -> Result<(OwnFields, Option<Type>)> {
+    fn own_fields(
+        &self,
+        types: &mut ir::ValueTypes,
+    ) -> Result<(OwnFields, Option<IndexSignature>)> {
         let mut own: Vec<(RecordField, Span)> = Vec::new();
         let mut index = None;
         for part in &self.parts {
@@ -201,7 +217,7 @@ impl Interface {
             if types.profile.mixed_index_records() {
                 for member in &part.members {
                     if let ast::TsTypeElement::TsIndexSignature(signature) = member {
-                        dictionaries::index_value(signature, types)
+                        dictionaries::index_signature(signature, types)
                             .and_then(|value| self.merge_index(&mut index, value, &self.name))
                             .map_err(|e| self.source.locate(e, signature.span))?;
                     }
@@ -242,7 +258,7 @@ impl Interface {
         &self,
         base: &ast::TsExprWithTypeArgs,
         types: &mut ir::ValueTypes,
-    ) -> Result<(String, Vec<RecordField>, Option<Type>)> {
+    ) -> Result<(String, Vec<RecordField>, Option<IndexSignature>)> {
         let ast::Expr::Ident(id) = &*base.expr else {
             return Err(unsupported(
                 "interface extends a qualified or computed base",
@@ -263,7 +279,14 @@ impl Interface {
                     .declared(Type::Dictionary(id))
                     .map(|members| members.fields.clone())
                     .unwrap_or_default();
-                Ok((name, fields, Some(types.dictionaries[id as usize].value)))
+                let keys = types
+                    .declared(Type::Dictionary(id))
+                    .and_then(|members| members.keys);
+                Ok((
+                    name,
+                    fields,
+                    Some((types.dictionaries[id as usize].value, keys)),
+                ))
             }
             Type::Class(_) => Err(unsupported(&format!(
                 "interface {} extends class {name}; class instance types are nominal",

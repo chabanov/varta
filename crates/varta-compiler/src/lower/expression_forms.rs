@@ -164,6 +164,11 @@ impl Lower<'_> {
             return Err(CompilerError::Internal("missing receiver function".into()));
         };
         let signature = self.types.functions[index as usize].clone();
+        // Overloads with `this` parameters (v38 `type_level`): the receiver
+        // takes part in selecting the overload.
+        if let Some(set) = signature.overloads {
+            return self.overloaded_call(call, value, set, Some(receiver));
+        }
         if !signature.shape.extended() && call.args.len() != signature.params.len() {
             return Err(invalid("callback argument count mismatch"));
         }

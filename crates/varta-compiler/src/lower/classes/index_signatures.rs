@@ -127,6 +127,10 @@ impl Lower<'_> {
         member: &ast::MemberExpr,
         value: Expr,
     ) -> Result<Expr> {
+        // V38 (`type_level`): a callable object's own properties.
+        if type_level::callable_properties(value.ty, self.types).is_some() {
+            return self.callable_member(member, value);
+        }
         let Type::Class(class) = value.ty else {
             return Ok(value);
         };

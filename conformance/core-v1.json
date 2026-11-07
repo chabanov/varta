@@ -4227,6 +4227,111 @@
       }
     },
     {
+      "id": "ts-callable-objects",
+      "feature": "ts-signatures",
+      "path": "cases/ts-callable-objects.ts",
+      "sha256": "62474969d52d32969313114c3304f29c2150944c6bbc3bb5f929d49a33647455",
+      "stdout": [
+        "varta log: 5 none function",
+        "varta log: count,label true 5",
+        "varta log: Hi, Ada",
+        "varta log: count {\"n\":1} [null]",
+        "varta log: 2 ms calls,unit",
+        "varta log: 6px 2 suffix,scale",
+        "varta log: 8px 10px true",
+        "varta log: true true calls,unit,extra",
+        "varta log: suffix",
+        "varta log: scale"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-pattern-checks",
+      "feature": "ts-template-literal-types",
+      "path": "cases/ts-pattern-checks.ts",
+      "sha256": "0ce370e0688288de35f39e3c94eb2801c8a261b54f87e5e401057c691b3a8f89",
+      "stdout": [
+        "varta log: onClick on onon",
+        "varta log: 12px 1e3px  px 0x1fpx -.5px",
+        "varta log: id-42 HELLO WORLD Click:3",
+        "varta log: id-0x1F id-0 id--5 id-0b101",
+        "varta log: Click:1 Ab:3 É: 2 1:1",
+        "varta log: auto #fff #",
+        "varta log: onKey 1px,2.5px -",
+        "varta log: onA  id-7"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-pattern-keys",
+      "feature": "ts-mapped-types",
+      "path": "cases/ts-pattern-keys.ts",
+      "sha256": "5d18ffc4522e4770e74db53b2fdb35dd6e5600dc77d51f2bbcd908b03a96e8aa",
+      "stdout": [
+        "varta log: 1 onClick,onFocus,onBlur 8 true",
+        "varta log: onA=5&a=1",
+        "varta log: 1 none {\"data-x\":\"1\",\"data-y\":\"2\"}",
+        "varta log: main Main 3",
+        "varta log: aria-live",
+        "varta log: saved doc"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-generic-overloads",
+      "feature": "ts-signatures",
+      "path": "cases/ts-generic-overloads.ts",
+      "sha256": "126962cdee1241473130e89f4ccb4583d53e5bde8a206272662e94c5f4799ba4",
+      "stdout": [
+        "varta log: [a] 42 true",
+        "varta log: 3 #2 x",
+        "varta log: > hits=2 @ada",
+        "varta log: 3 4px -1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-generic-constructors",
+      "feature": "ts-signatures",
+      "path": "cases/ts-generic-constructors.ts",
+      "sha256": "a62f0fcaa7fbabde01bc62fdee85dc66b418cdfb1620f1061e43cadca29d9f4a",
+      "stdout": [
+        "varta log: Box(3) Box(ada) true 6",
+        "varta log: Box(3) Box(ada) true 6",
+        "varta log: one 1",
+        "varta log: 2 3",
+        "varta log: 3 x true false function"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-shared-keys",
+      "feature": "ts-class-subtyping",
+      "path": "cases/ts-shared-keys.ts",
+      "sha256": "fa373e3ee52e4a9f416cc08cbac60c6645c97cebf44aa507054f01782378a05b",
+      "stdout": [
+        "varta log: 3",
+        "varta log: 2 3 false",
+        "varta log: 2 true",
+        "varta log: 1 3",
+        "varta log: 1 2",
+        "varta log: 1 2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "enum-members",
       "feature": "enums",
       "path": "cases/enum-members.ts",
