@@ -151,6 +151,14 @@ impl Session {
     fn tree(&mut self) -> Option<&mut Mirror> {
         self.working.as_mut().map(|(mirror, _)| mirror)
     }
+    /// Set the view's font set (the first available fonts of the
+    /// font-relative units), committed and in an open transaction alike.
+    pub fn set_fonts(&mut self, fonts: alloc::sync::Arc<crate::fonts::FontSet>) {
+        if let Some((mirror, _)) = self.working.as_mut() {
+            mirror.styles.set_fonts(alloc::sync::Arc::clone(&fonts));
+        }
+        self.committed.styles.set_fonts(fonts);
+    }
     /// Start a transaction over a copy of the committed tree.
     pub fn begin(&mut self) {
         self.working = Some((self.committed.clone(), Counters::default()));

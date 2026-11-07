@@ -7987,6 +7987,66 @@ Owner decision of the same day: (2) and (5) are required by the standards.
   for system fonts. Sums with percentages in `border-radius`, `transform`,
   `object-position` and grid tracks wait for those consumers.
 
+#### K8 T2 font-metric units (2026-11-06)
+
+The remainder of item (2), by the owner decision "fonts plus host" of the
+same day ([contract](architecture.md#view-css-engine-k8-t2-and-t3)).
+
+- **Engine** (`varta_style::fonts`): an element's first available font is
+  the first family of its computed list that the view's font set has a face
+  for (named or aliased; a generic family without a packaged face is the
+  host's), else the default family, else the host's default font; faces are
+  matched by Fonts 4 §5.2 step 4. Packaged faces are read from their own
+  tables: `OS/2` x-height (else the `x` outline's top, else 0.5em), `OS/2`
+  cap-height (else the ascent), the `0` and `水` advances (`hmtx` + `HVAR`;
+  else 0.5em, 1em), and for `normal` the shaper's ascent/descent/line gap
+  each rounded at the used size (Blink's line spacing); variable faces at
+  `wght`/`opsz`/`ital` with `avar` and `MVAR`. The engine now also computes
+  `font-weight` (Fonts 4 §2.2.1 `bolder` table, which the native renderer
+  had approximated) and `font-style` with the user-agent rows, and the
+  native renderer takes them from it. In `font-size`, `ex`/`cap`/`ch`/`ic`
+  are the parent's; `lh` with `normal` and `rlh` now resolve.
+- **Hosts.** Natively `TextMeasurer::font_set` gives the view its faces
+  (`View::set_fonts`, set by the runtime with the layout measurer) and the
+  desktop shell's `host_fonts` measures the platform fonts through CoreText
+  exactly as Blink on macOS does (rounded CoreText ascent/descent/leading
+  with the enlarged ascent of Times/Helvetica/Courier, CoreText cap-height,
+  the `x` glyph's CoreText bounds, advances from the platform face's tables
+  at its location): Chrome's values for `serif`, `sans-serif`, `monospace`,
+  `system-ui` (regular, bold; 13, 16, 100 px) and the default font are
+  reproduced to binary32 precision (`font_metrics` test). On the web the
+  engine module gains its one import, `varta_view.font_metrics`; the DOM
+  bridge answers it by reading `1ex`/`1cap`/`1ch`/`1ic`/`1lh` of a hidden
+  probe through `computedStyleMap` (no metric logic in JavaScript), and
+  passes the packaged faces' bytes to the engine (`view_engine_face`).
+  Found on the way: the bridge's packaged-`monospace` flag compared a
+  quoted lookup and was always set; fixed.
+- **Dependency record:** `read-fonts` 0.41.0 (already locked through
+  skrifa) becomes a direct dependency of `varta-style`; its `no_std` build,
+  which the wasm32 engine needs, requires its `libm` feature, adding the
+  one package `core_maths` 0.1.1 (MIT, a float extension trait over the
+  locked `libm`). Alternatives rejected: skrifa (its `no_std` feature needs
+  the same package), and a second hand-written sfnt reader. The engine
+  module grows from 467 to 508 KB.
+- **Evidence.** Cross-host corpus: twelve new font cases decided identically
+  by the Wasm module, the native session and the native renderer, and by
+  the browser view model in Node, with a deterministic stand-in for the
+  platform's measurements. Chrome oracle: three new scenes (platform fonts,
+  font-metric references in `font-size`/`line-height`/registered lengths
+  and math, packaged faces with weights and a variable face); `bridge` 621
+  and `platform` 609 checks pass at 1x, 1.25x and 2x, every new box placed
+  at whole pixels so each edge carries one length Chrome snaps to 1/64 px.
+  Fixtures: `scripts/generate-style-metrics-fonts.py`.
+- **Recorded deviations of Chrome on macOS** (packaged faces only; none for
+  system fonts): it measures the `x` outline rather than the `OS/2`
+  x-height (equal in the fixtures), uses CoreText's estimates for faces
+  without `OS/2` x/cap-heights, applies no `MVAR` cap-height delta, and
+  ignores `USE_TYPO_METRICS`. Not done: other platforms' measurements
+  (Linux falls back to Values 4 without metrics), weights other than normal
+  and bold for multi-weight platform families (CoreText traits).
+- **Tailwind acceptance:** unchanged at 70.4% of 588 uses; no verdict of the
+  corpus's 312 application candidates changed (it uses none of these units).
+
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
 Goal: the native HTTP server runs at current standards, secure and fast enough

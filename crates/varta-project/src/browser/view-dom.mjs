@@ -10,6 +10,9 @@ const eventKinds = new Map(V.events.map((entry) => [entry.name, entry]));
 const keyNames = new Map(V.keys.map((entry) => [entry.code, entry.domKey]));
 const rootAttribute = /^\[([a-z0-9-]+)\]$/.exec(V.defaults.rootSelector)[1];
 const composingKeyCode = 229;
+/** The units whose references `fontMetrics` measures, in the engine's
+ * order (`ex`, `cap`, `ch`, `ic`, and `lh` under `line-height: normal`). */
+const FONT_UNITS = ["ex", "cap", "ch", "ic", "lh"];
 const mountedContainers=new WeakMap();
 const fieldTag = (node) => ["input", "textarea", "select"].includes(node?.localName);
 const checkableField = (node) => node?.localName === "input" && ["checkbox", "radio"].includes(node.type);
@@ -41,14 +44,26 @@ export function encodeViewEvent(kind, values = {}) {
 }
 
 /** A DOM boundary with no HTML parsing, ambient navigation or guest JS. */
-export function createViewDom({ container, viewEngine, onEvent = () => {}, onError = error => {queueMicrotask(()=>{throw error;});}, onTitle = () => {}, onVisualInput, assets = new Map(), fonts = createFontNamespace(crypto.randomUUID().replaceAll('-', '')), linkRequested = () => false, copyText = async () => V.statuses.not_allowed, openUrl = () => V.statuses.not_allowed, interactive = true } = {}) {
+export function createViewDom({ container, viewEngine, onEvent = () => {}, onError = error => {queueMicrotask(()=>{throw error;});}, onTitle = () => {}, onVisualInput, assets = new Map(), fonts = createFontNamespace(crypto.randomUUID().replaceAll('-', '')), fontFaces = [], linkRequested = () => false, copyText = async () => V.statuses.not_allowed, openUrl = () => V.statuses.not_allowed, interactive = true } = {}) {
   if(onVisualInput!==undefined&&typeof onVisualInput!=='function')throw new TypeError('invalid visual timing callback');
   if (!container?.isConnected) throw new TypeError("view container must be attached");
   if(mountedContainers.has(container))throw new TypeError("view container already hosts an active session");
-  const model = createViewModel({ linkRequested, viewEngine }), document = container.ownerDocument, window = document.defaultView, Sheet = window.CSSStyleSheet;
+  const document = container.ownerDocument, window = document.defaultView, Sheet = window.CSSStyleSheet;
+  // The style engine decides which font is an element's first available
+  // one and reads packaged faces itself; a font the browser renders with
+  // its own (a generic family, the default font) is measured here with
+  // the browser's own units, on a hidden probe in the view's shadow tree.
+  const probe = document.createElement("div"); probe.style.display = "none";
+  const fontMetrics = (kind, family, weight, italic, size) => {
+    const style = probe.style;
+    style.fontFamily = kind === "default" ? "initial" : kind === "generic" ? family : fonts.value(JSON.stringify(family));
+    style.fontWeight = String(weight); style.fontStyle = italic ? "italic" : "normal"; style.fontSize = `${size}px`; style.lineHeight = "normal";
+    return FONT_UNITS.map((unit) => { style.wordSpacing = `1${unit}`; return probe.computedStyleMap().get("word-spacing").value; });
+  };
+  const model = createViewModel({ linkRequested, viewEngine, fontMetrics });
   const root = document.createElement("div"); root.setAttribute(rootAttribute, "");
   const shell=document.createElement("div");shell.style.height="100%";container.replaceChildren(shell);
-  const shadow = shell.attachShadow({ mode: "closed" }); shadow.append(root);
+  const shadow = shell.attachShadow({ mode: "closed" }); shadow.append(root, probe);
   mountedContainers.set(container,true);
   shadow.addEventListener("click",preventViewNavigation,{capture:true});shadow.addEventListener("submit",preventViewNavigation,{capture:true});
   const base = new Sheet();
@@ -62,6 +77,10 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
   // inputs are recorded here: the viewport, the media preferences and the
   // pointer and focus states the platform reports.
   const applied = new WeakMap(), engine = model.engine;
+  if (engine) {
+    for (const face of fontFaces) if (engine.face(face.family, face.bytes, face.generics) !== 0) throw new TypeError("invalid packaged font face");
+    engine.defaultFamily(fonts.defaultName);
+  }
   const idOf = (element) => { for (let at = element; at; at = at.parentNode) if (ids.has(at)) return ids.get(at); return W.noNode; };
   const deepest = (selector) => { const list = shadow.querySelectorAll(selector); return list.length ? idOf(list[list.length - 1]) : W.noNode; };
   function restyle() {
@@ -71,7 +90,7 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
     // `medium`: the base of computed font sizes. A generic `monospace` that
     // names a packaged face keeps no fixed-font size.
     const medium = Number.parseFloat(window.getComputedStyle(container).fontSize);
-    const packagedMonospace = fonts.family("monospace") !== "monospace" ? ENGINE_INPUTS.packagedMonospace : 0;
+    const packagedMonospace = fonts.family("monospace", false) !== "monospace" ? ENGINE_INPUTS.packagedMonospace : 0;
     engine.environment(inputs.width, inputs.height, inputs.rootFontSize, Number.isFinite(medium) ? medium : inputs.rootFontSize, inputs.flags | packagedMonospace);
     const focused = shadow.activeElement?.matches?.(":focus-visible") ? idOf(shadow.activeElement) : W.noNode;
     engine.state(focused, deepest(":hover"), deepest(":active"));

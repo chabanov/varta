@@ -1,5 +1,5 @@
 //! Initial, deliberately bounded box-only layout using the shared native engine.
-use crate::style::{self, Environment, Name, UaWeight};
+use crate::style::{self, Environment, Name};
 use crate::text::{TextAlign, TextOptions, TextSource, WhiteSpaceMode};
 use crate::tree::{Content, Tree, border_components, geometry_sides};
 use crate::units::Units;
@@ -958,10 +958,6 @@ pub(crate) fn text_style(
     Ok((resolved.options, families))
 }
 
-/// The range of numeric font weights (CSS Fonts 4 §2.2).
-const MIN_FONT_WEIGHT: f32 = 1.0;
-const MAX_FONT_WEIGHT: f32 = 1000.0;
-
 /// Chrome's minimum logical font size in CSS pixels (the style engine's
 /// [`varta_style::font::MINIMUM_LOGICAL_FONT_SIZE`]).
 #[cfg(test)]
@@ -1006,8 +1002,10 @@ pub(crate) fn resolve_text(
             Some(LineHeight::FontSizeRelative(multiplier))
         }
     };
-    let mut weight = 400.0;
-    let mut italic = false;
+    // The weight and style are the style engine's too (with the user-agent
+    // rows of headings, `strong`, `em` and the control font).
+    let weight = font.weight as f32;
+    let italic = font.italic;
     let mut white_space = WhiteSpaceMode::Normal;
     let mut break_anywhere = false;
     let mut align = TextAlign::Start;
@@ -1017,26 +1015,6 @@ pub(crate) fn resolve_text(
             .element(ancestor)
             .and_then(|element| style::ua_defaults(element.tag))
         {
-            if ua.control_font {
-                if !properties.contains_key(&CssProperty::FontWeight) {
-                    weight = style::NORMAL_FONT_WEIGHT;
-                }
-                if !properties.contains_key(&CssProperty::FontStyle) {
-                    italic = false;
-                }
-            }
-            if !properties.contains_key(&CssProperty::FontWeight) {
-                weight = match ua.weight {
-                    UaWeight::Inherit => weight,
-                    UaWeight::Absolute(value) => value,
-                    UaWeight::Bolder if weight < 400.0 => 400.0,
-                    UaWeight::Bolder if weight < 600.0 => 700.0,
-                    UaWeight::Bolder => 900.0,
-                };
-            }
-            if ua.italic && !properties.contains_key(&CssProperty::FontStyle) {
-                italic = true;
-            }
             if ua.preformatted && !properties.contains_key(&CssProperty::WhiteSpace) {
                 white_space = WhiteSpaceMode::Pre;
             }
@@ -1071,25 +1049,6 @@ pub(crate) fn resolve_text(
                 "nowrap" => WhiteSpaceMode::NoWrap,
                 "pre-wrap" => WhiteSpaceMode::PreWrap,
                 "pre" => WhiteSpaceMode::Pre,
-                _ => return Err(LayoutError::Unsupported(ancestor)),
-            };
-        }
-        if let Some(value) = declared(CssProperty::FontWeight) {
-            // CSS Fonts 4 §2.2: `normal`, `bold` or a number in [1, 1000].
-            weight = match value.as_str() {
-                "normal" => style::NORMAL_FONT_WEIGHT,
-                "bold" => style::UA_BOLD_WEIGHT,
-                number => number
-                    .parse::<f32>()
-                    .ok()
-                    .filter(|weight| (MIN_FONT_WEIGHT..=MAX_FONT_WEIGHT).contains(weight))
-                    .ok_or(LayoutError::Unsupported(ancestor))?,
-            };
-        }
-        if let Some(value) = declared(CssProperty::FontStyle) {
-            italic = match value.as_str() {
-                "normal" => false,
-                "italic" => true,
                 _ => return Err(LayoutError::Unsupported(ancestor)),
             };
         }

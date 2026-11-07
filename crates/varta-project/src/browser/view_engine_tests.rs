@@ -13,10 +13,14 @@
 //! host's own test (`view-engine.test.mjs`) checks the JavaScript bridge
 //! against, so both hosts are tied to one record.
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use varta_common::view::{CssProperty, Tag};
+use varta_style::fonts::{
+    FaceStyle, Family, FontSet, Generic, HostFamily, HostFonts, SizedMetrics, host_metrics,
+};
 use varta_style::session::{self, Session};
 use varta_view::{Access, BatchWriter, Broker, View};
-use wasmtime::{Engine, Instance, Module, Store, TypedFunc};
+use wasmtime::{Caller, Engine, Instance, Linker, Module, Store, TypedFunc};
 
 const ENGINE: &[u8] = include_bytes!("view-engine.wasm");
 const CORPUS: &str = include_str!("view-engine-corpus.json");
@@ -25,6 +29,67 @@ const EXPECTED: &str = include_str!("view-engine-expected.json");
 const WIDTH: f64 = 1600.0;
 const HEIGHT: f64 = 1000.0;
 const ROOT_FONT: f64 = 16.0;
+
+/// The packaged faces every host registers (the style engine's metric
+/// fixtures), as `(family, bytes, generic aliases)`.
+const FACES: &[(&str, &[u8], &[Generic])] = &[
+    (
+        "Varta Metrics",
+        include_bytes!("../../../varta-style/tests/fixtures/metrics.ttf"),
+        &[Generic::Monospace],
+    ),
+    (
+        "Varta Metrics",
+        include_bytes!("../../../varta-style/tests/fixtures/metrics-bold.ttf"),
+        &[],
+    ),
+];
+
+/// The browser's measurements in every host of this test: a deterministic
+/// stand-in for the bridge (`view-engine.test.mjs` answers the same) for
+/// the default font and the generic families the faces do not name.
+fn measures(kind: u32, family: &str, weight: f64, italic: bool, size: f64) -> Option<[f64; 5]> {
+    // `varta-style-wasm`'s import kinds: named, generic, default.
+    let (ex, cap, ch, line) = match (kind, family) {
+        (2, _) | (1, "serif") => (0.45, 0.66, 0.5, 1.15),
+        (1, "sans-serif") => (0.52, 0.72, 0.56, 1.15),
+        (1, "system-ui") => (0.53, 0.7, 0.62, 1.21),
+        _ => return None,
+    };
+    let bold = if weight >= 600.0 { 1.05 } else { 1.0 };
+    let slant = if italic { 1.02 } else { 1.0 };
+    Some([
+        ex * size * bold,
+        cap * size,
+        ch * size * bold * slant,
+        size,
+        (line * size).round(),
+    ])
+}
+
+#[derive(Debug)]
+struct TestHost;
+impl HostFonts for TestHost {
+    fn metrics(&self, family: HostFamily<'_>, style: FaceStyle, size: f64) -> Option<SizedMetrics> {
+        let (kind, name) = match family {
+            HostFamily::Named(name) => (0, name),
+            HostFamily::Generic(generic) => (1, generic.name()),
+            HostFamily::Default => (2, ""),
+        };
+        let [ex, cap, ch, ic, line] = measures(kind, name, style.weight, style.italic, size)?;
+        host_metrics(ex, cap, ch, ic, line)
+    }
+}
+
+/// The font set of the native session and renderer.
+fn font_set() -> Arc<FontSet> {
+    let mut set = FontSet::new(None, Some(Arc::new(TestHost)));
+    for (family, bytes, generics) in FACES {
+        let aliases: Vec<Family> = generics.iter().copied().map(Family::Generic).collect();
+        set.add_file(family, &aliases, bytes).unwrap();
+    }
+    Arc::new(set)
+}
 
 /// One session's calls, natively or through the wasm32 module.
 trait Driver {
@@ -90,8 +155,66 @@ struct Wasm {
 impl Wasm {
     fn new(engine: &Engine, module: &Module) -> Self {
         let mut store = Store::new(engine, ());
-        let instance = Instance::new(&mut store, module, &[]).unwrap();
-        Self { store, instance }
+        let mut linker = Linker::<()>::new(engine);
+        linker
+            .func_wrap(
+                "varta_view",
+                "font_metrics",
+                |mut caller: Caller<'_, ()>,
+                 kind: u32,
+                 family: u32,
+                 length: u32,
+                 weight: f64,
+                 italic: u32,
+                 size: f64,
+                 out: u32|
+                 -> u32 {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(wasmtime::Extern::into_memory)
+                        .unwrap();
+                    let mut name = vec![0; length as usize];
+                    memory.read(&caller, family as usize, &mut name).unwrap();
+                    let name = String::from_utf8(name).unwrap();
+                    let Some(values) = measures(kind, &name, weight, italic == 1, size) else {
+                        return 0;
+                    };
+                    let bytes: Vec<u8> = values
+                        .iter()
+                        .flat_map(|value| value.to_le_bytes())
+                        .collect();
+                    memory.write(&mut caller, out as usize, &bytes).unwrap();
+                    1
+                },
+            )
+            .unwrap();
+        let instance = linker.instantiate(&mut store, module).unwrap();
+        let mut wasm = Self { store, instance };
+        for (family, bytes, generics) in FACES {
+            let bits = generics
+                .iter()
+                .map(|generic| 1u32 << Generic::ALL.iter().position(|g| g == generic).unwrap())
+                .sum::<u32>();
+            let name = family.as_bytes();
+            let at = wasm
+                .func::<u32, u32>("view_engine_input")
+                .call(
+                    &mut wasm.store,
+                    u32::try_from(name.len() + bytes.len()).unwrap(),
+                )
+                .unwrap();
+            let memory = wasm.instance.get_memory(&mut wasm.store, "memory").unwrap();
+            memory.write(&mut wasm.store, at as usize, name).unwrap();
+            memory
+                .write(&mut wasm.store, at as usize + name.len(), bytes)
+                .unwrap();
+            let status = wasm
+                .func::<(u32, u32), u32>("view_engine_face")
+                .call(&mut wasm.store, (u32::try_from(name.len()).unwrap(), bits))
+                .unwrap();
+            assert_eq!(status, session::status::OK);
+        }
+        wasm
     }
     fn func<P: wasmtime::WasmParams, R: wasmtime::WasmResults>(
         &mut self,
@@ -313,6 +436,7 @@ impl Broker for Deny {
 /// deepest element's snapshot style.
 fn native(case: &Case) -> (bool, serde_json::Value) {
     let mut view = View::default();
+    view.set_fonts(font_set());
     view.set_environment(varta_view::Environment {
         width: WIDTH,
         height: HEIGHT,
@@ -350,15 +474,14 @@ fn browser_and_native_decide_the_corpus_identically() {
     for case in corpus() {
         // A fresh session per case, as a fresh view starts.
         let browser = run(&mut Wasm::new(&engine, &module), &case);
-        let shared = run(
-            &mut Session::new(session::environment(
-                (WIDTH, HEIGHT),
-                ROOT_FONT,
-                ROOT_FONT,
-                0,
-            )),
-            &case,
-        );
+        let mut native_session = Session::new(session::environment(
+            (WIDTH, HEIGHT),
+            ROOT_FONT,
+            ROOT_FONT,
+            0,
+        ));
+        native_session.set_fonts(font_set());
+        let shared = run(&mut native_session, &case);
         assert_eq!(
             browser, shared,
             "{}: wasm32 and native sessions differ",

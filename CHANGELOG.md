@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- K8 T2 font-metric units: `ex`, `cap`, `ch`, `ic`, `rex`, `rcap`, `rch`,
+  `ric`, `lh` under `line-height: normal` and `rlh` resolve from the
+  element's first available font on both hosts. The style engine selects
+  the font (CSS Fonts 4 §5 matching of family, style and weight) and reads
+  packaged faces' metrics itself (`read-fonts`, variable faces included);
+  the platform measures the fonts it renders with itself (natively through
+  CoreText, in the browser through Chrome's own units), and the Values 4
+  fallbacks apply only without any font. The engine also computes
+  `font-weight` and `font-style` with the user-agent rows (spec `bolder`
+  table). The Chrome comparison scenes (three new) pass at 1x, 1.25x and
+  2x with no new deviation; the browser host's `monospace` fixed-size flag
+  is fixed. New package: `core_maths` (read-fonts' `no_std` floats).
 - K8 T2 font-relative units: the style engine computes font sizes and line
   heights, so `em`, `lh` and `rlh` work in every property on both hosts;
   registered length values compute to absolute lengths before they inherit;

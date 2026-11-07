@@ -11,3 +11,8 @@ license.workspace = true
 # `scripts/build-view-engine.py`).
 [dependencies]
 varta-common = { path = "../varta-common", default-features = false, features = ["view"] }
+# Packaged faces' metrics (`fonts`): the font tables, `no_std`.
+read-fonts.workspace = true
+# The portable binary64 functions `varta-common` computes with (the same
+# locked version), so both hosts round font metrics to the same bits.
+libm = "=0.2.16"

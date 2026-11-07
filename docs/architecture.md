@@ -15016,14 +15016,61 @@ oracle, not the definition.
   font size of 9px for sizes no absolute length fixed (em lengths keep the
   specified size, as in Blink). A computed `line-height` is `normal`, a
   number (a multiple of each element's size), or a length (a percentage of
-  the element's computed size). The native renderer shapes text with these
-  sizes; the browser host's Chrome derives the same ones from its user-agent
-  sheet.
+  the element's computed size). It computes `font-weight` (`normal`, `bold`,
+  numbers; the user-agent rows: `h1`–`h3` bold, `strong` `bolder` by the
+  Fonts 4 §2.2.1 table, form controls `normal`) and `font-style` (`em`
+  italic, form controls `normal`) the same way. The native renderer shapes
+  text with these fonts; the browser host's Chrome derives the same ones
+  from its user-agent sheet.
+- **First available font and its metrics (Values 4 §6.1.1, Fonts 4 §5).**
+  `ex`, `cap`, `ch`, `ic`, their root forms `rex`, `rcap`, `rch`, `ric`,
+  `lh` where `line-height` is `normal` and `rlh` take the metrics of the
+  element's (the root's) first available font (`varta_style::fonts`): the
+  first family of its computed `font-family` list that the view's font set
+  has a face for, else the set's default family, else the host's default
+  font. A named family matches a packaged face's family or a named alias
+  (ASCII case-insensitively), a generic family a face it aliases or else
+  the host's own font for it; a family with neither is skipped. Within a
+  family the face is matched by Fonts 4 §5.2 step 4 (stretch, then style:
+  italic, oblique, normal or the reverse, then weight with the 400–500
+  rule), weight ranges of variable faces included. A **packaged face** is
+  read from its own tables (`read-fonts`, the same code in both hosts): the
+  `OS/2` x-height, else the top of the `x` glyph's `glyf` outline, else
+  0.5em; the `OS/2` cap-height, else the ascent; the `0` and `水` (U+6C34)
+  advances (`hmtx` with `HVAR` deltas), else 0.5em and 1em; and for
+  `normal` the ascent, descent and line gap of the shaper's selection
+  (`OS/2` typographic metrics under `USE_TYPO_METRICS`, else `hhea`, else
+  typographic, else Windows), each rounded to whole pixels at the used size
+  and summed, as Blink's line spacing. A variable face is read at its
+  location for the element (`wght` the matched weight, `opsz` the used size,
+  `ital` for italic; `fvar`/`avar` normalization and `MVAR` deltas). A
+  **host font** (a generic family no packaged face names, the default font,
+  a native system-font set's families, a packaged face the engine cannot
+  read) is measured by the host (`HostFonts`): natively through CoreText as
+  Chrome on macOS measures it (CoreText's ascent, descent and leading
+  rounded, with Blink's enlarged ascent of Times, Helvetica and Courier;
+  CoreText's cap-height; the top of the `x` glyph's CoreText bounds; the
+  `0` and `水` advances from the platform face's own tables at its location),
+  and in the browser host by the bridge through the browser's own units (a
+  hidden probe element in the view's shadow tree reports `1ex`, `1cap`,
+  `1ch`, `1ic` and `1lh` through `computedStyleMap`); the engine decides
+  which font is asked for. The root element's font is the initial family
+  at the root font size. In `font-size`, `ex`, `cap`, `ch` and `ic` take the
+  parent's font, and the result is an absolute size. Only when no font has
+  metrics (a native host without faces or platform measurements) do the
+  Values 4 fallbacks apply: `ex` and `ch` 0.5em, `ic` 1em; `cap` and a
+  `normal` `lh` then stay unresolved. Recorded deviations of Chrome on
+  macOS for packaged faces: it measures the `x` outline instead of the
+  `OS/2` x-height (equal in well-formed faces), takes CoreText's estimates
+  for a face without `OS/2` x- and cap-heights (without `x` and `H` glyphs,
+  2/3 and 8/9 of the ascent) instead of the `x` outline, the ascent and the
+  Values 4 fallbacks, applies no `MVAR` cap-height delta, and ignores
+  `USE_TYPO_METRICS` for `normal`.
 - **Lowering.** After `var()` substitution (Variables 1 §3), a valid value
   is lowered to the host grammar the renderer's consumers read
   (`css::lower`): math functions are evaluated, absolute and viewport units
-  become `px`, `em`, `lh` and `rlh` become `px` against the element's font
-  (Values 4 §6.1.1; in `font-size`, `em` alone stays a percentage of the
+  become `px`, the font-relative units become `px` against the element's
+  font (Values 4 §6.1.1; in `font-size`, `em` alone stays a percentage of the
   parent's size and a sum with other lengths is the parent's absolute size;
   in `font-size` and `line-height`, `lh` is the parent's), named colours and
   colour functions `rgba()` with 8-bit channels after gamut mapping, and
@@ -15040,9 +15087,8 @@ oracle, not the definition.
   tree resolve calc handles), and the browser host sets it inline. A value
   the native renderer cannot render yet is refused at parse time with
   `Unrenderable` and, when it only appears after substitution, is invalid at
-  computed-value time natively: `ex`, `ch`, `cap`, `ic` and their root forms,
-  `lh` where `line-height` is `normal` and `rlh` (they need the metrics of
-  the first available font), a sum of lengths and percentages in other
+  computed-value time natively: `cap` and a `normal` `lh` without any font
+  metrics, a sum of lengths and percentages in other
   properties (`border-radius`, `transform`, `object-position`, grid tracks),
   and values of the specifications that native layout lacks
   (`display: inline-block` and the other inner/outer display types,
@@ -15059,7 +15105,16 @@ built by `scripts/build-view-engine.py` with the locked toolchain and the
 with `view-engine.json` (source fingerprint, target, compiler and size; a
 test fails when the sources change without a rebuild), as
 `varta-kv-codec-wasm` is. Its only `unsafe` code reads and writes its
-arguments in linear memory. The view model mirrors every batch into an
+arguments in linear memory and calls its one import,
+`varta_view.font_metrics(kind, family, family_len, weight, italic, size,
+out) -> u32`, through which the DOM bridge measures a host font (`kind` 0 a
+named family, 1 a generic family, 2 the default font; five `f64` written at
+`out`: `ex`, `cap`, `ch`, `ic` and the `normal` line height; 1 when
+measured, 0 when the browser renders no such font); the module keeps at
+most 1024 answers. The packaged faces reach it through `view_engine_face`
+(family name and font file in the input buffer, a bit per generic family it
+stands for) and the default family through `view_engine_default_family`;
+the Worker's view model, which has no DOM, measures nothing. The view model mirrors every batch into an
 engine `Session` inside a transaction (`begin`, then `commit` or `abort`,
 so a refused batch changes nothing), and the engine checks each class,
 style value and stylesheet with the native verdicts. The DOM bridge keeps

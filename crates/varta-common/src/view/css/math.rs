@@ -92,10 +92,59 @@ pub enum LengthUnit {
     /// computed line height.
     Lh,
     Rlh,
-    /// Font-relative units that need the font's own metrics (`ex`, `ch`,
-    /// `cap`, `ic` and their root forms): valid CSS, refused when lowered
-    /// without them.
-    Unresolved,
+    /// `ex`, `cap`, `ch` and `ic` (§6.1.1): the first available font's
+    /// metrics of the element.
+    Metric(FontMetric),
+    /// `rex`, `rcap`, `rch` and `ric`: the root element's.
+    RootMetric(FontMetric),
+}
+
+/// The font metrics of the font-relative units `ex`, `cap`, `ch` and `ic`
+/// (CSS Values 4 §6.1.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FontMetric {
+    /// The x-height.
+    Ex,
+    /// The cap-height.
+    Cap,
+    /// The advance measure of `0` (U+0030).
+    Ch,
+    /// The advance measure of `水` (U+6C34).
+    Ic,
+}
+
+/// The references of [`FontMetric`] for one font, in CSS pixels. Each is
+/// the first available font's measure or, where the font lacks it, the
+/// fallback of CSS Values 4 §6.1.1 (`0.5em`, `0.5em`, `1em`; the cap-height
+/// falls back to the font's ascent, so it is `None` only without a font).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FontMetrics {
+    pub ex: f64,
+    pub cap: Option<f64>,
+    pub ch: f64,
+    pub ic: f64,
+}
+impl FontMetrics {
+    /// The fallbacks of a font size when no font metrics exist at all.
+    #[must_use]
+    pub fn fallback(em: f64) -> Self {
+        Self {
+            ex: em / 2.0,
+            cap: None,
+            ch: em / 2.0,
+            ic: em,
+        }
+    }
+    /// The reference of `metric`.
+    #[must_use]
+    pub fn get(&self, metric: FontMetric) -> Option<f64> {
+        match metric {
+            FontMetric::Ex => Some(self.ex),
+            FontMetric::Cap => self.cap,
+            FontMetric::Ch => Some(self.ch),
+            FontMetric::Ic => Some(self.ic),
+        }
+    }
 }
 
 /// CSS pixels per inch (§6.2).
@@ -124,7 +173,14 @@ pub fn length_unit(unit: &str) -> Option<LengthUnit> {
         "vmax" | "svmax" | "lvmax" | "dvmax" => L::ViewportMax,
         "lh" => L::Lh,
         "rlh" => L::Rlh,
-        "ex" | "rex" | "cap" | "rcap" | "ch" | "rch" | "ic" | "ric" => L::Unresolved,
+        "ex" => L::Metric(FontMetric::Ex),
+        "cap" => L::Metric(FontMetric::Cap),
+        "ch" => L::Metric(FontMetric::Ch),
+        "ic" => L::Metric(FontMetric::Ic),
+        "rex" => L::RootMetric(FontMetric::Ex),
+        "rcap" => L::RootMetric(FontMetric::Cap),
+        "rch" => L::RootMetric(FontMetric::Ch),
+        "ric" => L::RootMetric(FontMetric::Ic),
         _ => return None,
     })
 }
@@ -198,6 +254,10 @@ pub struct Resolution {
     /// The line heights of `lh` and `rlh`; `None` leaves them unresolved.
     pub lh: Option<f64>,
     pub rlh: Option<f64>,
+    /// The element's and the root element's font metrics; `None` leaves
+    /// `ex`, `cap`, `ch`, `ic` (and their root forms) unresolved.
+    pub metrics: Option<FontMetrics>,
+    pub root_metrics: Option<FontMetrics>,
     pub viewport_width: f64,
     pub viewport_height: f64,
 }
@@ -476,7 +536,8 @@ fn evaluate(node: &Node, resolution: &Resolution, flags: &mut Flags) -> Option<f
                         LengthUnit::ViewportHeight => vh,
                         LengthUnit::ViewportMin => vw.min(vh),
                         LengthUnit::ViewportMax => vw.max(vh),
-                        LengthUnit::Unresolved => return None,
+                        LengthUnit::Metric(metric) => resolution.metrics?.get(*metric)?,
+                        LengthUnit::RootMetric(metric) => resolution.root_metrics?.get(*metric)?,
                     }
                 }
             };
@@ -546,6 +607,13 @@ mod tests {
         rem: 16.0,
         lh: Some(12.0),
         rlh: Some(20.0),
+        metrics: None,
+        root_metrics: Some(FontMetrics {
+            ex: 4.0,
+            cap: None,
+            ch: 5.0,
+            ic: 10.0,
+        }),
         viewport_width: 800.0,
         viewport_height: 600.0,
     };
@@ -613,6 +681,10 @@ mod tests {
                 .value,
             44.0
         );
+        // Without the element's metrics `ch` stays unresolved; the root's
+        // resolve `rch`, and a missing cap-height leaves `rcap` unresolved.
         assert!(expression("calc(1ch)").evaluate(&RESOLUTION).is_none());
+        assert_eq!(value("calc(2rch + 1rex + 1ric)"), 24.0);
+        assert!(expression("calc(1rcap)").evaluate(&RESOLUTION).is_none());
     }
 }

@@ -776,8 +776,9 @@ recorded deviation (out-of-gamut colours) reports instead of failing:
 ```sh
 cargo test -p varta-style --locked
 cargo test -p varta-view --test integration --locked css_
+cargo test -p varta-desktop --lib --locked font_metrics
 for scale in 1 1.25 2; do
-  cargo run -p varta-view --example native_css_engine_probe --locked -- "$scale" > "target/native-css-$scale.json"
+  cargo run -p varta-desktop --example native_css_engine_probe --locked -- "$scale" > "target/native-css-$scale.json"
   node scripts/test-native-css-engine.mjs "target/native-css-$scale.json" bridge
   node scripts/test-native-css-engine.mjs "target/native-css-$scale.json" platform
 done

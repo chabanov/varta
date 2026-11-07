@@ -91,6 +91,211 @@
       0
     ]
   },
+  "font-metrics-default-font": {
+    "computed": {
+      "height": "31.68px",
+      "margin-left": "8px",
+      "padding-left": "32px",
+      "padding-top": "18px",
+      "width": "14.4px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-font-size-parent": {
+    "computed": {
+      "font-size": "21.200000000000003px",
+      "height": "26px",
+      "width": "21.200000000000003px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-generic-alias": {
+    "computed": {
+      "font-family": "monospace",
+      "font-size": "13px",
+      "height": "14px",
+      "width": "7.215px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-inline-style": {
+    "computed": {
+      "font-family": "sans-serif",
+      "height": "29.52px",
+      "width": "24.96px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-italic-system": {
+    "computed": {
+      "font-family": "system-ui",
+      "font-style": "italic",
+      "font-weight": "bold",
+      "height": "19px",
+      "width": "42.49728px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-layout-math": {
+    "computed": {
+      "font-family": "\"Varta Metrics\"",
+      "margin-left": "calc(10% + 15.52px)",
+      "width": "max(0px, calc(50% - 17.76px))"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-line-height-own": {
+    "computed": {
+      "font-family": "sans-serif",
+      "height": "24.96px",
+      "line-height": "24.96px",
+      "width": "17.92px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-matched-weight": {
+    "computed": {
+      "height": "18px",
+      "padding-left": "9.76px",
+      "width": "8.64px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-missing-family": {
+    "computed": {
+      "font-family": "Missing, sans-serif",
+      "height": "18px",
+      "padding-left": "11.52px",
+      "width": "83.2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-packaged-face": {
+    "computed": {
+      "border-width": "11.200000000000001px",
+      "font-family": "\"Varta Metrics\"",
+      "height": "17px",
+      "margin-left": "15.52px",
+      "padding-left": "8.88px",
+      "width": "16.64px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-registered-length": {
+    "computed": {
+      "font-family": "serif",
+      "height": "16px",
+      "width": "17.76px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "font-metrics-root-units": {
+    "computed": {
+      "font-family": "\"Varta Metrics\"",
+      "height": "10.56px",
+      "margin-top": "18px",
+      "width": "31.2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
   "font-relative-registered": {
     "computed": {
       "font-size": "20px",

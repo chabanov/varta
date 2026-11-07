@@ -259,7 +259,7 @@ fn violations_carry_utf8_byte_offsets() {
         Violation::Declaration
     );
     assert_eq!(
-        error(".a { width: 2ch }").violation,
+        error(".a { border-radius: calc(100% - 1rem) }").violation,
         Violation::Unrenderable
     );
     assert_eq!(

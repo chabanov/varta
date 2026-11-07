@@ -9,8 +9,9 @@
 //! input identically.
 //!
 //! This crate may use `unsafe` only for its heap (`heap`), the exported
-//! symbols with their input and output buffers, the single session cell and
-//! the panic handler, as the KV codec shim does. All semantics live in the
+//! symbols with their input and output buffers, the single session cell,
+//! the one import (the bridge's font measurements, `fonts`) and its answer
+//! cell, and the panic handler, as the KV codec shim does. All semantics live in the
 //! safe `varta-style` crate.
 //!
 //! Calling convention: `view_engine_input(len)` returns the address of a
@@ -23,6 +24,8 @@
 extern crate alloc;
 #[cfg(target_arch = "wasm32")]
 mod exports;
+#[cfg(target_arch = "wasm32")]
+mod fonts;
 #[cfg(target_arch = "wasm32")]
 mod heap;
 

@@ -23,6 +23,7 @@ mod prelude {
     pub use alloc::vec::Vec;
 }
 pub mod font;
+pub mod fonts;
 pub mod index;
 pub mod session;
 pub mod variables;
@@ -186,16 +187,48 @@ pub fn inherited(property: CssProperty) -> bool {
     )
 }
 
-/// The document's stylesheets and their cascade index.
+/// The document's stylesheets and their cascade index, and the view's
+/// font set (the first available fonts of the font-relative units).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Styles {
     sheets: BTreeMap<u32, Sheet>,
     index: CascadeIndex,
     bytes: usize,
     work: usize,
+    fonts: Fonts,
+}
+
+/// An element's font references, computed on the first value that names a
+/// font-relative unit.
+struct LazyFont<'f> {
+    cached: Option<Option<css::FontContext>>,
+    provider: &'f dyn Fn() -> Option<css::FontContext>,
+}
+impl LazyFont<'_> {
+    fn get(&mut self) -> Option<css::FontContext> {
+        *self.cached.get_or_insert_with(self.provider)
+    }
+}
+
+/// A shared font set; two are equal when they are the same set.
+#[derive(Debug, Clone, Default)]
+struct Fonts(alloc::sync::Arc<fonts::FontSet>);
+impl PartialEq for Fonts {
+    fn eq(&self, other: &Self) -> bool {
+        alloc::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 impl Styles {
+    /// The view's font set.
+    #[must_use]
+    pub fn fonts(&self) -> &fonts::FontSet {
+        &self.fonts.0
+    }
+    /// Replace the view's font set (a host sets it with its text faces).
+    pub fn set_fonts(&mut self, fonts: alloc::sync::Arc<fonts::FontSet>) {
+        self.fonts = Fonts(fonts);
+    }
     #[must_use]
     pub fn sheets(&self) -> &BTreeMap<u32, Sheet> {
         &self.sheets
@@ -492,24 +525,32 @@ impl Styles {
         environment: &Environment,
         validate: impl Fn(CssProperty, &str) -> bool,
     ) -> BTreeMap<CssProperty, Computed> {
-        self.computed_where(document, id, environment, |_| true, &validate)
+        let font = || match environment.context.font {
+            Some(font) => Some(font),
+            None => self.font_context(document, id, environment).ok(),
+        };
+        self.computed_where(document, id, environment, |_| true, (&validate, &font))
     }
 
     /// The computed values of `wanted` properties of `id` only, lowered in
     /// `environment` as given (see [`Styles::computed`]).
+    /// The computed values of `wanted` properties of `id` only, with
+    /// font-relative units resolved from `font` (called at most once, on
+    /// the first value that names one).
     pub(crate) fn computed_only(
         &self,
         document: &impl Document,
         id: u32,
         environment: &Environment,
         wanted: &[CssProperty],
+        font: &dyn Fn() -> Option<css::FontContext>,
     ) -> BTreeMap<CssProperty, Computed> {
         self.computed_where(
             document,
             id,
             environment,
             |property| wanted.contains(&property),
-            &|_, _| true,
+            (&|_, _| true, font),
         )
     }
 
@@ -519,13 +560,19 @@ impl Styles {
         id: u32,
         environment: &Environment,
         wanted: impl Fn(CssProperty) -> bool,
-        validate: &impl Fn(CssProperty, &str) -> bool,
+        (validate, font_context): (
+            &impl Fn(CssProperty, &str) -> bool,
+            &dyn Fn() -> Option<css::FontContext>,
+        ),
     ) -> BTreeMap<CssProperty, Computed> {
         let declared = self.declared(document, id, &environment.media);
         let mut scope: Option<Scope<'_>> = None;
         // The element's font references, computed on the first value that
         // names a font-relative unit.
-        let mut font: Option<Option<css::FontContext>> = environment.context.font.map(Some);
+        let mut font = LazyFont {
+            cached: None,
+            provider: font_context,
+        };
         let mut out = BTreeMap::new();
         for (property, raw) in declared {
             if !wanted(property) {
@@ -550,10 +597,7 @@ impl Styles {
         &'a self,
         document: &impl Document,
         (id, environment): (u32, &Environment),
-        (scope, font): (
-            &mut Option<Scope<'a>>,
-            &mut Option<Option<css::FontContext>>,
-        ),
+        (scope, font): (&mut Option<Scope<'a>>, &mut LazyFont<'_>),
         property: CssProperty,
         raw: &str,
         validate: &impl Fn(CssProperty, &str) -> bool,
@@ -584,8 +628,7 @@ impl Styles {
         }
         let mut context = environment.context;
         if font::uses_font_units(&substituted) {
-            context.font =
-                *font.get_or_insert_with(|| self.font_context(document, id, environment).ok());
+            context.font = font.get();
         }
         css::lower(property, &substituted, &context).map(Computed::Value)
     }

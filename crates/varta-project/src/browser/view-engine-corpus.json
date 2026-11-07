@@ -3221,6 +3221,115 @@
     "t"
    ],
    "style": []
+  },
+  {
+   "name": "font-metrics-default-font",
+   "sheet": ".a { width: 2ex; height: 3cap; margin-left: 1ch; padding-left: 2ic; padding-top: 1lh }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-packaged-face",
+   "sheet": ".a { font-family: \"Varta Metrics\"; width: 2ex; height: 1lh; padding-left: 1ch; margin-left: 1ic; border-width: 1cap }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-matched-weight",
+   "sheet": ".p { font-family: \"Varta Metrics\", serif; font-weight: 600 } .a { width: 1ex; height: 1lh; padding-left: 1ch }",
+   "classes": [
+    "p",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-missing-family",
+   "sheet": ".a { font-family: Missing, sans-serif; width: 10ex; height: 1lh; padding-left: 1cap }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-generic-alias",
+   "sheet": ".a { font-family: monospace; font-size: 13px; width: 1ch; height: 1lh }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-font-size-parent",
+   "sheet": ".p { font-family: system-ui; font-size: 20px } .a { font-size: 2ex; width: 1em; height: 1lh }",
+   "classes": [
+    "p",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-line-height-own",
+   "sheet": ".p { font-family: serif } .a { font-family: sans-serif; line-height: 3ex; height: 1lh; width: 2ch }",
+   "classes": [
+    "p",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-root-units",
+   "sheet": ".a { font-family: \"Varta Metrics\"; width: calc(1rex + 1rch + 1ric); height: 1rcap; margin-top: 1rlh }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-registered-length",
+   "sheet": "@property --w { syntax: \"<length>\"; inherits: true; initial-value: 0px } .p { font-family: \"Varta Metrics\"; --w: 2ch } .a { font-family: serif; width: var(--w); height: 2ch }",
+   "classes": [
+    "p",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-layout-math",
+   "sheet": ".a { font-family: \"Varta Metrics\"; width: calc(50% - 2ch); margin-left: calc(10% + 1ic) }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-italic-system",
+   "sheet": ".a { font-family: system-ui; font-style: italic; font-weight: bold; width: 4ch; height: 1lh }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "font-metrics-inline-style",
+   "sheet": ".a { font-family: sans-serif }",
+   "classes": [
+    "a"
+   ],
+   "style": [
+    [
+     "width",
+     "3ex"
+    ],
+    [
+     "height",
+     "calc(1lh + 1cap)"
+    ]
+   ]
   }
  ]
 }

@@ -908,17 +908,10 @@ impl Parser<'_> {
 fn independent(value: &str) -> bool {
     !css::contains_variable(value)
         && syntax::tokenize(value).iter().all(|t| match &t.token {
+            // Every length unit but the absolute ones is relative.
             Token::Dimension(_, unit) => !matches!(
                 css::math::length_unit(unit),
-                Some(
-                    css::math::LengthUnit::Em
-                        | css::math::LengthUnit::Rem
-                        | css::math::LengthUnit::ViewportWidth
-                        | css::math::LengthUnit::ViewportHeight
-                        | css::math::LengthUnit::ViewportMin
-                        | css::math::LengthUnit::ViewportMax
-                        | css::math::LengthUnit::Unresolved
-                )
+                Some(unit) if !matches!(unit, css::math::LengthUnit::Absolute(_))
             ),
             Token::Ident(word) => !word.eq_ignore_ascii_case("currentcolor"),
             _ => true,

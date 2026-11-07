@@ -54,7 +54,7 @@ export function createFontNamespace(prefix, families = [], { aliases = new Map()
       + (mono === undefined ? '' : ` :where(${monospaceTags.join(', ')}) { font-family: ${mono}; }`)
       + ` :where(${controlFontTags.join(', ')}) { font-family: inherit; font-synthesis: inherit; }`;
   };
-  return { family, value, rules, defaultFamily: fallback };
+  return { family, value, rules, defaultFamily: fallback, defaultName: defaultFamily };
 }
 
 /** Namespace arguments for font descriptors in the resource section's

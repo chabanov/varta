@@ -858,13 +858,24 @@ impl Context {
             lh: Some(super::stylesheet::REM_PIXELS),
             parent_lh: Some(super::stylesheet::REM_PIXELS),
             rlh: Some(super::stylesheet::REM_PIXELS),
+            metrics: NOMINAL_METRICS,
+            parent_metrics: NOMINAL_METRICS,
+            root_metrics: NOMINAL_METRICS,
         }),
     };
 }
 
+/// Font metrics for a parse-time renderability check.
+const NOMINAL_METRICS: math::FontMetrics = math::FontMetrics {
+    ex: super::stylesheet::REM_PIXELS / 2.0,
+    cap: Some(super::stylesheet::REM_PIXELS),
+    ch: super::stylesheet::REM_PIXELS / 2.0,
+    ic: super::stylesheet::REM_PIXELS,
+};
+
 /// The font-relative references of one element (CSS Values 4 §6.1.1), in
-/// CSS pixels. In `font-size` and `line-height`, `em` (in `font-size`) and
-/// `lh` refer to the parent element's metrics.
+/// CSS pixels. In `font-size`, `em`, `ex`, `cap`, `ch` and `ic` refer to the
+/// parent element's metrics; in `font-size` and `line-height`, `lh` does.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FontContext {
     /// The element's computed font size.
@@ -877,6 +888,21 @@ pub struct FontContext {
     pub parent_lh: Option<f64>,
     /// The root element's computed line height.
     pub rlh: Option<f64>,
+    /// The first available font's metrics of the element, of its parent and
+    /// of the root element (`ex`, `cap`, `ch`, `ic` and their root forms).
+    pub metrics: math::FontMetrics,
+    pub parent_metrics: math::FontMetrics,
+    pub root_metrics: math::FontMetrics,
+}
+impl FontContext {
+    /// The metrics `ex`, `cap`, `ch` and `ic` refer to in `property`.
+    fn metrics_for(&self, property: CssProperty) -> math::FontMetrics {
+        if property == CssProperty::FontSize {
+            self.parent_metrics
+        } else {
+            self.metrics
+        }
+    }
 }
 
 /// Properties whose numeric slots are nonnegative (CSS Box 3, Sizing 3,
@@ -1137,6 +1163,8 @@ fn lower_math(
             }
         }),
         rlh: font.and_then(|font| font.rlh),
+        metrics: font.map(|font| font.metrics_for(property)),
+        root_metrics: font.map(|font| font.root_metrics),
         viewport_width: context.viewport_width,
         viewport_height: context.viewport_height,
     };
@@ -1241,6 +1269,8 @@ pub fn absolutize_lengths(value: &str, context: &Context) -> Option<String> {
                 rem: context.root_font_size,
                 lh: font.and_then(|font| font.lh),
                 rlh: font.and_then(|font| font.rlh),
+                metrics: font.map(|font| font.metrics),
+                root_metrics: font.map(|font| font.root_metrics),
                 viewport_width: context.viewport_width,
                 viewport_height: context.viewport_height,
             };
@@ -1309,7 +1339,8 @@ fn absolute_length(value: f64, unit: math::LengthUnit, context: &Context) -> Opt
         L::ViewportHeight => vh,
         L::ViewportMin => vw.min(vh),
         L::ViewportMax => vw.max(vh),
-        L::Unresolved => return None,
+        L::Metric(metric) => context.font?.metrics.get(metric)?,
+        L::RootMetric(metric) => context.font?.root_metrics.get(metric)?,
     };
     font_length(value, factor)
 }
@@ -1362,7 +1393,12 @@ fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<
                     )
                 }
                 math::LengthUnit::Rlh => font_length(*value, context.font?.rlh?),
-                math::LengthUnit::Unresolved => None,
+                math::LengthUnit::Metric(metric) => {
+                    font_length(*value, context.font?.metrics_for(property).get(metric)?)
+                }
+                math::LengthUnit::RootMetric(metric) => {
+                    font_length(*value, context.font?.root_metrics.get(metric)?)
+                }
                 math::LengthUnit::Rem => Some(format!("{}rem", format_number(*value))),
                 unit => {
                     let vw = context.viewport_width / 100.0;
@@ -1567,6 +1603,9 @@ mod tests {
             (P::Width, "2em"),
             (P::Padding, "0.5em 1em"),
             (P::Height, "calc(2lh + 1em)"),
+            // ... and `ex`, `cap`, `ch`, `ic` from its first available font.
+            (P::Width, "2ch"),
+            (P::MarginLeft, "calc(1ex + 1rcap - 1ric)"),
         ] {
             assert_eq!(
                 check(property, value),
@@ -1578,7 +1617,6 @@ mod tests {
         for (property, value, refusal) in [
             (P::Width, "calc(1px + 1)", Refusal::Invalid),
             (P::BorderRadius, "calc(100% - 1rem)", Refusal::Unrenderable),
-            (P::Width, "2ch", Refusal::Unrenderable),
             (P::Width, "round(1px, 2px)", Refusal::Invalid),
             (
                 P::Color,
@@ -1682,6 +1720,19 @@ mod font_tests {
                 lh: Some(30.0),
                 parent_lh: Some(12.0),
                 rlh: None,
+                metrics: math::FontMetrics {
+                    ex: 9.0,
+                    cap: Some(14.0),
+                    ch: 11.0,
+                    ic: 20.0,
+                },
+                parent_metrics: math::FontMetrics::fallback(10.0),
+                root_metrics: math::FontMetrics {
+                    ex: 7.0,
+                    cap: None,
+                    ch: 8.0,
+                    ic: 16.0,
+                },
             }),
             ..Context::NOMINAL
         };
@@ -1706,8 +1757,35 @@ mod font_tests {
             lower(CssProperty::LineHeight, "calc(1em)").as_deref(),
             Some("20px")
         );
-        // Without the root's line height or a font context, nothing lowers.
+        // `ex`, `cap`, `ch` and `ic` from the element's font, in `font-size`
+        // from the parent's, and their root forms from the root's.
+        assert_eq!(lower(CssProperty::Width, "2ex").as_deref(), Some("18px"));
+        assert_eq!(lower(CssProperty::Width, "1cap").as_deref(), Some("14px"));
+        assert_eq!(
+            lower(CssProperty::Width, "calc(1ch + 1ic)").as_deref(),
+            Some("31px")
+        );
+        assert_eq!(lower(CssProperty::FontSize, "2ex").as_deref(), Some("10px"));
+        assert_eq!(
+            lower(CssProperty::FontSize, "calc(1ic + 1ch)").as_deref(),
+            Some("15px")
+        );
+        assert_eq!(
+            lower(CssProperty::LineHeight, "2ex").as_deref(),
+            Some("18px")
+        );
+        assert_eq!(
+            lower(CssProperty::Width, "calc(1rex + 1rch + 1ric)").as_deref(),
+            Some("31px")
+        );
+        assert_eq!(
+            lower(CssProperty::MarginLeft, "calc(10% + 1ch)").as_deref(),
+            Some("calc(10% + 11px)")
+        );
+        // Without the root's line height or cap-height, or a font context,
+        // nothing lowers.
         assert_eq!(lower(CssProperty::Width, "1rlh"), None);
+        assert_eq!(lower(CssProperty::Width, "1rcap"), None);
         let bare = Context {
             font: None,
             ..Context::NOMINAL

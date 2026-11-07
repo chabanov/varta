@@ -306,3 +306,61 @@ fn registered_lengths_compute_to_absolute_lengths_before_inheritance() {
         Computed::Value("40px".into())
     );
 }
+
+/// CSS Values 4 §6.1.1 with the first available font: a packaged face read
+/// from its tables, the user-agent weight rows choosing its bold face, the
+/// parent's font in `font-size`, `normal` line heights from the font's
+/// rounded metrics, and the root's font for the root forms.
+#[test]
+fn font_relative_units_take_the_first_available_font() {
+    let mut styles = Styles::default();
+    styles.set_fonts(alloc::sync::Arc::new(fonts::tests::set()));
+    styles
+        .set(
+            1,
+            ".p { font-family: \"Varta Metrics\" } .a { width: 2ex; height: 1lh; margin-left: 1ch; padding-left: 1cap; padding-top: 1ic; font-size: 2ex } .b { width: 1rex; height: 1rlh; line-height: 2ex; margin-top: 1lh }",
+            &mut 0,
+        )
+        .unwrap();
+    let mut tree = Tree::chain(&["", "p", "a"]);
+    let environment = environment(800.0);
+    let leaf = ROOT_NODE + 2;
+    let px = |computed: &BTreeMap<CssProperty, Computed>, property| match computed.get(&property) {
+        Some(Computed::Value(value)) => value.strip_suffix("px").unwrap().parse::<f64>().unwrap(),
+        other => panic!("{property:?}: {other:?}"),
+    };
+    let close = |a: f64, b: f64| assert!((a - b).abs() < 1e-9, "{a} != {b}");
+    let values = styles.computed(&tree, leaf, &environment, |_, _| true);
+    // `font-size: 2ex` of the parent's 16px face (x-height 520 units) is
+    // 16.64px; the element's own units follow from that size.
+    close(px(&values, CssProperty::FontSize), 16.64);
+    close(px(&values, CssProperty::Width), 17.3056);
+    // `normal`: 830, 170 and 90 units at 16.64px round to 14 + 3 + 1.
+    close(px(&values, CssProperty::Height), 18.0);
+    close(px(&values, CssProperty::MarginLeft), 9.2352);
+    // `strong` is `bolder`: the bold face (x-height 540 units).
+    tree.tags.insert(leaf, varta_common::view::Tag::Strong);
+    let bold = styles.computed(&tree, leaf, &environment, |_, _| true);
+    close(px(&bold, CssProperty::FontSize), 16.64);
+    close(px(&bold, CssProperty::Width), 17.9712);
+    // The root forms take the default family's face at the root size (the
+    // set's default is "Varta Metrics"); `line-height: 2ex` is the
+    // element's own x-height, and `lh` is then that length.
+    let mut tree = Tree::chain(&["", "p", "b"]);
+    tree.tags.clear();
+    let values = styles.computed(&tree, leaf, &environment, |_, _| true);
+    close(px(&values, CssProperty::Width), 8.32);
+    close(px(&values, CssProperty::Height), 17.0);
+    close(px(&values, CssProperty::LineHeight), 16.64);
+    close(px(&values, CssProperty::MarginTop), 16.64);
+    // Without any font: the fallbacks, and `normal` `lh` unresolved.
+    let mut bare = styles.clone();
+    bare.set_fonts(alloc::sync::Arc::new(fonts::FontSet::default()));
+    let values = bare.computed(&Tree::chain(&["", "p", "a"]), leaf, &environment, |_, _| {
+        true
+    });
+    close(px(&values, CssProperty::FontSize), 16.0);
+    assert_eq!(values.get(&CssProperty::Height), None);
+    assert_eq!(values.get(&CssProperty::PaddingLeft), None);
+    close(px(&values, CssProperty::Width), 16.0);
+}

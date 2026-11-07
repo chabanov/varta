@@ -20,14 +20,35 @@ export const ENGINE_INPUTS = Object.freeze({
 });
 /** The tag argument of `create` for a text node. */
 const TEXT_NODE = 0xffffffff;
+/** The family kinds the engine asks `fontMetrics` to measure
+ * (`varta-style-wasm` `fonts`): a family by name, a generic family, or the
+ * browser's default font. */
+export const FONT_KINDS = Object.freeze(["named", "generic", "default"]);
+/** The generic families of `face`'s `generics` argument, in bit order. */
+const GENERIC_FAMILIES = ["serif", "sans-serif", "monospace", "system-ui"];
+/** The measures `fontMetrics` returns, in the import's order. */
+const FONT_MEASURES = 5;
 const encoder = new TextEncoder(), decoder = new TextDecoder("utf-8", { fatal: true });
 const propertyCodes = new Map(registry.view.css.map((row) => [row.name, row.code]));
 const propertyNames = new Map(registry.view.css.map((row) => [row.code, row.name]));
 
-/** One style session over an instance of the compiled engine module. */
-export function createViewEngine(module) {
+/** One style session over an instance of the compiled engine module.
+ * `fontMetrics(kind, family, weight, italic, size)` measures a font the
+ * browser renders with its own (a `FONT_KINDS` kind): `[ex, cap, ch, ic,
+ * line-height normal]` in CSS pixels, or `undefined` where it cannot. The
+ * engine decides which font is the first available one; without the
+ * callback (a Worker), the units take the CSS Values 4 fallbacks. */
+export function createViewEngine(module, { fontMetrics } = {}) {
   if (!(module instanceof WebAssembly.Module)) throw new TypeError("view engine module required");
-  const exports = new WebAssembly.Instance(module, {}).exports;
+  let exports;
+  const font_metrics = (kind, family, length, weight, italic, size, out) => {
+    const name = decoder.decode(new Uint8Array(exports.memory.buffer, family, length));
+    const measured = fontMetrics?.(FONT_KINDS[kind], name, weight, italic === 1, size);
+    if (!Array.isArray(measured) || measured.length !== FONT_MEASURES || !measured.every(Number.isFinite)) return 0;
+    new Float64Array(exports.memory.buffer, out, FONT_MEASURES).set(measured);
+    return 1;
+  };
+  exports = new WebAssembly.Instance(module, { varta_view: { font_metrics } }).exports;
   const input = (text) => {
     const bytes = encoder.encode(text);
     const at = exports.view_engine_input(bytes.length);
@@ -51,6 +72,19 @@ export function createViewEngine(module) {
     removeStyle: (id, property) => exports.view_engine_unstyle(id, code(property)),
     setFlags: (id, disabled, checked) => exports.view_engine_flags(id, disabled ? 1 : 0, checked ? 1 : 0),
     stylesheet(id, text) { input(text); return exports.view_engine_sheet(id); },
+    /** A packaged face: its family, font file bytes and the generic
+     * families it stands for. */
+    face(family, bytes, generics = []) {
+      const indices = generics.map((generic) => GENERIC_FAMILIES.indexOf(generic.toLowerCase()));
+      if (indices.includes(-1)) throw new TypeError("unknown generic family");
+      const name = encoder.encode(family), at = exports.view_engine_input(name.length + bytes.length);
+      const buffer = new Uint8Array(exports.memory.buffer, at, name.length + bytes.length);
+      buffer.set(name); buffer.set(bytes, name.length);
+      return exports.view_engine_face(name.length, indices.reduce((bits, index) => bits | (1 << index), 0));
+    },
+    /** The family of text without `font-family`; `undefined` is the
+     * browser's default font. */
+    defaultFamily(family) { input(family ?? ""); return exports.view_engine_default_family(); },
     charge: () => exports.view_engine_charge(),
     environment: (width, height, rootFontSize, mediumFontSize, flags) => exports.view_engine_environment(width, height, rootFontSize, mediumFontSize, flags),
     state: (focus, hovered, active) => exports.view_engine_state(focus, hovered, active),

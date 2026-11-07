@@ -1,12 +1,17 @@
 //! K8 T2 scenes for the real-Chrome oracle: escaped class selectors,
 //! cascade layers and importance, CSS-wide keywords, conditional rules,
-//! registered custom properties, media features, math functions, units and
-//! CSS Color 4/5 colours, painted natively at a device scale. The browser
+//! registered custom properties, media features, math functions, units,
+//! the font-relative units of the platform's and packaged fonts, and CSS
+//! Color 4/5 colours, painted natively at a device scale. The browser
 //! host's bridge (or Chrome's own cascade) applies the same stylesheet.
+//! The platform measures its own fonts (`varta_desktop::shell::host_fonts`)
+//! as the shell does, so this probe lives with the native host.
 //!
-//! cargo run -p varta-view --example native_css_engine_probe -- 2 > target/native-css-2.json
+//! cargo run -p varta-desktop --example native_css_engine_probe -- 2 > target/native-css-2.json
 //! node scripts/test-native-css-engine.mjs target/native-css-2.json
+use std::sync::Arc;
 use varta_common::view::Tag;
+use varta_style::fonts::FontSet;
 use varta_view::{Access, BatchWriter as B, Broker, Environment, Renderer, View};
 
 /// The CSS viewport of every scene.
@@ -29,15 +34,40 @@ impl Broker for Denied {
 /// One element: its classes and children.
 struct Node(&'static str, &'static [Node]);
 
-/// A scene: its stylesheet, its elements under the root and, when the
-/// colours lie outside sRGB, the reason Chrome's pixels differ.
+/// A scene: its stylesheet, its elements under the root, its packaged
+/// faces and, when the colours lie outside sRGB, the reason Chrome's
+/// pixels differ.
 struct Scene {
     name: &'static str,
     sheet: &'static str,
     nodes: &'static [Node],
     reduced_motion: bool,
     deviation: Option<&'static str>,
+    fonts: &'static [Face],
 }
+
+/// A packaged face: its family, its file (relative to the workspace) and
+/// its `FontFace` weight descriptor.
+struct Face(&'static str, &'static str, &'static str);
+
+/// The style engine's metric fixtures (`scripts/generate-style-metrics-fonts.py`).
+const METRIC_FACES: &[Face] = &[
+    Face(
+        "Varta Metrics",
+        "crates/varta-style/tests/fixtures/metrics.ttf",
+        "400",
+    ),
+    Face(
+        "Varta Metrics",
+        "crates/varta-style/tests/fixtures/metrics-bold.ttf",
+        "700",
+    ),
+    Face(
+        "Varta Metrics Variable",
+        "crates/varta-style/tests/fixtures/metrics-variable.ttf",
+        "100 900",
+    ),
+];
 
 const SCENES: &[Scene] = &[
     Scene {
@@ -53,6 +83,7 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "layers",
@@ -60,6 +91,7 @@ const SCENES: &[Scene] = &[
         nodes: &[Node("a box", &[]), Node("b box", &[]), Node("c box", &[])],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "registered-properties",
@@ -67,6 +99,7 @@ const SCENES: &[Scene] = &[
         nodes: &[Node("outer", &[Node("inner", &[]), Node("bad", &[])])],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "theme-colours",
@@ -82,6 +115,7 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "colour-functions",
@@ -105,6 +139,7 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "out-of-gamut",
@@ -121,6 +156,7 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: Some("CSS Color 4 §14.2 gamut mapping natively; Chrome clips per channel"),
+        fonts: &[],
     },
     Scene {
         name: "math-and-units",
@@ -139,6 +175,7 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "media-features",
@@ -153,6 +190,7 @@ const SCENES: &[Scene] = &[
         ],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "reduced-motion",
@@ -160,6 +198,7 @@ const SCENES: &[Scene] = &[
         nodes: &[Node("a", &[]), Node("b", &[])],
         reduced_motion: true,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "comments-and-escapes",
@@ -167,6 +206,7 @@ const SCENES: &[Scene] = &[
         nodes: &[Node("a", &[]), Node("b", &[])],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "css-wide-keywords",
@@ -184,6 +224,7 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "importance",
@@ -201,6 +242,7 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "conditional-rules",
@@ -218,6 +260,7 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "named-colours-and-mixes",
@@ -237,6 +280,7 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "multi-colour-mixes",
@@ -249,6 +293,7 @@ const SCENES: &[Scene] = &[
         deviation: Some(
             "CSS Color 5 §3 mixes one or more colours; Chrome mixes exactly two and drops the declaration",
         ),
+        fonts: &[],
     },
     Scene {
         name: "font-relative-units",
@@ -264,6 +309,7 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
     },
     Scene {
         name: "percentage-length-math",
@@ -279,8 +325,77 @@ const SCENES: &[Scene] = &[
         )],
         reduced_motion: false,
         deviation: None,
+        fonts: &[],
+    },
+    Scene {
+        name: "platform-font-units",
+        sheet: ".r { position: relative; width: 320px; height: 200px } .a { position: absolute; left: 0; top: 0; width: 10ex; height: 2cap; background-color: #c00 } .b { position: absolute; left: 80px; top: 0; width: 5ch; height: 1lh; background-color: #0a0 } .c { position: absolute; left: 130px; top: 0; width: 2ic; height: calc(1rex + 1rcap); margin-top: 1rlh; background-color: #00c } .s { position: absolute; left: 170px; top: 0; font-family: sans-serif; width: 6ex; height: 1lh; background-color: #cc0 } .m { position: absolute; left: 230px; top: 0; font-family: monospace; width: 4ch; height: 1lh; background-color: #0cc } .u { position: absolute; left: 0; top: 60px; font-family: system-ui; font-size: 13px; width: 5ch; height: 1lh; background-color: #c0c } .w { position: absolute; left: 50px; top: 60px; font-family: system-ui; font-weight: bold; width: 5ch; height: 3ex; background-color: #888 } .i { position: absolute; left: 100px; top: 60px; font-family: serif; font-style: italic; font-size: 30px; width: 3cap; height: 1ex; background-color: #c60 } .n { position: absolute; left: 170px; top: 60px; font-family: Missing, sans-serif; font-size: 100px; width: 1ch; height: 0.5lh; background-color: #06c }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("s", &[]),
+                Node("m", &[]),
+                Node("u", &[]),
+                Node("w", &[]),
+                Node("i", &[]),
+                Node("n", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+    },
+    Scene {
+        name: "font-metric-references",
+        sheet: "@property --gap { syntax: \"<length>\"; inherits: true; initial-value: 0px } .r { position: relative; width: 320px; height: 200px; font-family: sans-serif; font-size: 20px; --gap: 1ch } .a { position: absolute; left: 0; top: 0; font-size: 2ex; width: 1em; height: 1lh; margin-left: var(--gap); background-color: #c00 } .b { position: absolute; left: 60px; top: 0; line-height: 3ex; width: 2cap; height: 1lh; background-color: #0a0 } .c { position: absolute; left: 0; top: 80px; font-family: monospace; width: calc(50% - 4ch); height: calc(1lh + 1rlh); background-color: #00c } .d { position: absolute; left: 200px; top: 0; font-size: 1.5em; font-family: system-ui; line-height: calc(1ex + 2ch); width: 1lh; height: 2ic; background-color: #cc0 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+    },
+    Scene {
+        name: "packaged-font-units",
+        sheet: ".r { position: relative; width: 320px; height: 200px; font-family: \"Varta Metrics\", serif } .a { position: absolute; left: 0; top: 0; width: 10ex; height: 1lh; background-color: #c00 } .b { position: absolute; left: 100px; top: 0; font-weight: bold; width: 5ch; height: 1lh; background-color: #0a0 } .c { position: absolute; left: 160px; top: 0; width: 2ic; height: 2cap; background-color: #00c } .d { position: absolute; left: 200px; top: 0; font-weight: 600; font-size: 13px; width: 3ex; height: 3cap; background-color: #cc0 } .v { position: absolute; left: 0; top: 60px; font-family: \"Varta Metrics Variable\"; font-weight: 500; width: 4ch; height: 3ex; background-color: #0cc } .w { position: absolute; left: 60px; top: 60px; font-family: \"Varta Metrics Variable\"; font-weight: 900; font-size: 40px; width: 1ch; height: 1ex; background-color: #c0c } .x { position: absolute; left: 120px; top: 60px; font-family: Missing, \"Varta Metrics\"; font-size: 3ex; width: 1ch; height: 1lh; background-color: #888 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
+                Node("v", &[]),
+                Node("w", &[]),
+                Node("x", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: METRIC_FACES,
     },
 ];
+
+/// The view's fonts: the scene's packaged faces, the platform for the rest.
+fn font_set(scene: &Scene) -> Result<FontSet, Box<dyn std::error::Error>> {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let mut set = FontSet::new(None, varta_desktop::shell::host_fonts(Vec::new()));
+    for Face(family, file, _) in scene.fonts {
+        let bytes = std::fs::read(format!("{root}/{file}"))?;
+        set.add_file(family, &[], &bytes)
+            .map_err(|error| format!("{file}: {error:?}"))?;
+    }
+    Ok(set)
+}
 
 fn append(batch: &mut B, parent: u32, nodes: &[Node], next: &mut u32) {
     for Node(class, children) in nodes {
@@ -315,6 +430,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         environment.preferences.reduced_motion = scene.reduced_motion;
         let mut view = View::default();
+        view.set_fonts(Arc::new(font_set(scene)?));
         view.set_environment(environment)?;
         let mut batch = B::new();
         batch.stylesheet(1, scene.sheet);
@@ -345,6 +461,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "nodes": tree(scene.nodes),
             "reducedMotion": scene.reduced_motion,
             "deviation": scene.deviation,
+            "fonts": scene.fonts.iter().map(|Face(family, file, weight)| serde_json::json!({"family": family, "file": file, "weight": weight})).collect::<Vec<_>>(),
             "boxes": boxes,
             "computed": view.snapshot()["tree"],
             "raster": image.pixels,
