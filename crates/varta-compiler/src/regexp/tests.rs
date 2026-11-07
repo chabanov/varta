@@ -6,10 +6,10 @@ use super::program::{self, op};
 use super::*;
 
 fn error(pattern: &str, flags: &str) -> RegExpError {
-    literal(pattern, flags).expect_err(pattern)
+    literal(pattern, flags, false).expect_err(pattern)
 }
 fn units(pattern: &str, flags: &str) -> Vec<u16> {
-    literal(pattern, flags)
+    literal(pattern, flags, false)
         .unwrap_or_else(|e| panic!("{pattern}: {e:?}"))
         .compiled
         .units
@@ -17,7 +17,7 @@ fn units(pattern: &str, flags: &str) -> Vec<u16> {
 
 #[test]
 fn flags_are_parsed_once_and_printed_in_canonical_order() {
-    let compiled = literal("a", "yusmig").unwrap();
+    let compiled = literal("a", "yusmig", false).unwrap();
     assert_eq!(compiled.flags.text(), "gimsuy");
     for flags in ["gg", "x", "G", "ii"] {
         assert!(
@@ -115,7 +115,7 @@ fn early_errors_follow_the_pattern_grammar() {
     for pattern in [
         "]", "a{", "a{1", "{", "}", "\\a", "\\c1", "[\\d-z]", "\\01", "\\k", "\\8",
     ] {
-        literal(pattern, "").unwrap_or_else(|e| panic!("{pattern}: {e:?}"));
+        literal(pattern, "", false).unwrap_or_else(|e| panic!("{pattern}: {e:?}"));
     }
 }
 
@@ -131,12 +131,12 @@ fn constructed_sources_escape_slashes_and_line_terminators_like_v8() {
         ("\u{2028}", "\\u2028"),
     ] {
         assert_eq!(
-            constructed(pattern, "").unwrap().source,
+            constructed(pattern, "", false).unwrap().source,
             source,
             "{pattern:?}"
         );
     }
-    assert_eq!(literal("a\\/b", "g").unwrap().source, "a\\/b");
+    assert_eq!(literal("a\\/b", "g", false).unwrap().source, "a\\/b");
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn headers_describe_anchors_prefilters_and_slots() {
 
 #[test]
 fn lean_programs_record_only_the_match_bounds() {
-    let compiled = literal("(a)((b)|c)*", "").unwrap().compiled;
+    let compiled = literal("(a)((b)|c)*", "", false).unwrap().compiled;
     assert_eq!(compiled.groups, 3);
     assert_eq!(compiled.units[program::CAPTURES], 8);
     assert_eq!(compiled.lean[program::CAPTURES], 2);
@@ -214,7 +214,7 @@ fn lean_programs_record_only_the_match_bounds() {
         2
     );
     // Without groups both programs are the same.
-    let plain = literal("ab+", "").unwrap().compiled;
+    let plain = literal("ab+", "", false).unwrap().compiled;
     assert_eq!(plain.units, plain.lean);
 }
 
@@ -258,4 +258,103 @@ fn v37_programs_without_regexps_compile_as_without_preludes() {
             "{named}"
         );
     }
+}
+
+/// V38 (`full_regexp`): the whole grammar compiles; early errors keep V8's
+/// text (pinned against Node 24.20.0).
+fn full_error(pattern: &str, flags: &str) -> String {
+    match literal(pattern, flags, true) {
+        Err(RegExpError::Syntax(message)) => message,
+        other => panic!("{pattern}/{flags}: {other:?}"),
+    }
+}
+
+#[test]
+fn full_grammar_compiles_every_es2025_form() {
+    for (pattern, flags) in [
+        (r"(a)\1", ""),
+        (r"(?<n>a)\k<n>", "u"),
+        (r"\k<n>(?<n>a)", ""),
+        ("a(?=b)(?!c)(?<=a)(?<!d)", ""),
+        ("(?=a)*", ""),
+        ("(?i:a)(?-i:b)(?ms-i:c)", ""),
+        ("(?<x>a)|(?<x>b)", ""),
+        (r"(?<a>.)(?<\u{62}>.)", ""),
+        (
+            r"\p{L}\P{Lu}\p{Script=Greek}\p{scx=Hira}\p{gc=Nd}\p{Any}",
+            "u",
+        ),
+        (r"[\p{L}--[a-z]][a&&b][\q{abc|d}]\p{RGI_Emoji}", "v"),
+        ("a", "dgimsvy"),
+        ("((((((a)?)?)?)?)?)?", ""),
+        ("a{100000}", ""),
+    ] {
+        let compiled = literal(pattern, flags, true).unwrap_or_else(|e| panic!("{pattern}: {e:?}"));
+        assert_eq!(
+            compiled.compiled.units[varta_common::regexp::header::FORMAT],
+            varta_common::regexp::FORMAT_VERSION
+        );
+    }
+}
+
+#[test]
+fn full_grammar_early_errors_keep_v8_text() {
+    for (pattern, flags, message) in [
+        ("(?<a>x)(?<a>y)", "", "Duplicate capture group name"),
+        (
+            "(?:(?<a>.)|(?<a>.))(?<a>.)",
+            "",
+            "Duplicate capture group name",
+        ),
+        (r"\k<b>(?<a>x)", "", "Invalid named capture referenced"),
+        (r"\k<a", "u", "Invalid capture group name"),
+        (r"\k", "u", "Invalid named reference"),
+        ("(?i-i:a)", "", "Repeated flag in flag group"),
+        ("(?ii:a)", "", "Repeated flag in flag group"),
+        ("(?-:a)", "", "Invalid flag group"),
+        ("(?-i-m:a)", "", "Multiple dashes in flag group"),
+        ("(?i)a", "", "Invalid group"),
+        ("(?x:a)", "", "Invalid group"),
+        ("a(?<=b)*", "", "Invalid quantifier"),
+        ("a(?=b)*", "u", "Invalid quantifier"),
+        (r"\p{Foo}", "u", "Invalid property name"),
+        (r"\p{l}", "u", "Invalid property name"),
+        (r"\p{RGI_Emoji}", "u", "Invalid property name"),
+        (r"\P{RGI_Emoji}", "v", "Invalid property name"),
+        (
+            r"[^\p{RGI_Emoji}]",
+            "v",
+            "Negated character class may contain strings",
+        ),
+        (
+            r"[^\q{abc}]",
+            "v",
+            "Negated character class may contain strings",
+        ),
+        (
+            "[a-z&&[aeiou]]",
+            "v",
+            "Invalid set operation in character class",
+        ),
+        ("[a&&b--c]", "v", "Invalid set operation in character class"),
+        ("[(]", "v", "Invalid character in character class"),
+        ("[a&&&b]", "v", "Invalid character in character class"),
+        ("[a-]", "v", "Invalid character in character class"),
+        (r"[a-\d]", "v", "Invalid character class"),
+        ("[!!]", "v", "Invalid set operation in character class"),
+        (r"[\q]", "v", "Invalid escape"),
+        (r"(a)\2", "u", "Invalid escape"),
+    ] {
+        let found = full_error(pattern, flags);
+        assert!(found.ends_with(message), "{pattern}/{flags}: {found}");
+    }
+    assert!(matches!(
+        literal("a", "uv", true),
+        Err(RegExpError::Syntax(m)) if m == "Invalid flags supplied to RegExp constructor 'uv'"
+    ));
+    // Programs stay within the format's single-unit offsets.
+    assert!(matches!(
+        literal(&"(a)".repeat(40_000), "", true),
+        Err(RegExpError::Unsupported(m)) if m.starts_with("RegExp program larger than")
+    ));
 }

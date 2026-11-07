@@ -36,4 +36,6 @@ pub enum IntrinsicError {
     CaseLimit,
     #[error("result too large")]
     ResultTooLarge,
+    #[error("malformed RegExp program")]
+    RegExpProgram,
 }

@@ -5023,6 +5023,30 @@ export const registry = freeze({
       "timerBookkeeping": false
     },
     {
+      "admittedUnder": [],
+      "capability": null,
+      "instanceBookkeeping": false,
+      "kvBookkeeping": false,
+      "minHostAbi": 34,
+      "name": "regexp_exec",
+      "networkBookkeeping": false,
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "f64",
+        "i32"
+      ],
+      "resultGlobals": true,
+      "results": [
+        "i32"
+      ],
+      "scheduler": false,
+      "stringResult": true,
+      "timerBookkeeping": false
+    },
+    {
       "admittedUnder": [
         "checked-f64-utf16-v34",
         "checked-f64-utf16-v35",
