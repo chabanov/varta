@@ -8236,6 +8236,11 @@ same day ([contract](architecture.md#view-css-engine-k8-t2-and-t3)).
   `::backdrop`: generated boxes natively, per-element pseudo rules in the
   bridge), the form-validity pseudo-classes (`:invalid`), and the
   `transition`/`animation` interplay with `translate`/`scale`.
+- Gate (font-metric units, S4 and S5 first parts together, merged with
+  main at `cc298823`): `python3 scripts/verify.py full` PASS at `e0030a37`
+  (4376 Rust tests passed, 0 failed, 25 ignored; 186 browser Node tests;
+  conformance baseline; sources unchanged), report
+  `target/verification/20261106-231206-57zwplmi/report.json` (macOS only).
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
