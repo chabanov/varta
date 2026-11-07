@@ -66,6 +66,15 @@ impl Lower<'_> {
             let span = value.span;
             return self.unknown_string(value, span);
         }
+        // V38 (`symbol_values`): ToString of a class instance with a
+        // `[Symbol.toPrimitive]` method or a `[Symbol.toStringTag]` getter.
+        let value = match self.object_primitive(value, "string")? {
+            Ok(primitive) => return self.template_text(primitive),
+            Err(value) => match self.tagged_text(value)? {
+                Ok(text) => return Ok(text),
+                Err(value) => value,
+            },
+        };
         let bigint = self.types.profile.bigint_values();
         if let Some(object) = unions::members(value.ty, self.types)
             .into_iter()

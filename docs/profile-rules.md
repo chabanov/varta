@@ -4292,6 +4292,14 @@ Contract: [architecture.md](architecture.md#symbol-values-symbol_values).
   instance. A user module constant admits only `Symbol()`/`Symbol(literal)`,
   which read no prelude constant; admitting `Symbol.for` or a well-known
   symbol there needs the prelude's initializers ordered first.
+- Symbol-keyed members exist only as the members `modules::symbol_keys`
+  rewrites before lowering: a key is `symbol_keys::key` (declaring module's
+  graph index and name) or `well_known_key`, and `is_symbol_key` tells it
+  apart. Never derive a key from a symbol value, never let a quoted key
+  spell one (`records::quoted_key`), and refuse every string-key view of a
+  record that has one (enumeration does). A new computed-key form adds its
+  case to the rewriter's visitor; a new protocol member adds its symbol to
+  `WELL_KNOWN_KEYS` and its call to `lower::symbols`.
 - Tests: `varta-runtime` `symbol_tests` (`symbol_cases/*.ts` with Node
   24.20.0 expected files, collector stress builds, v37 denials), the KV
   refusal in `kv_tests`, the `language` test of the tag, the conformance

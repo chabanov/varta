@@ -48,6 +48,15 @@ const WELL_KNOWN: [&str; 15] = [
 /// V8's message for ToNumber of a symbol.
 const NUMBER_CONVERSION: &str = "Cannot convert a Symbol value to a number";
 
+/// The well-known symbols whose members drive a protocol here
+/// (`modules::symbol_keys::WELL_KNOWN_KEYS`).
+const TO_PRIMITIVE: &str = "toPrimitive";
+const TO_STRING_TAG: &str = "toStringTag";
+const HAS_INSTANCE: &str = "hasInstance";
+/// `Object.prototype.toString`'s text around the tag (§20.1.3.6).
+const TAG_OPEN: &str = "[object ";
+const TAG_CLOSE: &str = "]";
+
 /// The index of the well-known symbol `Symbol.<name>`.
 pub(super) fn well_known(name: &str) -> Option<usize> {
     WELL_KNOWN.iter().position(|known| *known == name)
@@ -311,6 +320,149 @@ impl Lower<'_> {
                 body: vec![S::Expr(value), S::Throw(error)],
             },
         })
+    }
+    /// The class of `ty` when it declares (or inherits) the instance member
+    /// keyed by the well-known symbol `Symbol.<name>`, with whether that
+    /// member is a getter.
+    fn well_known_member(&self, ty: Type, name: &str) -> Option<(u32, bool)> {
+        let Type::Class(class) = ty else {
+            return None;
+        };
+        let key = crate::modules::symbol_keys::well_known_key(name);
+        self.types
+            .classes
+            .get(class)
+            .methods
+            .get(&key)
+            .map(|method| (class, method.getter))
+    }
+    /// A synthesized `receiver[Symbol.<name>](args)` member expression and
+    /// call, whose receiver the caller passes already lowered.
+    fn well_known_call(
+        name: &str,
+        args: Vec<ast::Expr>,
+        span: swc_common::Span,
+        receiver: ast::Expr,
+    ) -> (ast::CallExpr, ast::MemberExpr) {
+        let member = ast::MemberExpr {
+            span,
+            obj: Box::new(receiver),
+            prop: ast::MemberProp::Ident(ast::IdentName::new(
+                crate::modules::symbol_keys::well_known_key(name).into(),
+                span,
+            )),
+        };
+        let call = ast::CallExpr {
+            span,
+            callee: ast::Callee::Expr(Box::new(ast::Expr::Member(member.clone()))),
+            args: args
+                .into_iter()
+                .map(|expr| ast::ExprOrSpread {
+                    spread: None,
+                    expr: Box::new(expr),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        (call, member)
+    }
+    /// ToPrimitive of a class instance with a `[Symbol.toPrimitive](hint)`
+    /// method (§7.1.1): the method's primitive result, or the value back
+    /// when its class has none. `hint` is `"string"`, `"number"` or
+    /// `"default"`.
+    pub(super) fn object_primitive(
+        &mut self,
+        value: Expr,
+        hint: &str,
+    ) -> Result<std::result::Result<Expr, Expr>> {
+        if !self.types.profile.symbol_values() {
+            return Ok(Err(value));
+        }
+        let Some((_, false)) = self.well_known_member(value.ty, TO_PRIMITIVE) else {
+            return Ok(Err(value));
+        };
+        let span = value.span;
+        let hint = ast::Expr::Lit(ast::Lit::Str(ast::Str {
+            span,
+            value: hint.into(),
+            raw: None,
+        }));
+        let placeholder = ast::Expr::This(ast::ThisExpr { span });
+        let (call, member) = Self::well_known_call(TO_PRIMITIVE, vec![hint], span, placeholder);
+        let result = self.class_method_call(&call, &member, Some(value), None)?;
+        if unions::members(result.ty, self.types)
+            .iter()
+            .any(|ty| !unions::primitive(*ty) && !matches!(ty, Type::BigInt | Type::Symbol))
+        {
+            return Err(self.source.locate(
+                type_error(format!(
+                    "[Symbol.toPrimitive] must return a primitive value, found {}",
+                    result.ty
+                )),
+                span,
+            ));
+        }
+        Ok(Ok(result))
+    }
+    /// `value instanceof C` for a class `C` with a static
+    /// `[Symbol.hasInstance](value)` method (§13.10.2): ToBoolean of its
+    /// result, or `None` when the class has none.
+    pub(super) fn has_instance(
+        &mut self,
+        binary: &ast::BinExpr,
+        class: u32,
+    ) -> Result<Option<Expr>> {
+        let key = crate::modules::symbol_keys::well_known_key(HAS_INSTANCE);
+        if !self.types.profile.symbol_values()
+            || !self.types.classes.get(class).statics.contains_key(&key)
+        {
+            return Ok(None);
+        }
+        let (call, member) = Self::well_known_call(
+            HAS_INSTANCE,
+            vec![(*binary.left).clone()],
+            binary.span,
+            (*binary.right).clone(),
+        );
+        let result = self.class_static_call(&call, &member, class, None)?;
+        self.truth(result).map(Some)
+    }
+    /// `Object.prototype.toString` of a class instance with a
+    /// `[Symbol.toStringTag]` getter (§20.1.3.6): `[object <tag>]`, or the
+    /// value back when its class has none.
+    pub(super) fn tagged_text(&mut self, value: Expr) -> Result<std::result::Result<Expr, Expr>> {
+        if !self.types.profile.symbol_values() {
+            return Ok(Err(value));
+        }
+        let Some((_, true)) = self.well_known_member(value.ty, TO_STRING_TAG) else {
+            return Ok(Err(value));
+        };
+        let span = value.span;
+        let placeholder = ast::Expr::This(ast::ThisExpr { span });
+        let (_, member) = Self::well_known_call(TO_STRING_TAG, vec![], span, placeholder);
+        let tag = self.class_member(&member, value, true)?;
+        if tag.ty.erased() != Type::String {
+            return Err(self.source.locate(
+                type_error(format!(
+                    "[Symbol.toStringTag] getter of type {} (a string is required)",
+                    tag.ty
+                )),
+                span,
+            ));
+        }
+        let text = |text: &str, this: &Self| Expr {
+            span,
+            ty: Type::String,
+            kind: E::String(this.types.profile.string_bytes(text)),
+        };
+        let open = text(TAG_OPEN, self);
+        let close = text(TAG_CLOSE, self);
+        let concat = |a: Expr, b: Expr| Expr {
+            span,
+            ty: Type::String,
+            kind: E::Binary(ast::BinaryOp::Add, Box::new(a), Box::new(b)),
+        };
+        Ok(Ok(concat(concat(open, tag), close)))
     }
     /// `Symbol.<name>` (a well-known symbol) and `symbol.description`.
     pub(super) fn symbol_member(&mut self, member: &ast::MemberExpr) -> Result<Option<Expr>> {

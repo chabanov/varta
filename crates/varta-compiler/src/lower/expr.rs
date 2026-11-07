@@ -474,6 +474,10 @@ impl Lower<'_> {
             }
             ast::Expr::Bin(binary) if binary.op == ast::BinaryOp::InstanceOf => {
                 if let Some(class) = self.class_callee(&binary.right) {
+                    // V38 (`symbol_values`): `static [Symbol.hasInstance]`.
+                    if let Some(test) = self.has_instance(binary, class)? {
+                        return Ok(test);
+                    }
                     return self.class_instance_of(binary, class);
                 }
                 if let Some(test) = self.collection_instance_of(binary)? {
@@ -1322,8 +1326,8 @@ impl Lower<'_> {
                     value.span,
                 ));
             }
-            // A function (v36) serializes like `undefined`.
-            let function = |ty: &Type| matches!(ty, Type::Function(_));
+            // A function (v36) and a symbol (v38) serialize like `undefined`.
+            let function = |ty: &Type| matches!(ty, Type::Function(_) | Type::Symbol);
             let ty = if value.ty == Type::Unknown
                 || value.ty.is_union()
                     && unions::members(value.ty, self.types)

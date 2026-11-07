@@ -361,9 +361,9 @@ other platforms not run.
 
 Not done, each refused by name with its reason:
 
-- **Symbol-keyed properties**: `Symbol()` values are admitted by the [K9
-  D2 record](#k9-d2-value-layout-and-collector--2026-11-06); symbol-keyed
-  members are not.
+- **Symbol-keyed properties**: admitted by the [K9 D2
+  record](#k9-d2-value-layout-and-collector--2026-11-06) for `unique symbol`
+  constants and the protocol symbols.
 - **`WeakMap`, `WeakSet`, `WeakRef`, `FinalizationRegistry`**: weak edges
   (ephemerons) in the exact-root collector and deterministic cleanup turns
   in both schedulers. A strong-reference stand-in would leak and is not
@@ -415,11 +415,33 @@ readers (rebuilt `intrinsics.wasm`) and the KV stager of both hosts (rebuilt
 browser `kv-codec.wasm`). Evidence: `varta-runtime` `symbol_tests` (three
 Node 24.20.0 programs, collector stress builds, v37 denials), the KV
 refusal case, the `language` tag test, the regenerated browser registry and
-the conformance feature `symbol`. The linked serializer's symbol check raises the v38 `json` fuel golden of `fuel_determinism_tests` from 33439 to 33558. Not done in item 1: symbol-keyed
-properties and the protocols keyed by `toPrimitive`, `toStringTag` and
-`hasInstance` (they need a static key identity for a `unique symbol`
-across modules and record types; refused by the existing computed-key
-diagnostics), `Object.getOwnPropertySymbols`.
+the conformance feature `symbol`. The linked serializer's symbol check
+raises the v38 `json` fuel golden of `fuel_determinism_tests` from 33439 to
+33558.
+
+Item 1 continued (owner decision of 2026-11-06): members keyed by a
+module-level `unique symbol` constant, across modules, and by
+`Symbol.toPrimitive`/`toStringTag`/`hasInstance`, rewritten before lowering
+to members with stable keys (`modules::symbol_keys`); the ToPrimitive,
+`Object.prototype.toString` tag and `instanceof` protocols of classes.
+Evidence: the `keyed` and `protocols` Node programs and the cross-module
+test of `symbol_tests`. Refused by name: string-key enumeration of a record
+with symbol-keyed members, `Object.getOwnPropertySymbols`.
+
+Owner question (`JSON.stringify` by the spec, decision 2 of 2026-11-06):
+returning `undefined` from `JSON.stringify(x)` for `x: unknown` makes the
+result `string | undefined`, but TypeScript's lib types the call `string`
+(`lib.es5.d.ts`), so tsc-valid code stops compiling; the pilot's own
+`uarp-sdk` transport (`form.append(key, typeof value === 'object' ?
+JSON.stringify(value) : String(value))`) is the first casualty
+(`sdk_path_tests`), with fourteen other test programs. The change is
+reverted pending the owner: a value statically typed `symbol`, a function
+or `undefined` gives `undefined` as Node does, and an `unknown` or union
+value without a JSON form keeps the `TypeError`. Options: (a) keep that; (b)
+type the result `string | undefined` only where the argument's static type
+includes `undefined`, a function or a symbol (tsc-valid code with such
+arguments still breaks); (c) the owner's literal decision, with the SDK
+changed.
 
 ### Native CSS `scale()` — native backlog batch, 2026-11-06
 
@@ -3589,7 +3611,7 @@ The selectors are registered; the table records what each stream admits.
 | `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag, host time-zone grant; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
 | `expression_forms()` | K9 C — expressions and functions (2026-11-06): `await` anywhere, comma, `new.target` comparisons, tagged templates, spreads into fixed parameters, `this` parameters and field arrows, object-literal methods with `this`, computed keys, destructuring everywhere, hand-written iterators, `using`, structural thenables | Implemented in part ([contract](architecture.md#expression-forms-expression_forms), [record](#k9-c--expressions-and-functions-2026-11-06)): no ABI, value-layout, scheduler or host change. Pending: top-level `await` (needs module-level evaluation), object-literal getters/setters, `TemplateStringsArray.raw`, `SuppressedError` for double throws in `using`, `await` in `switch` case tests |
 | `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results. No ABI, value-layout or host change. Pending (owner decision): static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
-| `symbol_values()` | K9 D2 Symbol values (2026-11-06): value18 tag 16, registry, well-known symbols | Implemented ([contract](architecture.md#symbol-values-symbol_values), [record](#k9-d2-value-layout-and-collector--2026-11-06)); symbol-keyed properties pending |
+| `symbol_values()` | K9 D2 Symbol values (2026-11-06): value18 tag 16, registry, well-known symbols | Implemented ([contract](architecture.md#symbol-values-symbol_values), [record](#k9-d2-value-layout-and-collector--2026-11-06)); symbol-keyed members and protocols |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module
 under v38, scratch copies only, no live API call): the unmodified pilot checks

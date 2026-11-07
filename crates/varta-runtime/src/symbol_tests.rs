@@ -35,6 +35,9 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("values"),
     case!("declared"),
     case!("guide"),
+    case!("keyed"),
+    case!("protocols"),
+    case!("guide_keys"),
 ];
 
 fn compile_in(profile: LanguageProfile, source: &str) -> Vec<u8> {
@@ -96,10 +99,21 @@ fn declared_symbols_match_node() {
     matches_node("declared");
 }
 
-/// The `docs/language-guide.md` example, verbatim.
+#[test]
+fn symbol_keyed_members_match_node() {
+    matches_node("keyed");
+}
+
+#[test]
+fn symbol_protocols_match_node() {
+    matches_node("protocols");
+}
+
+/// The `docs/language-guide.md` examples, verbatim.
 #[test]
 fn symbol_guide_example_matches_node() {
     matches_node("guide");
+    matches_node("guide_keys");
 }
 
 /// Symbols keep their records rooted across every allocation: the stress
@@ -119,6 +133,84 @@ fn symbols_survive_collector_stress() {
     }
 }
 
+struct Modules(std::collections::BTreeMap<std::path::PathBuf, String>);
+impl varta_compiler::ModuleLoader for Modules {
+    fn resolve(
+        &self,
+        _: &std::path::Path,
+        specifier: &str,
+    ) -> Result<std::path::PathBuf, varta_compiler::CompilerError> {
+        Ok(specifier.trim_start_matches("./").into())
+    }
+    fn load(&self, path: &std::path::Path) -> Result<String, varta_compiler::CompilerError> {
+        self.0
+            .get(path)
+            .cloned()
+            .ok_or_else(|| varta_compiler::CompilerError::Module("missing virtual module".into()))
+    }
+}
+
+/// A `unique symbol` keeps one member key across modules: imported,
+/// re-exported and renamed bindings name the member its declaring module
+/// declared.
+#[test]
+fn symbol_keys_are_stable_across_modules() {
+    let modules = Modules(
+        [
+            (
+                "keys",
+                "export const TAG: unique symbol = Symbol('tag');\n\
+                 export interface Tagged { [TAG]: string; size: number }\n\
+                 export function make(size: number): Tagged { return { [TAG]: 'made', size }; }",
+            ),
+            ("again", "export { TAG as LABEL } from './keys';"),
+        ]
+        .into_iter()
+        .map(|(path, text)| (path.into(), text.to_owned()))
+        .collect(),
+    );
+    let entry = "import { make, TAG, type Tagged } from './keys';\n\
+                 import { LABEL } from './again';\n\
+                 export function main(): void {\n\
+                   const t: Tagged = make(2);\n\
+                   console.log(t[TAG] + ' ' + t[LABEL] + ' ' + String(TAG === LABEL));\n\
+                   t[LABEL] = 'changed';\n\
+                   console.log(t[TAG] + ' ' + JSON.stringify(t));\n\
+                 }";
+    let bytes = varta_compiler::compile_modules_with_profile(
+        varta_compiler::ModuleSource {
+            path: "main.ts".into(),
+            text: entry.into(),
+        },
+        &modules,
+        V38,
+    )
+    .unwrap_or_else(|e| panic!("{e}"))
+    .wasm;
+    let output = VartaRuntime::new().run_wasm_bytes(&bytes, &[]).unwrap();
+    // Node 24.20.0 prints the same two lines.
+    assert_eq!(
+        printed(&output.lines),
+        ["made made true", "changed {\"size\":2}"]
+    );
+}
+
+/// Symbol-keyed members are refused where a string-key view would list
+/// them, and quoted keys cannot spell a symbol key.
+#[test]
+fn symbol_keys_stay_out_of_string_key_forms() {
+    refused(
+        V38,
+        "const K = Symbol('k');\nexport function main(): void { const o = { [K]: 1, a: 2 }; console.log(Object.keys(o).join()); }",
+        "Object.keys of an object with symbol-keyed members",
+    );
+    refused(
+        V38,
+        "export function main(): void { const o = { '#[3:K]': 1 }; console.log(String(o)); }",
+        "reserved for symbol keys",
+    );
+}
+
 /// V37 keeps value layout 17 and rejects every symbol form.
 #[test]
 fn symbol_forms_stay_refused_by_v37() {
@@ -132,7 +224,6 @@ fn symbol_forms_stay_refused_by_v37() {
             "{source}"
         );
     }
-    let _ = V38;
     refused(
         V38,
         "export function main(): void { const s = Symbol(true); }",

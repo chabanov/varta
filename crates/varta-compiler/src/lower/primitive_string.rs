@@ -94,6 +94,21 @@ impl Lower<'_> {
                 },
             });
         }
+        // V38 (`symbol_values`): a class instance converts through its
+        // `[Symbol.toPrimitive]` method, or (String) its
+        // `[Symbol.toStringTag]` getter.
+        let value = match self.object_primitive(value, if number { "number" } else { "string" })? {
+            Ok(primitive) => return self.primitive_convert(primitive, rest, number, span),
+            Err(value) => value,
+        };
+        let value = if number || !rest.is_empty() {
+            value
+        } else {
+            match self.tagged_text(value)? {
+                Ok(text) => return Ok(text),
+                Err(value) => value,
+            }
+        };
         if unions::members(value.ty, self.types).iter().any(|ty| {
             !unions::primitive(*ty) && !(self.types.profile.bigint_values() && *ty == Type::BigInt)
         }) {

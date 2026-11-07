@@ -45,6 +45,9 @@ export function main(): void {
   console.log(JSON.stringify({ a: 1, b: held, c: 'x' }));
   console.log(JSON.stringify([1, held, 'x']));
   console.log(held);
+  console.log(String(JSON.stringify(red)));
+  const maybe: unknown = { a: [held, 1] };
+  console.log(String(JSON.stringify(maybe, null, 2)));
 
   const names = new Map<symbol, string>();
   names.set(red, 'red');

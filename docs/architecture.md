@@ -12410,13 +12410,35 @@ every form below (`symbol_forms_stay_refused_by_v37`).
   initialized with `Symbol()` or `Symbol(literal)`, which only allocate
   (`module_constants::initializer_form`); `Symbol.for` and the well-known
   symbols read the prelude's own constants and stay out of initializers.
-- **Not admitted yet**, refused by the existing diagnostics: symbol-keyed
-  properties (`{ [key]: v }`, `obj[key]`, class members `[key]` other than
-  the admitted iterator methods), and with them the protocols keyed by
-  `Symbol.toPrimitive`, `Symbol.toStringTag` and `Symbol.hasInstance`;
-  `Object.getOwnPropertySymbols`. `JSON.stringify(symbol)` at the top level
-  throws Varta's existing `TypeError` for a value without a JSON form
-  (Node returns `undefined`), like a function.
+- **Symbol-keyed members.** A computed key `[k]` whose `k` is a module-level
+  `unique symbol` constant (`const k = Symbol(…)` or annotated `unique
+  symbol`, declared, imported, re-exported or renamed) or one of
+  `Symbol.toPrimitive`, `Symbol.toStringTag` and `Symbol.hasInstance` names a
+  statically known member, as tsc types it: in object literals, interfaces
+  and type literals (property, method and getter signatures), class fields,
+  methods and accessors, and member reads, writes and calls
+  (`modules::symbol_keys`, run when the module graph is built, after the
+  module's dependencies). The member's key is `#[<declaring module's graph
+  index>:<name>]` (or `#[Symbol.<name>]`): the private-name prefix, so JSON,
+  KV and the value readers skip it like every non-string key, and no quoted
+  key may spell one (`reserved for symbol keys`). The key never depends on
+  the symbol value, which is created once per instance. A constant shadowed
+  by any other binding of its name in the module keeps the computed-key
+  rules. `Object.keys`/`values`/`entries` and `for...in` of a record with a
+  symbol-keyed member are refused by name (the string-key enumeration that
+  skips them is not implemented); `Object.getOwnPropertySymbols` and
+  symbol keys known only at run time stay refused.
+- **Protocols.** A class instance converts through its
+  `[Symbol.toPrimitive](hint)` method (§7.1.1) in `String`, `Number`,
+  template literals and unary `+`/`-` (hints `"string"` and `"number"`; the
+  method must return a primitive type); `String(x)` and template literals of
+  an instance without one but with a `[Symbol.toStringTag]` getter give
+  `[object <tag>]` (§20.1.3.6); `x instanceof C` calls a class's static
+  `[Symbol.hasInstance](x)` and applies ToBoolean (§13.10.2).
+  `JSON.stringify(symbol)` statically typed `symbol` is `undefined`; a value
+  of type `unknown` (or a union) that holds no JSON form keeps Varta's
+  `TypeError`, because the result is typed `string` as in TypeScript's lib
+  (see the K9 D2 record for the owner question).
 
 #### Virtual file roots (`file_roots`)
 

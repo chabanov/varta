@@ -14,6 +14,13 @@ Symbol(red)
 {"a":1,"c":"x"}
 [1,null,"x"]
 Symbol(red)
+undefined
+{
+  "a": [
+    null,
+    1
+  ]
+}
 3
 red
 false
