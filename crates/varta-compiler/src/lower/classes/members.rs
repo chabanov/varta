@@ -907,9 +907,9 @@ impl Lower<'_> {
         binary: &ast::BinExpr,
         class: u32,
     ) -> Result<Expr> {
-        // V38 (`symbol_values`): `static [Symbol.hasInstance]` (checked here,
-        // outside the expression lowering frame, whose size bounds the
-        // nesting depth the test thread's stack admits).
+        // V38 (`symbol_values`): `static [Symbol.hasInstance]`. Checked here,
+        // not in `expr_lowered`, to keep that frame small for deeply nested
+        // expressions (`exit_flow_tests` depth limit).
         if let Some(test) = self.has_instance(binary, class)? {
             return Ok(test);
         }
