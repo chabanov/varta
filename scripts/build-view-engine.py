@@ -17,7 +17,8 @@ The build is offline and locked and uses the workspace's `intrinsics` profile
 (size-optimized, abort on panic). It uses `wasm32-unknown-unknown` when that
 target is installed and otherwise `wasm32-wasip2`, whose linker is asked for a
 plain core module (no component) and whose libc supplies only the memory
-routines; the module imports nothing.
+routines; the module imports only the bridge's font measurements
+(`varta_view.font_metrics`).
 """
 import argparse
 import json

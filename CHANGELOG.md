@@ -13,6 +13,66 @@
   so a catastrophic pattern ends with the turn's typed fuel exhaustion.
   V37 keeps the linear-time subset unchanged. Conformance: 179 passed, 5
   known unsupported of 184 (four new feature rows and cases).
+- V38 K9 type level, step 3 (owner decision): a class array viewed as an
+  ancestor array (`B[]` or `(B | C)[]` as `A[]`) is one shared array, as in
+  JavaScript; an element read through a narrower name that does not admit
+  the element throws `TypeError` (replacing the copy of step 2). Pattern
+  template literal types (`` `on${string}` ``, `` `${number}px` ``) and
+  `Uppercase<string>` are checked like tsc: literals and template
+  expressions must match, `string` is not assignable. Admitted: `infer` in
+  intersection patterns, `this` in generic declarations and generic
+  declarations referring to themselves, `asserts this` methods and overloads
+  with rest parameters. Conformance: 193 passed, 5 known unsupported of 198.
+- K8 T2 S5 (first part), selectors: complex selectors with the four
+  combinators, type and universal selectors, `:is()`, `:where()`, `:not()`,
+  `:root`, `:host`, the structural pseudo-classes with `An+B`, `:focus`,
+  `:focus-within` and `:enabled`, Selectors 4 specificity, bounded matching
+  charged to the cascade work estimate; a winning `margin`, `padding` or
+  `gap` shorthand now overrides its longhands in the engine's computed
+  values (the browser bridge applied a losing longhand last). Tailwind
+  application candidates accepted: 228 to 251 of 312; the theme's
+  `:root, :host` rule is admitted.
+- K8 T2 S4 (first part), layout and text properties: CSS Logical 1
+  `padding-`/`margin-`/`inset-` `inline`/`block` properties (with
+  `-start`/`-end`), `inset` and `flex` map onto physical longhands at their
+  place in the cascade (with `var()`, split after substitution); new
+  properties `translate`, `scale`, `transform-origin` and `letter-spacing`,
+  rendered natively (effective transform `translate`, `scale`, `transform`
+  around the origin; shaper letter spacing). Chrome comparison: three new
+  scenes pass at 1x, 1.25x and 2x. Tailwind application candidates
+  accepted: 203 to 228 of 312.
+- K8 T2 font-metric units: `ex`, `cap`, `ch`, `ic`, `rex`, `rcap`, `rch`,
+  `ric`, `lh` under `line-height: normal` and `rlh` resolve from the
+  element's first available font on both hosts. The style engine selects
+  the font (CSS Fonts 4 §5 matching of family, style and weight) and reads
+  packaged faces' metrics itself (`read-fonts`, variable faces included);
+  the platform measures the fonts it renders with itself (natively through
+  CoreText, in the browser through Chrome's own units), and the Values 4
+  fallbacks apply only without any font. The engine also computes
+  `font-weight` and `font-style` with the user-agent rows (spec `bolder`
+  table). The Chrome comparison scenes (three new) pass at 1x, 1.25x and
+  2x with no new deviation; the browser host's `monospace` fixed-size flag
+  is fixed. New package: `core_maths` (read-fonts' `no_std` floats).
+- V38 K9 C owner decisions (2026-11-06), `expression_forms`: tagged
+  templates pass GetTemplateObject's per-site template object, so
+  `TemplateStringsArray.raw` works and every evaluation of a site sees the
+  same arrays; object-literal methods see the receiver they are called on
+  (spread copies, methods moved between objects, `undefined` for an
+  extracted method), passed through a register by every function-value call
+  of programs that have such methods, so spreads, `Object.assign` and
+  enumeration of such objects are admitted. Modules evaluate in the order of
+  ECMAScript's Evaluate() (requests in source order, type-only imports
+  erased), initializers may call imported functions, and module
+  initializers may `await`: a synthesized evaluator runs the asynchronous
+  module algorithm (siblings run while an awaiting module is suspended,
+  dependents run in the job its completion settles, a rejection fails every
+  waiting importer) and the entry module calls `main` at its end. Object
+  literals have getters and setters (accessor properties): reads, writes,
+  compound assignments, views, spreads, own keys, entries and
+  `JSON.stringify` (through a materializing copy) go through them; other
+  host reads of such objects are refused. No host ABI or value layout
+  change (the accepted value ABI bump was not needed); v37 keeps rejecting
+  every form.
 - V38 K9 type level, step 2 (owner decisions): branded primitives
   (`string & { __brand: … }` is the primitive), `typeof` of local bindings,
   overloaded call/construct signatures and function intersections (calls

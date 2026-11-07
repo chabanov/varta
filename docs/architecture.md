@@ -6367,7 +6367,9 @@ finished body fills the reservation, so the interned type graph is cyclic but
 finite. Direct cycles without such a step stay rejected with `recursive type
 declaration` (`type A = B; type B = A`), a recursive alias as a direct union
 member is rejected (`type A = string | A`), and recursive generic declarations
-are rejected. V33 and earlier keep rejecting every self-reference.
+are rejected (v38 [`type_level`](#type-level-type_level) admits a generic
+declaration that refers to the same instantiation of itself, reserved per
+type argument list). V33 and earlier keep rejecting every self-reference.
 
 Recursive graphs are ordinary values: their runtime JSON depth (64) and visit
 (4096) bounds and the encoder's cycle check are unchanged, and the collector is
@@ -11620,10 +11622,9 @@ Node 24 is the reference for every output below.
   statement's frame-saved temporaries and its statements keep their order,
   so operands evaluated before an `await` are materialized first and a
   short-circuited operand (`a?.f(await x)`, `a || await b`) never awaits.
-  `await` in a `switch` case test, a `do...while` condition and at module
-  top level stays refused (`await inside switch case test`, `top-level await
-  is not supported`): module code runs only the pure constant initializers
-  of [module constants](#module-constants-module_constants).
+  `await` in a `switch` case test and a `do...while` condition stays
+  refused (`await inside switch case test`). Top-level `await` in module
+  initializers follows [module evaluation](#module-evaluation-module_evaluation).
 - **Operators and statements.** The comma operator evaluates every operand
   in order and yields the last. `new.target === C` (`!==`, either order) in
   a class constructor tests the class of the instance under construction
@@ -11632,16 +11633,28 @@ Node 24 is the reference for every output below.
   refused by name. Iterator results are created as `{ value, done }`, the
   CreateIterResultObject order, so `JSON.stringify` and `Object.keys` of a
   generator result match JavaScript.
-- **Tagged templates.** ``tag`a${x}b` `` calls `tag` with a fresh
-  `TemplateStringsArray` of the cooked strings (a readonly `string[]`)
-  followed by the substitutions, like `tag(["a", "b"], x)`; the
-  substitutions are checked against the tag's parameters as call arguments.
-  ``String.raw`…` `` joins the raw text (line terminators normalized to LF)
-  with the ToString of each substitution. Refused: the strings array's
-  `raw` property (`TemplateStringsArray.raw outside String.raw`), a part
-  whose cooked string is `undefined` (an invalid escape) and type arguments
-  on a tagged template. Deviation: the strings array is created per
-  evaluation instead of once per site.
+- **Tagged templates.** ``tag`a${x}b` `` calls `tag` with the site's
+  template object followed by the substitutions, like `tag(strings, x)`;
+  the substitutions are checked against the tag's parameters as call
+  arguments. The template object is GetTemplateObject's: one
+  `TemplateStringsArray` per site (a `string[]` array type of its own whose
+  values only sites create) holding the cooked strings, and its `raw`
+  property is the site's array of raw strings (line terminators normalized
+  to LF). Every evaluation of a site, in every call and every
+  instantiation of a generic function, passes the same two arrays: they
+  are built once per instance by a synthesized initializer, which runs
+  before the module initializers, into two permanent root slots behind the
+  module constants, and `strings.raw` finds the site whose cooked array
+  `strings` is (a strings array no site created throws `TypeError`).
+  Everywhere else a `TemplateStringsArray` is the `string[]` it is: array
+  methods, `string[]` parameters (`readonly string[]` in TypeScript) and
+  identity comparisons see the same array. ``String.raw`…` `` joins the
+  raw text with the ToString of each substitution. Refused: assigning
+  `raw`, a part whose cooked string is `undefined` (an invalid escape),
+  type arguments on a tagged template and `String.raw(strings, …values)`
+  called as a function. Deviation: the arrays are not frozen (Varta has no
+  integrity levels), so a write through a `string[]` alias changes the
+  site's array where JavaScript throws `TypeError`.
 - **Spreads into fixed parameters.** A spread argument whose length is
   static expands in place: an array literal spreads its elements and a
   binding of a fixed-length tuple type spreads its elements (`f(...pair)`,
@@ -11660,18 +11673,61 @@ Node 24 is the reference for every output below.
   templates, `String(…)`, `+` with a string operand); other bodies need a
   return annotation. A field initializer may read and capture `this.f` for
   the fields initialized before it, as a constructor statement may.
-- **Object-literal methods that use `this`.** The literal binds its
-  methods to the object it creates: a hidden binding receives the object
-  right after it is built, and every such method is an arrow over that
-  binding. The object's type is its contextual closed object type, or the
-  record of its literal or binding field values and annotated methods.
-  Calls `o.m()` (and fluent chains `o.m().n()`) behave as in JavaScript.
-  Deviations, refused where observable: an object spread, `Object.assign`
-  source or own-key enumeration of a record type built by such a literal is
-  refused by name (the copied methods would keep the original receiver),
-  and a method value extracted and called alone sees the object instead of
-  `undefined`. Getters and setters of object literals (accessor properties)
-  and generator methods that use `this` stay refused by name.
+- **Object-literal methods that use `this`.** A method sees the receiver
+  it is called on, as in JavaScript: `o.m()` passes `o`, a spread copy
+  passes the copy, a method assigned to another object passes that object
+  and an extracted method called alone passes `undefined` (reading a
+  property of that `this` throws `TypeError`). Function values have no
+  receiver parameter, so a program with such methods passes receivers
+  through a register, one permanent root slot behind the module constants:
+  every function-value call stores the object of `o.m(...)` (evaluated
+  once into a local) or nothing (`undefined`) right before the dispatch,
+  and the method, a closure over a hidden `this` binding, takes and clears
+  it first, before its parameter defaults. Programs without such methods
+  keep their code. The object's type is its contextual closed object type,
+  or the record of its literal or binding field values and annotated
+  methods; the receiver must be an object of that type or of a type viewed
+  as it ([structural subtyping](#structural-subtyping-structural_subtyping)),
+  otherwise the call throws `TypeError: object literal method called on an
+  object that is not of its literal type` (deviation: JavaScript would read
+  the other object's properties; a spread copy with more fields than the
+  literal is such an object). Spreads, `Object.assign` and own-key
+  enumeration of such objects are admitted. Generator methods that use
+  `this` and a spread in a literal whose methods use `this` stay refused by
+  name.
+- **Object-literal getters and setters.** `get p() {…}` and `set p(v) {…}`
+  define accessor properties (owner decision 2026-11-06): reading `o.p`
+  calls the getter and assigning it calls the setter, with the object as
+  `this` (the receiver register above); compound and logical assignments
+  read through the getter and write through the setter; an assignment to a
+  getter-only property throws `TypeError: Cannot set property p of
+  #<Object> which has only a getter`; `in` and `Object.hasOwn` report the
+  property; spreads, `Object.keys`/`values`/`entries`, `Object.assign`
+  sources and `for...in` read through the getter, so a spread copy has a
+  data property. The literal's type is its contextual record type, or the
+  record of its data fields, annotated methods and annotated accessors (a
+  getter's return or a setter's parameter type). The object has a physical
+  shape of its own: its data fields and, per accessor, the getter and
+  setter closures in fields with reserved private names, and the literal's
+  value is a [structural view](#structural-subtyping-structural_subtyping)
+  of that shape as its type, so member accesses select the layout by the
+  object's descriptor and call the accessor functions. No value layout or
+  host ABI changes (the owner had accepted a new value ABI version; none is
+  needed): hosts read records as data and skip private fields, so the
+  compiler never lets an object with accessors reach a host read silently.
+  `JSON.stringify` of a record or array that may hold such an object
+  serializes a copy made by a synthesized materializer, which reads every
+  property through its getter (nested records and arrays included); every
+  other host operation (`varta.kv`, logging of objects, HTTP bodies) of a
+  value that may hold one, and an `unknown` cell that may hold one, is
+  refused by name. Deviations: the own keys of an object with accessors,
+  and of the objects a `JSON.stringify` materializer copies, are in the
+  order of the type's members (sorted by name) rather than creation order,
+  and a cyclic graph of such objects exhausts the materializer instead of
+  throwing JavaScript's `TypeError`. Refused: a setter without a getter, a
+  spread in a literal with accessors, a `this` parameter of a setter, an
+  optional member in a type whose objects `JSON.stringify` copies, and
+  accessors in an `unknown` or other non-record context.
 - **Computed keys.** `{ [k]: v }` with a constant key — a string or number
   literal, a template without substitutions, or a `const` binding or
   module constant initialized by such a literal — names a closed record
@@ -12104,10 +12160,30 @@ refused with an `unsupported …` diagnostic that names it (list below).
     types map them); an array's and tuple's `number`, positions and
     `Array.prototype` string keys; a primitive's prototype string keys
     (`number` for strings). Symbol-keyed members have no key type here.
-  - *Pattern template literal types* (`` `on${string}` ``) and intrinsic
-    string types over `string` are `string` outside an `extends` clause (a
-    lenient deviation: TypeScript would also check each literal assigned to
-    them against the pattern).
+  - *Pattern template literal types* (`` `on${string}` ``, `` `${number}px` ``,
+    `` `id-${bigint}` ``) and the intrinsic string types over `string`
+    (`Uppercase<string>`, and over a pattern: `` Uppercase<`on${string}`> ``
+    is `` `ON${Uppercase<string>}` ``) are checked as in tsc (step 3,
+    2026-11-06). A pattern is a member of a string literal set
+    (`LiteralValue::Pattern`), physically a string like every literal type.
+    A string literal is assignable to it when it matches (TypeScript's
+    inference from a literal to a template: a placeholder followed by text
+    takes the text up to that text's first occurrence, the last one the
+    rest; `${number}` takes a non-empty text whose ECMAScript `ToNumber` is
+    finite, `${bigint}` a bigint literal's text, `${Uppercase<string>}` a
+    text the mapping leaves unchanged); a pattern is assignable to another
+    when every string it describes matches the other; `string` is
+    assignable to none. A template literal expression where a string
+    literal type is expected takes the template type of its parts
+    (`` `on${name}` `` with `name: string` is `` `on${string}` ``). A union
+    drops the string literals its patterns match, and `` `${string}` `` is
+    `string`. `Record` and mapped types over a pattern key type are string
+    index signatures (their keys are not checked against the pattern), and
+    `Omit` drops the keys a pattern matches. Refused by name: a checked
+    assertion (`x as T`, `JSON.parse(text) as T`) to a type with a pattern,
+    which has no run-time test, `Pick` with pattern keys, and an intrinsic
+    type over a pattern with a `number`, `bigint` or other mapped
+    placeholder.
   - *`infer`* inside a declared generic type's arguments (`Box<infer U>`: the
     declaration body with its parameters as inference positions), in a union
     pattern with one inferring member (`infer U | undefined`) and over
@@ -12122,30 +12198,69 @@ refused with an `unsupported …` diagnostic that names it (list below).
     receiver of `x.isT()`.
   - *Class subtyping in containers*: a subclass instance is accepted wherever
     an ancestor is expected in arrays (`push`, literals, element writes),
-    tuples, records, `Map`/`Set` values and unions. An array of a class
-    converts to an array of an ancestor class (`B[]` to `A[]`) by a shallow
-    copy (an array literal is retyped), and an array of a union of classes
-    to an array of their common ancestor by a new array of the unboxed
-    elements.
+    tuples, records, `Map`/`Set` values and unions.
+- **Shared class arrays (step 3, owner decision of 2026-11-06).** An array
+  whose elements are class instances, or a union of classes with `null` or
+  `undefined`, converts to an array type whose element type admits every
+  one of them (`B[]` and `(B | C)[]` to `A[]`, `(B | null)[]` to `(A |
+  null)[]`) without a copy, as in JavaScript: both names hold one array, so
+  every write through one is seen through the other. The compiler joins the
+  array types that such conversions connect into components
+  (`type_level::covariance`) and gives every array type of a component one
+  element representation, so no element is converted: instance handles
+  (the arrays of unions of classes hold the instances, boxing on read and
+  unboxing on write) or, when a union of the component admits `null` or
+  `undefined`, union cells (the arrays of one class box on write and unbox
+  on read). Both are existing canonical array layouts (element kind Record
+  or ReferenceUnion), so no value layout, value ABI or host import changes.
+  TypeScript's array covariance is unsound: through the wider name an
+  `A` (or `null`) may be stored that a narrower name does not admit. Every
+  element read (`xs[i]`, `at`, `pop`, iteration, callbacks, destructuring,
+  library methods) through an array type of a component whose element type
+  does not admit every value stored through the component's other types
+  tests the element (the class descriptor against the admitted classes and
+  their subclasses; `null`/`undefined` against the element union) and
+  throws `TypeError` (`array element is not a value of the array's element
+  type`) on a mismatch, consistent with the checked predicate reads.
+  Programs without such conversions keep their code. A collection whose
+  key vector is an array type with a changed representation is refused by
+  name.
 - **Intentional deviations from Node.** (1) A type predicate that lies
   (narrows to a member the value does not hold) throws `TypeError` at the
   narrowed read (`value does not have the type its type predicate
   asserted`), consistent with the checked `as` assertions; Node continues
-  with the mistyped value. (2) A `B[]` converted to `A[]` is a copy: a write
-  through one name is not seen through the other, where Node aliases one
-  array (a shared alias could store an `A` into the `B[]`).
+  with the mistyped value. (2) An element of a shared class array that the
+  read's element type does not admit (an `A` stored through `A[]` and read
+  through `B[]`) throws `TypeError` at the read; Node continues with the
+  mistyped value.
+
+- **Step 3 admissions (2026-11-06).** `infer` inside an intersection pattern
+  (`T extends { a: infer A } & { b: infer B }`: the check type matches
+  every member, sharing the bindings; a name inferred twice joins its
+  candidates). `this` in a generic interface or object type alias is the
+  instantiation being resolved, and a generic declaration may refer to the
+  same instantiation of itself (`interface Link<T> { next: Link<T> | null
+  }`): the recursive reservation is kept per type argument list. An
+  `asserts this` or `asserts this is T` method narrows the receiver binding
+  of its call statement for the rest of the block (a subclass narrowing
+  reads through the descriptor test, `TypeError` when the method lied). An
+  overload set with a rest parameter merges into one rest parameter of the
+  union of every parameter type (`{ (...parts: string[]): string; (n:
+  number): string }` is `(...args: (string | number)[]) => string`); the
+  call selects the first overload whose parameters (rest elements
+  included) accept the arguments.
 
 Still refused, each by name: `unique symbol` (no Symbol values in this
-profile), `import("…")` types, callable objects with properties (a call
-signature together with other members: no closed layout holds a function
-value and fields), overloads with a `this` parameter, type parameters or a
-rest parameter, generic construct signatures and constructor types,
+profile; track D's Symbol values are not in this profile yet), `import("…")`
+types, callable objects with properties (a call signature together with
+other members: no closed layout holds a function value and fields),
+overloads with a `this` parameter or type parameters, generic construct
+signatures and constructor types (a monomorphized class has one layout per
+instantiation, so one constructor value cannot build every instantiation),
 intersections of object types whose shared property has no common type,
-mapped types over `number` or symbol key sets, `keyof never`, `this` in a
-generic declaration, `typeof` of a generic function or class and of a
-module initializer whose type would need lowering, `infer` inside an
-intersection pattern or a union with several inferring members, and an
-`asserts this` method.
+mapped types over `number` or symbol key sets, `keyof never`, `typeof` of a
+generic function or class and of a module initializer whose type would need
+lowering, and `infer` in a union with several inferring members.
 
 #### Declarations and classes (`declaration_forms`)
 
@@ -12319,8 +12434,8 @@ Store is its own instance, so module code runs again for each request (as
 the call-free initializers already did). Tool entries keep refusing stored
 module values (`module constants with tool/HTTP entry points`). A module
 initializer may call functions and construct objects (`const registry =
-load()`, `static instance = new C()`, static blocks); only a top-level
-`await` stays refused. A primitive `const` whose initializer runs code is
+load()`, `static instance = new C()`, static blocks); a top-level `await`
+is admitted under `expression_forms` (below). A primitive `const` whose initializer runs code is
 stored like a module variable that no code may assign. Initializers that
 run code are never pruned as unread (`program_limits`).
 
@@ -12337,6 +12452,36 @@ binding on a path it never takes is refused too); other modules cannot
 reach this module's bindings early, since imports are acyclic and
 initialized first. A module variable whose type is `undefined` or `null`
 alone is refused (it has no boxed form).
+
+**Evaluation order and top-level `await`** (2026-11-06, K9 C, owner
+decision; `expression_forms`). Modules are evaluated in the order of
+Evaluate() (§16.2.1.5.3): a depth-first walk from the entry module over each
+module's requested modules in source order (imports and re-exports; `import
+type` and `export type` declarations request nothing, as TypeScript's
+`verbatimModuleSyntax` and Node's type stripping erase them), each module
+after the modules it requests; compiler-owned engine preludes come first.
+Imported functions may be called by initializers. A module whose
+initializers `await` (outside function values) is evaluated as one async
+function, its initializers in source order. Without such a module the
+initializers still run in that order before `main`. With one, the
+program's entry is a synthesized evaluator (guest code, no host change)
+that follows InnerModuleEvaluation and the asynchronous module algorithm
+exactly, the graph being acyclic: in the walk, a module that neither awaits
+nor waits for an asynchronously evaluating dependency runs at once, an
+awaiting one without such dependencies starts, and the others wait. When an
+async module's evaluation completes (one job after its promise settles, as
+the spec's reaction does), AsyncModuleExecutionFulfilled gathers the
+waiting ancestors whose last pending dependency it was (through
+synchronous ones) and runs or starts them in the order they became
+asynchronous; a synchronous sibling therefore runs while an earlier sibling
+is suspended, as in Node. A rejection marks the module and every waiting
+ancestor failed (AsyncModuleExecutionRejected): none of them runs, and the
+entry module's failure is an unhandled rejection, so the execution fails as
+Node's does. The entry module calls `main` at the end of its own
+evaluation, as `await main();` appended to it would. Refused with top-level
+`await`: tool and HTTP entry points (`top-level await with tool or HTTP
+entry points`); a throw of a synchronous module during the initial walk
+ends the execution as an uncaught exception.
 
 #### Bytes held by unknown (`byte_values`)
 
@@ -15490,14 +15635,61 @@ oracle, not the definition.
   font size of 9px for sizes no absolute length fixed (em lengths keep the
   specified size, as in Blink). A computed `line-height` is `normal`, a
   number (a multiple of each element's size), or a length (a percentage of
-  the element's computed size). The native renderer shapes text with these
-  sizes; the browser host's Chrome derives the same ones from its user-agent
-  sheet.
+  the element's computed size). It computes `font-weight` (`normal`, `bold`,
+  numbers; the user-agent rows: `h1`–`h3` bold, `strong` `bolder` by the
+  Fonts 4 §2.2.1 table, form controls `normal`) and `font-style` (`em`
+  italic, form controls `normal`) the same way. The native renderer shapes
+  text with these fonts; the browser host's Chrome derives the same ones
+  from its user-agent sheet.
+- **First available font and its metrics (Values 4 §6.1.1, Fonts 4 §5).**
+  `ex`, `cap`, `ch`, `ic`, their root forms `rex`, `rcap`, `rch`, `ric`,
+  `lh` where `line-height` is `normal` and `rlh` take the metrics of the
+  element's (the root's) first available font (`varta_style::fonts`): the
+  first family of its computed `font-family` list that the view's font set
+  has a face for, else the set's default family, else the host's default
+  font. A named family matches a packaged face's family or a named alias
+  (ASCII case-insensitively), a generic family a face it aliases or else
+  the host's own font for it; a family with neither is skipped. Within a
+  family the face is matched by Fonts 4 §5.2 step 4 (stretch, then style:
+  italic, oblique, normal or the reverse, then weight with the 400–500
+  rule), weight ranges of variable faces included. A **packaged face** is
+  read from its own tables (`read-fonts`, the same code in both hosts): the
+  `OS/2` x-height, else the top of the `x` glyph's `glyf` outline, else
+  0.5em; the `OS/2` cap-height, else the ascent; the `0` and `水` (U+6C34)
+  advances (`hmtx` with `HVAR` deltas), else 0.5em and 1em; and for
+  `normal` the ascent, descent and line gap of the shaper's selection
+  (`OS/2` typographic metrics under `USE_TYPO_METRICS`, else `hhea`, else
+  typographic, else Windows), each rounded to whole pixels at the used size
+  and summed, as Blink's line spacing. A variable face is read at its
+  location for the element (`wght` the matched weight, `opsz` the used size,
+  `ital` for italic; `fvar`/`avar` normalization and `MVAR` deltas). A
+  **host font** (a generic family no packaged face names, the default font,
+  a native system-font set's families, a packaged face the engine cannot
+  read) is measured by the host (`HostFonts`): natively through CoreText as
+  Chrome on macOS measures it (CoreText's ascent, descent and leading
+  rounded, with Blink's enlarged ascent of Times, Helvetica and Courier;
+  CoreText's cap-height; the top of the `x` glyph's CoreText bounds; the
+  `0` and `水` advances from the platform face's own tables at its location),
+  and in the browser host by the bridge through the browser's own units (a
+  hidden probe element in the view's shadow tree reports `1ex`, `1cap`,
+  `1ch`, `1ic` and `1lh` through `computedStyleMap`); the engine decides
+  which font is asked for. The root element's font is the initial family
+  at the root font size. In `font-size`, `ex`, `cap`, `ch` and `ic` take the
+  parent's font, and the result is an absolute size. Only when no font has
+  metrics (a native host without faces or platform measurements) do the
+  Values 4 fallbacks apply: `ex` and `ch` 0.5em, `ic` 1em; `cap` and a
+  `normal` `lh` then stay unresolved. Recorded deviations of Chrome on
+  macOS for packaged faces: it measures the `x` outline instead of the
+  `OS/2` x-height (equal in well-formed faces), takes CoreText's estimates
+  for a face without `OS/2` x- and cap-heights (without `x` and `H` glyphs,
+  2/3 and 8/9 of the ascent) instead of the `x` outline, the ascent and the
+  Values 4 fallbacks, applies no `MVAR` cap-height delta, and ignores
+  `USE_TYPO_METRICS` for `normal`.
 - **Lowering.** After `var()` substitution (Variables 1 §3), a valid value
   is lowered to the host grammar the renderer's consumers read
   (`css::lower`): math functions are evaluated, absolute and viewport units
-  become `px`, `em`, `lh` and `rlh` become `px` against the element's font
-  (Values 4 §6.1.1; in `font-size`, `em` alone stays a percentage of the
+  become `px`, the font-relative units become `px` against the element's
+  font (Values 4 §6.1.1; in `font-size`, `em` alone stays a percentage of the
   parent's size and a sum with other lengths is the parent's absolute size;
   in `font-size` and `line-height`, `lh` is the parent's), named colours and
   colour functions `rgba()` with 8-bit channels after gamut mapping, and
@@ -15514,17 +15706,71 @@ oracle, not the definition.
   tree resolve calc handles), and the browser host sets it inline. A value
   the native renderer cannot render yet is refused at parse time with
   `Unrenderable` and, when it only appears after substitution, is invalid at
-  computed-value time natively: `ex`, `ch`, `cap`, `ic` and their root forms,
-  `lh` where `line-height` is `normal` and `rlh` (they need the metrics of
-  the first available font), a sum of lengths and percentages in other
+  computed-value time natively: `cap` and a `normal` `lh` without any font
+  metrics, a sum of lengths and percentages in other
   properties (`border-radius`, `transform`, `object-position`, grid tracks),
   and values of the specifications that native layout lacks
   (`display: inline-block` and the other inner/outer display types,
   `position: sticky`, intrinsic sizes, `overflow: scroll | clip`,
   `white-space: pre-line | break-spaces`, `text-align: justify`, border
   styles other than `solid`).
-- **Not yet admitted:** `@keyframes`, `@container`, nesting, and the
-  selector, layout and paint stages S4–S8.
+- **Layout and text properties (S4).** Mapped properties are expanded
+  when a stylesheet is parsed (`view::mapped`): the flow-relative box
+  properties of CSS Logical 1 §4 (`padding-`, `margin-` and `inset-`
+  `inline`/`block` with their `-start`/`-end` forms) in the subset's only
+  writing mode (`horizontal-tb`, `ltr`: inline start left, block start
+  top), `inset` (Positioned Layout 3 §3.1, the box rule) and `flex`
+  (Flexbox 1 §7.1: `none`, `auto`, factors with omitted factors 1 and an
+  omitted basis `0%`, Chrome's computed form of the specification's 0).
+  Each mapped declaration declares its physical longhands at its own place
+  in the cascade, so a mapped property and its physical longhand win over
+  each other by the ordinary order (Logical 1 §4). A value with `var()`
+  gives every longhand the whole value and its part, split after
+  substitution (Variables 1 §3.1, pending-substitution values); a split
+  that fails is invalid at computed-value time. Mapped properties are
+  stylesheet-only: the engine's computed values, the native renderer and
+  the browser bridge see only physical longhands. New properties:
+  `translate` and `scale` (Transforms 2 §4, two-dimensional; `scale`
+  percentages compute to numbers; the renderer takes positive factors
+  only), `transform-origin` (Transforms 1 §5, keywords and two
+  length-percentages, lowered to `<x> <y>` lengths or percentages; a sum of
+  a length and a percentage is refused as unrenderable) and
+  `letter-spacing` (Text 3 §8.2, `normal | <length>`, inherited, absolute
+  at computed-value time). Natively the effective transform is the
+  `translate`, then `scale`, then `transform` list (Transforms 2 §6.1)
+  around the `transform-origin`; letter spacing is added after every
+  typographic character unit by the shaper.
+- **Selectors (S5, first part; Selectors 4).** Selector lists of complex
+  selectors (`stylesheet::selector`): type and universal selectors (the view
+  tags), classes, the descendant, child, next-sibling and
+  subsequent-sibling combinators, `:is()` and `:where()` (forgiving lists)
+  and `:not()`, nested at most `selector::MAX_SELECTOR_NESTING` deep with at
+  most `selector::MAX_COMPOUNDS` compounds per complex selector; `:root`;
+  `:host`, which in the view's sheets matches nothing (Scoping 1 §3.2.1);
+  `:first-child`, `:last-child`, `:only-child`, their `-of-type` forms and
+  `:nth-child()`, `:nth-last-child()`, `:nth-of-type()`,
+  `:nth-last-of-type()` with `An+B` (no `of S`), counting element siblings;
+  `:hover`, `:active`, `:focus`, `:focus-within`, `:focus-visible`,
+  `:enabled`, `:disabled` and `:checked`. Specificity is the
+  `(ids, classes, types)` triple of §17 (`:where()` adds nothing, `:is()`
+  and `:not()` their most specific argument). The engine matches right to
+  left with the restart rules of Servo's matcher, so a failed descendant
+  search never retries above its closest failing ancestor; selectors that
+  search ancestors, siblings or arguments charge
+  `compounds × (ancestors + siblings + 1)` to the cascade work estimate per
+  candidate element. The browser bridge records the focused element
+  (`view_engine_focus`) apart from the focus-visible one; natively every
+  focus is visible, as before. A shorthand that wins over its longhand
+  (`margin`, `padding`, `gap`) gives the longhand its component in the
+  computed values, so the bridge's inline order cannot reverse the
+  cascade. Native style reads are recomputed when an element's children
+  change order. Refused: pseudo-elements, attribute and id selectors,
+  `:has()`, `:nth-child(… of S)` and the form-validity pseudo-classes.
+- **Not yet admitted:** `@keyframes`, `@container`, nesting, the rest of
+  S4 (per-side border longhands, `overflow-x`/`-y`, `visibility`,
+  `text-transform`, `rotate`, and the display types and sizes native
+  layout lacks: `inline-block`, `inline-flex`, `fit-content`, `sticky`),
+  the rest of S5 (above), and the paint stages S6–S8.
 
 **Browser bridge (K8 T3).** The official browser host runs the engine as
 `view-engine.wasm`: `varta-style-wasm`, a `wasm32` shim of `varta-style`
@@ -15533,7 +15779,16 @@ built by `scripts/build-view-engine.py` with the locked toolchain and the
 with `view-engine.json` (source fingerprint, target, compiler and size; a
 test fails when the sources change without a rebuild), as
 `varta-kv-codec-wasm` is. Its only `unsafe` code reads and writes its
-arguments in linear memory. The view model mirrors every batch into an
+arguments in linear memory and calls its one import,
+`varta_view.font_metrics(kind, family, family_len, weight, italic, size,
+out) -> u32`, through which the DOM bridge measures a host font (`kind` 0 a
+named family, 1 a generic family, 2 the default font; five `f64` written at
+`out`: `ex`, `cap`, `ch`, `ic` and the `normal` line height; 1 when
+measured, 0 when the browser renders no such font); the module keeps at
+most 1024 answers. The packaged faces reach it through `view_engine_face`
+(family name and font file in the input buffer, a bit per generic family it
+stands for) and the default family through `view_engine_default_family`;
+the Worker's view model, which has no DOM, measures nothing. The view model mirrors every batch into an
 engine `Session` inside a transaction (`begin`, then `commit` or `abort`,
 so a refused batch changes nothing), and the engine checks each class,
 style value and stylesheet with the native verdicts. The DOM bridge keeps

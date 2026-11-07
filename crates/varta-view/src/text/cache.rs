@@ -24,6 +24,7 @@ impl Request<'_> {
             value.size.to_bits().hash(hash);
             value.weight.to_bits().hash(hash);
             value.italic.hash(hash);
+            value.letter_spacing.to_bits().hash(hash);
             value.white_space.hash(hash);
             value.align.hash(hash);
             value.break_anywhere.hash(hash);

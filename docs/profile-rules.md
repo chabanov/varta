@@ -4035,10 +4035,42 @@ Contract: [architecture.md](architecture.md#expression-forms-expression_forms).
   bindings), never an expression with effects. Hidden bindings start with
   `#`, which no source identifier can.
 - Object-literal methods that use `this` go through `object_methods`:
-  the shape is noted with `Views::note_bound`, and `spread_views` refuses
-  any key copy or enumeration of it or of a view of it. A new key-copying
-  form must note its shape (see `sdk_paths`), or it would copy bound
-  methods. Getters/setters stay refused until records have accessors.
+  the method is an arrow whose entry (`receiver_prologue`, keyed by the
+  arrow's span in `core::State::method_receivers`) takes the receiver from
+  the register and checks it (`IsClass` with the `VIEW_SOURCES` marker,
+  completed by `receiver_shapes` after `subtyping::resolve`). The register
+  exists only when `object_methods::scan` finds such a method; then every
+  `E::FunctionCall` emission stores its receiver after the arguments
+  (`emit::functions::function_call`), and a new function-value call path
+  must go through `E::FunctionCall` so a method never reads a stale
+  receiver. `o.m(...)` of a plain function field takes `o` into a hidden
+  local (`method_call`); a receiver that is not such a local stores
+  `undefined`.
+- Object-literal accessors (`object_accessors`): the physical shape names
+  getter and setter fields with `accessor_field`'s reserved prefixes
+  (interned by `records::intern_accessors`, the only intern that admits
+  them); the value is a view (`Views::note_view`) of that shape as the
+  literal's type. `subtyping` reads (`accessor_call`), writes (setter or
+  the stored read-only `TypeError`), `has` and own-key names understand the
+  reserved fields. Every host read of a value that may hold such an object
+  must go through a `JSON.stringify` materializer or is refused by
+  `refuse_host_reads`; a new host operation that reads records needs no
+  change, but a new path that serializes guest values on the guest side
+  must call the getters itself.
+- Top-level `await` (`top_level_await`): a module that awaits is one
+  async initializer (`module_constants::link_module`, split with
+  `split_async`); the evaluator text is generated from the static plan and
+  compiled like the HTTP adapters, over one body function per module named
+  `__varta_module_<n>`. Keep `requests` in source order and type-only
+  requests erased; the entry's `main` call is appended to its async
+  initializer or to its synthesized body. Every initializer list goes
+  through `top_level_await::ordered`.
+- Template objects (`tagged_templates`): one site per (module, span); the
+  cooked and raw arrays live in module-constant slots numbered from `BASE`
+  until `finish` places them, and the initializer `finish` returns runs
+  before every other initializer. `TemplateStringsArray` values become
+  `string[]` (`tagged_templates::plain`) wherever another array type is
+  expected or compared; only `.raw` keeps the type.
 - Computed keys resolve only through `constant_key`: literals and
   `ValueTypes::constant_keys` (filled for `const` bindings and module
   constants with literal initializers). Never infer a key from a value
@@ -4104,7 +4136,8 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   their instance members, `C.m` a static method) in `module_constants::
   check`, reserve the initializer index for effectful chunks, and never let
   `prune::unread_constants` drop an initializer that calls code. Top-level
-  `await` stays refused.
+  `await` is the K9 C stream's (`top_level_await`, under
+  `expression_forms`).
 - Class forms are a pre-layout rewrite (`classes::forms`, after
   `private_names` and `parameter_properties`): setters become methods named
   `forms::setter_key` (no string key can spell it), abstract members get an
@@ -4187,7 +4220,9 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   `nested` (bound `MAX_TYPE_DEPTH`); recursive generic aliases go through
   `enter_recursive`/`push_instantiation`/`pop_instantiation` in
   `named::instantiate`, never by relaxing `NamedTypes::resolving` for the
-  same instantiation.
+  same instantiation. The same instantiation inside itself (and `this` in a
+  generic declaration, `named::instantiate_resolved`) resolves to its
+  recursive reservation, keyed by (declaration, type arguments).
 - `type_level::extends` is the one TypeScript assignability relation for
   conditional types, constraints (`generics::satisfies`), predicates,
   `satisfies` and `Exclude`/`Extract`. It decides types only; a value
@@ -4228,18 +4263,38 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   a declaration whose annotation queries a local resolves its annotation in
   `variables`, not `predeclare`. Named declarations being resolved never
   read the snapshot (`named::resolving_declaration`).
-- Class subtyping in containers (`type_level::containers`): a `B[]` to
-  `A[]` conversion is a shallow `ArraySlice` copy (an array literal is
-  retyped); a union-of-classes array to an ancestor array builds a new
-  array of unboxed elements (`class_union_array`, in `expr_lowered` before
-  `widen`). Never alias an array under a wider element type.
+- Class subtyping in containers (`type_level::containers`): a class or
+  class-union array converted to a wider class array is a `Reinterpret`
+  of the same array, recorded by `covariance::note`; never copy it.
+  `covariance::resolve` (after `subtyping::resolve`, before literal
+  erasure) joins the recorded pairs into components, sets the element
+  representation of every array type of a component (`Stored::Instances`
+  for union arrays beside class arrays, `Stored::Cells` for class arrays
+  beside a union admitting `null`/`undefined`; it rewrites
+  `ValueTypes::arrays` last) and rewrites every element access of those
+  types: reads (`Index`, `MaybeIndex`, `ArrayAt`, `ArrayPop`) box or unbox
+  and are tested when the read's element type does not admit every value
+  stored through the component; writes (`SetIndex`, array literals,
+  `ArrayPush` items, `ArrayFill`, `ArraySearch` needles) convert to the
+  stored representation. A new IR form that reads or writes array elements
+  must be handled there (the walkers are exhaustive).
+- Pattern template literal types are `LiteralValue::Pattern` members of
+  string literal sets (`type_level::patterns`, pieces interned in
+  `LiteralTypes::patterns`). Every membership test of a literal value in a
+  set goes through `type_level::value_in` (subset, `fits`, `refine`), never
+  `BTreeSet::contains` alone; `exhausted_by` never counts a pattern as
+  covered. A reader that needs a finite text (`string_units`,
+  `string_members`, `constants`) gets `None`/skips the pattern and must
+  refuse it by name or fall back to a string index signature; checked
+  assertions and JSON targets refuse patterns (`has_pattern`,
+  `contains_pattern`).
 - Predicate narrowing of a class instance to a subclass reads through
   `checked_downcast` (descriptor test, `TypeError`), of `unknown` to an
   object type through `assert_value`; `this is T` predicates are recorded per
   (declaring class, method) by `member_signature`.
 - Tests: `varta-runtime` `type_level_tests` with the Node 24 logs of
   `type_level_cases` (each also rejected by v37), the deviation test
-  `checked_predicates_and_copied_array_views_deviate_from_node`, the compiler's
+  `checked_predicates_and_shared_array_reads_deviate_from_node`, the compiler's
   `composed_class_names_follow_the_checker_types` scanner test, and the
   nine `typescript_handbook` conformance rows.
 

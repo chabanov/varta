@@ -240,7 +240,13 @@ fn key_names(keys: Type, what: &str, types: &mut ir::ValueTypes) -> Result<Vec<S
     for member in split(keys, types) {
         match member {
             Type::Literal(LiteralBase::String, _) => {
-                names.extend(literals::string_members(member, types).unwrap_or_default());
+                let Some(members) = literals::string_members(member, types) else {
+                    return Err(unsupported(&format!(
+                        "{what} with the key type {} (only literal keys select properties statically)",
+                        subtyping::describe(member, types)
+                    )));
+                };
+                names.extend(members);
             }
             Type::Literal(LiteralBase::Number, id) => {
                 if let Some(literals::LiteralValue::Number(bits)) =
@@ -294,8 +300,23 @@ fn pick(ty: Type, keys: Type, types: &mut ir::ValueTypes) -> Result<Type> {
 
 /// `Omit<T, K>` = `Pick<T, Exclude<keyof T, K>>`.
 fn omit(ty: Type, keys: Type, types: &mut ir::ValueTypes) -> Result<Type> {
-    let omitted = key_names_lenient(keys, types)?;
     let all = objects::keys(ty, types)?;
+    // A pattern key type omits the keys it matches.
+    if split(keys, types)
+        .iter()
+        .any(|key| matches!(key, Type::Literal(_, id) if types.literals.has_pattern(*id)))
+    {
+        let mut kept = Vec::new();
+        for name in literals::string_members(all, types).unwrap_or_default() {
+            let single = objects::string_keys(vec![name.clone()], types)?;
+            if !extends(single, keys, types) {
+                kept.push(name);
+            }
+        }
+        let kept = objects::string_keys(kept, types)?;
+        return pick(ty, kept, types);
+    }
+    let omitted = key_names_lenient(keys, types)?;
     let kept: Vec<String> = literals::string_members(all, types)
         .unwrap_or_default()
         .into_iter()
@@ -316,7 +337,11 @@ fn key_names_lenient(keys: Type, types: &mut ir::ValueTypes) -> Result<Option<Ve
 /// `Record<K, V>`: one required `V` property per literal key, or the string
 /// index signature for `string`.
 fn record(keys: Type, value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
-    if keys == Type::String {
+    // A pattern key type (`` `on${string}` ``) is a string index signature
+    // here: its keys are not checked against the pattern.
+    if keys == Type::String
+        || matches!(keys, Type::Literal(LiteralBase::String, id) if types.literals.has_pattern(id))
+    {
         return dictionaries::intern(value, types);
     }
     let names = key_names(keys, "Record", types)?;

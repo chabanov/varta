@@ -33,45 +33,23 @@ fn media_expansion_is_charged_before_cloning_and_exact_work_is_admitted() {
     assert_eq!(parse(&media).unwrap_err().violation, Violation::WorkLimit);
 }
 
-/// The legacy grammar's work charges are unchanged, so the browser host
-/// (which still runs its own checker) admits exactly the same budgets.
+/// The class-only grammar's work charges carry over to complex selectors:
+/// a node per compound and per pseudo-class (`:root` included), a node plus
+/// the name per class.
 #[test]
 fn legacy_sheets_keep_their_work_charges() {
     let weight = super::super::DRAFT_STYLESHEET_NODE_WORK;
     let source = ":root{--a:1px} .a.b:hover,.c{color:#fff;padding:var(--a)} @media (min-width:1px) and (prefers-color-scheme:dark){.d{opacity:0.5}}";
     let parsed = parse_with_work_limit(source, usize::MAX).unwrap();
     let expected = source.len()
-        // :root rule, selector, declaration
-        + weight + weight + weight + "1px".len() + "a".len()
+        // :root rule, selector (compound and pseudo-class), declaration
+        + weight + 2 * weight + weight + "1px".len() + "a".len()
         // rule; `.a.b:hover`: selector + 2 classes + 1 pseudo; `.c`
         + weight + (weight + 2 * weight + 2 + weight) + (weight + weight + 1)
         + (weight + "#fff".len()) + (weight + "var(--a)".len())
         // media: 2 conditions; rule weighted by them; selector; declaration
         + 2 * weight + 3 * weight + (weight + weight + 1) + (weight + "0.5".len());
     assert_eq!(parsed.work, expected);
-}
-
-#[test]
-fn indexed_class_membership_keeps_comma_and_duplicate_specificity() {
-    let rules = parse(".a.a:checked, .a.b { color:#abc }").unwrap();
-    for classes in [vec!["a", "a"], vec!["a", "b"], vec!["b"], vec![]] {
-        let index: std::collections::BTreeSet<_> = classes.iter().copied().collect();
-        for checked in [false, true] {
-            let subject = Subject {
-                root: false,
-                classes: &classes,
-                focused: false,
-                hovered: false,
-                active: false,
-                disabled: false,
-                checked,
-            };
-            assert_eq!(
-                rules[0].matching(&subject),
-                rules[0].matching_with_classes(&subject, |name| index.contains(name))
-            );
-        }
-    }
 }
 
 #[test]
@@ -83,27 +61,27 @@ fn the_stylesheet_grammar_is_checked() {
     )
     .unwrap();
     assert_eq!(rules.len(), 3);
-    assert_eq!(rules[1].selectors[0].specificity(), 3);
+    assert_eq!(rules[1].selectors[0].specificity(), (0, 3, 0));
     assert!(!rules[2].applies(&media(1024.0, false)));
     assert!(rules[2].applies(&media(800.0, true)));
     for invalid in [
-        "div { color: red }",
-        ".a > .b { color: #fff }",
-        ".a .b { color: #fff }",
         ".a { colour: #fff }",
         ".a { background-color: url(x) }",
         ".a { background-color: \\75 rl(x) }",
         ".a { background-color: u\\72l(\"x\") }",
         "@import \"x\";",
         "@\\69mport \"x\";",
-        ".a:nth-child(2) { color: #fff }",
         ".a::before { color: #fff }",
         "#a { color: #fff }",
+        "frob { color: #fff }",
+        ".a > { color: #fff }",
+        ".a:nth-child(x) { color: #fff }",
+        ".a:has(.b) { color: #fff }",
+        "[data-x] { color: #fff }",
         ".a { color: #fff",
         ".a { ; color: #fff }",
         ".a { color: #fff;; }",
         "@media (orientation: sideways) { .a { color: #fff } }",
-        ":root.a { --x: 1 }",
         "@media (prefers-color-scheme: dark) { .a { color: #fff }",
         "<!-- .a { color: #fff } -->",
         ".a { color: #fff } }",
@@ -131,7 +109,7 @@ fn escaped_class_selectors_follow_the_html_class_model() {
     .unwrap();
     let classes: Vec<_> = rules
         .iter()
-        .map(|rule| rule.selectors[0].classes[0].as_str())
+        .map(|rule| rule.selectors[0].subject().classes[0].as_str())
         .collect();
     assert_eq!(
         classes,
@@ -145,7 +123,7 @@ fn escaped_class_selectors_follow_the_html_class_model() {
             "é"
         ]
     );
-    assert_eq!(rules[5].selectors[0].pseudo, [Pseudo::Hover]);
+    assert_eq!(rules[5].selectors[0].subject().pseudo, [Pseudo::Hover]);
 }
 
 #[test]
@@ -244,11 +222,11 @@ fn violations_carry_utf8_byte_offsets() {
         }
     );
     // A multi-byte character before the violation counts in bytes.
-    let text = ":root { --label: x }\n/* é */ .a > .b {}";
-    assert_eq!(error(text).offset, text.find(" >").unwrap());
-    let text = "/* é */ div { color: #fff }";
+    let text = ":root { --label: x }\n/* é */ .a > #b {}";
+    assert_eq!(error(text).offset, text.find("#b").unwrap());
+    let text = "/* é */ frob { color: #fff }";
     assert_eq!(error(text).violation, Violation::Selector);
-    assert_eq!(error(text).offset, text.find("div").unwrap());
+    assert_eq!(error(text).offset, text.find("frob").unwrap());
     assert_eq!(error(".a { color: #fff").violation, Violation::Unterminated);
     assert_eq!(
         error(".a { color: #fff; font-family: \"A\", Inherit }").violation,
@@ -259,7 +237,7 @@ fn violations_carry_utf8_byte_offsets() {
         Violation::Declaration
     );
     assert_eq!(
-        error(".a { width: 2ch }").violation,
+        error(".a { border-radius: calc(100% - 1rem) }").violation,
         Violation::Unrenderable
     );
     assert_eq!(
@@ -270,27 +248,55 @@ fn violations_carry_utf8_byte_offsets() {
     assert_eq!(error("x{} .a{background:\\75 rl(x)}").offset, 18);
 }
 
+/// CSS Logical 1 §4 in the horizontal left-to-right writing mode, `inset`
+/// and `flex`: each longhand declared at the mapped declaration's place.
 #[test]
-fn pointer_pseudo_classes_are_independent_and_can_combine_with_disabled() {
-    let rules =
-        parse(".a:hover {color:#00f} .a:active {color:#f00} .a:hover:disabled {color:#888}")
-            .unwrap();
-    for hovered in [false, true] {
-        for active in [false, true] {
-            let subject = Subject {
-                root: false,
-                classes: &["a"],
-                focused: false,
-                hovered,
-                active,
-                disabled: true,
-                checked: false,
-            };
-            assert_eq!(rules[0].matching(&subject).is_some(), hovered);
-            assert_eq!(rules[1].matching(&subject).is_some(), active);
-            assert_eq!(rules[2].matching(&subject).is_some(), hovered);
-        }
-    }
+fn mapped_properties_declare_their_physical_longhands() {
+    let declarations = |text: &str| parse(text).unwrap()[0].declarations.clone();
+    let error = |text: &str| parse(text).unwrap_err();
+    let property =
+        |property: CssProperty, value: &str| (Name::Property(property), value.to_owned());
+    assert_eq!(
+        declarations(
+            ".a { padding-left: 9px; padding-inline: 1px 2px; margin-block: auto; inset: 0 }"
+        ),
+        vec![
+            property(CssProperty::PaddingLeft, "9px"),
+            property(CssProperty::PaddingLeft, "1px"),
+            property(CssProperty::PaddingRight, "2px"),
+            property(CssProperty::MarginTop, "auto"),
+            property(CssProperty::MarginBottom, "auto"),
+            property(CssProperty::Top, "0"),
+            property(CssProperty::Right, "0"),
+            property(CssProperty::Bottom, "0"),
+            property(CssProperty::Left, "0"),
+        ]
+    );
+    assert_eq!(
+        declarations(".a { flex: 1; margin-inline-end: -4px }"),
+        vec![
+            property(CssProperty::FlexGrow, "1"),
+            property(CssProperty::FlexShrink, "1"),
+            property(CssProperty::FlexBasis, "0%"),
+            property(CssProperty::MarginRight, "-4px"),
+        ]
+    );
+    let pending = declarations(".a { padding-block: var(--spacing) }");
+    assert_eq!(pending.len(), 2);
+    assert!(matches!(
+        &pending[1],
+        (Name::Mapped(CssProperty::PaddingBottom, part), value)
+            if part.index == 1 && value == "var(--spacing)"
+    ));
+    assert_eq!(
+        error(".a { padding-inline: -1px }").violation,
+        Violation::Declaration
+    );
+    assert_eq!(
+        error(".a { flex: 1 2 3 4 }").violation,
+        Violation::Declaration
+    );
+    assert!(parse("@supports (padding-inline: 1px) { .a { color: red } }").is_ok());
 }
 
 #[test]
@@ -314,7 +320,7 @@ fn importance_supports_and_conditional_layers_follow_the_specifications() {
             (Name::Custom("x".into()), "2".into())
         ]
     );
-    assert_eq!(rules[2].selectors[0].classes, ["b"]);
+    assert_eq!(rules[2].selectors[0].subject().classes, ["b"]);
     assert_eq!(rules[3].media.len(), 1);
     // `never` sits in a false @supports block: it is not declared.
     assert_eq!(parsed.layers.len(), 2);

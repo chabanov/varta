@@ -112,14 +112,17 @@ impl Lower<'_> {
                     E::Index(Box::new(value), Box::new(index)),
                 )
             }
-            // V38 (`expression_forms`): the strings array of a tagged
-            // template carries no raw strings (`tagged_templates`).
+            // V38 (`expression_forms`): the raw strings of a tagged
+            // template's strings array (`tagged_templates`).
             ast::MemberProp::Ident(name)
-                if name.sym == "raw"
-                    && self.types.profile.expression_forms()
-                    && self.types.arrays[id as usize] == Type::String =>
+                if name.sym == "raw" && tagged_templates::is_strings(value.ty, self.types) =>
             {
-                return Err(unsupported(tagged_templates::RAW_REFUSED));
+                if !read {
+                    return Err(type_error(
+                        "cannot assign to raw because it is a read-only property",
+                    ));
+                }
+                return self.template_raw(value, member.span);
             }
             _ => {
                 return Err(unsupported(
@@ -172,6 +175,7 @@ impl Lower<'_> {
         base: Expr,
         method: &str,
     ) -> Result<Expr> {
+        let base = tagged_templates::plain(base, self.types);
         let Type::Array(id) = base.ty else {
             return Err(type_error(
                 "array method requires a narrowed array receiver",

@@ -30,9 +30,10 @@ pub(crate) struct NamedTypes {
     /// Resolved declarations by type arguments (empty for non-generic ones).
     resolved: BTreeMap<(Key, Vec<Type>), Type>,
     resolving: Vec<Key>,
-    /// Reserved types of declarations that referred to themselves while being
-    /// resolved (v34 `recursive_types`), filled when their resolution ends.
-    placeholders: BTreeMap<Key, Type>,
+    /// Reserved types of declarations (with their type arguments, v38
+    /// `type_level`) that referred to themselves while being resolved (v34
+    /// `recursive_types`), filled when their resolution ends.
+    placeholders: BTreeMap<(Key, Vec<Type>), Type>,
     /// The source of every linked module, by module index (v38 diagnostics
     /// of generic method signatures instantiated in another module).
     sources: BTreeMap<usize, Source>,
@@ -433,8 +434,12 @@ pub(super) fn instantiate(
     }
     let recursive = type_level::enter_recursive(&key, &memo.1, types)?;
     if types.named.resolving.contains(&key) && !recursive {
-        if types.profile.recursive_types() && memo.1.is_empty() && params.is_none() {
-            return recursive::placeholder(&key, declaration.as_ref(), types)
+        // V38 (`type_level`): a generic declaration may refer to the same
+        // instantiation of itself (`this`, `next: List<T>`).
+        if types.profile.recursive_types()
+            && (memo.1.is_empty() && params.is_none() || types.profile.type_level())
+        {
+            return recursive::placeholder(&memo, declaration.as_ref(), types)
                 .map_err(|e| source.locate(e, span));
         }
         return Err(source.locate(unsupported("recursive type declaration"), span));
@@ -458,7 +463,7 @@ pub(super) fn instantiate(
     types.named.current = caller;
     types.named.resolving.pop();
     type_level::pop_instantiation(types);
-    let placeholder = types.named.placeholders.remove(&key);
+    let placeholder = types.named.placeholders.remove(&memo);
     let ty = result?;
     let ty = match placeholder {
         Some(placeholder) => {
@@ -468,6 +473,22 @@ pub(super) fn instantiate(
     };
     types.named.resolved.insert(memo, ty);
     Ok(ty)
+}
+
+/// The instantiation `arguments` of the declaration `key` while it is being
+/// resolved (v38 `type_level`: `this` in a generic interface or object type
+/// alias): its reserved recursive type.
+pub(super) fn instantiate_resolved(
+    key: &Key,
+    arguments: Vec<Type>,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    let memo = (key.clone(), arguments);
+    if let Some(ty) = types.named.resolved.get(&memo) {
+        return Ok(*ty);
+    }
+    let declaration = types.named.declarations.get(key).cloned();
+    recursive::placeholder(&memo, declaration.as_ref(), types)
 }
 
 /// Bind type parameters (errors stay at the reference), then lower the body
@@ -550,7 +571,7 @@ mod recursive {
         }
     }
     pub(super) fn placeholder(
-        key: &Key,
+        key: &(Key, Vec<Type>),
         declaration: Option<&Declaration>,
         types: &mut ir::ValueTypes,
     ) -> Result<Type> {

@@ -106,7 +106,8 @@ fn involves_class(ty: Type, types: &ir::ValueTypes) -> bool {
         .any(|member| matches!(member, Type::Class(_)))
 }
 
-/// Record a `this is T` method predicate (`isDog(): this is Dog`).
+/// Record a `this is T` method predicate (`isDog(): this is Dog`) or an
+/// `asserts this [is T]` assertion method.
 pub(super) fn note_method(
     (class, name): (u32, &str),
     function: &ast::Function,
@@ -118,21 +119,23 @@ pub(super) fn note_method(
     let ast::TsType::TsTypePredicate(predicate) = &*annotation.type_ann else {
         return Ok(());
     };
-    if predicate.asserts {
-        return Err(unsupported(
-            "asserts this assertion method (call-statement narrowing of a receiver)",
-        ));
-    }
     if !matches!(predicate.param_name, ast::TsThisTypeOrIdent::TsThisType(_)) {
         return Ok(());
     }
-    if let Some(target) = &predicate.type_ann {
-        let ty = keyword_type(&target.type_ann, types)?;
-        types
-            .type_level
-            .this_predicates
-            .insert((class, name.to_owned()), ty);
-    }
+    let ty = match &predicate.type_ann {
+        Some(target) => Some(keyword_type(&target.type_ann, types)?),
+        // `this is` always has a type; `asserts this` asserts truthiness,
+        // which a receiver always has.
+        None => None,
+    };
+    types.type_level.this_predicates.insert(
+        (class, name.to_owned()),
+        Predicate {
+            parameter: None,
+            ty,
+            asserts: predicate.asserts,
+        },
+    );
     Ok(())
 }
 
@@ -210,18 +213,13 @@ impl Lower<'_> {
                 .get(class)
                 .methods
                 .get(method.sym.as_ref())
-            && let Some(ty) = self
+            && let Some(predicate) = self
                 .types
                 .type_level
                 .this_predicates
                 .get(&(found.owner, method.sym.to_string()))
         {
-            let predicate = Predicate {
-                parameter: None,
-                ty: Some(*ty),
-                asserts: false,
-            };
-            return Some((predicate, call));
+            return Some((predicate.clone(), call));
         }
         let index = match stmt::unparen(callee) {
             ast::Expr::Ident(id) if self.binding(id.sym.as_ref()).is_err() => {

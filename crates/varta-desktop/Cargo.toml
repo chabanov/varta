@@ -35,6 +35,9 @@ varta-artifact = { path = "../varta-artifact" }
 varta-common = { path = "../varta-common" }
 varta-runtime = { path = "../varta-runtime" }
 varta-view = { path = "../varta-view" }
+# The style engine's font interface: the platform measures the fonts it
+# renders with itself for the font-relative units.
+varta-style = { path = "../varta-style" }
 thiserror.workspace = true
 # The host-owned permission decision file and audit log (already locked
 # through varta-common and the runtime).

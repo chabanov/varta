@@ -3015,7 +3015,7 @@ values:
 <!-- generated:view-stylesheet-tokens:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
 | Item | Values |
 | --- | --- |
-| Pseudo-classes | `:hover`, `:active`, `:focus-visible`, `:disabled`, `:checked` |
+| Pseudo-classes | `:hover`, `:active`, `:focus`, `:focus-within`, `:focus-visible`, `:disabled`, `:enabled`, `:checked`, `:root`, `:host`, `:first-child`, `:last-child`, `:only-child`, `:first-of-type`, `:last-of-type`, `:only-of-type`, `:nth-child()`, `:nth-last-child()`, `:nth-of-type()`, `:nth-last-of-type()`, `:is()`, `:where()`, `:not()` |
 | Media features | `prefers-color-scheme`, `min-width`, `max-width` |
 | Forbidden anywhere | `\`, `<`, `>`, `/*`, `@import`, `!important`, `url(`, `image-set(`, `expression(` |
 | Forbidden in `set_style` values | `;`, `{`, `}` |
@@ -3385,6 +3385,10 @@ not imply complete CSS rendering or typography acceptance.
 | 78 | `aspect-ratio` | `auto \|\| [<number> [/ <number>]?]` | positive ratio terms |
 | 79 | `vertical-align` | `baseline \| sub \| super \| text-top \| text-bottom \| middle \| top \| bottom \| <length-percentage>` | inline-level boxes |
 | 80 | `image-orientation` | `from-image \| none` | inherited |
+| 81 | `translate` | `none \| <length-percentage> <length-percentage>?` | — |
+| 82 | `scale` | `none \| <number> <number>?` | positive factors |
+| 83 | `transform-origin` | `<length-percentage> <length-percentage>` | — |
+| 84 | `letter-spacing` | `normal \| <length>` | inherited |
 <!-- generated:view-css-properties:end -->
 
 **Events.**

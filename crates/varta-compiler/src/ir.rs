@@ -363,6 +363,12 @@ pub(crate) struct ValueTypes {
     pub overloads: crate::lower::overloads::Overloads,
     /// K9 type-level state (v38 `type_level`); see `lower::type_level`.
     pub type_level: crate::lower::type_level::TypeLevel,
+    /// Template objects of tagged template sites (v38 `expression_forms`);
+    /// see `lower::tagged_templates`.
+    pub templates: crate::lower::tagged_templates::TemplateObjects,
+    /// The receiver register of object-literal methods that use `this`
+    /// (v38 `expression_forms`); see `lower::object_methods`.
+    pub receivers: crate::lower::object_methods::Receivers,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1), or under value

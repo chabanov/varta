@@ -34,4 +34,8 @@ pub(super) struct State {
     /// Set while a hoisted function declaration is lowered: it never keeps
     /// the narrowing of a mutable binding.
     pub(super) hoisting: bool,
+    /// V38 (`expression_forms`): object-literal methods about to be lowered
+    /// as closures that take their receiver at entry (`object_methods`), by
+    /// the span of their arrow: the hidden `this` binding and object type.
+    pub(super) method_receivers: BTreeMap<(u32, u32), (String, crate::ir::Type)>,
 }

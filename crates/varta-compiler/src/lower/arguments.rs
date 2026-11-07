@@ -24,6 +24,7 @@ pub(super) fn accepts(expected: Type, actual: Type, types: &ir::ValueTypes) -> b
 /// `accepts` without structural views (v38 `structural_subtyping`).
 pub(super) fn nominal_accepts(expected: Type, actual: Type, types: &ir::ValueTypes) -> bool {
     expected == actual
+        || tagged_templates::widens(expected, actual, types)
         || literals::assignable(expected, actual, types)
         || classes::upcast(types, actual, expected)
         || dictionaries::converts(expected, actual, types)
@@ -32,7 +33,9 @@ pub(super) fn nominal_accepts(expected: Type, actual: Type, types: &ir::ValueTyp
             unions::members(actual, types).iter().all(|t| {
                 literals::member_of(*t, &target, types)
                     || target.iter().any(|e| {
-                        classes::upcast(types, *t, *e) || dictionaries::converts(*e, *t, types)
+                        classes::upcast(types, *t, *e)
+                            || dictionaries::converts(*e, *t, types)
+                            || tagged_templates::widens(*e, *t, types)
                     })
             })
         }

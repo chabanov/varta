@@ -476,6 +476,15 @@ impl View {
         self.tree.images.set = images;
     }
 
+    /// Set the faces the style engine takes the first available font's
+    /// metrics from (CSS Values 4 §6.1.1: `ex`, `cap`, `ch`, `ic` and `lh`
+    /// under `line-height: normal`), normally the text measurer's
+    /// ([`TextMeasurer::font_set`]). Without one, those units take the
+    /// Values 4 fallbacks, and `cap` and a `normal` `lh` stay unresolved.
+    pub fn set_fonts(&mut self, fonts: std::sync::Arc<varta_style::fonts::FontSet>) {
+        self.tree.styles.set_fonts(fonts);
+    }
+
     /// Cancel transient IME state on the currently focused field, if any.
     pub fn cancel_preedit(&mut self) {
         if let Some(id) = self.tree.focus

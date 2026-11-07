@@ -1,5 +1,5 @@
 //! Initial, deliberately bounded box-only layout using the shared native engine.
-use crate::style::{self, Environment, Name, UaWeight};
+use crate::style::{self, Environment, Name};
 use crate::text::{TextAlign, TextOptions, TextSource, WhiteSpaceMode};
 use crate::tree::{Content, Tree, border_components, geometry_sides};
 use crate::units::Units;
@@ -570,14 +570,22 @@ fn layout_properties(
     let variables = style::Variables::new(tree, id, env);
     // Cascade 5 §6.1: rule declarations, inline values, important rules.
     let cascade = tree.cascade_refs(id, env);
-    fn rules<'a>(list: &[varta_style::Declared<'a>]) -> Vec<(CssProperty, &'a str)> {
+    // A mapped longhand with `var()` takes its component of the substituted
+    // value; `None` is invalid at computed-value time.
+    let rules = |list: &[varta_style::Declared<'_>]| -> Vec<(CssProperty, Option<String>)> {
         list.iter()
             .filter_map(|declared| match declared.name {
-                Name::Property(property) => Some((*property, declared.value)),
+                Name::Property(property) => Some((*property, Some(declared.value.to_owned()))),
+                Name::Mapped(property, part) => Some((
+                    *property,
+                    variables
+                        .substitute(declared.value)
+                        .and_then(|value| part.source.component(&value, part.index)),
+                )),
                 Name::Custom(_) => None,
             })
             .collect()
-    }
+    };
     let (normal, important) = (rules(&cascade.normal), rules(&cascade.important));
     let declarations = normal
         .into_iter()
@@ -586,12 +594,12 @@ fn layout_properties(
                 .style
                 .iter()
                 .filter(|(property, _)| geometry_sides(**property).is_none())
-                .map(|(property, value)| (*property, value.as_str())),
+                .map(|(property, value)| (*property, Some(value.clone()))),
         )
         .chain(important);
     let mut result = BTreeMap::new();
     for (property, value) in declarations {
-        let Some(value) = variables.property(property, value) else {
+        let Some(value) = value.and_then(|value| variables.property(property, &value)) else {
             let affected: &[CssProperty] = match property {
                 CssProperty::Margin => &[
                     CssProperty::MarginTop,
@@ -958,10 +966,6 @@ pub(crate) fn text_style(
     Ok((resolved.options, families))
 }
 
-/// The range of numeric font weights (CSS Fonts 4 §2.2).
-const MIN_FONT_WEIGHT: f32 = 1.0;
-const MAX_FONT_WEIGHT: f32 = 1000.0;
-
 /// Chrome's minimum logical font size in CSS pixels (the style engine's
 /// [`varta_style::font::MINIMUM_LOGICAL_FONT_SIZE`]).
 #[cfg(test)]
@@ -1006,8 +1010,11 @@ pub(crate) fn resolve_text(
             Some(LineHeight::FontSizeRelative(multiplier))
         }
     };
-    let mut weight = 400.0;
-    let mut italic = false;
+    // The weight and style are the style engine's too (with the user-agent
+    // rows of headings, `strong`, `em` and the control font).
+    let weight = font.weight as f32;
+    let italic = font.italic;
+    let mut letter_spacing = 0.0;
     let mut white_space = WhiteSpaceMode::Normal;
     let mut break_anywhere = false;
     let mut align = TextAlign::Start;
@@ -1017,26 +1024,6 @@ pub(crate) fn resolve_text(
             .element(ancestor)
             .and_then(|element| style::ua_defaults(element.tag))
         {
-            if ua.control_font {
-                if !properties.contains_key(&CssProperty::FontWeight) {
-                    weight = style::NORMAL_FONT_WEIGHT;
-                }
-                if !properties.contains_key(&CssProperty::FontStyle) {
-                    italic = false;
-                }
-            }
-            if !properties.contains_key(&CssProperty::FontWeight) {
-                weight = match ua.weight {
-                    UaWeight::Inherit => weight,
-                    UaWeight::Absolute(value) => value,
-                    UaWeight::Bolder if weight < 400.0 => 400.0,
-                    UaWeight::Bolder if weight < 600.0 => 700.0,
-                    UaWeight::Bolder => 900.0,
-                };
-            }
-            if ua.italic && !properties.contains_key(&CssProperty::FontStyle) {
-                italic = true;
-            }
             if ua.preformatted && !properties.contains_key(&CssProperty::WhiteSpace) {
                 white_space = WhiteSpaceMode::Pre;
             }
@@ -1058,6 +1045,15 @@ pub(crate) fn resolve_text(
         if let Some(value) = declared(CssProperty::TextAlign) {
             align = TextAlign::parse(value).ok_or(LayoutError::Unsupported(ancestor))?;
         }
+        if let Some(value) = declared(CssProperty::LetterSpacing) {
+            // CSS Text 3 §8.2: `normal` is zero.
+            letter_spacing = match value.as_str() {
+                "normal" => 0.0,
+                length => crate::units::Units::new(env)
+                    .and_then(|units| units.pixels(length, true))
+                    .ok_or(LayoutError::Unsupported(ancestor))?,
+            };
+        }
         if let Some(value) = declared(CssProperty::OverflowWrap) {
             break_anywhere = match value.as_str() {
                 "normal" => false,
@@ -1074,25 +1070,6 @@ pub(crate) fn resolve_text(
                 _ => return Err(LayoutError::Unsupported(ancestor)),
             };
         }
-        if let Some(value) = declared(CssProperty::FontWeight) {
-            // CSS Fonts 4 §2.2: `normal`, `bold` or a number in [1, 1000].
-            weight = match value.as_str() {
-                "normal" => style::NORMAL_FONT_WEIGHT,
-                "bold" => style::UA_BOLD_WEIGHT,
-                number => number
-                    .parse::<f32>()
-                    .ok()
-                    .filter(|weight| (MIN_FONT_WEIGHT..=MAX_FONT_WEIGHT).contains(weight))
-                    .ok_or(LayoutError::Unsupported(ancestor))?,
-            };
-        }
-        if let Some(value) = declared(CssProperty::FontStyle) {
-            italic = match value.as_str() {
-                "normal" => false,
-                "italic" => true,
-                _ => return Err(LayoutError::Unsupported(ancestor)),
-            };
-        }
     }
     Ok(ResolvedText {
         specified_size: font.size.px as f32,
@@ -1101,6 +1078,7 @@ pub(crate) fn resolve_text(
             line_height,
             weight,
             italic,
+            letter_spacing,
             white_space,
             break_anywhere,
             source: TextSource::General,
@@ -1343,7 +1321,8 @@ fn build_one(
                 | CssProperty::FontFamily
                 | CssProperty::FontWeight
                 | CssProperty::FontStyle
-                | CssProperty::WhiteSpace => {}
+                | CssProperty::WhiteSpace
+                | CssProperty::LetterSpacing => {}
                 CssProperty::OverflowWrap | CssProperty::TextAlign => {}
                 // `clip` is the initial value; an admitted ellipsis root is a
                 // rich formatting root (see `inline::ellipsis`).
@@ -1354,9 +1333,16 @@ fn build_one(
                             .is_some_and(|shape| shape.rich.is_some()) => {}
                 property if paint_only(property) => {}
                 // A transform applies after layout (`boxes_inner`).
-                CssProperty::Transform => {
-                    crate::transform::List::parse(&value, units)
-                        .ok_or(LayoutError::Unsupported(id))?;
+                CssProperty::Transform | CssProperty::Translate | CssProperty::Scale => {
+                    let single = BTreeMap::from([(property, value.clone())]);
+                    if let Some(list) = crate::transform::effective(&single) {
+                        crate::transform::List::parse(&list, units)
+                            .ok_or(LayoutError::Unsupported(id))?;
+                    }
+                }
+                CssProperty::TransformOrigin => {
+                    let single = BTreeMap::from([(property, value.clone())]);
+                    crate::transform::origin(&single, units).ok_or(LayoutError::Unsupported(id))?;
                 }
                 CssProperty::Width => {
                     style.size.width = if value == "auto" {
@@ -2388,10 +2374,11 @@ fn boxes_inner(
             // box contains, without moving any other box. A transform that
             // scales keeps the subtree where layout put it: paint, hits and
             // the public geometry map it through `transform`.
-            let transform = tree
-                .computed_read(id, &layout_env)
-                .get(&CssProperty::Transform)
-                .map(|value| crate::transform::resolve(value, units, rect))
+            let computed = tree.computed_read(id, &layout_env);
+            let origin =
+                crate::transform::origin(&computed, units).ok_or(LayoutError::Unsupported(id))?;
+            let transform = crate::transform::effective(&computed)
+                .map(|value| crate::transform::resolve(&value, origin, units, rect))
                 .transpose()
                 .map_err(|()| LayoutError::Unsupported(id))?
                 .flatten();
