@@ -316,12 +316,17 @@ fn renumber_constants(program: &mut ir::Program) {
         each_constant(&mut function.body, &mut |index| *index = map[index]);
     }
     program.constants = map.len() as u32;
+    let register = program.types.receivers.register();
+    program
+        .types
+        .receivers
+        .place(register.and_then(|index| map.get(&index).copied()));
 }
 
 /// Visit every module-constant index in `body`: reads (`ModuleConstant`) in
 /// any expression and writes (`InitModuleConstant`) in any statement,
 /// including statement bodies nested in expressions.
-fn each_constant(body: &mut [S], visit: &mut dyn FnMut(&mut u32)) {
+pub(super) fn each_constant(body: &mut [S], visit: &mut dyn FnMut(&mut u32)) {
     constant_writes(body, visit);
     statements(body, &mut |expr| match &mut expr.kind {
         E::ModuleConstant(index) => visit(index),
@@ -517,7 +522,7 @@ fn expression(expr: &mut Expr, visit: &mut dyn FnMut(&mut Expr)) {
     }
 }
 
-fn statements(body: &mut [S], visit: &mut dyn FnMut(&mut Expr)) {
+pub(super) fn statements(body: &mut [S], visit: &mut dyn FnMut(&mut Expr)) {
     for statement in body {
         self::statement(statement, visit);
     }

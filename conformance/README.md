@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 116 feature rows and 195 cases:
-190 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 117 feature rows and 198 cases:
+193 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -452,6 +452,12 @@ output is Node.js v24.20.0's. Two forms noted above are now admitted: template
 computed keys and `await` inside a template literal or a call argument.
 `using` declarations (ECMAScript 2026) and TypeScript `this` parameters are
 pinned to the Varta contract rather than the ECMAScript 2025 text.
+The owner decisions of the same day add `template-objects.ts` (per-site
+template objects and `raw`) on `tagged-templates`, `method-receivers.ts`
+(a method sees the receiver it is called on) on `object-literal-methods`
+and the row `top-level-await` with `top-level-await.ts` (an awaiting entry
+module, a microtask scheduled before the `await` and `main` after the
+evaluation), each matching Node.js v24.20.0.
 
 The v38 declarations-and-classes review (K9 B, 2026-11-06) uses the
 `typescript_handbook` origin for language features that ECMAScript does not

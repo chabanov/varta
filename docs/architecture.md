@@ -11618,10 +11618,9 @@ Node 24 is the reference for every output below.
   statement's frame-saved temporaries and its statements keep their order,
   so operands evaluated before an `await` are materialized first and a
   short-circuited operand (`a?.f(await x)`, `a || await b`) never awaits.
-  `await` in a `switch` case test, a `do...while` condition and at module
-  top level stays refused (`await inside switch case test`, `top-level await
-  is not supported`): module code runs only the pure constant initializers
-  of [module constants](#module-constants-module_constants).
+  `await` in a `switch` case test and a `do...while` condition stays
+  refused (`await inside switch case test`). Top-level `await` in module
+  initializers follows [module evaluation](#module-evaluation-module_evaluation).
 - **Operators and statements.** The comma operator evaluates every operand
   in order and yields the last. `new.target === C` (`!==`, either order) in
   a class constructor tests the class of the instance under construction
@@ -11630,16 +11629,28 @@ Node 24 is the reference for every output below.
   refused by name. Iterator results are created as `{ value, done }`, the
   CreateIterResultObject order, so `JSON.stringify` and `Object.keys` of a
   generator result match JavaScript.
-- **Tagged templates.** ``tag`a${x}b` `` calls `tag` with a fresh
-  `TemplateStringsArray` of the cooked strings (a readonly `string[]`)
-  followed by the substitutions, like `tag(["a", "b"], x)`; the
-  substitutions are checked against the tag's parameters as call arguments.
-  ``String.raw`…` `` joins the raw text (line terminators normalized to LF)
-  with the ToString of each substitution. Refused: the strings array's
-  `raw` property (`TemplateStringsArray.raw outside String.raw`), a part
-  whose cooked string is `undefined` (an invalid escape) and type arguments
-  on a tagged template. Deviation: the strings array is created per
-  evaluation instead of once per site.
+- **Tagged templates.** ``tag`a${x}b` `` calls `tag` with the site's
+  template object followed by the substitutions, like `tag(strings, x)`;
+  the substitutions are checked against the tag's parameters as call
+  arguments. The template object is GetTemplateObject's: one
+  `TemplateStringsArray` per site (a `string[]` array type of its own whose
+  values only sites create) holding the cooked strings, and its `raw`
+  property is the site's array of raw strings (line terminators normalized
+  to LF). Every evaluation of a site, in every call and every
+  instantiation of a generic function, passes the same two arrays: they
+  are built once per instance by a synthesized initializer, which runs
+  before the module initializers, into two permanent root slots behind the
+  module constants, and `strings.raw` finds the site whose cooked array
+  `strings` is (a strings array no site created throws `TypeError`).
+  Everywhere else a `TemplateStringsArray` is the `string[]` it is: array
+  methods, `string[]` parameters (`readonly string[]` in TypeScript) and
+  identity comparisons see the same array. ``String.raw`…` `` joins the
+  raw text with the ToString of each substitution. Refused: assigning
+  `raw`, a part whose cooked string is `undefined` (an invalid escape),
+  type arguments on a tagged template and `String.raw(strings, …values)`
+  called as a function. Deviation: the arrays are not frozen (Varta has no
+  integrity levels), so a write through a `string[]` alias changes the
+  site's array where JavaScript throws `TypeError`.
 - **Spreads into fixed parameters.** A spread argument whose length is
   static expands in place: an array literal spreads its elements and a
   binding of a fixed-length tuple type spreads its elements (`f(...pair)`,
@@ -11658,18 +11669,28 @@ Node 24 is the reference for every output below.
   templates, `String(…)`, `+` with a string operand); other bodies need a
   return annotation. A field initializer may read and capture `this.f` for
   the fields initialized before it, as a constructor statement may.
-- **Object-literal methods that use `this`.** The literal binds its
-  methods to the object it creates: a hidden binding receives the object
-  right after it is built, and every such method is an arrow over that
-  binding. The object's type is its contextual closed object type, or the
-  record of its literal or binding field values and annotated methods.
-  Calls `o.m()` (and fluent chains `o.m().n()`) behave as in JavaScript.
-  Deviations, refused where observable: an object spread, `Object.assign`
-  source or own-key enumeration of a record type built by such a literal is
-  refused by name (the copied methods would keep the original receiver),
-  and a method value extracted and called alone sees the object instead of
-  `undefined`. Getters and setters of object literals (accessor properties)
-  and generator methods that use `this` stay refused by name.
+- **Object-literal methods that use `this`.** A method sees the receiver
+  it is called on, as in JavaScript: `o.m()` passes `o`, a spread copy
+  passes the copy, a method assigned to another object passes that object
+  and an extracted method called alone passes `undefined` (reading a
+  property of that `this` throws `TypeError`). Function values have no
+  receiver parameter, so a program with such methods passes receivers
+  through a register, one permanent root slot behind the module constants:
+  every function-value call stores the object of `o.m(...)` (evaluated
+  once into a local) or nothing (`undefined`) right before the dispatch,
+  and the method, a closure over a hidden `this` binding, takes and clears
+  it first, before its parameter defaults. Programs without such methods
+  keep their code. The object's type is its contextual closed object type,
+  or the record of its literal or binding field values and annotated
+  methods; the receiver must be an object of that type or of a type viewed
+  as it ([structural subtyping](#structural-subtyping-structural_subtyping)),
+  otherwise the call throws `TypeError: object literal method called on an
+  object that is not of its literal type` (deviation: JavaScript would read
+  the other object's properties; a spread copy with more fields than the
+  literal is such an object). Spreads, `Object.assign` and own-key
+  enumeration of such objects are admitted. Getters and setters of object
+  literals (accessor properties), generator methods that use `this` and a
+  spread in a literal whose methods use `this` stay refused by name.
 - **Computed keys.** `{ [k]: v }` with a constant key — a string or number
   literal, a template without substitutions, or a `const` binding or
   module constant initialized by such a literal — names a closed record
@@ -12214,8 +12235,8 @@ Store is its own instance, so module code runs again for each request (as
 the call-free initializers already did). Tool entries keep refusing stored
 module values (`module constants with tool/HTTP entry points`). A module
 initializer may call functions and construct objects (`const registry =
-load()`, `static instance = new C()`, static blocks); only a top-level
-`await` stays refused. A primitive `const` whose initializer runs code is
+load()`, `static instance = new C()`, static blocks); a top-level `await`
+is admitted under `expression_forms` (below). A primitive `const` whose initializer runs code is
 stored like a module variable that no code may assign. Initializers that
 run code are never pruned as unread (`program_limits`).
 
@@ -12232,6 +12253,36 @@ binding on a path it never takes is refused too); other modules cannot
 reach this module's bindings early, since imports are acyclic and
 initialized first. A module variable whose type is `undefined` or `null`
 alone is refused (it has no boxed form).
+
+**Evaluation order and top-level `await`** (2026-11-06, K9 C, owner
+decision; `expression_forms`). Modules are evaluated in the order of
+Evaluate() (§16.2.1.5.3): a depth-first walk from the entry module over each
+module's requested modules in source order (imports and re-exports; `import
+type` and `export type` declarations request nothing, as TypeScript's
+`verbatimModuleSyntax` and Node's type stripping erase them), each module
+after the modules it requests; compiler-owned engine preludes come first.
+Imported functions may be called by initializers. A module whose
+initializers `await` (outside function values) is evaluated as one async
+function, its initializers in source order. Without such a module the
+initializers still run in that order before `main`. With one, the
+program's entry is a synthesized evaluator (guest code, no host change)
+that follows InnerModuleEvaluation and the asynchronous module algorithm
+exactly, the graph being acyclic: in the walk, a module that neither awaits
+nor waits for an asynchronously evaluating dependency runs at once, an
+awaiting one without such dependencies starts, and the others wait. When an
+async module's evaluation completes (one job after its promise settles, as
+the spec's reaction does), AsyncModuleExecutionFulfilled gathers the
+waiting ancestors whose last pending dependency it was (through
+synchronous ones) and runs or starts them in the order they became
+asynchronous; a synchronous sibling therefore runs while an earlier sibling
+is suspended, as in Node. A rejection marks the module and every waiting
+ancestor failed (AsyncModuleExecutionRejected): none of them runs, and the
+entry module's failure is an unhandled rejection, so the execution fails as
+Node's does. The entry module calls `main` at the end of its own
+evaluation, as `await main();` appended to it would. Refused with top-level
+`await`: tool and HTTP entry points (`top-level await with tool or HTTP
+entry points`); a throw of a synchronous module during the initial walk
+ends the execution as an uncaught exception.
 
 #### Bytes held by unknown (`byte_values`)
 

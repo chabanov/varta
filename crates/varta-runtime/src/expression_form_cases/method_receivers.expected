@@ -1,0 +1,10 @@
+count=4 step=2
+count=4 step=2 | count=6 step=2
+count=4 step=2 | count=10 step=10
+TypeError
+count,step,bump,describe
+10
+10 5
+count=1 step=1, count=5 step=5
+15 11 15 11
+widget#3

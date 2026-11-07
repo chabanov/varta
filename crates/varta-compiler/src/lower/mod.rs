@@ -305,7 +305,7 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
             && id.sym == "TemplateStringsArray"
             && !named::declared(types, "TemplateStringsArray")
         {
-            return arrays::intern(Type::String, types);
+            return tagged_templates::array(types);
         }
         return named::resolve(id.sym.as_ref(), types);
     }
@@ -464,7 +464,7 @@ mod object_assign;
 mod object_entries;
 mod object_enumeration;
 mod object_is;
-mod object_methods;
+pub(crate) mod object_methods;
 mod object_narrowing;
 mod optional_chains;
 pub(crate) mod overloads;
@@ -504,11 +504,12 @@ mod strings;
 pub(crate) mod subtyping;
 pub(crate) mod suspension;
 mod switches;
-mod tagged_templates;
+pub(crate) mod tagged_templates;
 mod tdz;
 mod templates;
 mod thenables;
 mod tools;
+mod top_level_await;
 mod tuples;
 pub(crate) mod type_level;
 mod type_operators;

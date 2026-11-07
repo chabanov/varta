@@ -53,10 +53,6 @@ pub(crate) struct Views {
     /// `Reinterpret` of the value that `resolve` replaces by a call of the
     /// pair's synthesized wrapper (`Rewriter::adapter`).
     adapters: RefCell<BTreeSet<(u32, u32)>>,
-    /// V38 (`expression_forms`): record shapes built by object literals whose
-    /// methods are bound to the object (`object_methods`); copying or
-    /// enumerating their own keys is refused in `spread_views`.
-    bound: RefCell<BTreeSet<u32>>,
     /// V38 (`sdk_paths`): the closed record shapes whose own keys a program
     /// copies or enumerates, with the form, source and span. `resolve`
     /// refuses a shape that is a view of an object type with other fields or
@@ -98,9 +94,9 @@ impl Views {
             .borrow_mut()
             .push((shape, form, source.clone(), span));
     }
-    /// Note a record shape built with methods bound to its object.
-    pub(crate) fn note_bound(&self, shape: u32) {
-        self.bound.borrow_mut().insert(shape);
+    /// The source types viewed as record `shape` (after `resolve`).
+    pub(crate) fn sources_of(&self, shape: u32) -> &[Type] {
+        self.sources.get(&shape).map_or(&[], Vec::as_slice)
     }
     /// Note the closed record shapes a value of `ty` entering an `unknown`
     /// cell may hold (v38 JSON-object reads of records).
@@ -848,19 +844,7 @@ fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result
                 .collect(),
         )
     };
-    let bound = types.subtyping.bound.borrow();
     for (shape, form, source, span) in types.subtyping.spreads.borrow().iter() {
-        if bound_source(*shape, edges, &bound) {
-            return Err(source.locate(
-                unsupported(&format!(
-                    "{} of a {} built by an object literal whose methods use this; the copied \
-                     methods would keep that object as their receiver",
-                    form.name(),
-                    describe(Type::Record(*shape), types),
-                )),
-                *span,
-            ));
-        }
         let declared = names(Type::Record(*shape)).unwrap_or_default();
         let mut visited = BTreeSet::from([Type::Record(*shape)]);
         let mut stack = vec![*shape];
@@ -890,25 +874,6 @@ fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result
         }
     }
     Ok(())
-}
-/// Whether a value of record `shape` may hold an object whose methods are
-/// bound to it: the shape itself or any record it views.
-fn bound_source(shape: u32, edges: &BTreeSet<(Type, u32)>, bound: &BTreeSet<u32>) -> bool {
-    let mut visited = BTreeSet::from([shape]);
-    let mut stack = vec![shape];
-    while let Some(target) = stack.pop() {
-        if bound.contains(&target) {
-            return true;
-        }
-        for (wider, _) in edges.iter().filter(|(_, t)| *t == target) {
-            if let Type::Record(id) = wider
-                && visited.insert(*id)
-            {
-                stack.push(*id);
-            }
-        }
-    }
-    false
 }
 /// Close the admitted edges and route every member access of a view shape
 /// through its accessors (see the module documentation).
@@ -1292,12 +1257,9 @@ impl Rewriter<'_> {
     fn expression(&mut self, value: &mut Expr) -> Result<()> {
         // A function-field call through a view that a class method provides
         // calls the method directly: the arguments are evaluated before the
-        // member is selected.
-        if let E::FunctionCall {
-            callee,
-            ignored_receiver: None,
-            ..
-        } = &value.kind
+        // member is selected. (A receiver held for object-literal methods,
+        // `object_methods`, is the base itself.)
+        if let E::FunctionCall { callee, .. } = &value.kind
             && let E::Field(base, slot) = &callee.kind
             && let Some(shape) = self.view(base.ty)
             && self.method_backed(shape, *slot)
@@ -1705,7 +1667,9 @@ impl Rewriter<'_> {
                 ty: result,
                 kind: E::FunctionCall {
                     callee: Box::new(callee),
-                    ignored_receiver: None,
+                    // The object is the receiver of an object-literal method
+                    // (`object_methods`).
+                    ignored_receiver: Some(Box::new(receiver(view))),
                     args: params[1..]
                         .iter()
                         .enumerate()

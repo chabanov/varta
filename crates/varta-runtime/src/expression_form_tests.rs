@@ -42,9 +42,11 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("await_operands"),
     case!("operators"),
     case!("tagged_templates"),
+    case!("template_objects"),
     case!("spreads"),
     case!("receivers"),
     case!("object_methods"),
+    case!("method_receivers"),
     case!("computed_keys"),
     case!("destructuring"),
     case!("callback_patterns"),
@@ -112,6 +114,13 @@ fn tagged_templates_and_string_raw_match_node() {
     matches_node("tagged_templates");
 }
 
+/// GetTemplateObject: one frozen strings array per site with its `raw`
+/// array, the same object at every evaluation of the site.
+#[test]
+fn template_objects_are_cached_per_site_like_node() {
+    matches_node("template_objects");
+}
+
 #[test]
 fn spreads_into_fixed_parameters_match_node() {
     matches_node("spreads");
@@ -125,6 +134,13 @@ fn this_parameters_and_field_arrows_match_node() {
 #[test]
 fn object_literal_methods_with_this_match_node() {
     matches_node("object_methods");
+}
+
+/// A method sees the receiver it is called on: spread copies, methods
+/// moved between objects, extracted methods (`undefined`) and enumeration.
+#[test]
+fn object_literal_methods_see_their_receiver_like_node() {
+    matches_node("method_receivers");
 }
 
 #[test]
@@ -205,12 +221,8 @@ fn unsupported_expression_forms_are_refused_by_name() {
             "getter or setter in an object literal",
         ),
         (
-            "function tag(s: TemplateStringsArray): string { return s.raw[0]; } export function main(): void { console.log(tag`a`); }",
-            "TemplateStringsArray.raw outside String.raw",
-        ),
-        (
-            "async function v(): Promise<number> { return 1; } const x: number = await v(); export function main(): void { console.log(String(x)); }",
-            "top-level await is not supported",
+            "function tag(s: TemplateStringsArray): string { s.raw = ['x']; return s[0]; } export function main(): void { console.log(tag`a`); }",
+            "cannot assign to raw because it is a read-only property",
         ),
         (
             "async function v(): Promise<number> { return 1; } export async function main(): Promise<void> { switch (1) { case await v(): console.log('one'); } }",
@@ -221,8 +233,8 @@ fn unsupported_expression_forms_are_refused_by_name() {
             "spread to a class constructor",
         ),
         (
-            "export function main(): void { const o = { n: 1, get(): number { return this.n; } }; const c = { ...o }; console.log(String(c.get())); }",
-            "built by an object literal whose methods use this",
+            "export function main(): void { const base = { n: 1 }; const o = { ...base, get(): number { return this.n; } }; console.log(String(o.get())); }",
+            "spread in an object literal whose methods use this",
         ),
         (
             "class C { v = 1; f = () => this.v; } export function main(): void { console.log(String(new C().f())); }",

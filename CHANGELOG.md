@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- V38 K9 C owner decisions (2026-11-06), `expression_forms`: tagged
+  templates pass GetTemplateObject's per-site template object, so
+  `TemplateStringsArray.raw` works and every evaluation of a site sees the
+  same arrays; object-literal methods see the receiver they are called on
+  (spread copies, methods moved between objects, `undefined` for an
+  extracted method), passed through a register by every function-value call
+  of programs that have such methods, so spreads, `Object.assign` and
+  enumeration of such objects are admitted. Modules evaluate in the order of
+  ECMAScript's Evaluate() (requests in source order, type-only imports
+  erased), initializers may call imported functions, and module
+  initializers may `await`: a synthesized evaluator runs the asynchronous
+  module algorithm (siblings run while an awaiting module is suspended,
+  dependents run in the job its completion settles, a rejection fails every
+  waiting importer) and the entry module calls `main` at its end. No host
+  ABI or value layout change; v37 keeps rejecting every form.
 - V38 K9 type level, step 2 (owner decisions): branded primitives
   (`string & { __brand: … }` is the primitive), `typeof` of local bindings,
   overloaded call/construct signatures and function intersections (calls
