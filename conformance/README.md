@@ -514,3 +514,14 @@ The `class-index-signatures` row (typescript_handbook; CORE-02) adds
 `class-index-signature`: undeclared members of instances with a string index
 signature, by name and computed key, also through a subclass; it matches
 Node.js v24.20.0.
+The runtime temporal dead zone of module bindings (owner decision of
+2026-11-06) adds `module-tdz` under `temporal-dead-zone`: module code reads
+and writes later bindings before their initialization and catches
+`ReferenceError`; `class-index-json` serializes instances with index
+signatures, nested and with a replacer list, in own-key order. Both match
+Node.js v24.20.0.
+Class values add `class-values` (`typeof C` parameters and results, `new`,
+static calls, `name`, `===` and `typeof` of class objects, dispatched over
+subclasses) under `static-class-members`, and generic overload signatures
+add `generic-overloads` (per-candidate inference with constraints) under
+`overloads`; both match Node.js v24.20.0.

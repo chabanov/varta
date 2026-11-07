@@ -161,7 +161,7 @@ pub(super) fn variant(ty: Type, construct: bool, types: &mut ir::ValueTypes) -> 
 
 /// The construct type of class `class` (`typeof C`): its constructor's
 /// parameters and its instance type.
-pub(super) fn class_constructor(class: u32, types: &mut ir::ValueTypes) -> Result<Type> {
+pub(in crate::lower) fn class_constructor(class: u32, types: &mut ir::ValueTypes) -> Result<Type> {
     let info = types.classes.get(class);
     if info.is_template() {
         return Err(unsupported(
@@ -317,7 +317,11 @@ impl Lower<'_> {
         if !self.types.profile.type_level() {
             return Ok(None);
         }
-        let Some(class) = self.class_callee(argument) else {
+        // A class object binding (v38) is a class value too.
+        let Some(class) = self
+            .class_callee(argument)
+            .or_else(|| self.class_value_path(argument))
+        else {
             return Ok(None);
         };
         if self.types.classes.get(class).is_template() {

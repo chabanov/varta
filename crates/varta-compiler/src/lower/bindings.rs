@@ -1,7 +1,7 @@
 //! Lexical declarations predeclare all leaves before evaluating any initializer.
 use super::*;
 impl Lower<'_> {
-    fn binding_annotation(&mut self, pattern: &ast::Pat) -> Result<Option<Type>> {
+    pub(super) fn binding_annotation(&mut self, pattern: &ast::Pat) -> Result<Option<Type>> {
         let ann = match pattern {
             ast::Pat::Ident(p) => p.type_ann.as_deref(),
             ast::Pat::Object(p) => p.type_ann.as_deref(),

@@ -31,6 +31,7 @@ mod template_types;
 mod tuple_types;
 mod utilities;
 
+pub(super) use constructors::class_constructor;
 pub(super) use containers::covariant_array;
 pub(super) use covariance::resolve as resolve_covariance;
 pub(crate) use patterns::Pattern;

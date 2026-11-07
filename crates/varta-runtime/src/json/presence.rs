@@ -1,6 +1,45 @@
 //! Value v7 records: fixed typed slots plus own-property presence/insertion order.
 use super::*;
+use varta_common::value::{INDEX_SIGNATURE_KEY, array_index_units};
+
+/// A record member in serialization order.
+#[derive(Clone, Copy)]
+enum Member {
+    Field(usize),
+    /// An entry of the class instance's index dictionary, by position.
+    Entry(usize),
+}
+/// The present entries of an index dictionary in stored order: their array
+/// index (if the key is one), packed key, value kind and payload.
+type Entries = Vec<(Option<u32>, u64, u32, u64)>;
+
 impl Encoder<'_, '_> {
+    /// The present entries of the index dictionary `packed` of a class
+    /// instance (holes of an indexed dictionary skipped).
+    fn index_entries(&mut self, packed: u64) -> Result<Entries, wasmtime::Error> {
+        let dictionary = Dictionary::read_in(self.data, packed, self.version, self.module)
+            .map_err(wasmtime::Error::new)?;
+        let mut entries = Vec::new();
+        for position in 0..dictionary.keys.length {
+            let Some((key, value)) = dictionary
+                .entry(self.data, position)
+                .map_err(wasmtime::Error::new)?
+            else {
+                continue;
+            };
+            let units = varta_common::text::units(
+                self.bytes(key as u32 as usize, (key >> i32::BITS) as usize)?,
+            )
+            .map_err(|_| error("invalid UTF-16 byte length"))?;
+            entries.push((
+                array_index_units(units.iter().copied()),
+                key,
+                dictionary.values.kind as u32,
+                value,
+            ));
+        }
+        Ok(entries)
+    }
     pub(super) fn record_present(
         &mut self,
         packed: u64,
@@ -129,6 +168,21 @@ impl Encoder<'_, '_> {
             .collect::<Result<_, wasmtime::Error>>()?;
         let mut rank = rank;
         rank.sort_by_key(|(noninteger, index, _)| (*noninteger, *index));
+        // V38 (`declaration_forms`): the entries of a class instance's index
+        // dictionary are its own properties beside the fields.
+        let index = fields.iter().position(|field| {
+            matches!(field, Some((name, kind, value))
+                if *name == INDEX_SIGNATURE_KEY
+                    && *kind == ValueKind::Dictionary as u32
+                    && *value != 0)
+        });
+        let extra = match index {
+            Some(slot) => {
+                let (_, _, value) = fields[slot].ok_or_else(|| error("missing field slot"))?;
+                Some(self.index_entries(value)?)
+            }
+            None => None,
+        };
         self.path.push(ptr);
         self.write(b"{")?;
         let mut written = false;
@@ -142,9 +196,56 @@ impl Encoder<'_, '_> {
                 }
             }
         }
-        for (_, _, slot) in rank {
+        // Own-key order: array indices of fields and entries ascending, then
+        // the fields, then the other entries, each in insertion order.
+        let mut members: Vec<(u8, u32, Member)> = rank
+            .into_iter()
+            .map(|(noninteger, key, slot)| (u8::from(noninteger), key, Member::Field(slot)))
+            .collect();
+        if let Some(entries) = &extra {
+            self.visit(depth + 1)?;
+            for (position, (index, ..)) in entries.iter().enumerate() {
+                let member = Member::Entry(position);
+                members.push(match index {
+                    Some(index) => (0, *index, member),
+                    None => (2, position as u32, member),
+                });
+            }
+        }
+        members.sort_by_key(|(class, key, _)| (*class, *key));
+        for (.., member) in members {
+            let slot = match member {
+                Member::Field(slot) => slot,
+                Member::Entry(position) => {
+                    let Some(entries) = &extra else {
+                        return Err(error("missing index entries"));
+                    };
+                    let (_, key, kind, value) = entries[position];
+                    let (kind, value) = self.resolve(kind, value)?;
+                    if kind == ValueKind::Undefined as u32 {
+                        self.visit(depth + 1)?;
+                        if value != 0 {
+                            return Err(error("noncanonical undefined"));
+                        }
+                        continue;
+                    }
+                    if written {
+                        self.write(b",")?;
+                    }
+                    written = true;
+                    let start = key as u32 as usize;
+                    let units =
+                        varta_common::text::units(self.bytes(start, (key >> i32::BITS) as usize)?)
+                            .map_err(|_| error("invalid UTF-16 byte length"))?;
+                    varta_common::text::write_json(&mut self.output, &units)
+                        .map_err(|_| error("output byte limit"))?;
+                    self.write(b":")?;
+                    self.value(kind, value, depth + 1)?;
+                    continue;
+                }
+            };
             let (name, kind, value) = fields[slot].ok_or_else(|| error("missing field slot"))?;
-            if kind == ValueKind::Undefined as u32 {
+            if kind == ValueKind::Undefined as u32 || Some(slot) == index {
                 continue;
             }
             // V37 private state is not a property (`json_stringify_v17`).

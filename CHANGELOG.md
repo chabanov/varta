@@ -73,6 +73,24 @@
   host reads of such objects are refused. No host ABI or value layout
   change (the accepted value ABI bump was not needed); v37 keeps rejecting
   every form.
+- V38 K9 B, third increment (owner decisions): the temporal dead zone of
+  module bindings is checked at run time, as in JavaScript. Code that runs
+  during module evaluation and reads or writes a later binding throws
+  `ReferenceError` (`Cannot access 'X' before initialization`); only a read
+  while an initializer itself is evaluated stays a compile error, as in tsc
+  (TS2448), and function values may now reference later bindings. An early
+  static-field or `var` read stays refused (JavaScript reads `undefined`).
+  `JSON.stringify` of class instances with index signatures includes the
+  extra keys in own-key order (previously they were silently dropped), in
+  the linked library and the host serializer alike. Tool entries cannot
+  run module evaluation yet: binary64 profiles have no tool adapter (owner
+  decision pending). Classes are values: `typeof C` holds `C` or a
+  subclass, and `new`, static calls and `name` dispatch over the
+  subclasses; `this`-using static methods inherited across modules run with
+  the calling subclass as `this` (before, silently with the declaring
+  class); generic overload signatures of functions infer their type
+  arguments per call. Conformance (with K9 C): 194 passed, 5 known
+  unsupported of 199.
 - V38 K9 type level, step 2 (owner decisions): branded primitives
   (`string & { __brand: … }` is the primitive), `typeof` of local bindings,
   overloaded call/construct signatures and function intersections (calls

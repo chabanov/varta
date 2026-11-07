@@ -168,6 +168,8 @@ impl Lower<'_> {
                 self.class_constructor_value(id, context)
             }
             ast::Expr::New(new) if self.constructs_value(&new.callee) => self.construct_value(new),
+            // V38 (`declaration_forms`): class objects.
+            _ if let Some(value) = self.class_value_expression(expression) => value,
             _ => self.expr_inner(expression),
         };
         if let Ok(value) = &result {
@@ -188,6 +190,7 @@ impl Lower<'_> {
                 }
             })
             .and_then(|value| self.void_function(value, expected))
+            .and_then(|value| self.class_value_conversion(value, expected, expression))
             .and_then(|value| unions::widen(value, expected, self.types))
             .map_err(|e| self.source.locate(e, expression.span()))
     }
@@ -296,7 +299,7 @@ impl Lower<'_> {
                 }
                 if !binding.initialized {
                     return Err(invalid(format!(
-                        "binding used before initialization: {}",
+                        "binding used before initialization: {} (TS2448)",
                         name.sym
                     )));
                 }
@@ -412,7 +415,7 @@ impl Lower<'_> {
                     }
                     ast::UnaryOp::TypeOf if self.types.profile.has_undefined() => {
                         let name = match value.ty {
-                            Type::Function(_) => "function",
+                            Type::Function(_) | Type::ClassValue(_) => "function",
                             Type::Undefined | Type::Void => "undefined",
                             Type::Error
                             | Type::NativeError(_)
@@ -867,6 +870,11 @@ impl Lower<'_> {
                     && !self.prelude_member(callee)
                 {
                     return self.class_static_call(call, member, class, expected);
+                }
+                if let ast::Expr::Member(member) = stmt::unparen(callee)
+                    && let Some(class) = self.class_value_path(&member.obj)
+                {
+                    return self.class_value_static_call(call, member, class);
                 }
                 if let ast::Expr::Member(member) = stmt::unparen(callee)
                     && self

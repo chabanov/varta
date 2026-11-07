@@ -175,7 +175,7 @@ fn function_value_type(function: &ast::Function, types: &mut ir::ValueTypes) -> 
         types,
     )
 }
-fn initializer_type(init: &ast::Expr, types: &mut ir::ValueTypes) -> Option<Type> {
+pub(super) fn initializer_type(init: &ast::Expr, types: &mut ir::ValueTypes) -> Option<Type> {
     match init {
         ast::Expr::Paren(paren) => initializer_type(&paren.expr, types),
         ast::Expr::Fn(function) => function_value_type(&function.function, types),
@@ -199,7 +199,7 @@ impl Lower<'_> {
     /// (`setTimeout(...)`/`setInterval(...)`, so that
     /// `const id = setInterval(() => clearInterval(id), ms)` captures `id`) or
     /// an instance `new C(...)` of a declared class without type arguments.
-    fn known_initializer(&self, init: &ast::Expr) -> Option<Type> {
+    pub(super) fn known_initializer(&self, init: &ast::Expr) -> Option<Type> {
         match stmt::unparen(init) {
             ast::Expr::Call(call) => {
                 let ast::Callee::Expr(callee) = &call.callee else {

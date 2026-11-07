@@ -1,0 +1,3 @@
+rex woof | animal:Animal | dog:Dog
+fido woof | max woof
+false Animal Dog

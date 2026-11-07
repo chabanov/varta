@@ -74,6 +74,12 @@ pub(crate) enum Type {
     /// `ValueTypes::tuples[id].array` of the union of its element types.
     /// Erased to that array before emission; see `lower::tuples`.
     Tuple(u32),
+    /// A class object (v38 `declaration_forms`, `typeof C`): the identity of
+    /// the class `C` or of one of its subclasses, the class id. Physically an
+    /// `i32` (erased to `Number` before emission); `new`, static calls and
+    /// `name` dispatch over the closed set of subclasses. It never enters a
+    /// union, an aggregate or `unknown`; see `lower::class_values`.
+    ClassValue(u32),
 }
 
 /// The engine collection families of v37 (`Type::Collection`).
@@ -369,6 +375,10 @@ pub(crate) struct ValueTypes {
     /// The receiver register of object-literal methods that use `this`
     /// (v38 `expression_forms`); see `lower::object_methods`.
     pub receivers: crate::lower::object_methods::Receivers,
+    /// V38 (`module_evaluation`): module bindings that code may read before
+    /// their initialization, by root slot: the slot of their initialization
+    /// flag and the binding's source name (`ReferenceError` text).
+    pub module_flags: std::collections::BTreeMap<u32, (u32, String)>,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1), or under value
@@ -1310,6 +1320,7 @@ impl std::fmt::Display for Type {
             Self::Record(_) => "object",
             Self::Dictionary(_) => "dictionary object",
             Self::Class(_) => "class instance",
+            Self::ClassValue(_) => "class",
             Self::Generator(_) => "generator",
             Self::Promise(_) => "promise",
             Self::Collection(kind, _) => kind.name(),

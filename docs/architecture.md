@@ -12362,8 +12362,16 @@ time (`new.target.name`, an Error subclass's `name`).
   `TypeError` if the implementation returns a value its overload does not
   admit). Signatures need return annotations and must be compatible with the
   implementation (TS2394); they precede it directly with the same export
-  state (TS2391, TS2383). Generic overloads and an overloaded function used
-  as a value are refused by name.
+  state (TS2391, TS2383). A generic overload signature of a function (owner
+  decision of 2026-11-06) is a candidate instantiated per call, as tsc
+  infers it: its type arguments are inferred from the argument types (a
+  primitive argument keeps its literal type), an unbound one takes its
+  default or `unknown`, and each must satisfy its constraint, or the
+  candidate does not match; the selected instantiation's result type
+  checks the implementation's result as above. Generic overloads do not
+  type arguments contextually and are not checked against the
+  implementation (TS2394 applies to the others). A generic method overload
+  and an overloaded function used as a value are refused by name.
 - **Setters and accessors.** `set x(v)` with or without a `get x()`: an
   assignment `o.x = v` evaluates `o`, then `v`, calls the setter and yields
   `v`; `o.x op= v` and `o.x++` read through the getter first. Accessors are
@@ -12395,9 +12403,40 @@ time (`new.target.name`, an Error subclass's `name`).
   `Derived.kind()` as in JavaScript. `super.m()` in static code calls the
   parent's `m` with the calling class as `this` (a copy of `m` in the
   calling class when `m` uses `this`), and `super.x` reads the parent's
-  static field. A `this`-using static method inherited from a class of
-  another module, and `super.m()` of such a method from a static field
-  initializer or block, are refused by name.
+  static field. Every static method that uses `this` also gets a receiver
+  version (`[this]m`, owner decision of 2026-11-06: class values) whose
+  first parameter, a class value, is `this`: a subclass without a copy
+  (declared in another module, whose copy could not reach the declaring
+  module's private names, or never named through) and a class value that
+  may hold any subclass call it with their own class, so `this.m()`, `new
+  this()` and `this.name` dispatch over the subclasses. `this.x` of a
+  static field reads the declaring class's field there. A method that
+  writes a static field through `this` (an own property of the subclass
+  in JavaScript) or whose `super` reaches no module-level parent has no
+  receiver version, and calling it with such a subclass as `this` is
+  refused by name; so is `super.m()` of a `this`-using method from a
+  static field initializer or block.
+- **Class values.** A class named where a value is expected, and a value
+  of type `typeof C`, is a class object (owner decision of 2026-11-06):
+  the identity of `C` or of one of its subclasses, an `i32` class id
+  (`Type::ClassValue`, erased to a Number before emission), with no host,
+  value-layout or ABI change. Classes are a closed world, so `new v(…)`,
+  static calls `v.m(…)` and `v.name` dispatch over the subclasses of `C`
+  known at link time (one direct call when they share the
+  implementation); `typeof v` is `"function"` and `===`/`!==` compare
+  identities. `typeof D` is assignable to `typeof C` when `D` descends
+  from `C` and its constructor accepts `C`'s parameters; `new v(…)`
+  refuses a subclass whose constructor does not (TS2511 for an abstract
+  `C`), and a subclass static method incompatible with `C`'s is TS2417.
+  Where a constructor type `new (…) => T` is expected, a class value
+  binding converts to the closure that constructs through the dispatch,
+  and generic inference sees its constructor type. A class value never
+  enters a union, an array, a record or `unknown` (it has no value tag),
+  a static field is not read through it (only through its class), and a
+  generic class is no value; each is refused by name (an engine class
+  keeps its own value rules).
+  `ConstructorParameters` and `InstanceType` take `typeof C` through its
+  constructor type. V37 keeps the class name an unknown identifier.
 - **Class expressions and local classes.** `const X = class [N] { … }` at
   module level or in a function body, and a class declaration in a function
   body, is a module class declaration (named `X`, or the class's own name
@@ -12417,13 +12456,22 @@ time (`new.target.name`, an Error subclass's `name`).
   dictionary operation on it (a missing key reads `undefined`). Every
   declared field must be of the index's value type and methods and
   accessors are refused unless it is `unknown` (TS2411). Static, readonly
-  and non-string index signatures are refused by name, and `JSON.stringify`
-  of such an instance is refused (JavaScript would list the extra
-  properties after the fields).
-- **Not admitted yet.** Standard decorators (they need classes as values
-  and the decorator context objects) and generic overload signatures are
-  refused by name (`decorator`, `generic overload signature`). Legacy
-  `experimentalDecorators` are not planned.
+  and non-string index signatures are refused by name. The hidden field's
+  descriptor key is `value::INDEX_SIGNATURE_KEY` (a private key no source
+  can spell). Serialization (owner decision of 2026-11-06), by the linked
+  serializer and the host's `json_stringify_owned` alike, never writes that
+  field: it lists the dictionary's entries as the instance's own properties
+  in JavaScript's own-key order, so `JSON.stringify` (also nested, with a
+  replacer list or indentation) writes the canonical array-index keys of
+  fields and entries ascending, then the fields in insertion order, then
+  the other entries in insertion order; entries holding `undefined` are
+  omitted, as for fields. One difference remains: an extra property that a
+  base constructor adds before a subclass's own fields are defined is
+  listed after those fields, where JavaScript lists it before them.
+- **Not admitted yet.** Standard decorators (they need the decorator
+  context objects, `this` in field initializers and method values) are
+  refused by name (`decorator`). Legacy `experimentalDecorators` are not
+  planned.
 
 #### Module evaluation (`module_evaluation`)
 
@@ -12439,19 +12487,38 @@ is admitted under `expression_forms` (below). A primitive `const` whose initiali
 stored like a module variable that no code may assign. Initializers that
 run code are never pruned as unread (`program_limits`).
 
-JavaScript throws `ReferenceError` when code reads a binding before its
-initialization. Varta refuses such a read at compile time whenever an
-effectful initializer can reach it: the reachable code is the initializer
-plus, transitively, every module function, function-valued binding and
-class it names (a class with its constructor, instance fields and instance
-methods; a static method through `C.m`), and no binding of the module
-declared at or after the initializer may be read by it (`binding used
-before initialization: X is read by code this initializer runs`). The
-analysis over-approximates calls (a program that only names a later
-binding on a path it never takes is refused too); other modules cannot
-reach this module's bindings early, since imports are acyclic and
-initialized first. A module variable whose type is `undefined` or `null`
-alone is refused (it has no boxed form).
+JavaScript throws `ReferenceError` when code reads or writes a binding
+before its initialization (owner decision of 2026-11-06: by the
+specification, at run time). A read while an initializer is evaluated,
+outside function values or in an immediately invoked one, is refused at
+compile time as tsc refuses it (`binding used before initialization: X
+(TS2448)`); inside a function, a direct read before the declaration is the
+same TS2448 error. Every other early access is checked at run time. The
+bindings that code may reach before their initialization are found
+syntactically: those that function values of an earlier (or their own)
+initializer mention, and those that an initializer running code reaches
+through the initializer plus, transitively, every module function,
+function-valued binding and class it names (a class with its constructor,
+instance fields and instance methods; a static method through `C.m`).
+Such a binding is stored in its root slot like a module variable (never
+folded to a literal) with an initialization flag in a further root slot
+(`0` or `1`, below the heap base, so the collector skips it); its
+initializer sets the flag, and every read and write through the root slot
+tests it first and throws an Error-root instance named `ReferenceError`
+with Node's message (`Cannot access 'X' before initialization`), a write
+after evaluating its right side. The analysis over-approximates calls,
+which costs only the flag test. A binding mentioned by a function value of
+an earlier initializer is reached through its root slot before its own
+initializer is lowered, so its type must follow from its annotation or its
+function syntax (otherwise `annotate the binding`). Two early reads stay
+refused because JavaScript reads `undefined` there, which the declared
+type does not admit: a static field read before its definition and a
+module `var` (`X is read before its definition by code this initializer
+runs`). Other modules cannot reach this module's bindings early, since
+imports are acyclic and initialized first. A module-level class reached
+before its declaration still constructs (JavaScript throws there; the
+class binding has no flag yet). A module variable whose type is
+`undefined` or `null` alone is refused (it has no boxed form).
 
 **Evaluation order and top-level `await`** (2026-11-06, K9 C, owner
 decision; `expression_forms`). Modules are evaluated in the order of

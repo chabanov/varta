@@ -771,7 +771,9 @@ impl VisitMut for Rewriter<'_> {
                 query.expr_name = ast::TsTypeQueryExpr::TsEntityName(ast::TsEntityName::Ident(id));
                 return;
             }
-            if symbol.structured() {
+            // A class or function merged with a namespace (a class's static
+            // fields) is typed by its value (v38 class values).
+            if symbol.structured() && !symbol.value {
                 self.fail(
                     unsupported("typeof of a const enum or namespace object"),
                     query.span,

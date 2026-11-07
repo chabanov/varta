@@ -380,6 +380,11 @@ fn signature_part(
             let signature = types.functions[id as usize].clone();
             part(&signature, types)
         }
+        // A class object (v38) through its constructor type.
+        Type::ClassValue(class) if construct => {
+            let constructor = constructors::class_constructor(class, types)?;
+            signature_part(constructor, what, construct, types, part)
+        }
         Type::Never => Ok(Type::Never),
         other => Err(type_error(format!(
             "type argument {} of {what} is not a {} type",
