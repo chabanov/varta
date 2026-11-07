@@ -523,10 +523,15 @@ Checked JSON is linked as well: `json_parse_v19` (the shared `no_std`
 decoder `varta_common::json::scan` and builder `varta_common::json::build`,
 which the reference host's recoverable imports of earlier profiles run too)
 and `json_stringify_owned` (the shared value18 encoder
-`varta_intrinsics::json`), and so is the text of a logged value,
-`value_format_v12`: a v38 module logs a value by passing that text to
+`varta_intrinsics::json`), and so is the text of a logged argument list,
+`value_format_v12` (Node 24's `util.formatWithOptions` notation,
+`varta_intrinsics::inspect`): a v38 module logs by passing that text to
 `log_string16`, and no profile admits the earlier renderer `value_log_v12`
-([linked serialization](architecture.md#linked-serialization-and-logging-v38)).
+([linked serialization](architecture.md#linked-serialization-and-logging-v38),
+[console notation](architecture.md#console-notation-node_console)). A host
+therefore never formats a value; the class names it prints come from the
+display trailer that ends every value18 record descriptor (kind word, name
+length word, UTF-8 name), which a host reading records may ignore.
 Every text result of linked code is an owned guest string, so results
 larger than the 1 MiB result buffer need nothing from a host. Apart from
 the [KV imports](#kv-storage-v38), no v38 import reads value layouts beyond

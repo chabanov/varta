@@ -17217,11 +17217,14 @@ console.log(shown);
         // The primitive conversions, comparisons and value18 readers
         // (wave 3) are linked as well.
         "varta log: 2.5 2.5 true true object false true false k7",
-        // So are serialization and the logged text of a value, which v38
-        // logs through `log_string16`.
+        // So are serialization and the logged text of a value (Node's
+        // notation, `node_console`), which v38 logs through `log_string16`;
+        // its continuation lines are checked below.
         "varta log: {\"path\":\"/n\\ud800\",\"limit\":2,\"tags\":[\"a\"]}",
-        "varta log: {\"name\":\"list\",\"arguments\":{\"path\":\"/n\\ud800\",\"limit\":2,\"tags\":[\"a\"]}}",
+        "varta log: {",
     ];
+    // Node 24 prints the record on three lines.
+    let shown = "varta log: {\n  name: 'list',\n  arguments: { path: '/n\\ud800', limit: 2, tags: [ 'a' ] }\n}\n";
     let logs = |output: &std::process::Output| {
         String::from_utf8_lossy(&output.stdout)
             .lines()
@@ -17232,6 +17235,11 @@ console.log(shown);
     let dev = project.command(&["dev"]);
     assert!(dev.status.success(), "{}", combined(&dev));
     assert_eq!(logs(&dev), expected);
+    assert!(
+        String::from_utf8_lossy(&dev.stdout).contains(shown),
+        "{}",
+        combined(&dev)
+    );
     let build = project.command(&["build", "--single"]);
     assert!(build.status.success(), "{}", combined(&build));
     let wasm = fs::read(project.0.join("dist/app.wasm")).unwrap();

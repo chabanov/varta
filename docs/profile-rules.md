@@ -4168,6 +4168,39 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   `composed_class_names_follow_the_checker_types` scanner test, and the
   nine `typescript_handbook` conformance rows.
 
+### Console notation (`node_console`)
+
+Contract: [architecture.md](architecture.md#console-notation-node_console).
+
+- Gate on `node_console()`; earlier profiles keep the one-argument
+  `console.log` and their notation. `lower::console` only boxes the
+  arguments (`unknown::logged`) into an `unknown[]` array; every formatting
+  rule lives in `varta_intrinsics::inspect`, the one implementation for
+  native and browser hosts. Never format a value in the compiler or in a
+  host.
+- Keep `inspect` a step-for-step port of Node's `inspect.js` (the source is
+  in the pinned Node binary: `process.binding('natives')['internal/util/inspect']`);
+  regenerate expectations with Node 24 under `--stack-trace-limit=0`, never
+  by hand. A new value kind or record display gets its Node notation there
+  and a pinned case, or stays refused by `lower::console::logged_cell`.
+- Linked intrinsics have no function tables: no `core::fmt` (`format!`,
+  `{}`) in `inspect`; write digits with its helpers.
+- Every value18 descriptor carries its display trailer
+  (`emit::records::descriptor`, from `lower::record_displays`); readers
+  that do not display records keep reading the prefix
+  (`value::descriptor_bytes`). A new engine-owned layout that Node prints
+  specially gets a `RecordDisplay` kind, never a name test in `inspect`.
+- Private state is read only by name (`STATE`, `#time`, the promise
+  fields); `inspect` never resolves other private slots (they may hold
+  values no reader validates as a property).
+- `SuppressedError` lives in its own prelude (`SUPPRESSED`), so programs
+  that use only `AggregateError` keep their bytes; keep its fields typed
+  `unknown` and its constructor without options, as the spec defines it.
+- Tests: `varta-runtime` `console_tests` (`console_cases/*.ts` with Node
+  24.20.0 `--stack-trace-limit=0` expected files), the `inspect` unit tests,
+  the `display` trailer test, the conformance features `console-notation`
+  and `suppressed-error`.
+
 ### Bytes held by unknown (`byte_values`)
 
 Contract: [architecture.md](architecture.md#bytes-held-by-unknown-byte_values).

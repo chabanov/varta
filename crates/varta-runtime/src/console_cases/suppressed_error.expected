@@ -1,0 +1,6 @@
+[SuppressedError: msg]
+SuppressedError msg [Error: a] b
+true true true
+[SuppressedError] {} SuppressedError true
+both failed true true
+{ wrapped: [SuppressedError: x] } function

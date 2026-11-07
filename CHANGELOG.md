@@ -16,6 +16,20 @@
   `TypeError` at the narrowed read, and a copied array view does not alias.
   Callable objects with properties stay refused. Conformance: 160 passed, 5
   known unsupported of 165 (new row `ts-class-subtyping`).
+- V38 console notation (K9 D1, `node_console`): `console.log`,
+  `console.info` and `console.debug` take any number of arguments and print
+  exactly what Node 24 prints (`util.formatWithOptions` with `%s %d %i %f
+  %j %o %O %c %%`, `util.inspect` depth, line breaking, column grouping,
+  quoting, circular references), including class instances, Error objects
+  as under `--stack-trace-limit=0`, `Map`, `Set`, `Date`, `Uint8Array` and
+  promises. **Changed v38 output:** booleans print `true`/`false` (not
+  `1`/`0`), aggregates print in Node's notation instead of compact JSON,
+  Errors print `[Error: message]`. Value layout 18 record descriptors end
+  with a display trailer naming class instances. Earlier profiles keep
+  their output.
+- V38 `SuppressedError` (ES2026 explicit resource management): an Error
+  class with `error`, `suppressed` and `message`, `instanceof` and catch
+  narrowing, printed as Node prints it.
 - K8 T2 font-relative units: the style engine computes font sizes and line
   heights, so `em`, `lh` and `rlh` work in every property on both hosts;
   registered length values compute to absolute lengths before they inherit;

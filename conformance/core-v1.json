@@ -991,6 +991,24 @@
       ],
       "origin": "typescript_handbook",
       "reference": "https://www.typescriptlang.org/docs/handbook/2/classes.html#index-signatures"
+    },
+    {
+      "id": "console-notation",
+      "title": "Console formatter: Node util.format and util.inspect notation",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#console-notation-node_console"
+    },
+    {
+      "id": "suppressed-error",
+      "title": "SuppressedError (ES2026 explicit resource management)",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#console-notation-node_console"
     }
   ],
   "cases": [
@@ -1078,9 +1096,9 @@
       "path": "cases/truth-values.ts",
       "sha256": "c21305c34d6e2576373d55ce4e68afeb5975d0505c75e333d83ae8a1f4fbd311",
       "stdout": [
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 0"
+        "varta log: true",
+        "varta log: false",
+        "varta log: false"
       ],
       "baseline": {
         "status": "supported"
@@ -1105,8 +1123,8 @@
       "path": "cases/strict-number-equality.ts",
       "sha256": "37df09729f98dca529d0a4f12e8f19c55ca3ec0cb4f36954d6b95946473e7fd0",
       "stdout": [
-        "varta log: 0",
-        "varta log: 1"
+        "varta log: false",
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -1130,8 +1148,8 @@
       "path": "cases/record-optional-presence.ts",
       "sha256": "7eb7ebf55b95f7a7dc2cbc24087bab58850b61550a6269edd001e45548627046",
       "stdout": [
-        "varta log: 0",
-        "varta log: 1"
+        "varta log: false",
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -1156,7 +1174,7 @@
       "path": "cases/sparse-search-presence.ts",
       "sha256": "783c3aea0f8981a848c06c02061dbf3cf73b6128048b53fa6d4e6cec02e086cc",
       "stdout": [
-        "varta log: 1",
+        "varta log: true",
         "varta log: -1"
       ],
       "baseline": {
@@ -1194,8 +1212,8 @@
       "path": "cases/reverse-keeps-hole.ts",
       "sha256": "407fbb7c5e07c29b51ab675b9fc62921c58028d5d98ba26fe76c637cc238cd21",
       "stdout": [
-        "varta log: 1",
-        "varta log: 0",
+        "varta log: true",
+        "varta log: false",
         "varta log: [3,null,1]"
       ],
       "baseline": {
@@ -1233,7 +1251,7 @@
       "path": "cases/repeat-range-error.ts",
       "sha256": "28dbb8154643b93ff0949aa2980f79bda588e6d04d589b46a701a9fc036ec66a",
       "stdout": [
-        "varta log: 1"
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -1296,7 +1314,7 @@
       "path": "cases/bigint-addition.ts",
       "sha256": "0f0a8c5406160fa4bf7a9bd91bed437de22fdc9abd83ce68cef8b279ee8706d1",
       "stdout": [
-        "varta log: 3"
+        "varta log: 3n"
       ],
       "baseline": {
         "status": "supported"
@@ -1523,7 +1541,7 @@
       "path": "cases/regexp-test.ts",
       "sha256": "3c3d977bec8f1c256dafc215dd2fea62b3e71ee1268a0928163ca14830357c8e",
       "stdout": [
-        "varta log: 1"
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -1716,9 +1734,9 @@
       "path": "cases/bigint-exact-arithmetic.ts",
       "sha256": "7a50e114cb9ad6dc23a358eba397693f8d156dc299b2a44450d7aa35d3fb793b",
       "stdout": [
-        "varta log: 9007199254740995",
-        "varta log: -2",
-        "varta log: 1267650600228229401496703205376"
+        "varta log: 9007199254740995n",
+        "varta log: -2n",
+        "varta log: 1267650600228229401496703205376n"
       ],
       "baseline": {
         "status": "supported"
@@ -1730,10 +1748,10 @@
       "path": "cases/bigint-conversions.ts",
       "sha256": "cb134970bfbf1442ebadb1ca750268d96e8cb23141d8ebe0cd5455738865fc64",
       "stdout": [
-        "varta log: 255",
+        "varta log: 255n",
         "varta log: 9007199254740992",
         "varta log: bigint",
-        "varta log: 0"
+        "varta log: false"
       ],
       "baseline": {
         "status": "supported"
@@ -1745,9 +1763,9 @@
       "path": "cases/bigint-native-errors.ts",
       "sha256": "5c3812dd73cb37c1065df295a577d41a116c8f992246a013008f85526cb790c1",
       "stdout": [
-        "varta log: 1",
-        "varta log: 1",
-        "varta log: 1"
+        "varta log: true",
+        "varta log: true",
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -1759,10 +1777,10 @@
       "path": "cases/bigint-primitive-comparison.ts",
       "sha256": "5d136b8b138fd8c0fb4dbcb7fb714356ea7ea7955134b40a47865433996198ce",
       "stdout": [
-        "varta log: 1",
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 0"
+        "varta log: true",
+        "varta log: true",
+        "varta log: false",
+        "varta log: false"
       ],
       "baseline": {
         "status": "supported"
@@ -1774,8 +1792,8 @@
       "path": "cases/bigint-width-and-radix.ts",
       "sha256": "1cd917a02a502bd78aa13b2b7fc4d7508a1c910e09b1ce80becf57c3cc610cdd",
       "stdout": [
-        "varta log: -1",
-        "varta log: 255",
+        "varta log: -1n",
+        "varta log: 255n",
         "varta log: -ff"
       ],
       "baseline": {
@@ -1788,7 +1806,7 @@
       "path": "cases/bigint-array-values.ts",
       "sha256": "b47a202f487275a1f08e386cda806807a512956eaf33b38a2e50b701909eaf5a",
       "stdout": [
-        "varta log: 3"
+        "varta log: 3n"
       ],
       "baseline": {
         "status": "supported"
@@ -1800,9 +1818,9 @@
       "path": "cases/bigint-json-errors.ts",
       "sha256": "ea672df3f26131929f84258451d79277c8930b865074e5a35a76d62d9d1cdfb3",
       "stdout": [
-        "varta log: 1",
-        "varta log: 1",
-        "varta log: 1"
+        "varta log: true",
+        "varta log: true",
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -1814,9 +1832,9 @@
       "path": "cases/bigint-optional-record.ts",
       "sha256": "98a0b3d00e1fc1eb674d201e5c386765e689b1096eda169769f67cc2ce962d94",
       "stdout": [
-        "varta log: 9007199254740995",
-        "varta log: 0",
-        "varta log: 7"
+        "varta log: 9007199254740995n",
+        "varta log: false",
+        "varta log: 7n"
       ],
       "baseline": {
         "status": "supported"
@@ -1828,9 +1846,9 @@
       "path": "cases/bigint-union-arithmetic.ts",
       "sha256": "0367e68c06ddbe5d95b64a471794532fd87467bb606d4c600754e2a14b8f4cbb",
       "stdout": [
-        "varta log: 3",
+        "varta log: 3n",
         "varta log: NaN",
-        "varta log: 1"
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -1842,7 +1860,7 @@
       "path": "cases/bigint-throw-catch.ts",
       "sha256": "7a1789f471220012da5a6ad6bc75ea6bb6c8bdf5a057e42ae10d636af762a1f3",
       "stdout": [
-        "varta log: 8",
+        "varta log: 8n",
         "varta log: finally"
       ],
       "baseline": {
@@ -1855,7 +1873,7 @@
       "path": "cases/bigint-json-schema.ts",
       "sha256": "bc0bf4febe4b603eb0b9df6df0ab01782542e0e9f0c4d3e17ee765a1539f48b6",
       "stdout": [
-        "varta log: 1",
+        "varta log: true",
         "varta log: number",
         "varta log: 123"
       ],
@@ -1869,7 +1887,7 @@
       "path": "cases/bigint-coercive-width.ts",
       "sha256": "affc11389803ddbc5090f2f696d0593cab1b02aafd12a75df37dd44d897eb69a",
       "stdout": [
-        "varta log: -1"
+        "varta log: -1n"
       ],
       "baseline": {
         "status": "supported"
@@ -1881,13 +1899,13 @@
       "path": "cases/bigint-compound-assignments.ts",
       "sha256": "7689fc4298ef92f5e1ff0672875877d08ac9b5b91523cf888826239e4cedba6d",
       "stdout": [
-        "varta log: 20",
-        "varta log: 40",
-        "varta log: 7",
-        "varta log: 7",
+        "varta log: 20n",
+        "varta log: 40n",
+        "varta log: 7n",
+        "varta log: 7n",
         "varta log: 11",
-        "varta log: 1",
-        "varta log: 40"
+        "varta log: true",
+        "varta log: 40n"
       ],
       "baseline": {
         "status": "supported"
@@ -1899,12 +1917,12 @@
       "path": "cases/bigint-updates.ts",
       "sha256": "cc91e87dc50c073bd3f88ae13f3570af4f929a4136b3c4e0f2cc242d27f2e53a",
       "stdout": [
-        "varta log: 9007199254740993",
-        "varta log: 9007199254740995",
-        "varta log: 9007199254740995",
-        "varta log: 9007199254740993",
-        "varta log: 8",
-        "varta log: 8",
+        "varta log: 9007199254740993n",
+        "varta log: 9007199254740995n",
+        "varta log: 9007199254740995n",
+        "varta log: 9007199254740993n",
+        "varta log: 8n",
+        "varta log: 8n",
         "varta log: bigint",
         "varta log: number"
       ],
@@ -1920,9 +1938,9 @@
       "stdout": [
         "varta log: ff",
         "varta log: 255",
-        "varta log: 1",
-        "varta log: 1",
-        "varta log: 1"
+        "varta log: true",
+        "varta log: true",
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -1941,7 +1959,7 @@
         "varta log: 0",
         "varta log: 16",
         "varta log: -Infinity",
-        "varta log: 9007199254740993",
+        "varta log: 9007199254740993n",
         "varta log: bigint"
       ],
       "baseline": {
@@ -1955,10 +1973,10 @@
       "sha256": "487e22e5eed94acc77bd1c525f5c44af7dd92cac3617d97e35198164b0652ac3",
       "stdout": [
         "varta log: NaN",
-        "varta log: 1",
+        "varta log: true",
         "varta log: NaN",
         "varta log: 4",
-        "varta log: 0",
+        "varta log: false",
         "varta log: NaN",
         "varta log: [\"first\",\"n\"]",
         "varta log: {\"first\":1,\"n\":null}"
@@ -1980,7 +1998,7 @@
         "varta log: 12",
         "varta log: 12",
         "varta log: Infinity",
-        "varta log: 1",
+        "varta log: true",
         "varta log: 2"
       ],
       "baseline": {
@@ -1997,7 +2015,7 @@
         "varta log: 6",
         "varta log: 11",
         "varta log: NaN",
-        "varta log: 1",
+        "varta log: true",
         "varta log: undefinedx"
       ],
       "baseline": {
@@ -2013,10 +2031,10 @@
         "varta log: atrue",
         "varta log: 0",
         "varta log: NaN",
-        "varta log: 5",
+        "varta log: 5n",
         "varta log: 3",
-        "varta log: 6",
-        "varta log: 1"
+        "varta log: 6n",
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -2053,10 +2071,10 @@
         "varta log: 16",
         "varta log: -Infinity",
         "varta log: -2",
-        "varta log: -9007199254740993",
+        "varta log: -9007199254740993n",
         "varta log: -1",
-        "varta log: -1",
-        "varta log: 1"
+        "varta log: -1n",
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -2070,7 +2088,7 @@
       "stdout": [
         "varta log: left",
         "varta log: right",
-        "varta log: 1",
+        "varta log: true",
         "varta log: 2",
         "varta log: -2",
         "varta log: -3",
@@ -2086,15 +2104,15 @@
       "path": "cases/primitive-equality.ts",
       "sha256": "13630954982e27501310b420ade97678eba8f645e76869f1b835fb3360520877",
       "stdout": [
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 1",
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 0",
-        "varta log: 1"
+        "varta log: true",
+        "varta log: false",
+        "varta log: true",
+        "varta log: false",
+        "varta log: true",
+        "varta log: true",
+        "varta log: false",
+        "varta log: false",
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -2106,13 +2124,13 @@
       "path": "cases/primitive-relational.ts",
       "sha256": "6e7d13b7a05dbf5ac1bba00cd02afdd571b6d48bcb19b954e6cefda9f54d7d39",
       "stdout": [
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 0",
-        "varta log: 1",
-        "varta log: 1"
+        "varta log: true",
+        "varta log: false",
+        "varta log: true",
+        "varta log: false",
+        "varta log: false",
+        "varta log: true",
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -2126,10 +2144,10 @@
       "stdout": [
         "varta log: left",
         "varta log: right",
-        "varta log: 1",
+        "varta log: true",
         "varta log: left",
         "varta log: right",
-        "varta log: 0"
+        "varta log: false"
       ],
       "baseline": {
         "status": "supported"
@@ -2141,12 +2159,12 @@
       "path": "cases/record-property-deletion.ts",
       "sha256": "3d784b7f9c295c0e3424d7319587f7ad686ef1547b0c2059b580679bf8f1bee1",
       "stdout": [
-        "varta log: 1",
-        "varta log: 0",
+        "varta log: true",
+        "varta log: false",
         "varta log: [\"b\",\"a\"]",
         "varta log: {\"b\":2,\"a\":3}",
-        "varta log: 1",
-        "varta log: 1"
+        "varta log: true",
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -2158,15 +2176,15 @@
       "path": "cases/delete-primitive-keys.ts",
       "sha256": "4ebc94db11746a2e80d066616fb595d089fff7baadeda5f59e6df94dd4095842",
       "stdout": [
-        "varta log: 1",
-        "varta log: 1",
-        "varta log: 1",
-        "varta log: 1",
+        "varta log: true",
+        "varta log: true",
+        "varta log: true",
+        "varta log: true",
         "varta log: {}",
-        "varta log: 1",
-        "varta log: 1",
-        "varta log: 1",
-        "varta log: 1",
+        "varta log: true",
+        "varta log: true",
+        "varta log: true",
+        "varta log: true",
         "varta log: 2"
       ],
       "baseline": {
@@ -2181,8 +2199,8 @@
       "stdout": [
         "varta log: base",
         "varta log: key",
-        "varta log: 1",
-        "varta log: 0",
+        "varta log: true",
+        "varta log: false",
         "varta log: 9"
       ],
       "baseline": {
@@ -2212,7 +2230,7 @@
         "varta log: source",
         "varta log: extra",
         "varta log: [[\"2\",null],[\"3\",9]]",
-        "varta log: 1",
+        "varta log: true",
         "varta log: []"
       ],
       "baseline": {
@@ -2244,9 +2262,9 @@
         "varta log: []",
         "varta log: []",
         "varta log: []",
-        "varta log: 1",
-        "varta log: 1",
-        "varta log: 1"
+        "varta log: true",
+        "varta log: true",
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -2258,16 +2276,16 @@
       "path": "cases/same-value-primitives.ts",
       "sha256": "5e553dc3e72e0f5bf0007dfd1ec1a32aae6ddbb9b2db235264e29d86a02239bf",
       "stdout": [
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 1",
-        "varta log: 1",
+        "varta log: true",
+        "varta log: false",
+        "varta log: true",
+        "varta log: false",
+        "varta log: true",
+        "varta log: false",
+        "varta log: true",
+        "varta log: true",
         "varta log: void",
-        "varta log: 1"
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -2279,19 +2297,19 @@
       "path": "cases/same-value-identity.ts",
       "sha256": "a1fafdcadf1b20c500f3cd78ad62ca697f6b80765db0ba613ae22fdf9e2c267e",
       "stdout": [
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 0",
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 1",
-        "varta log: 0",
-        "varta log: 1",
-        "varta log: 0",
+        "varta log: true",
+        "varta log: false",
+        "varta log: false",
+        "varta log: true",
+        "varta log: false",
+        "varta log: true",
+        "varta log: false",
+        "varta log: true",
+        "varta log: false",
         "varta log: left",
         "varta log: right",
         "varta log: extra",
-        "varta log: 1"
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -2303,7 +2321,7 @@
       "path": "cases/object-assign-record.ts",
       "sha256": "24aad1728655e234c53c0dbbbfdf5924a56fc12a11db1349e2cc23c56930f734",
       "stdout": [
-        "varta log: 1",
+        "varta log: true",
         "varta log: [\"a\",\"b\"]",
         "varta log: {\"a\":9,\"b\":3}",
         "varta log: {\"seed\":\"x\",\"a\":1,\"b\":3}"
@@ -2319,8 +2337,8 @@
       "sha256": "611acda804d9368cd2d67b676698073b10c46a143752a28099b4c579f9e95463",
       "stdout": [
         "varta log: [1,null,4]",
-        "varta log: 1",
-        "varta log: 1",
+        "varta log: true",
+        "varta log: true",
         "varta log: [1,null]",
         "varta log: [\"\\ud83d\",\"\\ude00\"]"
       ],
@@ -2338,8 +2356,8 @@
         "varta log: first",
         "varta log: last",
         "varta log: {\"a\":2}",
-        "varta log: 1",
-        "varta log: 1",
+        "varta log: true",
+        "varta log: true",
         "varta log: [7,2]"
       ],
       "baseline": {
@@ -2355,7 +2373,7 @@
         "varta log: a:1.5",
         "varta log: same:3",
         "varta log: {\"name\":\"json\",\"note\":\"n\",\"score\":2}",
-        "varta log: 0"
+        "varta log: false"
       ],
       "baseline": {
         "status": "supported"
@@ -2373,7 +2391,7 @@
         "varta log: {\"page\":51,\"retries\":2}",
         "varta log: 0.12.0",
         "varta log: 18446744073709551617",
-        "varta log: 1"
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -2389,7 +2407,7 @@
         "varta log: DELETE /agents/1 204",
         "varta log: POST /runs missing",
         "varta log: POST has 4 letters",
-        "varta log: 1",
+        "varta log: true",
         "varta log: {\"method\":\"GET\",\"path\":\"/agents\",\"expect\":200,\"cached\":false}"
       ],
       "baseline": {
@@ -2405,8 +2423,8 @@
         "varta log: dot/0 area 0",
         "varta log: rect/4 area 6",
         "varta log: square rect/4 area 1",
-        "varta log: 1",
-        "varta log: 0",
+        "varta log: true",
+        "varta log: false",
         "varta log: {\"name\":\"rect\",\"sides\":4,\"width\":1,\"height\":2}"
       ],
       "baseline": {
@@ -2420,8 +2438,8 @@
       "sha256": "ac2438621e4dd4a756370d0bf6c2e9171aaaada8e1d4e5d4594327f228916bec",
       "stdout": [
         "varta log: https://api.example/agents?auth=apiKey&retries=2",
-        "varta log: 1",
-        "varta log: 0",
+        "varta log: true",
+        "varta log: false",
         "varta log: https://api.example/runs?auth=none&retries=0",
         "varta log: {\"baseUrl\":\"https://api.example\",\"auth\":\"none\",\"retries\":0}"
       ],
@@ -2458,7 +2476,7 @@
         "varta log: 2",
         "varta log: {\"id\":\"a1\",\"kind\":\"agent\",\"name\":\"Ada\",\"created\":10,\"tags\":[\"x\",\"y\"]}",
         "varta log: 2",
-        "varta log: 1"
+        "varta log: true"
       ],
       "baseline": {
         "status": "supported"
@@ -2476,7 +2494,7 @@
         "varta log: a2:5",
         "varta log: score",
         "varta log: 8",
-        "varta log: 1",
+        "varta log: true",
         "varta log: {\"read\":true,\"write\":false}{\"score\":9}"
       ],
       "baseline": {
@@ -2489,15 +2507,15 @@
       "path": "cases/error-subclasses.ts",
       "sha256": "f7564d9c5f4160da9017cd87317a0ace48fd71231e47fc6f9f7891e46b05ae16",
       "stdout": [
-        "varta log: 1",
-        "varta log: 1",
+        "varta log: true",
+        "varta log: true",
         "varta log: NotFoundError: HTTP 404",
         "varta log: UarpError: Connection error",
-        "varta log: 1",
-        "varta log: 0",
+        "varta log: true",
+        "varta log: false",
         "varta log: finally",
         "varta log: APIError 500",
-        "varta log: 1",
+        "varta log: true",
         "varta log: TypeError: bad"
       ],
       "baseline": {
@@ -3469,6 +3487,25 @@
       }
     },
     {
+      "id": "console-notation",
+      "feature": "console-notation",
+      "path": "cases/console-notation.ts",
+      "sha256": "d06f34fd358d8234600b598eb907c8a41e26dbc4e5d3d3388c6f849e6b9e2910",
+      "stdout": [
+        "varta log: total 3 true 10n -0 null undefined",
+        "varta log: { id: 7, tags: [ 'a', \"it's\" ], nested: { a: { b: [Object] } } }",
+        "varta log: Point { x: 1, y: 2 } [ Point { x: 3, y: 4 } ]",
+        "varta log: Map(1) { 'k' => [ 1, 2 ] } Set(1) { 'x' } 1970-01-01T00:00:00.000Z",
+        "varta log: progress is 42.5% (7, 2.5) {\"a\":1} [ 1, [length]: 1 ]",
+        "varta log: [TypeError: bad] [Error: failed] { [cause]: 'disk' }",
+        "varta log: [\n    0,  11, 22, 33, 44,\n   55,  66, 77, 88, 99,\n  110, 121\n]",
+        "varta log: <ref *1> {\n  name: 'first',\n  next: { name: 'second', next: [Circular *1] }\n}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "enum-members",
       "feature": "enums",
       "path": "cases/enum-members.ts",
@@ -3721,6 +3758,21 @@
         "varta log: 17 7 1",
         "varta log: true",
         "varta log: 100 1 5"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "suppressed-error",
+      "feature": "suppressed-error",
+      "path": "cases/suppressed-error.ts",
+      "sha256": "dc90851e1c5a233f3c7d2342653d180260faab275dce973c24625af5bb09d894",
+      "stdout": [
+        "varta log: SuppressedError: both failed",
+        "varta log: true true",
+        "varta log: true",
+        "varta log: {} true function"
       ],
       "baseline": {
         "status": "supported"

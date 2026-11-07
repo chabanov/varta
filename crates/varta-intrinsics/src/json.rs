@@ -1,16 +1,13 @@
-//! Value18 serialization: `JSON.stringify` (v38 `json_stringify_owned`) and
-//! the diagnostic text of a logged value (`value_format_v12`, which v38 logs
-//! through `log_string16`), one traversal for both, generic over [`Memory`]
-//! and an output [`Sink`] of UTF-16 code units.
+//! Value18 serialization: `JSON.stringify` (v38 `json_stringify_owned`),
+//! generic over [`Memory`] and an output [`Sink`] of UTF-16 code units. The
+//! logged notation of v38 is Node's (`crate::inspect`).
 //!
 //! The behavior is the host serializer's for value layout 18 (the runtime's
-//! `json_stringify_owned` and `value_log_v12`): the same output, the same
-//! order of checks over the graph and the same typed failures, with private
-//! state hidden from JSON and shown in diagnostics. The traversal is
-//! iterative, so any nesting within the profile's JSON depth limit needs no
-//! native stack, and it counts the UTF-8 bytes of its output against the
-//! host's output limits: the memory budget for JSON, the result buffer for
-//! the diagnostic text of an aggregate.
+//! `json_stringify_owned`): the same output, the same order of checks over
+//! the graph and the same typed failures, with private state hidden. The
+//! traversal is iterative, so any nesting within the profile's JSON depth
+//! limit needs no native stack, and it counts the UTF-8 bytes of its output
+//! against the memory budget.
 //!
 //! Every value is read with the shared `no_std` readers of the value core
 //! under v38 `bounds`; a noncanonical layout is [`EncodeError::Layout`], a
@@ -21,17 +18,15 @@
 //! graph was validated.
 use crate::{Memory, number::Shortest};
 use alloc::{collections::BTreeSet, vec::Vec};
-use varta_bigint::Budget;
 use varta_common::{
     abi,
     bigint::BigIntView,
     function::check_closure_envelope,
     value::{
         ARRAY_META_BYTES, ARRAY_SLOT_BYTES, Dictionary, ErrorObject,
-        HASHED_DICTIONARY_VALUE_VERSION as VERSION, ModuleBounds, PRIVATE_KEY_PREFIX,
-        PROMISE_REASON_FIELD, PROMISE_STATE_FIELD, PROMISE_VALUE_FIELD, PrimitiveBox, PromiseState,
+        HASHED_DICTIONARY_VALUE_VERSION as VERSION, ModuleBounds, PRIVATE_KEY_PREFIX, PrimitiveBox,
         RecordShape, ReferenceBox, ValueKind as Kind, Vector, byte_at, byte_vector,
-        function_field_layout, read_record_with, record_descriptor, string_range,
+        read_record_with, record_descriptor, string_range,
     },
 };
 
@@ -78,26 +73,6 @@ impl Sink for Count {
 impl Sink for Vec<u16> {
     fn units(&mut self, units: &[u16]) {
         self.extend_from_slice(units);
-    }
-}
-
-/// What the traversal produces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    /// `JSON.stringify`, private state hidden (`json_stringify_owned`).
-    Json,
-    /// The notation of a logged aggregate (`value_log_v12`): BigInts with an
-    /// `n`, functions and promises shown, private state shown.
-    Diagnostic,
-}
-impl Mode {
-    /// The host's limit on the UTF-8 bytes of the output: the memory budget
-    /// for the owned JSON result, the result buffer for a diagnostic.
-    fn output_limit(self) -> usize {
-        match self {
-            Self::Json => abi::MAX_MEMORY_BYTES,
-            Self::Diagnostic => abi::MAX_RESULT_BYTES,
-        }
     }
 }
 
@@ -181,7 +156,7 @@ pub fn stringify<M: Memory + ?Sized, S: Sink + ?Sized>(
     bounds: ModuleBounds,
     sink: &mut S,
 ) -> Result<Option<usize>, EncodeError> {
-    let mut encoder = Encoder::new(memory, bounds, Mode::Json, sink, None);
+    let mut encoder = Encoder::new(memory, bounds, sink);
     let (kind, payload) = encoder.resolve(kind, payload)?;
     if kind == Kind::Undefined as u32 {
         if payload != 0 {
@@ -198,83 +173,6 @@ pub fn stringify<M: Memory + ?Sized, S: Sink + ?Sized>(
         return Err(EncodeError::BigInt);
     }
     Ok(Some(encoder.nodes))
-}
-
-/// The diagnostic text `value_log_v12` logs for the value18 cell `cell`
-/// (before the `varta log: ` prefix): scalars, Error objects and functions
-/// as the host shows them, strings as their own code units, aggregates in
-/// the diagnostic notation within the result-buffer output limit.
-pub fn format<M: Memory + ?Sized, S: Sink + ?Sized>(
-    memory: &M,
-    cell: u64,
-    bounds: ModuleBounds,
-    budget: &mut Budget,
-    sink: &mut S,
-) -> Result<(), EncodeError> {
-    // An aggregate is validated once, by the encoder; every other cell as
-    // `ReferenceBox::read_in` validates it.
-    let header = ReferenceBox::read_envelope(memory, cell, VERSION).map_err(layout)?;
-    let value = match header.kind {
-        Kind::Record | Kind::Array | Kind::Dictionary | Kind::Promise | Kind::Bytes => header,
-        _ => ReferenceBox::read_in(memory, cell, VERSION, bounds).map_err(layout)?,
-    };
-    match value.kind {
-        Kind::BigInt => {
-            let text = crate::bigint::integer(memory, value.payload, budget)?
-                .to_string_radix(10, budget)?;
-            budget.consume_work(text.len() as u64)?;
-            sink.ascii(text.as_bytes());
-        }
-        Kind::Null => sink.ascii(b"null"),
-        Kind::Undefined => sink.ascii(b"undefined"),
-        Kind::Boolean => sink.ascii(if value.payload == 0 { b"0" } else { b"1" }),
-        Kind::Float64 => {
-            let number = f64::from_bits(value.payload);
-            if number.is_finite() {
-                sink.ascii(Shortest::new().format_finite(number));
-            } else {
-                sink.ascii(ryu_js::Buffer::new().format(number).as_bytes());
-            }
-        }
-        Kind::String => raw(memory, value.payload, sink)?,
-        Kind::Error => {
-            let object =
-                ErrorObject::read_in(memory, value.payload, VERSION, bounds).map_err(layout)?;
-            sink.ascii(object.class.name().as_bytes());
-            if string_range(object.message).1 != 0 {
-                sink.ascii(b": ");
-                raw(memory, object.message, sink)?;
-            }
-        }
-        Kind::Function => sink.ascii(FUNCTION_DISPLAY.as_bytes()),
-        Kind::Record | Kind::Array | Kind::Dictionary | Kind::Promise | Kind::Bytes => {
-            let mut encoder = Encoder::new(memory, bounds, Mode::Diagnostic, sink, Some(budget));
-            let (kind, payload) = encoder.resolve(value.kind as u32, value.payload)?;
-            if kind == Kind::Undefined as u32 {
-                return Err(EncodeError::Layout);
-            }
-            encoder.run(kind, payload)?;
-        }
-        _ => return Err(EncodeError::Layout),
-    }
-    Ok(())
-}
-/// The code units of the string `handle`, unescaped.
-fn raw<M: Memory + ?Sized, S: Sink + ?Sized>(
-    memory: &M,
-    handle: u64,
-    sink: &mut S,
-) -> Result<(), EncodeError> {
-    let (ptr, len) = string_range(handle);
-    let bytes = memory.borrow(ptr, len).ok_or(EncodeError::Layout)?;
-    let mut buffer = [0u16; RUN_UNITS];
-    for chunk in bytes.as_chunks::<2>().0.chunks(RUN_UNITS) {
-        for (unit, pair) in buffer.iter_mut().zip(chunk) {
-            *unit = u16::from_le_bytes(*pair);
-        }
-        sink.units(&buffer[..chunk.len()]);
-    }
-    Ok(())
 }
 
 /// A record field as serialization reads it: its UTF-8 key in static data,
@@ -319,8 +217,6 @@ enum Frame {
         depth: usize,
         written: bool,
     },
-    /// A diagnostic promise whose settled value is being written.
-    Promise { ptr: usize },
 }
 
 /// Aggregates on the current path, for the cycle check: scanned while the
@@ -373,19 +269,14 @@ impl Path {
 /// Output code units staged before they are passed to the sink.
 const STAGED_UNITS: usize = 32;
 
-struct Encoder<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> {
+struct Encoder<'m, 's, M: Memory + ?Sized, S: Sink + ?Sized> {
     memory: &'m M,
     bounds: ModuleBounds,
-    mode: Mode,
     sink: &'s mut S,
-    /// The work budget of diagnostic BigInt text.
-    budget: Option<&'b mut Budget>,
-    /// [`Mode::output_limit`].
-    limit: usize,
     /// Output not yet passed to the sink.
     staged: [u16; STAGED_UNITS],
     filled: usize,
-    /// UTF-8 bytes of the output so far, against [`Mode::output_limit`].
+    /// UTF-8 bytes of the output so far, against the memory budget.
     utf8: usize,
     nodes: usize,
     /// A BigInt was replaced by `null` (`JSON.stringify` then throws).
@@ -400,21 +291,12 @@ struct Encoder<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> {
     /// its own block, presence, order and link word.
     shapes: Vec<RecordShape>,
 }
-impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S> {
-    fn new(
-        memory: &'m M,
-        bounds: ModuleBounds,
-        mode: Mode,
-        sink: &'s mut S,
-        budget: Option<&'b mut Budget>,
-    ) -> Self {
+impl<'m, 's, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, M, S> {
+    fn new(memory: &'m M, bounds: ModuleBounds, sink: &'s mut S) -> Self {
         Self {
             memory,
             bounds,
-            mode,
             sink,
-            budget,
-            limit: mode.output_limit(),
             staged: [0; STAGED_UNITS],
             filled: 0,
             utf8: 0,
@@ -454,7 +336,7 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
     /// Count `utf8` output bytes against the output limit.
     #[inline]
     fn count(&mut self, utf8: usize) -> Result<(), EncodeError> {
-        if utf8 > self.limit - self.utf8 {
+        if utf8 > abi::MAX_MEMORY_BYTES - self.utf8 {
             return Err(EncodeError::Output);
         }
         self.utf8 += utf8;
@@ -626,9 +508,6 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
     fn resolve(&mut self, kind: u32, payload: u64) -> Result<(u32, u64), EncodeError> {
         if kind == Kind::Function as u32 {
             check_closure_envelope(self.memory, payload, &self.bounds.limits).map_err(layout)?;
-            if function_field_layout(VERSION) && self.mode == Mode::Diagnostic {
-                return Ok((kind, payload));
-            }
             return Ok((Kind::Undefined as u32, 0));
         }
         if kind == Kind::ReferenceUnion as u32 {
@@ -689,9 +568,6 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
             Kind::Dictionary => self.dictionary(payload, depth),
             Kind::Promise => self.promise(payload, depth),
             Kind::Bytes => self.bytes(payload, depth),
-            Kind::Function if self.mode == Mode::Diagnostic => {
-                self.ascii(FUNCTION_DISPLAY.as_bytes())
-            }
             _ => Err(EncodeError::Layout),
         }
     }
@@ -715,17 +591,10 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
     }
     fn bigint(&mut self, payload: u64) -> Result<(), EncodeError> {
         BigIntView::check(self.memory, payload).map_err(layout)?;
-        let Some(budget) = self.budget.as_deref_mut() else {
-            // `JSON.stringify` validates the rest of the graph before it
-            // throws: corrupt slots, cycles and limits are not hidden.
-            self.bigint = true;
-            return self.ascii(b"null");
-        };
-        let text =
-            crate::bigint::integer(self.memory, payload, budget)?.to_string_radix(10, budget)?;
-        budget.consume_work(text.len() as u64)?;
-        self.ascii(text.as_bytes())?;
-        self.ascii(b"n")
+        // `JSON.stringify` validates the rest of the graph before it throws:
+        // corrupt slots, cycles and limits are not hidden.
+        self.bigint = true;
+        self.ascii(b"null")
     }
     fn enter(&mut self, ptr: usize) -> Result<(), EncodeError> {
         if !self.path.insert(ptr) {
@@ -910,81 +779,21 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
         }
         index_key(&self.memory.borrow(field.key, field.len)?)
     }
-    /// A promise: `{}` in JSON; in diagnostics `Promise { <pending> }`,
-    /// `Promise { value }` or `Promise { <rejected> reason }`.
+    /// A promise: `{}` (it has no own enumerable property), after its
+    /// record is validated.
     fn promise(&mut self, payload: u64, depth: usize) -> Result<(), EncodeError> {
-        // One validating pass finds the promise record's state and settled
-        // fields (the first descriptor entry of each name).
-        const NAMES: [&str; 3] = [
-            PROMISE_STATE_FIELD,
-            PROMISE_VALUE_FIELD,
-            PROMISE_REASON_FIELD,
-        ];
-        let memory = self.memory;
-        let diagnostic = self.mode == Mode::Diagnostic;
-        let mut fields: [Option<(u32, u64)>; 3] = [None; 3];
         let shape = self.shape(payload)?;
         read_record_with(
-            memory,
+            self.memory,
             payload,
             VERSION,
             &self.shapes[shape],
-            |entry| {
-                if !diagnostic {
-                    return;
-                }
-                for (field, name) in fields.iter_mut().zip(NAMES) {
-                    if field.is_none()
-                        && entry.len == name.len()
-                        && memory.borrow(entry.key, entry.len).as_deref() == Some(name.as_bytes())
-                    {
-                        *field = Some((entry.kind as u32, entry.payload));
-                    }
-                }
-            },
+            |_| {},
             |_| {},
         )
         .map_err(layout)?;
         self.visit(depth + 1)?;
-        if !diagnostic {
-            return self.ascii(b"{}");
-        }
-        let ptr = payload as u32 as usize;
-        if self.path.contains(ptr) {
-            return Err(EncodeError::Cyclic);
-        }
-        let [state, value, reason] = fields;
-        let (kind, state) = state.ok_or(EncodeError::Layout)?;
-        if kind != Kind::Float64 as u32 {
-            return Err(EncodeError::Layout);
-        }
-        let state = f64::from_bits(state);
-        self.path.insert(ptr);
-        let (field, opening): (Option<(u32, u64)>, &[u8]) =
-            if state == f64::from(PromiseState::Pending as i32) {
-                self.ascii(b"Promise { <pending> }")?;
-                self.path.remove(ptr);
-                return Ok(());
-            } else if state == f64::from(PromiseState::Fulfilled as i32) {
-                (value, b"Promise { ")
-            } else if state == f64::from(PromiseState::Rejected as i32) {
-                (reason, b"Promise { <rejected> ")
-            } else {
-                return Err(EncodeError::Layout);
-            };
-        let (kind, payload) = field.ok_or(EncodeError::Layout)?;
-        self.ascii(opening)?;
-        self.stack.push(Frame::Promise { ptr });
-        // The settled value or reason; `undefined` prints as in Node.
-        let (kind, payload) = self.resolve(kind, payload)?;
-        if kind == Kind::Undefined as u32 {
-            if payload != 0 {
-                return Err(EncodeError::Layout);
-            }
-            self.visit(depth + 2)?;
-            return self.ascii(b"undefined");
-        }
-        self.value(kind, payload, depth + 2)
+        self.ascii(b"{}")
     }
     /// Write the next member of the innermost aggregate, or close it.
     fn step(&mut self) -> Result<(), EncodeError> {
@@ -1035,11 +844,6 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
             }
             Some(Frame::Dictionary { .. }) => self.dictionary_step(),
             Some(Frame::Record { .. }) => self.record_step(),
-            Some(Frame::Promise { ptr }) => {
-                let ptr = *ptr;
-                self.punct(b' ')?;
-                self.close(ptr, b'}')
-            }
             None => Ok(()),
         }
     }
@@ -1124,7 +928,7 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
                 continue;
             }
             // Private state (ES private names, prelude state) is no property.
-            if self.mode == Mode::Json && self.private(field)? {
+            if self.private(field)? {
                 self.visit(depth + 1)?;
                 continue;
             }
@@ -1225,9 +1029,7 @@ mod tests {
             let mut encoder = Encoder::new(
                 &[][..],
                 ModuleBounds::v38(abi::StaticRegion::SINGLE_PAGE),
-                Mode::Json,
                 &mut out,
-                None,
             );
             encoder.string16(&bytes).unwrap();
             encoder.flush();

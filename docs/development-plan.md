@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with the K8 CSS engine's font sizes, font-relative units and layout-time `calc` on top of the K9 A TypeScript type level, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **4333 Rust tests passed, 0 failures, 25 ignored; 185 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-192642-e303l5b8/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **175 passed, 5 known unsupported out of 180** after the K9 A, B and D cases, module evaluation, enum and namespace objects, enum assignability and class index signatures (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **177 passed, 5 known unsupported out of 182** after the K9 A, B and D cases, module evaluation, enum and namespace objects, enum assignability, class index signatures and the K9 D1 console and SuppressedError cases (2026-11-06; console cases record Node 24 console output), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -390,6 +390,44 @@ Not done, each refused by name with its reason:
 - `Promise.any` still rejects with an `Error`, not an `AggregateError`;
   object-to-primitive conversion (`String(date)`, `` `${array}` ``) stays
   refused.
+
+### K9 D1 console notation — 2026-11-06
+
+Owner direction (K9, 2026-11-06): `console.log` prints exactly what Node 24
+prints. Selector `node_console()`
+([contract](architecture.md#console-notation-node_console),
+[rules](profile-rules.md#console-notation-node_console)):
+
+- `console.log`, `console.info` and `console.debug` take any number of
+  arguments; the linked `varta_intrinsics::inspect` is a step-for-step port
+  of Node's `util.formatWithOptions`/`util.inspect` (depth 2, `compact: 3`,
+  `breakLength: 80`, column grouping, quoting, `[Object]`/`[Array]`,
+  `<ref *n>`/`[Circular *n]`, `%` directives), for every value kind v38 has:
+  primitives (`true`/`false`, `-0`, BigInt `n`), records, dictionaries,
+  arrays (holes), class instances (`ClassName { … }`), Error objects and
+  subclasses (`[Name: message] { [cause]: … }`, `AggregateError`'s
+  `[errors]`), `Map`, `Set`, `Date`, `Uint8Array` and promises.
+- `SuppressedError` (owner decision 2026-11-06, ES2026 explicit resource
+  management) as an Error class of the engine prelude `suppressed.ts`, for
+  track K9 C's `using`/`await using`; case `suppressed_error` and the
+  conformance feature `suppressed-error`.
+- Value layout 18 (unreleased, in place): every record descriptor ends with
+  a display trailer (`value::RecordDisplay`, class name). No value tag, host
+  import or ABI changes; `value_format_v12` now takes the argument list's
+  cell. Parallel K9 D streams adding value tags (Symbol, integrity, weak
+  collections) touch value18 independently of this trailer.
+- Changed v38 expectations: logged booleans print `true`/`false` instead of
+  `1`/`0`, aggregates print in Node's notation instead of compact JSON,
+  Errors print `[Error: message]`, strings inside aggregates use single
+  quotes. Earlier profiles keep their notation and one-argument rule.
+- Evidence: `console_tests` (Node 24.20.0 expected output, production
+  budgets and collector stress), the conformance feature
+  `console-notation`.
+- Deviations (documented in the contract): functions print as
+  `[Function (anonymous)]` (no function names yet), `%s`/`%d` never call
+  program `toString`/`valueOf`, `%o` shows no hidden properties of functions
+  or typed arrays, non-ASCII column widths use Node's non-ICU tables,
+  `console.error`/`console.warn` (standard error) are not admitted.
 
 ### Native CSS `scale()` — native backlog batch, 2026-11-06
 
@@ -3558,6 +3596,7 @@ The selectors are registered; the table records what each stream admits.
 | `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Iterable<T>` value annotations (`Array.from` with a map function: `standard_library()`) |
 | `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag, host time-zone grant; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
 | `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results. No ABI, value-layout or host change. Pending (owner decision): static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
+| `node_console()` | K9 D1 console notation (2026-11-06): multi-argument `console.log`/`info`/`debug` printed as Node 24 prints them | Implemented ([contract](architecture.md#console-notation-node_console), [record](#k9-d1-console-notation--2026-11-06)): the linked `varta_intrinsics::inspect`; value18 record descriptors end with a display trailer (class name, engine layouts). No host import or value tag |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module
 under v38, scratch copies only, no live API call): the unmodified pilot checks

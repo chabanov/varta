@@ -10850,8 +10850,10 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   memory budget admits the same values. `json_stringify_owned` retains its
   result, as the host import does; `value_format_v12` returns an unrooted
   owned text, and a string cell's own string without a copy.
-- **Logging.** V38 lowers `console.log` of a value cell to
-  `log_string16(value_format_v12(cell))`, so a v38 module imports no value
+- **Logging.** V38 lowers `console.log` of anything but one string to
+  `log_string16(value_format_v12(cell))`, where `cell` holds the `unknown[]`
+  argument list and the text is Node's ([console
+  notation](#console-notation-node_console)), so a v38 module imports no value
   renderer: `LanguageProfile::host_operation` maps the logging operations to
   `value_format_v12`, and no profile admits `value_log_v12` (the runtime
   keeps it for the compiler's `host_import_test_hook`). Under v38
@@ -12113,6 +12115,88 @@ binding on a path it never takes is refused too); other modules cannot
 reach this module's bindings early, since imports are acyclic and
 initialized first. A module variable whose type is `undefined` or `null`
 alone is refused (it has no boxed form).
+
+#### Console notation (`node_console`)
+
+K9 D1 (2026-11-06). V38 prints what Node 24 prints: `console.log`,
+`console.info` and `console.debug` take any number of arguments and log one
+line of `util.formatWithOptions` text with the default `util.inspect`
+options (depth 2, `compact: 3`, `breakLength: 80`, `maxArrayLength: 100`,
+`maxStringLength: 10000`, no colors). Earlier profiles keep their notation
+and their one-argument rule.
+
+- **Lowering.** One string argument is logged as it is (`log_string16`).
+  Every other call boxes each argument into an `unknown` cell, collects the
+  cells in an `unknown[]` array and logs the text the linked
+  `value_format_v12` returns for the array's cell. Under v38
+  `value_format_v12` therefore takes the cell of the *argument list*, not of
+  one value; it stays a linked intrinsic with no host import. A spread
+  argument and a `void` expression are refused at compile time. Logging
+  admits every value `unknown` holds and, for logging only, `Map` and `Set`
+  values, `Date` instances and class instances with `#private` fields;
+  values that may reach a URL, a RegExp match array or another builtin
+  object without a Node notation stay refused (`unsupported logging of a
+  value holding a URL, …`).
+- **Formatting.** The linked `varta_intrinsics::inspect` follows Node's
+  `lib/internal/util/inspect.js` step for step: `%s %d %i %f %j %o %O %c %%`
+  directives of a leading string (`%s` inspects objects at depth 0, `%o` with
+  `showHidden` at depth 4, `%j` is `JSON.stringify` with `[Circular]`),
+  strings unquoted at the top level and quoted in aggregates by Node's quote
+  choice and escapes, `-0`, BigInts with `n`, `true`/`false`, depth elision
+  (`[Object]`, `[Array]`, `[ClassName]`), single-line output up to 80
+  columns with three nesting levels, column grouping of arrays of more than
+  six entries, `... n more items`, `<n empty items>`, long strings split
+  after line breaks, `<ref *n>`/`[Circular *n]`, `ClassName { … }`,
+  `Map(n) { k => v }`, `Set(n) { v }`, `Uint8Array(n) [ … ]`, the ISO text of
+  a `Date` (`Invalid Date`), `Promise { … }` and Error objects. As in Node,
+  the text has no length limit of its own: fuel, memory and the output
+  budget bound it. The literal-format case uses the same linked path as a
+  dynamic format string.
+- **Test builds.** A build that hosts `value_format_v12`
+  (`host_import_test_hook`) lowers logging as v37 does, through the host's
+  `value_log_v12` renderer; the corpus comparisons with v37 and of linked
+  JSON serialization use it, and `console_tests` pins the linked notation
+  against Node.
+- **Errors.** Varta records no stack frames, so an Error prints as Node
+  prints it under `--stack-trace-limit=0`: `[Name: message]` (`[Name]` for
+  an empty message), the constructor named by `improveStack`
+  (`[Plain [Error]: m]`), then its own enumerable fields, `[cause]` and
+  `AggregateError`'s `[errors]`. A cause that is `undefined` is not shown
+  (an instance does not record whether its options had one).
+- **`SuppressedError`** (owner decision 2026-11-06; ECMA-262 2026
+  §20.5.8, explicit resource management). The engine prelude
+  `<varta>/builtins/suppressed.ts` (`modules::engine::SUPPRESSED`, admitted
+  by `node_console()`) declares `class SuppressedError extends Error` with
+  the constructor `(error: unknown, suppressed: unknown, message?: string)`:
+  `name` is `"SuppressedError"`, `error` and `suppressed` hold the given
+  values as `unknown`, an `undefined` message leaves no own message and
+  there is no options argument. It is an Error class like `AggregateError`
+  (prototype chain to `Error`, `instanceof`, catch narrowing, the exception
+  channel); its fields are not own enumerable properties to `JSON.stringify`
+  or the console notation, which prints `[SuppressedError: message]` as
+  Node 24 does. `typeof SuppressedError` is `"function"`; v37 does not know
+  the name. Track K9 C throws it from `using`/`await using` when a disposal
+  throws after the body threw.
+- **Record display trailers (value layout 18).** Every value18 record
+  descriptor ends, after its entries and a wide record's edge bitmap, with
+  a display trailer: a kind word (`value::RecordDisplay`: 0 object, 1
+  class, 2 Error class, 3 `AggregateError`, 4 `Map` storage, 5 `Set`
+  storage, 6 `Date`), a name length word and the UTF-8 name (none for an
+  object; at most 256 bytes otherwise; a generic class instance carries its
+  template's name). `value::record_display` validates it inside the static
+  region. Readers that do not display records read the descriptor prefix
+  (`value::descriptor_bytes`) unchanged; earlier layouts have no trailer.
+  This is the only layout change of the stream; it adds no value tag.
+- **Deviations from Node** (documented, not silent): functions carry no
+  name or source text, so every function prints `[Function (anonymous)]`
+  and `%s` of a function prints the same; `%s`, `%d`, `%i` and `%f` never
+  call program code (a class's own `toString`/`valueOf` is not used; objects
+  convert as `[object Object]`, arrays by their elements, a `Date` by its
+  time value); `%o` of a function or a typed array shows no hidden
+  properties; the column width of non-ASCII entries uses Node's non-ICU
+  width tables instead of ICU's; `%j` of a value holding a BigInt ends the
+  execution with the serializer's failure where Node throws. `console.error`
+  and `console.warn` (standard error) stay unsupported.
 
 #### Bytes held by unknown (`byte_values`)
 

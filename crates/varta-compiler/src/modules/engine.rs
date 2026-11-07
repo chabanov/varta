@@ -259,6 +259,10 @@ pub(crate) const DATE: Prelude = Prelude {
     lifted: Some(date_v38),
 };
 pub(crate) const DATE_CLASS: &str = "Date";
+/// The class [`AGGREGATE`] exports.
+pub(crate) const AGGREGATE_ERROR_CLASS: &str = "AggregateError";
+/// The class [`SUPPRESSED`] exports.
+pub(crate) const SUPPRESSED_ERROR_CLASS: &str = "SuppressedError";
 /// The v38 date prelude (`standard_library`): the v37 parser and calendar
 /// helpers, `Date.parse` extended to the legacy `toString` forms, and the
 /// complete `Date` class of `prelude/date_local.ts` in place of the v37 one.
@@ -303,6 +307,19 @@ pub(crate) const AGGREGATE: Prelude = Prelude {
     members: &[],
     triggers: &[],
     admitted: LanguageProfile::standard_library,
+    extended: None,
+    loads: &[],
+    lifted: None,
+};
+/// `SuppressedError` (ES2026 explicit resource management; v38, K9 D1), an
+/// `Error` subclass of typed guest code like [`AGGREGATE`].
+pub(crate) const SUPPRESSED: Prelude = Prelude {
+    path: "<varta>/builtins/suppressed.ts",
+    source: include_str!("../prelude/suppressed.ts"),
+    exports: &[(SUPPRESSED_ERROR_CLASS, Namespace::Class)],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::node_console,
     extended: None,
     loads: &[],
     lifted: None,
@@ -780,7 +797,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 21] = [
+pub(crate) const PRELUDES: [&Prelude; 22] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -791,6 +808,7 @@ pub(crate) const PRELUDES: [&Prelude; 21] = [
     &DATE,
     &STANDARD,
     &AGGREGATE,
+    &SUPPRESSED,
     &REGEXP,
     &BLOB,
     &FETCH,

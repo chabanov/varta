@@ -1402,6 +1402,15 @@ impl Lower<'_> {
             });
         }
         let (host, expected, result) = match name.as_str() {
+            // Under the host-import test switch that hosts the formatter,
+            // the host's `value_log_v12` renders values in the earlier
+            // notation, so v38 lowers logging as v37 does.
+            "console.log" | "log" | "console.info" | "console.debug"
+                if self.types.profile.node_console()
+                    && crate::link::links(self.types.profile, Host::ValueFormatV12) =>
+            {
+                return self.console_log(call);
+            }
             "console.log" | "log" => {
                 if call.args.len() != 1 {
                     return Err(invalid("log expects one argument"));
@@ -1495,7 +1504,7 @@ impl Lower<'_> {
 /// V38 logs a value cell as its linked text (`value_format_v12`) through the
 /// `log_string16` effect, so logging needs no host renderer; under the
 /// compiler's host-import test switch, through the host's `value_log_v12`.
-fn logged_text(
+pub(super) fn logged_text(
     profile: varta_common::language::LanguageProfile,
     span: swc_common::Span,
     cell: Expr,

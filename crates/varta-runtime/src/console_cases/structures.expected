@@ -1,0 +1,75 @@
+info 1
+debug [ 1 ]
+Point { x: 1, y: 2 } [ Point { x: 3, y: 4 }, Point { x: 5, y: 6 } ]
+[Plain [Error]: p] [Coded [Error]: bad thing] { code: 'E_BAD' }
+[AggregateError: agg] { [errors]: [ 1, [Error: e] ] }
+[Error: outer] { [cause]: [Error: inner] }
+{
+  err: [Error: nested
+  line]
+}
+{
+  label: 'root',
+  children: [ { label: 'a', children: [Array] }, { label: 'b', children: [] } ]
+}
+{ a: [ { b: [Object] } ], f: 'g' }
+[
+  'item0',  'item1',  'item2',
+  'item3',  'item4',  'item5',
+  'item6',  'item7',  'item8',
+  'item9',  'item10', 'item11',
+  'item12', 'item13', 'item14',
+  'item15', 'item16', 'item17',
+  'item18', 'item19', 'item20',
+  'item21', 'item22', 'item23',
+  'item24', 'item25'
+]
+[ 1, 'two', 3, 'four', 5, 'six', 7, 'eight' ]
+[
+     1.5, -2.25, 3,
+  400000,  5e-7, 6,
+       7,     8, 9,
+      10,    11
+]
+Map(2) { 'first' => [ 1, 2, 3 ], 'second' => [ 4, 5 ] }
+Set(2) { 'b', 'c' } { s: Set(2) { 'b', 'c' } }
+[ [ 1, 2, [ 3, 4, [Array] ] ], { a: { b: [Object] } } ]
+{ a: { b: { c: [] } } }
+[ undefined, null, true, 0n, -0, '' ]
+[ <2 empty items>, 1, <2 empty items>, 2 ] [ <4 empty items> ]
+{ a: [Object] }|[ 1, [Array] ]|[Error: e]
+16|1|0|NaN
+12|1000|-3
+{ deep: { er: { est: [Object] } } }
+{
+  deep: { er: { est: { x: 1 } } }
+}
+{"d":[1]}
+trailing %s
+one and %s
+a b c
+{ list: [ [Function (anonymous)] ] }
+Promise { { v: [ 1, 2 ] } }
+{ p: Promise { { v: [Array] } } }
+Uint8Array(120) [
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0,
+  ... 20 more items
+]
+{ bytes: Uint8Array(3) [ 255, 0, 128 ] }
+2024-02-29T13:05:09.007Z { date: 2024-02-29T13:05:09.007Z } [ 2024-02-29T13:05:09.007Z ]
+{ 'key with space': 1, "quote's": 2, 'ünï': 3, '': 4 }
+[
+  'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy',
+  'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
+]
+{ s: `it's "q"` } [ '`b` it\'s "q"' ]
+[ '\x01\x7F\x85', 'tab\there' ]

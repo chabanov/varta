@@ -6006,6 +6006,51 @@ depth, and `JSON.stringify` takes property lists but no replacer
 function. `Symbol()`, `WeakMap`/`WeakSet`/`WeakRef`, `Proxy`, `Reflect`,
 `structuredClone`, `Object.freeze` and `Intl` are refused with the reason.
 
+#### Console output like Node (opt-in v38)
+
+`console.log`, `console.info` and `console.debug` take any number of
+arguments and print exactly what Node 24 prints: strings as they are, every
+other value in `util.inspect` notation, and `%s %d %i %f %j %o %O %c %%`
+directives in a leading string. Class instances print with their class
+name, and `Map`, `Set`, `Date`, `Uint8Array`, promises, Error objects and
+circular references print in Node's notation:
+
+```ts
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+interface Item { name: string; next: Item | null }
+export function main(): void {
+  console.log("total", 3, true, 10n, -0); // total 3 true 10n -0
+  console.log({ id: 7, tags: ["a", "b"], ok: false }); // { id: 7, tags: [ 'a', 'b' ], ok: false }
+  console.log(new Point(1, 2)); // Point { x: 1, y: 2 }
+  console.log(new Map([["k", [1, 2]]]), new Set(["x"])); // Map(1) { 'k' => [ 1, 2 ] } Set(1) { 'x' }
+  console.log({ a: { b: { c: { d: 1 } } } }); // { a: { b: { c: [Object] } } }
+  console.log("%s is %d%%", "progress", 42.5); // progress is 42.5%
+  console.log(new Error("failed", { cause: "disk" })); // [Error: failed] { [cause]: 'disk' }
+  const first: Item = { name: "first", next: null };
+  first.next = { name: "second", next: first };
+  console.log(first);
+  // <ref *1> {
+  //   name: 'first',
+  //   next: { name: 'second', next: [Circular *1] }
+  // }
+}
+```
+
+Varta records no stack frames, so an Error prints as Node prints it with
+`--stack-trace-limit=0`, and functions print as `[Function (anonymous)]`
+because function values carry no name. `SuppressedError` (ES2026) is
+available as well: `new SuppressedError(error, suppressed, "message")` is an
+`Error` whose `error` and `suppressed` fields are `unknown`, narrowed by
+`instanceof` in a `catch`. Earlier profiles keep one argument
+per `console.log` (and print booleans as `1`/`0`).
+
 #### Web bytes (opt-in v38)
 
 Response bodies are bytes, as in browsers and Node: a reader yields

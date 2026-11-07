@@ -1,0 +1,66 @@
+true false 1 -0 1.5 NaN -Infinity 10n -3n
+undefined null top [ 'nested', "it's" ]
+
+one string
+{ a: [ 1, 2, { b: [Object] } ], s: "it's" }
+Foo { a: 1, b: 'x' } Empty {} [ Foo { a: 1, b: 'x' } ] { f: { g: { h: [Foo] } } }
+[MyError: m] { code: 5 }
+[Named: n]
+[Error: x] { [cause]: 1 }
+[TypeError: bad] [ [RangeError: r] ] { e: [Error] }
+Box { value: 3 } Box { value: 's' }
+Map(2) { 'a' => 1, 'b' => { x: 1 } } Set(3) { 1, 2, 3 } Map(0) {} Set(0) {}
+1970-01-01T00:00:00.000Z [ Invalid Date ] { d: 1970-01-02T00:00:00.000Z }
+Uint8Array(3) [ 1, 2, 3 ] Uint8Array(0) []
+Promise { 4 }
+[
+    0,   7,  14,  21,  28,  35,  42,  49,
+   56,  63,  70,  77,  84,  91,  98, 105,
+  112, 119, 126, 133, 140, 147, 154, 161,
+  168, 175, 182, 189, 196, 203
+]
+[
+   0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11,
+  12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+  24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+  36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+  48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+  60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71,
+  72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,
+  84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+  96, 97, 98, 99,
+  ... 20 more items
+]
+[
+  'apple',
+  'banana',
+  'cherry',
+  'dates',
+  'elderberry',
+  'fig',
+  'grape',
+  'honeydew'
+]
+{
+  alpha: 'aaaaaaaaaaaaaaaa',
+  beta: 'bbbbbbbbbbbbbbbbbbbb',
+  gamma: 'cccccccccccccccccc',
+  delta: 1
+}
+<ref *1> { name: 'a', next: { name: 'b', next: [Circular *1] } }
+Bob is 42.5 years and 42, 3.25
+[ 1, 2, [length]: 2 ] and { k: [ 3 ] }
+{"a":1}|"x"
+100% 5 %%
+ styled
+dyn value!
+{ '2': 'two', 'a-b': 1, _ok: true, '$no': null }
+{
+  long: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+}
+[
+  'a\nb',
+  'line one\nline two\nline three\nline four and more text here to be long'
+]
+[Function (anonymous)] [ [Function (anonymous)] ]
+{ u: undefined, n: null, nested: [ [ [Array] ] ] }

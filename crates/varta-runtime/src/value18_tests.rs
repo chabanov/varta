@@ -132,6 +132,19 @@ fn v38_modules_import_only_value18_readers_and_channel_v9() {
     let mut replaced = 0;
     for op in &old {
         let replacement = V38.host_operation(*op);
+        // V38 (`node_console`) logs every non-string value as the linked
+        // Node notation of its argument list through `log_string16`.
+        if matches!(
+            op,
+            H::LogInt | H::LogFloat | H::LogFloatV2 | H::LogUndefined
+        ) {
+            assert!(
+                !new.contains(op) && new.contains(&H::LogString16),
+                "{new:?}"
+            );
+            replaced += 1;
+            continue;
+        }
         if replacement == H::ValueFormatV12 {
             assert!(V38.links(replacement) && new.contains(&H::LogString16));
             assert!(
@@ -172,7 +185,13 @@ fn v38_modules_import_only_value18_readers_and_channel_v9() {
             .unwrap()
             .lines
     };
-    assert_eq!(run(V38), run(V37));
+    // The same values; v38 prints booleans as Node does (`node_console`).
+    let printed = |booleans: [&str; 2]| {
+        let [yes, no] = booleans;
+        [yes, no, "1", "number", yes, no, "132y"].map(|line| format!("varta log: {line}"))
+    };
+    assert_eq!(run(V38), printed(["true", "false"]));
+    assert_eq!(run(V37), printed(["1", "0"]));
     let module = VartaRuntime::new()
         .validate_module(&compile(source, V38))
         .unwrap();

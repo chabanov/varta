@@ -99,6 +99,7 @@ const COMMON_CORE: &[&str] = &[
     "crates/varta-common/src/memory.rs",
     "crates/varta-common/src/text.rs",
     "crates/varta-common/src/value.rs",
+    "crates/varta-common/src/value/display.rs",
     "crates/varta-common/src/value/error.rs",
     "crates/varta-common/src/value/primitive.rs",
     "crates/varta-common/src/value/reference.rs",
@@ -366,10 +367,13 @@ fn linking_is_deterministic_and_links_only_what_a_program_uses() {
     let first = compile(EVERY_FAMILY, V38);
     assert_eq!(first, compile(EVERY_FAMILY, V38));
     let sine = compile(
-        "export function main(): void { console.log(Math.sin(0.5)); }",
+        "export function main(): void { if (Math.sin(0.5) > 0.4) { console.log(\"y\"); } }",
         V38,
     );
-    let plain = compile("export function main(): void { console.log(0.5); }", V38);
+    let plain = compile(
+        "export function main(): void { console.log(\"0.5\"); }",
+        V38,
+    );
     assert_eq!(
         region(&plain).intrinsic_pages(),
         0,
