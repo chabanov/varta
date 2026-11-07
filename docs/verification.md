@@ -798,6 +798,15 @@ cargo test -p varta-project --lib --locked view_engine
 node --test crates/varta-project/src/browser/view-engine.test.mjs
 ```
 
+Layout-time math (`calc()` of lengths and percentages) has its own tests in
+the engine grammar, the native calc table and layout:
+
+```sh
+cargo test -p varta-common --lib --locked layout_math
+cargo test -p varta-view --lib --locked calc
+cargo test -p varta-view --test integration --locked percentage_and_length
+```
+
 The desktop shell's system preferences (macOS reduced motion and increased
 contrast) are host inputs with their own tests:
 

@@ -192,12 +192,15 @@ pub(crate) struct ShapedFlow {
 enum PaddingLength {
     Pixels(f32),
     Fraction(f32),
+    /// A layout-time `calc()` by its table key ([`crate::calc::key`]).
+    Calc(usize),
 }
 impl From<LengthPercentage> for PaddingLength {
     fn from(value: LengthPercentage) -> Self {
         match value.expand() {
             ExpandedLengthPercentage::Length(value) => Self::Pixels(value),
             ExpandedLengthPercentage::Percent(value) => Self::Fraction(value),
+            ExpandedLengthPercentage::Calc(handle) => Self::Calc(crate::calc::key(handle)),
         }
     }
 }
@@ -221,6 +224,7 @@ impl FontBox {
             *out = match value {
                 PaddingLength::Pixels(value) => value,
                 PaddingLength::Fraction(value) => value * width,
+                PaddingLength::Calc(key) => crate::calc::resolve_key(key, width),
             } + border;
             if !out.is_finite() || !(0.0..=crate::units::MAX_LENGTH).contains(out) {
                 return Err(LayoutError::Limit);

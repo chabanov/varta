@@ -7,6 +7,8 @@ type Node = (Option<u32>, Vec<u32>, String, BTreeMap<CssProperty, String>);
 #[derive(Default)]
 struct Tree {
     nodes: BTreeMap<u32, Node>,
+    /// Tags other than `div`.
+    tags: BTreeMap<u32, varta_common::view::Tag>,
 }
 impl Tree {
     fn chain(classes: &[&str]) -> Self {
@@ -27,6 +29,11 @@ impl Tree {
 impl Document for Tree {
     fn element(&self, id: u32) -> Option<Element<'_>> {
         self.nodes.get(&id).map(|(_, _, class, style)| Element {
+            tag: self
+                .tags
+                .get(&id)
+                .copied()
+                .unwrap_or(varta_common::view::Tag::Div),
             class,
             style,
             disabled: false,
@@ -61,7 +68,11 @@ fn environment(width: f64) -> Environment {
             dark: false,
             preferences: stylesheet::media::Preferences::default(),
         },
-        context: Context::NOMINAL,
+        context: Context {
+            font: None,
+            ..Context::NOMINAL
+        },
+        font: font::FontBase::default(),
     }
 }
 
@@ -196,4 +207,102 @@ fn unrelated_and_duplicate_anchors_do_not_expand_candidate_lists() {
             .is_empty()
     );
     assert!(index.candidates(true, &BTreeSet::new()).is_empty());
+}
+
+/// The computed values of the leaf of a chain whose elements have `tags`.
+fn computed_tagged(
+    sheet: &str,
+    classes: &[&str],
+    tags: &[(u32, varta_common::view::Tag)],
+) -> BTreeMap<CssProperty, Computed> {
+    let mut styles = Styles::default();
+    styles.set(1, sheet, &mut 0).unwrap();
+    let mut tree = Tree::chain(classes);
+    tree.tags.extend(tags.iter().copied());
+    let leaf = ROOT_NODE + classes.len() as u32 - 1;
+    styles.computed(&tree, leaf, &environment(800.0), |property, value| {
+        css::property_value(property, value)
+    })
+}
+
+#[test]
+fn font_relative_units_resolve_against_the_computed_font() {
+    use varta_common::view::Tag;
+    let width = |sheet: &str, tags: &[(u32, Tag)]| {
+        computed_tagged(sheet, &["", "p", "t"], tags).remove(&CssProperty::Width)
+    };
+    // Values 4 §6.1.1: `em` is the element's computed font size.
+    assert_eq!(
+        width(".p { font-size: 20px } .t { width: 2em }", &[]),
+        value("40px")
+    );
+    assert_eq!(
+        width(".p { font-size: 2em } .t { width: calc(1em + 1px) }", &[]),
+        value("33px")
+    );
+    // The user-agent rows: `h1` is 2em, `code` switches to the fixed
+    // monospace size, a control has the small-control font.
+    assert_eq!(width(".t { width: 1em }", &[(3, Tag::H1)]), value("32px"));
+    assert_eq!(width(".t { width: 1em }", &[(3, Tag::Code)]), value("13px"));
+    assert_eq!(
+        width(".t { width: 3em }", &[(3, Tag::Input)]),
+        value("40px")
+    );
+    // `em` in `font-size` is the parent's size; a sum is absolute.
+    assert_eq!(
+        width(
+            ".p { font-size: 10px } .t { font-size: calc(1em + 2px); width: 1em }",
+            &[]
+        ),
+        value("12px")
+    );
+    // `lh` is the computed line height, a number times the font size; in
+    // `line-height` itself, `lh` is the parent's.
+    let heights = computed_tagged(
+        ".p { font-size: 10px; line-height: 2 } .t { font-size: 20px; line-height: calc(1lh + 5px); height: 2lh; width: 1lh }",
+        &["", "p", "t"],
+        &[],
+    );
+    assert_eq!(
+        heights[&CssProperty::LineHeight],
+        Computed::Value("25px".into())
+    );
+    assert_eq!(
+        heights[&CssProperty::Height],
+        Computed::Value("50px".into())
+    );
+    // `lh` with `line-height: normal` needs the font's metrics.
+    assert_eq!(width(".t { width: 1lh }", &[]), None);
+    // `em` in `line-height` is the element's own size.
+    assert_eq!(
+        computed_tagged(
+            ".p { font-size: 10px } .t { font-size: 20px; line-height: 1.5em }",
+            &["", "p", "t"],
+            &[]
+        )
+        .remove(&CssProperty::LineHeight),
+        value("30px")
+    );
+}
+
+#[test]
+fn registered_lengths_compute_to_absolute_lengths_before_inheritance() {
+    // Properties and Values API 1 §2.4: `2em` computes at the declaring
+    // element (10px font), so the child inherits 20px, not 2 × its 20px.
+    let sheet = "@property --gap { syntax: \"<length>\"; inherits: true; initial-value: 0px }
+        @property --pair { syntax: \"<length>+\"; inherits: true; initial-value: 0px }
+        @property --raw { syntax: \"*\"; inherits: true }
+        .p { font-size: 10px; --gap: 2em; --pair: 1em calc(1em + 1rem); --raw: 2em }
+        .t { font-size: 20px; margin-top: var(--gap); padding: var(--pair); margin-bottom: var(--raw) }";
+    let out = computed_tagged(sheet, &["", "p", "t"], &[]);
+    assert_eq!(out[&CssProperty::MarginTop], Computed::Value("20px".into()));
+    assert_eq!(
+        out[&CssProperty::Padding],
+        Computed::Value("10px 26px".into())
+    );
+    // An unregistered value is a token sequence: `em` resolves where used.
+    assert_eq!(
+        out[&CssProperty::MarginBottom],
+        Computed::Value("40px".into())
+    );
 }

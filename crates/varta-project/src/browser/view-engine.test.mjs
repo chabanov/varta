@@ -36,7 +36,7 @@ test("the browser view model decides the cross-host corpus as the native rendere
     assert.equal(browserAccepts, nativeAccepts, `${item.name}: browser ${browserAccepts}, native ${nativeAccepts}`);
     if (!browserAccepts) { refused++; continue; }
     accepted++;
-    model.engine.environment(WIDTH, HEIGHT, ROOT_FONT, 0);
+    model.engine.environment(WIDTH, HEIGHT, ROOT_FONT, ROOT_FONT, 0);
     assert.deepEqual(Object.fromEntries(model.engine.computed(parent)), record.computed, `${item.name}: computed values`);
   }
   assert(accepted > 200 && refused > 20, `${accepted} accepted, ${refused} refused`);

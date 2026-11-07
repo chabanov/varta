@@ -7971,6 +7971,61 @@ sections is [view CSS engine](architecture.md#view-css-engine-k8-t2-and-t3).
   layout lacks (`inline-flex`, `inline-block`, `sticky`, `fit-content`,
   `-webkit-box`).
 
+#### K8 T2 items (2) and (5): font-relative units and layout-time math (2026-11-06)
+
+Owner decision of the same day: (2) and (5) are required by the standards.
+
+- The style engine computes font sizes and line heights (`varta_style::font`:
+  the user-agent font rows, Blink's monospace and minimum-size rules, moved
+  from the native renderer), so `em`, `lh` and `rlh` resolve in every
+  property on both hosts, and registered length values compute at the
+  declaring element before they inherit (Properties and Values API 1 §2.4).
+  The browser host passes its `medium` size (the `all: initial` shadow host)
+  and whether a packaged face names `monospace`; the engine receives each
+  element's tag.
+- Sums of lengths and percentages resolve at layout (Values 4 §10.10) for
+  sizes, margins, padding, gaps, the flex basis, insets and
+  `vertical-align`, through a recorded Taffy 0.15.1 patch that lets the
+  high-level tree resolve calc handles (an index, never a pointer).
+- Chrome oracle: two new scenes (font-relative units with a registered
+  length, percentage-and-length math), `bridge` 503 and `platform` 491
+  checks pass at 1x, 1.25x and 2x with no new deviation.
+- **Dependency record: Taffy 0.15.1 vendored with a patch** (the dependency
+  rule of CLAUDE.md §5, as for the Parley patch). Why: upstream's `calc`
+  feature stores a `calc()` length as an opaque handle and asks the layout
+  tree to resolve it, but the high-level `TaffyTree` that native layout uses
+  hard-codes the answer zero, so no Taffy user above the low-level traits
+  can resolve `calc()`. Alternatives rejected: reimplementing Taffy's tree
+  over its low-level layout traits (a second copy of `TaffyTree` and its
+  cache, view and rounding code), and refusing sums of lengths and
+  percentages (they are required by CSS Values 4 §10.10 and the owner
+  decision). Change: one upstream file, `src/tree/taffy_tree.rs`, gains a
+  `calc_resolver` field and `TaffyTree::set_calc_resolver`; without a
+  resolver the tree answers zero as upstream. No dependency version changes;
+  the lockfile changes only Taffy's source selection (registry to
+  `vendor/taffy`), and the `calc` feature is enabled for `varta-view`.
+  Provenance: the checksum-pinned crates.io archive (SHA-256 in
+  `vendor/taffy/VARTA-PATCH.md`); a recursive comparison with the unpacked
+  release finds only the patched file, the two patch records and the
+  dropped `Cargo.lock`/`.cargo_vcs_info.json`. Safety: the handle Varta
+  passes is a table index made with `ptr::without_provenance`, never a
+  pointer, and neither Taffy nor Varta dereferences it, so no `unsafe` is
+  added to workspace code. Removal criterion: upstream exposing a resolver
+  for `TaffyTree` (or Varta moving to the low-level API), after which the
+  vendored copy is dropped and the lockfile returns to the registry source.
+- Remaining for (2): `ex`, `ch`, `cap`, `ic` (and root forms), `lh` with
+  `line-height: normal` and `rlh` need the metrics of the first available
+  font. Owner decision (2026-11-06), "fonts plus host": the shared engine
+  reads the first available font's metrics from packaged font bytes with
+  read-fonts (one implementation for both hosts); for system and generic
+  families the host supplies them (natively through CoreText, as the emoji
+  platform metrics are read; on the web the bridge only measures through
+  browser APIs and passes the numbers into Wasm, with no metric logic in
+  JavaScript); the Values 4 fallbacks apply only when no metrics are
+  available at all; the goal is Chrome's values with no recorded deviation
+  for system fonts. Sums with percentages in `border-radius`, `transform`,
+  `object-position` and grid tracks wait for those consumers.
+
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
 Goal: the native HTTP server runs at current standards, secure and fast enough

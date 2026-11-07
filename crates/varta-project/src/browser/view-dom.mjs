@@ -2,7 +2,7 @@ import { registry } from "../../../varta-common/browser/registry.mjs";
 import { createFontNamespace } from './view-fonts.mjs';
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
 import { createViewModel, imageCandidateNames } from "./view-model.mjs";
-import { readMediaInputs, MEDIA_INPUT_QUERIES } from "./view-engine.mjs";
+import { readMediaInputs, MEDIA_INPUT_QUERIES, ENGINE_INPUTS } from "./view-engine.mjs";
 
 const V = registry.view, W = V.wire, F = V.filters;
 const field = Object.fromEntries(W.eventFields.map((entry) => [entry.name, entry]));
@@ -67,7 +67,12 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
   function restyle() {
     if (closed) return;
     const inputs = readMediaInputs(window);
-    engine.environment(inputs.width, inputs.height, inputs.rootFontSize, inputs.flags);
+    // The shadow host is `all: initial`, so its size is the platform's
+    // `medium`: the base of computed font sizes. A generic `monospace` that
+    // names a packaged face keeps no fixed-font size.
+    const medium = Number.parseFloat(window.getComputedStyle(container).fontSize);
+    const packagedMonospace = fonts.family("monospace") !== "monospace" ? ENGINE_INPUTS.packagedMonospace : 0;
+    engine.environment(inputs.width, inputs.height, inputs.rootFontSize, Number.isFinite(medium) ? medium : inputs.rootFontSize, inputs.flags | packagedMonospace);
     const focused = shadow.activeElement?.matches?.(":focus-visible") ? idOf(shadow.activeElement) : W.noNode;
     engine.state(focused, deepest(":hover"), deepest(":active"));
     for (const [id, element] of nodes) {

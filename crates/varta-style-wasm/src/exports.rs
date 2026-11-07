@@ -1,6 +1,7 @@
 //! The exported calls of the style session (`varta_style::session`).
 use alloc::{vec, vec::Vec};
 use core::cell::UnsafeCell;
+use varta_common::view::Tag;
 use varta_common::view::stylesheet::REM_PIXELS;
 use varta_style::session::{self, Session, status};
 
@@ -33,9 +34,14 @@ fn state() -> &'static mut State {
 /// input is not UTF-8), with one borrow of the state.
 fn with<R>(f: impl FnOnce(&mut Session, Option<&str>) -> R) -> R {
     let state = state();
-    let session = state
-        .session
-        .get_or_insert_with(|| Session::new(session::environment(1024.0, 768.0, REM_PIXELS, 0)));
+    let session = state.session.get_or_insert_with(|| {
+        Session::new(session::environment(
+            (1024.0, 768.0),
+            REM_PIXELS,
+            REM_PIXELS,
+            0,
+        ))
+    });
     f(session, core::str::from_utf8(&state.input).ok())
 }
 
@@ -73,9 +79,21 @@ pub extern "C" fn view_engine_abort() {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn view_engine_create(id: u32, element: u32) -> u32 {
-    with(|session, _| session.create(id, element != 0))
+pub extern "C" fn view_engine_create(id: u32, tag: u32) -> u32 {
+    // `TEXT_NODE` creates a text node; anything else is an element tag code.
+    let tag = if tag == TEXT_NODE {
+        None
+    } else {
+        match u16::try_from(tag).ok().and_then(Tag::from_code) {
+            Some(tag) => Some(tag),
+            None => return session::status::MISUSE,
+        }
+    };
+    with(|session, _| session.create(id, tag))
 }
+
+/// The tag argument of [`view_engine_create`] that creates a text node.
+const TEXT_NODE: u32 = u32::MAX;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn view_engine_insert(parent: u32, child: u32, before: u32) -> u32 {
@@ -130,8 +148,16 @@ pub extern "C" fn view_engine_charge() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn view_engine_environment(width: f64, height: f64, root: f64, flags: u32) {
-    with(|session, _| session.set_environment(session::environment(width, height, root, flags)));
+pub extern "C" fn view_engine_environment(
+    width: f64,
+    height: f64,
+    root: f64,
+    medium: f64,
+    flags: u32,
+) {
+    with(|session, _| {
+        session.set_environment(session::environment((width, height), root, medium, flags));
+    });
 }
 
 #[unsafe(no_mangle)]

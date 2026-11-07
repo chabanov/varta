@@ -27,6 +27,10 @@ pub struct Environment {
     /// Device pixels per CSS pixel: what an `img` `srcset` selects a
     /// candidate for (HTML §4.8.4.3.3). A renderer sets its own scale.
     pub device_pixel_ratio: f64,
+    /// The host's `medium` font size and monospace behaviour, the base of
+    /// computed font sizes and so of `em` and `lh` (a renderer sets its
+    /// text measurer's).
+    pub font: varta_style::font::FontBase,
 }
 impl Default for Environment {
     fn default() -> Self {
@@ -38,6 +42,7 @@ impl Default for Environment {
             root_font_size: varta_common::view::stylesheet::REM_PIXELS,
             scrollbars: Scrollbars::default(),
             device_pixel_ratio: 1.0,
+            font: varta_style::font::FontBase::default(),
         }
     }
 }
@@ -71,6 +76,7 @@ impl Environment {
         varta_style::Environment {
             media: self.media(),
             context: self.lowering(),
+            font: self.font,
         }
     }
     /// The reference metrics of computed-value lowering.
@@ -79,6 +85,7 @@ impl Environment {
             root_font_size: self.root_font_size,
             viewport_width: self.width,
             viewport_height: self.height,
+            font: None,
         }
     }
     /// Set the host reference font. Zero is valid for geometry; text shaping
@@ -172,6 +179,8 @@ pub(crate) struct Variables<'a> {
     id: u32,
     environment: &'a Environment,
     custom: std::cell::OnceCell<varta_style::Scope<'a>>,
+    /// The element's font references, on the first font-relative value.
+    font: std::cell::OnceCell<Option<varta_common::view::css::FontContext>>,
 }
 impl<'a> Variables<'a> {
     pub fn new(tree: &'a crate::tree::Tree, id: u32, environment: &'a Environment) -> Self {
@@ -180,6 +189,7 @@ impl<'a> Variables<'a> {
             id,
             environment,
             custom: std::cell::OnceCell::new(),
+            font: std::cell::OnceCell::new(),
         }
     }
     pub fn property(
@@ -224,7 +234,16 @@ impl<'a> Variables<'a> {
         {
             return None;
         }
-        varta_common::view::css::lower(property, &result, &self.environment.lowering())
+        let mut context = self.environment.lowering();
+        if varta_style::font::uses_font_units(&result) {
+            context.font = *self.font.get_or_init(|| {
+                self.tree
+                    .styles
+                    .font_context(self.tree, self.id, &self.environment.style())
+                    .ok()
+            });
+        }
+        varta_common::view::css::lower(property, &result, &context)
     }
     pub fn substitute(&self, value: &str) -> Option<String> {
         if !self
@@ -251,82 +270,16 @@ pub(crate) const UA_BOLD_WEIGHT: f32 = 700.0;
 pub(crate) const NORMAL_FONT_WEIGHT: f32 = 400.0;
 /// Inline-start padding of `ul`/`ol` (`padding-inline-start: 40px`).
 pub(crate) const UA_LIST_PADDING_PX: f32 = 40.0;
-/// Chrome's default fixed (monospace) font size over its default proportional
-/// size (13px / 16px). See [`FontSize::switch_family`].
-pub(crate) const UA_MONOSPACE_RATIO: f32 = 13.0 / 16.0;
-/// The generic family name the user-agent table gives `pre` and `code`.
-pub(crate) const UA_MONOSPACE_FAMILY: &str = "monospace";
-
-/// Whether a `font-family` value is exactly the generic `monospace` family
-/// (Blink's `IsMonospace`): a list such as `monospace, monospace` is not.
-pub(crate) fn sole_monospace(family: &str) -> bool {
-    family.trim().eq_ignore_ascii_case(UA_MONOSPACE_FAMILY)
-}
-
 /// The host's medium font size and whether the generic `monospace` keeps
 /// Chrome's fixed-font size where the family switches to or from it
-/// ([`FontSize::switch_family`]). A generic `monospace` that a packaged face
-/// names is an ordinary family in the official browser host, so it does not.
+/// ([`varta_style::font::FontSize::switch_family`]). A generic `monospace`
+/// that a packaged face names is an ordinary family in the official browser
+/// host, so it does not.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct FontBase {
     /// The host's medium size in CSS pixels.
     pub px: f32,
     pub fixed_monospace: bool,
-}
-
-/// Blink's computed font-size state along an element path, which decides how
-/// the size changes where the generic family switches to or from monospace.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct FontSize {
-    /// Computed size in CSS pixels.
-    pub px: f32,
-    /// Still the initial `medium` keyword: no font-size applies on the path.
-    keyword: bool,
-    /// Fixed by an absolute length (`px`, `rem`); em-like user-agent scales
-    /// and percentages inherit the parent's flag.
-    absolute: bool,
-}
-impl FontSize {
-    /// The initial `medium` size of the host's proportional default.
-    pub(crate) fn medium(base: f32) -> Self {
-        Self {
-            px: base,
-            keyword: true,
-            absolute: false,
-        }
-    }
-    /// `font-size` as a multiple of the inherited size (em scale or percentage).
-    pub(crate) fn scale(&mut self, factor: f32) {
-        self.px *= factor;
-        self.keyword = false;
-    }
-    /// `font-size` as an absolute length in CSS pixels.
-    pub(crate) fn absolute(&mut self, px: f32) {
-        self.px = px;
-        self.keyword = false;
-        self.absolute = true;
-    }
-    /// Whether an absolute length fixes the size on the path: then neither a
-    /// family switch nor the minimum logical font size changes it.
-    pub(crate) fn is_absolute(&self) -> bool {
-        self.absolute
-    }
-    /// Blink's `CheckForGenericFamilyChange`: where the family switches between
-    /// the sole generic `monospace` and anything else, a non-absolute size is
-    /// re-derived. The `medium` keyword takes the host medium size, scaled by
-    /// [`UA_MONOSPACE_RATIO`] for monospace; any other size is multiplied
-    /// (into monospace) or divided (out of it) by that ratio.
-    pub(crate) fn switch_family(&mut self, base: f32, parent_monospace: bool, monospace: bool) {
-        if self.absolute || parent_monospace == monospace {
-            return;
-        }
-        self.px = match (self.keyword, monospace) {
-            (true, true) => base * UA_MONOSPACE_RATIO,
-            (true, false) => base,
-            (false, true) => self.px * UA_MONOSPACE_RATIO,
-            (false, false) => self.px / UA_MONOSPACE_RATIO,
-        };
-    }
 }
 
 /// How a row changes the inherited font weight when the author sets none.
@@ -355,13 +308,9 @@ pub(crate) struct UaDefaults {
     pub block: bool,
     /// `display: list-item`: the box generates an outside list marker.
     pub list_item: bool,
-    /// `font-size` as a multiple of the inherited size (`2em` for `h1`).
-    pub font_scale: Option<f32>,
     pub weight: UaWeight,
     /// `font-style: italic`.
     pub italic: bool,
-    /// `font-family: monospace`.
-    pub monospace: bool,
     /// `white-space: pre`.
     pub preformatted: bool,
     /// Top and bottom margins in em of the element's own font size.
@@ -375,9 +324,10 @@ pub(crate) struct UaDefaults {
     /// These stop an ancestor's inherited alignment at the control.
     pub text_align: Option<crate::text::TextAlign>,
     /// Chrome's `font: -webkit-small-control` on form controls: absent author
-    /// values reset the size to [`UA_CONTROL_FONT_SIZE_PX`] (an absolute
-    /// size), the weight and style to `normal` and `line-height` to `normal`.
-    /// The family stays inherited, as the official host makes it.
+    /// values reset the weight and style to `normal`; the size and
+    /// `line-height` are the style engine's rows
+    /// ([`varta_style::font::UA_FONTS`]). The family stays inherited, as the
+    /// official host makes it.
     pub control_font: bool,
 }
 impl UaDefaults {
@@ -386,10 +336,8 @@ impl UaDefaults {
             tag,
             block: false,
             list_item: false,
-            font_scale: None,
             weight: UaWeight::Inherit,
             italic: false,
-            monospace: false,
             preformatted: false,
             margin_block_em: 0.0,
             nested_list_margin_zero: false,
@@ -399,10 +347,9 @@ impl UaDefaults {
             control_font: false,
         }
     }
-    const fn heading(tag: varta_common::view::Tag, scale: f32, margin: f32) -> Self {
+    const fn heading(tag: varta_common::view::Tag, margin: f32) -> Self {
         Self {
             block: true,
-            font_scale: Some(scale),
             weight: UaWeight::Absolute(UA_BOLD_WEIGHT),
             margin_block_em: margin,
             ..Self::new(tag)
@@ -443,9 +390,9 @@ pub(crate) const NATIVE_UA_DEFAULTS: &[UaDefaults] = {
             margin_block_em: 1.0,
             ..UaDefaults::new(Tag::P)
         },
-        UaDefaults::heading(Tag::H1, 2.0, 0.67),
-        UaDefaults::heading(Tag::H2, 1.5, 0.83),
-        UaDefaults::heading(Tag::H3, 1.17, 1.0),
+        UaDefaults::heading(Tag::H1, 0.67),
+        UaDefaults::heading(Tag::H2, 0.83),
+        UaDefaults::heading(Tag::H3, 1.0),
         UaDefaults::list(Tag::Ul, ListKind::Unordered),
         UaDefaults::list(Tag::Ol, ListKind::Ordered),
         UaDefaults {
@@ -455,7 +402,6 @@ pub(crate) const NATIVE_UA_DEFAULTS: &[UaDefaults] = {
         },
         UaDefaults {
             block: true,
-            monospace: true,
             preformatted: true,
             margin_block_em: 1.0,
             ..UaDefaults::new(Tag::Pre)
@@ -469,7 +415,6 @@ pub(crate) const NATIVE_UA_DEFAULTS: &[UaDefaults] = {
             ..UaDefaults::new(Tag::Em)
         },
         UaDefaults {
-            monospace: true,
             ..UaDefaults::new(Tag::Code)
         },
         UaDefaults::new(Tag::Label),
@@ -485,9 +430,6 @@ pub(crate) fn ua_defaults(tag: varta_common::view::Tag) -> Option<&'static UaDef
     NATIVE_UA_DEFAULTS.iter().find(|row| row.tag == tag)
 }
 
-/// Chrome's `-webkit-small-control` font size: 10pt at 96 CSS pixels per
-/// inch (13.333px), independent of the host's medium size.
-pub(crate) const UA_CONTROL_FONT_SIZE_PX: f32 = 40.0 / 3.0;
 /// The HTML default `size` of a text field, in average characters. Varta
 /// has no `size` attribute, and `number` fields ignore it in Chrome.
 pub(crate) const UA_FIELD_COLUMNS: u32 = 20;
@@ -667,8 +609,17 @@ mod ua_tests {
                 .map(|row| row.tag)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(rows(|row| row.monospace), UA_MONOSPACE_TAGS);
         assert_eq!(rows(|row| row.text_align.is_some()), CONTROL_FONT_TAGS);
+        // The font rows are the style engine's.
+        let fonts = |keep: fn(&varta_style::font::UaFont) -> bool| {
+            varta_style::font::UA_FONTS
+                .iter()
+                .filter(|row| keep(row))
+                .map(|row| row.tag)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(fonts(|row| row.monospace), UA_MONOSPACE_TAGS);
+        assert_eq!(fonts(|row| row.control), CONTROL_FONT_TAGS);
     }
     #[test]
     fn native_ua_table_has_one_row_per_tag_and_browser_values() {
@@ -678,11 +629,15 @@ mod ua_tests {
         assert_eq!(tags.len(), NATIVE_UA_DEFAULTS.len());
         let h1 = ua_defaults(Tag::H1).unwrap();
         assert_eq!(
-            (h1.font_scale, h1.weight, h1.margin_block_em),
-            (Some(2.0), UaWeight::Absolute(700.0), 0.67)
+            (h1.weight, h1.margin_block_em),
+            (UaWeight::Absolute(700.0), 0.67)
         );
         let h3 = ua_defaults(Tag::H3).unwrap();
-        assert_eq!((h3.font_scale, h3.margin_block_em), (Some(1.17), 1.0));
+        assert_eq!(h3.margin_block_em, 1.0);
+        assert_eq!(
+            varta_style::font::ua_font(Tag::H3).unwrap().scale,
+            Some(1.17)
+        );
         let ul = ua_defaults(Tag::Ul).unwrap();
         assert_eq!(
             (ul.padding_inline_start, ul.list, ul.nested_list_margin_zero),
@@ -690,7 +645,7 @@ mod ua_tests {
         );
         assert!(ua_defaults(Tag::Li).unwrap().list_item);
         let pre = ua_defaults(Tag::Pre).unwrap();
-        assert!(pre.monospace && pre.preformatted && pre.block);
+        assert!(pre.preformatted && pre.block);
         assert!(!ua_defaults(Tag::Label).unwrap().block);
         assert_eq!(
             ua_defaults(Tag::Button).unwrap().text_align,
@@ -734,7 +689,7 @@ mod ua_tests {
             control_defaults(ControlKind::Radio).intrinsic,
             Intrinsic::Square(13.0)
         );
-        assert!((UA_CONTROL_FONT_SIZE_PX - 13.3333).abs() < 1e-3);
+        assert!((varta_style::font::UA_CONTROL_FONT_SIZE_PX - 13.3333).abs() < 1e-3);
         // Exactly the control rows carry the control font.
         for row in NATIVE_UA_DEFAULTS {
             assert_eq!(row.control_font, row.text_align.is_some());
@@ -753,52 +708,5 @@ mod ua_tests {
             styled.insert(property, "0".to_owned());
             assert!(!themed(&styled), "{property:?}");
         }
-    }
-
-    /// Chrome 156 computed sizes with a 16px proportional and 13px fixed default.
-    #[test]
-    fn monospace_switch_follows_blink_keyword_and_absolute_state() {
-        const BASE: f32 = 16.0;
-        let close = |size: FontSize, expected: f32| (size.px - expected).abs() < 1e-4;
-        // body > pre: the medium keyword takes the fixed default.
-        let mut pre = FontSize::medium(BASE);
-        pre.switch_family(BASE, false, true);
-        assert!(close(pre, 13.0));
-        // pre > span { font-family: serif }: back to the proportional keyword.
-        let mut span = pre;
-        span.switch_family(BASE, true, false);
-        assert!(close(span, 16.0));
-        // h1 > code: the 2em heading keeps the non-absolute state.
-        let mut code = FontSize::medium(BASE);
-        code.scale(2.0);
-        code.switch_family(BASE, false, true);
-        assert!(close(code, 26.0));
-        // h3 > pre: 18.72px becomes 15.21px.
-        let mut pre = FontSize::medium(BASE);
-        pre.scale(1.17);
-        pre.switch_family(BASE, false, true);
-        assert!(close(pre, 15.21));
-        // pre > span { font-size: 200% } stays monospace.
-        let mut span = FontSize::medium(BASE);
-        span.switch_family(BASE, false, true);
-        span.scale(2.0);
-        span.switch_family(BASE, true, true);
-        assert!(close(span, 26.0));
-        // h1 > pre (26px) > span { font-family: serif } returns to 32px.
-        let mut span = code;
-        span.switch_family(BASE, true, false);
-        assert!(close(span, 32.0));
-        // Absolute lengths (px, rem) are never re-derived, and percentages of
-        // them keep the absolute state; em-like scales of medium never set it.
-        assert!(!code.is_absolute() && !span.is_absolute());
-        let mut fixed = FontSize::medium(BASE);
-        fixed.absolute(16.0);
-        fixed.switch_family(BASE, false, true);
-        assert!(close(fixed, 16.0));
-        fixed.scale(1.5);
-        fixed.switch_family(BASE, true, false);
-        assert!(close(fixed, 24.0) && fixed.is_absolute());
-        assert!(sole_monospace(" Monospace ") && !sole_monospace("monospace, monospace"));
-        assert!(!sole_monospace("\"monospace\""));
     }
 }

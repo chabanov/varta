@@ -380,7 +380,7 @@ impl TextMeasurer {
     pub(crate) fn fixed_monospace(&self) -> bool {
         !(self.packaged
             && self
-                .resolve_families(Some(crate::style::UA_MONOSPACE_FAMILY))
+                .resolve_families(Some(varta_style::font::UA_MONOSPACE_FAMILY))
                 .is_some())
     }
 

@@ -198,6 +198,11 @@ pub(super) fn measure(
                     let (above, below) = strut(tree, env, id, (measurer, size))?;
                     truncated(fraction * (above + below))
                 }
+                // CSS Inline 3 §4.4: percentages of the line height.
+                ExpandedLengthPercentage::Calc(handle) => {
+                    let (above, below) = strut(tree, env, id, (measurer, size))?;
+                    truncated(crate::calc::resolve(handle, above + below))
+                }
             };
             Align::Bottom(-raise)
         }
