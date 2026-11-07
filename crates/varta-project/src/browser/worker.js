@@ -57,7 +57,7 @@ self.onmessage = async ({ data }) => {
       if (++calls > descriptor.budgets.hostCallsPerTurn) throw new Error("host-call budget exhausted");
     };
     const emit = (text) => {
-      const line = `varta log: ${text}`;
+      const line = registry.console.logPrefix + text;
       outputBytes += encoder.encode(line).byteLength + 1;
       if (outputBytes > descriptor.budgets.outputBytes) throw new Error("output budget exhausted");
       logs.push(line);
@@ -75,35 +75,43 @@ self.onmessage = async ({ data }) => {
       if (flag!==1 || value!==root) throw new Error("noncanonical exception channel state");
       throw new Error(`uncaught guest exception: ${renderReason(value, false)}`);
     };
+    const logUtf16 = (prefix, ptr, len) => {
+      if (profile.fairFuel) tank.charge("byte", Math.max(len, 0));
+      const memory = instance.exports[descriptor.memoryExport];
+      if (!(memory instanceof WebAssembly.Memory) || ptr < 0 || len < 0 || len % 2 || len > descriptor.maxStringBytes || ptr + len > memory.buffer.byteLength) throw new Error("invalid guest string");
+      // Decode diagnostics in bounded chunks, preserving BOMs and replacing
+      // lone units like native. Count the entire attempted UTF-8 line, while
+      // retaining text only within the output budget. Never allocate a whole
+      // guest-sized string merely to reject an oversized output.
+      const decoder = new TextDecoder("utf-16le", { ignoreBOM: true });
+      const chunks = [];
+      let size = encoder.encode(prefix).byteLength + 1;
+      const add = (text) => {
+        size += encoder.encode(text).byteLength;
+        if (outputBytes + size <= descriptor.budgets.outputBytes) chunks.push(text);
+      };
+      for (let offset = 0; offset < len; offset += descriptor.decodeChunkBytes) {
+        add(decoder.decode(new Uint8Array(memory.buffer, ptr + offset, Math.min(descriptor.decodeChunkBytes, len - offset)), { stream: true }));
+      }
+      add(decoder.decode());
+      outputBytes += size;
+      if (outputBytes > descriptor.budgets.outputBytes) throw new Error("output budget exhausted");
+      const line = prefix + chunks.join("");
+      logs.push(line);
+      self.postMessage({ type: "log", line });
+    };
     const implementations = {
       ...scheduler.implementations,
       log_i32(value) { emit(String(value)); },
       log_f64_v2(value) { emit(String(value)); },
       log_undefined(value) { if (value !== 0) throw new Error("noncanonical undefined"); emit("undefined"); },
-      log_string16(ptr, len) {
-        if (profile.fairFuel) tank.charge("byte", Math.max(len, 0));
-        const memory = instance.exports[descriptor.memoryExport];
-        if (!(memory instanceof WebAssembly.Memory) || ptr < 0 || len < 0 || len % 2 || len > descriptor.maxStringBytes || ptr + len > memory.buffer.byteLength) throw new Error("invalid guest string");
-        // Decode diagnostics in bounded chunks, preserving BOMs and replacing
-        // lone units like native. Count the entire attempted UTF-8 line, while
-        // retaining text only within the output budget. Never allocate a whole
-        // guest-sized string merely to reject an oversized output.
-        const decoder = new TextDecoder("utf-16le", { ignoreBOM: true });
-        const chunks = [];
-        let size = encoder.encode("varta log: ").byteLength + 1;
-        const add = (text) => {
-          size += encoder.encode(text).byteLength;
-          if (outputBytes + size <= descriptor.budgets.outputBytes) chunks.push(text);
-        };
-        for (let offset = 0; offset < len; offset += descriptor.decodeChunkBytes) {
-          add(decoder.decode(new Uint8Array(memory.buffer, ptr + offset, Math.min(descriptor.decodeChunkBytes, len - offset)), { stream: true }));
-        }
-        add(decoder.decode());
-        outputBytes += size;
-        if (outputBytes > descriptor.budgets.outputBytes) throw new Error("output budget exhausted");
-        const line = "varta log: " + chunks.join("");
-        logs.push(line);
-        self.postMessage({ type: "log", line });
+      log_string16(ptr, len) { logUtf16(registry.console.logPrefix, ptr, len); },
+      // V38 standard error: the level word selects the line's prefix; the
+      // loader forwards the line to the console method of its level.
+      log_stderr16(level, ptr, len) {
+        const stream = registry.console.stderr.find((entry) => entry.word === level);
+        if (stream === undefined) throw new Error("invalid standard-error level");
+        logUtf16(stream.prefix, ptr, len);
       },
     };
     const manifest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(data.manifest));

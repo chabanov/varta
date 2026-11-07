@@ -27,6 +27,8 @@ mod capability;
 /// Idle and incremental collection (v38 `incremental_collection`).
 #[cfg(feature = "std")]
 pub mod collector;
+/// Console output streams (v38 `console_methods`).
+pub mod console;
 #[cfg(feature = "std")]
 mod diagnostic;
 /// Host event sources and host tasks (v38 `turn_budgets`).

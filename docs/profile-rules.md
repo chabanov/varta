@@ -4240,6 +4240,33 @@ Contract: [architecture.md](architecture.md#console-notation-node_console).
   the `display` trailer test, the conformance features `console-notation`
   and `suppressed-error`.
 
+### Console methods (`console_methods`)
+
+Contract: [architecture.md](architecture.md#console-methods-console_methods).
+
+- Gate on `console_methods()`; `lower::console::Method::of` is the one map
+  from callee names to methods. V37 and earlier keep refusing every method
+  but `log`.
+- Standard error is only `log_stderr16` with a `console::StderrLevel` word;
+  never encode a stream in the text, and never add a level without a
+  registry entry (`StderrLevel::ALL`, the browser registry's `console`
+  section). Hosts route a captured line only by its prefix
+  (`console::is_standard_error`); the browser loader forwards and decides
+  nothing else.
+- Stateful and composite methods belong in the console prelude
+  (`prelude/console.ts`); its `varta.console.*` intrinsics exist only in
+  engine preludes. Every formatting rule stays in `varta_intrinsics::inspect`
+  (`render` for `dir` and `table`); the prelude never formats a value.
+- A program that never loads the console prelude must keep its bytes:
+  `log`, `error` and `warn` write directly unless the prelude is loaded,
+  and then all go through `consoleWrite` (group indentation).
+- New varta-common modules compiled into guest builds are listed in every
+  wasm build script's `COMMON_CORE` and in `link/tests.rs`.
+- Tests: `varta-runtime` `console_method_tests` (`console_method_cases/*.ts`
+  with Node 24.20.0 `.stdout`/`.stderr`), the `console::tests` units, the
+  CLI smoke `v38_console_standard_error_goes_to_stderr`, the browser
+  worker test of `log_stderr16`, the conformance feature `console-methods`.
+
 ### Bytes held by unknown (`byte_values`)
 
 Contract: [architecture.md](architecture.md#bytes-held-by-unknown-byte_values).

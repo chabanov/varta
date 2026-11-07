@@ -5261,6 +5261,7 @@ dependencies = [
 name = "varta-intrinsics"
 version = "0.1.0"
 dependencies = [
+ "icu_normalizer",
  "libm",
  "num-bigint",
  "ryu-js",

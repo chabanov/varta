@@ -143,18 +143,8 @@ fn console_notation_survives_collector_stress() {
 fn unsupported_logging_is_refused_by_name() {
     refused(
         V38,
-        "export function main(): void { const xs = [1]; console.log(...xs); }",
-        "unsupported spread",
-    );
-    refused(
-        V38,
         "export function main(): void { console.log(new URL('https://a.example/')); }",
         "unsupported logging of a value holding a URL",
-    );
-    refused(
-        V38,
-        "export function main(): void { console.error('x'); }",
-        "unsupported",
     );
 }
 

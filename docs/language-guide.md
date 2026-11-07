@@ -4338,8 +4338,8 @@ export async function main(): Promise<void> {
 ```
 
 `await` of `T | Promise<T>` waits for the promise when there is one.
-`Promise.any` rejects with an `Error("All promises were rejected")` (there is
-no `AggregateError`), an `allSettled` result's `value` is typed
+`Promise.any` rejects with an `Error("All promises were rejected")` (v38:
+an `AggregateError` of every reason), an `allSettled` result's `value` is typed
 `T | undefined`, and awaiting a promise hidden in `unknown` throws a
 `TypeError`: keep promises typed as `Promise<T>`.
 
@@ -6102,6 +6102,36 @@ available as well: `new SuppressedError(error, suppressed, "message")` is an
 `Error` whose `error` and `suppressed` fields are `unknown`, narrowed by
 `instanceof` in a `catch`. Earlier profiles keep one argument
 per `console.log` (and print booleans as `1`/`0`).
+
+The rest of Node's console works as well. `console.error`, `console.warn`,
+`console.trace` and a failed `console.assert` write standard error (`varta`
+prints those lines to standard error; the browser host forwards them to the
+page's `console.error`/`console.warn`); groups indent every line; counters,
+timers (under the `time.now` grant), `console.dir` options and
+`console.table` print as in Node:
+
+```ts
+export function main(): void {
+  const parts = ["a", 1];
+  console.error("failed:", ...parts); // standard error: failed: a 1
+  console.group("request");
+  console.warn("slow");      // standard error:   slow
+  console.count();           //   default: 1
+  console.groupEnd();
+  console.assert(1 > 2, "math"); // standard error: Assertion failed: math
+  console.dir({ a: { b: { c: 1 } } }, { depth: 0 }); // { a: [Object] }
+  console.table([{ a: 1, b: "x" }]);
+  // ┌─────────┬───┬─────┐
+  // │ (index) │ a │ b   │
+  // ├─────────┼───┼─────┤
+  // │ 0       │ 1 │ 'x' │
+  // └─────────┴───┴─────┘
+}
+```
+
+Node prints its process warnings (`console.countReset` of an unknown
+label, a repeated `console.time` label) later and with its process id;
+Varta prints them at once as `Warning: …` on standard error.
 
 #### Web bytes (opt-in v38)
 

@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with the K9 C expression and function forms (integrated with K9 A steps 1–2 and K9 B), K9 B declarations and classes, the K8 CSS engine's font-relative units, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, gated on the K9 C integration commit 1414396 whose sources equal merged `main` except the gate records: **4379 Rust tests passed, 0 failures, 25 ignored; 185 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-213007-y3wpjbwk/report.json` in that worktree. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **192 passed, 5 known unsupported out of 197** after the K9 A, B, C and D cases, module evaluation, enum and namespace objects, enum assignability, class index signatures and the K9 D1 console and SuppressedError cases (2026-11-06; console cases record Node 24 console output), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **193 passed, 5 known unsupported out of 198** after the K9 A, B, C and D cases, module evaluation, enum and namespace objects, enum assignability, class index signatures and the K9 D1 console, SuppressedError and console method cases (2026-11-06; console cases record Node 24 console output), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -384,11 +384,10 @@ Not done, each refused by name with its reason:
   functions**: need a type-directed deep copy and guest-driven
   (de)serialization walks.
 - **Intl** (NumberFormat, DateTimeFormat, PluralRules, Collator,
-  RelativeTimeFormat, ListFormat, Segmenter) and `localeCompare`/`normalize`:
+  RelativeTimeFormat, ListFormat, Segmenter) and `localeCompare`:
   need ICU4X locale data shipped deterministically (size and crate pins to
   be justified).
-- `Promise.any` still rejects with an `Error`, not an `AggregateError`;
-  object-to-primitive conversion (`String(date)`, `` `${array}` ``) stays
+- Object-to-primitive conversion (`String(date)`, `` `${array}` ``) stays
   refused.
 
 ### K9 D1 console notation — 2026-11-06
@@ -428,6 +427,37 @@ prints. Selector `node_console()`
   program `toString`/`valueOf`, `%o` shows no hidden properties of functions
   or typed arrays, non-ASCII column widths use Node's non-ICU tables,
   `console.error`/`console.warn` (standard error) are not admitted.
+
+### K9 D1 console methods and standard error — 2026-11-06
+
+Owner decisions (2026-11-06): a standard-error host operation and the rest
+of Node's console, by the spec with Node-pinned cases, v37 unchanged.
+Selector `console_methods()`
+([contract](architecture.md#console-methods-console_methods),
+[rules](profile-rules.md#console-methods-console_methods)):
+
+- `log_stderr16(level, ptr, len)` (host ABI 34, additive, capability-free)
+  with the levels `error`/`warn`; native lines `varta error: `/`varta warn: `
+  printed to standard error by `varta` and `varta-runtime`; the browser
+  worker implements it and the loader forwards each line to the page's
+  `console.error`/`console.warn`.
+- `console.error`, `console.warn`, `console.dirxml`, and the console prelude
+  for `trace`, `assert`, `group`/`groupCollapsed`/`groupEnd`, `count`/
+  `countReset`, `time`/`timeEnd`/`timeLog` (`time.now`), `dir` (inspect
+  options) and `table` (`cli_table`), through the linked `console_render`.
+- Spread arguments and `void` calls are admitted in every console method.
+- Evidence: `console_method_tests` (three Node-pinned programs on both
+  streams, timers, levels, warnings, v37 refusals).
+- D1 item 2, first part: `Promise.any` rejects with an `AggregateError` of
+  the reasons in input order; `String.prototype.normalize` (four forms,
+  lone surrogates kept) through the linked `string_normalize16` with
+  ICU4X's compiled normalization data. Dependency: `icu_normalizer` 2.4.0
+  (`default-features = false`, `compiled_data`) in the intrinsics, already
+  locked through the vendored `parley`; no new crate enters the lock.
+  Evidence: the `promises` and `strings` standard-library cases (Node 24).
+- Deviations (contract): process warnings are synchronous `Warning: …`
+  lines without a process id; millisecond timer durations; `dir` ignores
+  `colors`/`customInspect`/`getters`/`showProxy`.
 
 ### Native CSS `scale()` — native backlog batch, 2026-11-06
 
@@ -3597,6 +3627,7 @@ The selectors are registered; the table records what each stream admits.
 | `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag, host time-zone grant; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
 | `expression_forms()` | K9 C — expressions and functions (2026-11-06): `await` anywhere, comma, `new.target` comparisons, tagged templates, spreads into fixed parameters, `this` parameters and field arrows, object-literal methods with `this`, computed keys, destructuring everywhere, hand-written iterators, `using`, structural thenables | Implemented in part ([contract](architecture.md#expression-forms-expression_forms), [record](#k9-c--expressions-and-functions-2026-11-06)): no ABI, value-layout, scheduler or host change. Pending: top-level `await` (needs module-level evaluation), object-literal getters/setters, `TemplateStringsArray.raw`, `SuppressedError` for double throws in `using`, `await` in `switch` case tests |
 | `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results. No ABI, value-layout or host change. Pending (owner decision): static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
+| `console_methods()` | K9 D1 console methods (2026-11-06): standard error and the rest of Node's console | Implemented ([contract](architecture.md#console-methods-console_methods), [record](#k9-d1-console-methods-and-standard-error--2026-11-06)): `log_stderr16` (host ABI 34), the console prelude, the linked `console_render` |
 | `node_console()` | K9 D1 console notation (2026-11-06): multi-argument `console.log`/`info`/`debug` printed as Node 24 prints them | Implemented ([contract](architecture.md#console-notation-node_console), [record](#k9-d1-console-notation--2026-11-06)): the linked `varta_intrinsics::inspect`; value18 record descriptors end with a display trailer (class name, engine layouts). No host import or value tag |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module

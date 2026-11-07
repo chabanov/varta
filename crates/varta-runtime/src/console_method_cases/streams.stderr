@@ -1,0 +1,12 @@
+err 1 { a: [ 1, 2 ] }
+warn x
+{ nested: { deep: { deeper: [Object] } } }
+[Error: bad]
+Trace: x 1
+Trace
+Trace: { a: 1 }
+Assertion failed: yes 5
+Assertion failed
+Assertion failed { a: 1 }
+Assertion failed: empty string
+spread 1 two [ 3 ] end

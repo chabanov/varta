@@ -17136,6 +17136,56 @@ fn v38_standard_library_runs_in_dev_and_artifacts() {
 }
 
 #[test]
+fn v38_console_standard_error_goes_to_stderr() {
+    // `console.error` and `console.warn` (`console_methods`) write standard
+    // error in `dev`, through the packaged artifacts and the native
+    // launcher; standard output keeps the `console.log` lines. Node 24
+    // prints the same text on the same streams.
+    let source = "export function main():void{console.log('out',1);console.error('err',{a:[1]});\
+         console.group('g');console.warn('warn %s','x');console.groupEnd();console.trace('t');}";
+    let project = RegressionProject::new(source, serde_json::json!({}));
+    project.language_profile("checked-f64-utf16-v38");
+    let stdout_expected = ["varta log: out 1", "varta log: g"];
+    let stderr_expected = [
+        "varta error: err { a: [ 1 ] }",
+        "varta warn:   warn x",
+        "varta error: Trace: t",
+    ];
+    let lines = |bytes: &[u8], prefixes: &[&str]| {
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .filter(|line| prefixes.iter().any(|prefix| line.starts_with(prefix)))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let check = |output: &std::process::Output| {
+        assert!(output.status.success(), "{}", combined(output));
+        let all = ["varta log:", "varta error:", "varta warn:"];
+        assert_eq!(lines(&output.stdout, &all), stdout_expected);
+        assert_eq!(lines(&output.stderr, &all), stderr_expected);
+    };
+    check(&project.command(&["dev"]));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            check(&command.current_dir(&project.0).output().unwrap());
+        }
+    }
+    check(
+        &Command::new(project.0.join("dist/app"))
+            .current_dir(&project.0)
+            .output()
+            .unwrap(),
+    );
+    project.language_profile("checked-f64-utf16-v37");
+    let rejected = project.command(&["dev"]);
+    assert!(!rejected.status.success());
+    assert!(!combined(&rejected).contains("varta error:"));
+}
+
+#[test]
 fn v38_declaration_forms_run_in_dev_and_artifacts() {
     let source = "import {Kind, Units, Shape, Square} from './shapes.ts';\
          function describe(shape:Shape):string;\

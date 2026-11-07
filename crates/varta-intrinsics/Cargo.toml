@@ -18,5 +18,6 @@ varta-bigint = { path = "../varta-bigint" }
 # results on every host, unlike the platform `f64` library.
 libm = "=0.2.16"
 ryu-js.workspace = true
+icu_normalizer.workspace = true
 num-bigint = { version = "=0.4.8", default-features = false }
 thiserror = { version = "2.0", default-features = false }

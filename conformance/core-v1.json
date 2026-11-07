@@ -1112,6 +1112,15 @@
       ],
       "origin": "varta_contract",
       "reference": "docs/architecture.md#console-notation-node_console"
+    },
+    {
+      "id": "console-methods",
+      "title": "Console methods: standard error, groups, counters, table, assert, dir",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#console-methods-console_methods"
     }
   ],
   "cases": [
@@ -4227,6 +4236,26 @@
         "varta log: true true",
         "varta log: true",
         "varta log: {} true function"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "console-methods",
+      "feature": "console-methods",
+      "path": "cases/console-methods.ts",
+      "sha256": "dbf3b9139107cb3384da557cfdb8e3b9aa103bbbb6a73cd765e89ca762c30513",
+      "stdout": [
+        "varta error: e { a: 1 }",
+        "varta warn: w 4",
+        "varta log: g",
+        "varta log:   default: 1",
+        "varta log:   default: 2",
+        "varta log: ┌─────────┬───┬───┐\n│ (index) │ 0 │ 1 │\n├─────────┼───┼───┤\n│ 0       │ 1 │ 2 │\n└─────────┴───┴───┘",
+        "varta warn: Assertion failed: no",
+        "varta log: { a: [Object] }",
+        "varta error: Trace"
       ],
       "baseline": {
         "status": "supported"

@@ -17,6 +17,7 @@ use crate::{
     text,
 };
 use varta_bigint::Budget;
+use varta_common::console::RenderMode;
 use varta_common::value::{ErrorClass, ValueKind, string_range};
 use varta_intrinsics::{
     bigint::MAX_BITS,
@@ -83,6 +84,36 @@ pub extern "C" fn value_format_v12(cell: i64) -> i32 {
         guest::retain_root(cell as u64);
         let units = inspect::format_arguments(
             &Guest,
+            cell as u64,
+            bounds,
+            &mut Budget::new(MAX_BITS, u64::MAX),
+        )?;
+        text::produce(|sink| {
+            sink.units(&units);
+            Ok::<(), EncodeError>(())
+        })
+    })
+    .unwrap_or_else(|error| fatal(error));
+    let (ptr, len) = string_range(handle);
+    guest::set_result_len(len as i32);
+    ptr as i32
+}
+
+/// `console_render (mode, cell) -> ptr`: the text of a v38 console render
+/// request (`console_methods`: `console.dir` or `console.table`) held by
+/// the `unknown[]` cell `cell` ([`inspect::render`]), as an owned string
+/// like [`value_format_v12`]. An unknown mode traps.
+#[unsafe(no_mangle)]
+pub extern "C" fn console_render(mode: i32, cell: i64) -> i32 {
+    let Some(mode) = RenderMode::from_word(mode) else {
+        guest::trap();
+    };
+    let bounds = bounds();
+    let handle = scratch(SCRATCH_BYTES, || {
+        guest::retain_root(cell as u64);
+        let units = inspect::render(
+            &Guest,
+            mode,
             cell as u64,
             bounds,
             &mut Budget::new(MAX_BITS, u64::MAX),

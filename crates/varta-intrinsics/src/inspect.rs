@@ -17,7 +17,10 @@
 //! shared `no_std` value readers under the module's bounds, so a
 //! noncanonical layout is [`EncodeError::Layout`].
 use crate::{Memory, json::EncodeError, number::Shortest};
+
+mod console;
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
+pub use console::render;
 use varta_bigint::Budget;
 use varta_common::{
     bigint::BigIntView,
@@ -46,6 +49,8 @@ pub const HIDDEN_DEPTH: usize = 4;
 const MAX_ARRAY_LENGTH: usize = 100;
 /// `util.inspect`'s `maxStringLength`.
 const MAX_STRING_LENGTH: usize = 10_000;
+/// The `maxArrayLength` of a `console.table` cell.
+const TABLE_ARRAY_LENGTH: usize = 3;
 /// `kMinLineLength`: shorter strings never split into lines.
 const MIN_LINE_LENGTH: usize = 16;
 /// Arrays with more entries than this group into columns.
@@ -83,6 +88,59 @@ const STATE: [&[u8]; 5] = [
 const ERROR_HIDDEN: [&[u8]; 3] = [b"name", b"message", b"stack"];
 /// Milliseconds per day.
 const MS_PER_DAY: f64 = 86_400_000.0;
+
+/// `util.inspect`'s `compact`: a number of inner levels joined on one line
+/// (`false` is 0), or `true`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Compact {
+    Levels(usize),
+    Single,
+}
+
+/// The `util.inspect` options a console method sets (`console.dir`, the
+/// cells of `console.table`); [`Options::DEFAULT`] are Node's defaults. An
+/// unbounded `depth`, `breakLength`, `maxArrayLength` or `maxStringLength`
+/// (`Infinity`, `null`) is the type's maximum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Options {
+    /// `depth`, compared with the recursion level as Node compares it
+    /// (`-1` elides even the top-level object).
+    pub depth: i64,
+    pub show_hidden: bool,
+    pub break_length: usize,
+    pub compact: Compact,
+    pub max_array_length: usize,
+    pub max_string_length: usize,
+    /// `sorted: true`: object entries in code unit order.
+    pub sorted: bool,
+    /// `numericSeparator`: `_` between digit groups of Numbers and BigInts.
+    pub numeric_separator: bool,
+}
+
+impl Options {
+    pub const DEFAULT: Self = Self {
+        depth: DEFAULT_DEPTH as i64,
+        show_hidden: false,
+        break_length: BREAK_LENGTH,
+        compact: Compact::Levels(COMPACT),
+        max_array_length: MAX_ARRAY_LENGTH,
+        max_string_length: MAX_STRING_LENGTH,
+        sorted: false,
+        numeric_separator: false,
+    };
+    /// The options of a `console.table` cell (`_inspect`): `depth` 0 (`-1`
+    /// for a non-array object with more than two own keys),
+    /// `maxArrayLength` 3, unbounded `breakLength`.
+    #[must_use]
+    pub const fn table_cell(elided: bool) -> Self {
+        Self {
+            depth: if elided { -1 } else { 0 },
+            max_array_length: TABLE_ARRAY_LENGTH,
+            break_length: usize::MAX,
+            ..Self::DEFAULT
+        }
+    }
+}
 
 /// `util.formatWithOptions` of the logged argument array held by the
 /// `unknown[]` cell `cell`: `%` directives of a leading string, then every
@@ -387,8 +445,7 @@ struct Inspector<'m, 'b, M: Memory + ?Sized> {
     memory: &'m M,
     bounds: ModuleBounds,
     budget: &'b mut Budget,
-    depth: usize,
-    show_hidden: bool,
+    options: Options,
     indentation: usize,
     /// Aggregates being formatted (`ctx.seen`).
     seen: Vec<u32>,
@@ -405,8 +462,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             memory,
             bounds,
             budget,
-            depth: DEFAULT_DEPTH,
-            show_hidden: false,
+            options: Options::DEFAULT,
             indentation: 0,
             seen: Vec::new(),
             circular: Vec::new(),
@@ -573,8 +629,18 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
         depth: usize,
         show_hidden: bool,
     ) -> Result<Text, EncodeError> {
-        self.depth = depth;
-        self.show_hidden = show_hidden;
+        self.inspect_with(
+            value,
+            Options {
+                depth: depth as i64,
+                show_hidden,
+                ..Options::DEFAULT
+            },
+        )
+    }
+    /// `util.inspect(value, options)` from the top level.
+    fn inspect_with(&mut self, value: Value, options: Options) -> Result<Text, EncodeError> {
+        self.options = options;
         self.indentation = 0;
         self.seen.clear();
         self.circular.clear();
@@ -745,12 +811,21 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
                 let units = self.string(value.payload)?;
                 self.string_text(&units)
             }
-            Kind::Float64 => number(f64::from_bits(value.payload)),
+            Kind::Float64 => self.number_text(f64::from_bits(value.payload)),
             Kind::I32 => {
                 let value = i32::try_from(value.payload as i64).map_err(layout)?;
-                number(f64::from(value))
+                self.number_text(f64::from(value))
             }
-            Kind::BigInt => self.bigint(value.payload)?,
+            Kind::BigInt => {
+                let text = self.bigint(value.payload)?;
+                if self.options.numeric_separator {
+                    let mut grouped = numeric_separators(&text[..text.len() - 1]);
+                    grouped.push(u16::from(b'n'));
+                    grouped
+                } else {
+                    text
+                }
+            }
             Kind::Boolean => ascii(if value.payload == 0 { "false" } else { "true" }),
             Kind::Undefined => ascii("undefined"),
             Kind::Null => ascii("null"),
@@ -758,14 +833,44 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             _ => return Err(EncodeError::Layout),
         })
     }
+    /// `formatNumber`, with `numericSeparator` digit groups.
+    fn number_text(&self, value: f64) -> Text {
+        if !self.options.numeric_separator {
+            return number(value);
+        }
+        let integer = libm::trunc(value);
+        let whole = number(integer);
+        // `String(integer)`: a negative zero prints `0`.
+        let whole = if whole == ascii("-0") {
+            ascii("0")
+        } else {
+            whole
+        };
+        if integer == value {
+            if !value.is_finite() || contains(&whole, &ascii("e")) {
+                return whole;
+            }
+            return numeric_separators(&whole);
+        }
+        if value.is_nan() {
+            return whole;
+        }
+        let full = number(value);
+        let fraction = &full[(whole.len() + 1).min(full.len())..];
+        let mut text = numeric_separators(&whole);
+        text.push(u16::from(b'.'));
+        text.extend(numeric_separators_end(fraction));
+        text
+    }
     /// A nested string: quoted, cut at [`MAX_STRING_LENGTH`] units, and a
     /// long one split after its line breaks.
     fn string_text(&self, units: &[u16]) -> Text {
-        let (units, trailer) = if units.len() > MAX_STRING_LENGTH {
-            let remaining = units.len() - MAX_STRING_LENGTH;
+        let max = self.options.max_string_length;
+        let (units, trailer) = if units.len() > max {
+            let remaining = units.len() - max;
             let plural = if remaining > 1 { "s" } else { "" };
             (
-                &units[..MAX_STRING_LENGTH],
+                &units[..max],
                 concat(&[
                     &ascii("... "),
                     &digits(remaining as u64, 1),
@@ -776,18 +881,20 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
         } else {
             (units, Text::new())
         };
-        let mut text =
-            if units.len() > MIN_LINE_LENGTH && units.len() + self.indentation + 4 > BREAK_LENGTH {
-                let mut separator = ascii(" +\n");
-                separator.extend(spaces(self.indentation + 2));
-                let lines: Vec<Text> = units
-                    .split_inclusive(|unit| *unit == u16::from(b'\n'))
-                    .map(quoted)
-                    .collect();
-                join(&lines, &separator)
-            } else {
-                quoted(units)
-            };
+        let mut text = if self.options.compact != Compact::Single
+            && units.len() > MIN_LINE_LENGTH
+            && units.len().saturating_add(self.indentation + 4) > self.options.break_length
+        {
+            let mut separator = ascii(" +\n");
+            separator.extend(spaces(self.indentation + 2));
+            let lines: Vec<Text> = units
+                .split_inclusive(|unit| *unit == u16::from(b'\n'))
+                .map(quoted)
+                .collect();
+            join(&lines, &separator)
+        } else {
+            quoted(units)
+        };
         text.extend(trailer);
         text
     }
@@ -805,7 +912,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
                 let class = ascii(object.class.name());
                 let message = self.string(object.message)?;
                 let base = self.error_base(&class, &class, &message);
-                if !self.show_hidden {
+                if !self.options.show_hidden {
                     return Ok(base);
                 }
                 let label = class.clone();
@@ -829,7 +936,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
         opening: Text,
         body: impl FnOnce(&mut Self, usize) -> Result<(Vec<Text>, Vec<bool>), EncodeError>,
     ) -> Result<Text, EncodeError> {
-        if recurse > self.depth {
+        if recurse as i64 > self.options.depth {
             let mut text = alloc::vec![u16::from(b'[')];
             text.extend_from_slice(label);
             text.push(u16::from(b']'));
@@ -840,18 +947,31 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
         let recurse = recurse + 1;
         self.seen.push(id);
         self.current_depth = recurse;
-        let (output, numeric) = body(self, recurse)?;
+        let (mut output, numeric) = body(self, recurse)?;
         let mut base = base;
+        let mut opening = opening;
         if let Some(index) = self.circular.iter().position(|seen| *seen == id) {
             let mut reference =
                 concat(&[&ascii("<ref *"), &digits(index as u64 + 1, 1), &ascii(">")]);
-            if !base.is_empty() {
+            if self.options.compact == Compact::Single {
+                // `compact: true` puts the reference before the brace.
                 reference.push(u16::from(b' '));
-                reference.extend(base);
+                reference.extend(opening);
+                opening = reference;
+            } else {
+                if !base.is_empty() {
+                    reference.push(u16::from(b' '));
+                    reference.extend(base);
+                }
+                base = reference;
             }
-            base = reference;
         }
         self.seen.pop();
+        // `sorted`: the entries of an object in code unit order (an array's
+        // extra keys are at most its hidden `length`, so they keep theirs).
+        if self.options.sorted && !array {
+            output.sort();
+        }
         let closing = if array { ascii("]") } else { ascii("}") };
         Ok(self.reduce(
             Raw {
@@ -872,13 +992,15 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
         self.indentation -= 2;
         text
     }
-    /// `formatProperty` of a `kObjectType` property.
+    /// `formatProperty` of a `kObjectType` property, or of an array's
+    /// hidden `length` (`array`, `kArrayExtrasType`).
     fn property(
         &mut self,
         name: &[u16],
         hidden: bool,
         value: Value,
         recurse: usize,
+        array: bool,
     ) -> Result<Text, EncodeError> {
         let mut text = Text::new();
         if hidden {
@@ -888,8 +1010,26 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
         if hidden {
             text.push(u16::from(b']'));
         }
-        push(&mut text, ": ");
-        text.extend(self.nested(value, recurse)?);
+        text.push(u16::from(b':'));
+        // `compact: true` indents an object's property values by three and
+        // moves one wider than `breakLength` to its own line.
+        let diff = if self.options.compact == Compact::Single && !array {
+            3
+        } else {
+            2
+        };
+        self.indentation += diff;
+        let value = self.value(value, recurse);
+        let wide =
+            matches!(&value, Ok(value) if diff == 3 && self.options.break_length < width(value));
+        if wide {
+            text.push(u16::from(b'\n'));
+            text.extend(spaces(self.indentation));
+        } else {
+            text.push(u16::from(b' '));
+        }
+        self.indentation -= diff;
+        text.extend(value?);
         Ok(text)
     }
 
@@ -903,7 +1043,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
     }
     fn array(&mut self, payload: u64, id: u32, recurse: usize) -> Result<Text, EncodeError> {
         let vector = Vector::read_in(self.memory, payload, VERSION, self.bounds).map_err(layout)?;
-        if vector.length == 0 && !self.show_hidden {
+        if vector.length == 0 && !self.options.show_hidden {
             return Ok(ascii("[]"));
         }
         self.finish(
@@ -914,15 +1054,22 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             ascii("["),
             |inspector, recurse| {
                 let mut output = inspector.array_entries(&vector, recurse)?;
-                if inspector.show_hidden {
+                if inspector.options.show_hidden {
                     let length = Value {
                         kind: Kind::Float64,
                         payload: (vector.length as f64).to_bits(),
                     };
-                    output.push(inspector.property(&ascii("length"), true, length, recurse)?);
+                    output.push(inspector.property(
+                        &ascii("length"),
+                        true,
+                        length,
+                        recurse,
+                        true,
+                    )?);
                 }
                 let mut numeric = Vec::new();
-                for at in 0..vector.length.min(MAX_ARRAY_LENGTH + 2) {
+                let max = inspector.options.max_array_length.saturating_add(2);
+                for at in 0..vector.length.min(max) {
                     numeric.push(inspector.element(&vector, at)?.is_some_and(|element| {
                         matches!(element.kind, Kind::Float64 | Kind::I32 | Kind::BigInt)
                     }));
@@ -933,7 +1080,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
     }
     /// `formatArray` and `formatSpecialArray`.
     fn array_entries(&mut self, vector: &Vector, recurse: usize) -> Result<Vec<Text>, EncodeError> {
-        let length = vector.length.min(MAX_ARRAY_LENGTH);
+        let length = vector.length.min(self.options.max_array_length);
         let mut output = Vec::new();
         let mut at = 0;
         while at < length {
@@ -993,7 +1140,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             &digits(vector.length as u64, 1),
             &ascii(") ["),
         ]);
-        if vector.length == 0 && !self.show_hidden {
+        if vector.length == 0 && !self.options.show_hidden {
             return Ok(ascii("Uint8Array(0) []"));
         }
         self.finish(
@@ -1003,7 +1150,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             Text::new(),
             opening,
             |inspector, _| {
-                let length = vector.length.min(MAX_ARRAY_LENGTH);
+                let length = vector.length.min(inspector.options.max_array_length);
                 let mut output = Vec::with_capacity(length + 1);
                 for at in 0..length {
                     let byte = byte_at(inspector.memory, &vector, at).map_err(layout)?;
@@ -1014,7 +1161,12 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
                 }
                 Ok((
                     output,
-                    alloc::vec![true; vector.length.min(MAX_ARRAY_LENGTH + 2)],
+                    alloc::vec![
+                        true;
+                        vector
+                            .length
+                            .min(inspector.options.max_array_length.saturating_add(2))
+                    ],
                 ))
             },
         )
@@ -1043,7 +1195,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             |inspector, recurse| {
                 let mut output = Vec::with_capacity(entries.len());
                 for (name, value) in &entries {
-                    output.push(inspector.property(name, false, *value, recurse)?);
+                    output.push(inspector.property(name, false, *value, recurse, false)?);
                 }
                 Ok((output, Vec::new()))
             },
@@ -1245,7 +1397,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             |inspector, recurse| {
                 let mut output = Vec::with_capacity(fields.len());
                 for (name, value) in &fields {
-                    output.push(inspector.property(name, false, *value, recurse)?);
+                    output.push(inspector.property(name, false, *value, recurse, false)?);
                 }
                 Ok((output, Vec::new()))
             },
@@ -1318,7 +1470,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
         let message = text(self, &ERROR_MESSAGE[1..], ERROR_MESSAGE)?;
         let aggregate = record.display == RecordDisplay::AggregateError;
         let mut keys: Vec<(Text, bool, Value)> = Vec::new();
-        if self.show_hidden {
+        if self.options.show_hidden {
             keys.push((
                 ascii("stack"),
                 true,
@@ -1344,7 +1496,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
         }
         for field in Self::public(&record) {
             if (aggregate && field.key == AGGREGATE_ERRORS)
-                || (!self.show_hidden && ERROR_HIDDEN.contains(&field.key.as_slice()))
+                || (!self.options.show_hidden && ERROR_HIDDEN.contains(&field.key.as_slice()))
             {
                 continue;
             }
@@ -1376,14 +1528,14 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             |inspector, recurse| {
                 let mut output = Vec::with_capacity(keys.len());
                 for (key, hidden, value) in &keys {
-                    if inspector.show_hidden
+                    if inspector.options.show_hidden
                         && *hidden
                         && key.as_slice() == ascii("stack").as_slice()
                     {
                         output.push(ascii("[stack]: [Getter/Setter]"));
                         continue;
                     }
-                    output.push(inspector.property(key, *hidden, *value, recurse)?);
+                    output.push(inspector.property(key, *hidden, *value, recurse, false)?);
                 }
                 Ok((output, Vec::new()))
             },
@@ -1441,7 +1593,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             Text::new(),
             ascii(&(prefix.clone() + "{")),
             |inspector, recurse| {
-                let length = entries.len().min(MAX_ARRAY_LENGTH);
+                let length = entries.len().min(inspector.options.max_array_length);
                 let mut output = Vec::with_capacity(length + 1);
                 inspector.indentation += 2;
                 for (key, value) in &entries[..length] {
@@ -1461,7 +1613,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
         )
     }
 
-    /// `reduceToSingleString` with `compact: 3`.
+    /// `reduceToSingleString`.
     fn reduce(&self, raw: Raw, recurse: usize) -> Text {
         let Raw {
             base,
@@ -1470,9 +1622,12 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             output,
             numeric,
         } = raw;
+        let Compact::Levels(compact) = self.options.compact else {
+            return self.reduce_single(base, [opening, closing], &output);
+        };
         let entries = output.len();
-        let output = if array && entries > GROUP_ENTRIES {
-            self.group(output, &numeric)
+        let output = if compact >= 1 && array && entries > GROUP_ENTRIES {
+            self.group(output, &numeric, compact)
         } else {
             output
         };
@@ -1481,9 +1636,12 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             text.extend_from_slice(&base);
             text.push(u16::from(b' '));
         }
-        if self.current_depth.saturating_sub(recurse) < COMPACT && entries == output.len() {
+        if compact >= 1
+            && self.current_depth.saturating_sub(recurse) < compact
+            && entries == output.len()
+        {
             let start = output.len() + self.indentation + opening.len() + base.len() + LINE_START;
-            if below_break_length(&output, start, &base) {
+            if below_break_length(&output, start, &base, self.options.break_length) {
                 let joined = join(&output, &ascii(", "));
                 if !joined.contains(&u16::from(b'\n')) {
                     text.extend(opening);
@@ -1508,13 +1666,50 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
         text.extend(closing);
         text
     }
+    /// `reduceToSingleString` with `compact: true`: entries on one line
+    /// within `breakLength`, otherwise one per line after the brace.
+    fn reduce_single(&self, base: Text, braces: [Text; 2], output: &[Text]) -> Text {
+        let [opening, closing] = braces;
+        let mut text = opening.clone();
+        if below_break_length(output, 0, &base, self.options.break_length) {
+            if !base.is_empty() {
+                text.push(u16::from(b' '));
+                text.extend_from_slice(&base);
+            }
+            text.push(u16::from(b' '));
+            text.extend(join(output, &ascii(", ")));
+            text.push(u16::from(b' '));
+            text.extend(closing);
+            return text;
+        }
+        let indentation = spaces(self.indentation);
+        if base.is_empty() && opening.len() == 1 {
+            text.push(u16::from(b' '));
+        } else {
+            if !base.is_empty() {
+                text.push(u16::from(b' '));
+                text.extend_from_slice(&base);
+            }
+            text.push(u16::from(b'\n'));
+            text.extend_from_slice(&indentation);
+            push(&mut text, "  ");
+        }
+        let mut separator = ascii(",\n");
+        separator.extend_from_slice(&indentation);
+        push(&mut separator, "  ");
+        text.extend(join(output, &separator));
+        text.push(u16::from(b' '));
+        text.extend(closing);
+        text
+    }
     /// `groupArrayElements`: more than six entries in aligned columns when
     /// at least three fit side by side and no entry dominates.
-    fn group(&self, output: Vec<Text>, numeric: &[bool]) -> Vec<Text> {
+    fn group(&self, output: Vec<Text>, numeric: &[bool], compact: usize) -> Vec<Text> {
+        let break_length = self.options.break_length;
         let mut total = 0usize;
         let mut max = 0usize;
         let mut length = output.len();
-        if MAX_ARRAY_LENGTH < output.len() {
+        if self.options.max_array_length < output.len() {
             // The "... more items" entry stays out of the columns.
             length -= 1;
         }
@@ -1524,7 +1719,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             max = max.max(*len);
         }
         let actual_max = max + SEPARATOR_SPACE;
-        if !(actual_max * 3 + self.indentation < BREAK_LENGTH
+        if !((actual_max * 3).saturating_add(self.indentation) < break_length
             && (total as f64 / actual_max as f64 > 5.0 || max <= 6))
         {
             return output;
@@ -1533,8 +1728,8 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
         let biased_max = (actual_max as f64 - 3.0 - average_bias).max(1.0);
         let columns = [
             libm::floor(libm::sqrt(CHAR_HEIGHTS * biased_max * length as f64) / biased_max + 0.5),
-            libm::floor((BREAK_LENGTH - self.indentation) as f64 / actual_max as f64),
-            (COMPACT * 4) as f64,
+            libm::floor(break_length.saturating_sub(self.indentation) as f64 / actual_max as f64),
+            (compact * 4) as f64,
             MAX_COLUMNS as f64,
         ]
         .into_iter()
@@ -1578,7 +1773,7 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             }
             grouped.push(line);
         }
-        if MAX_ARRAY_LENGTH < output.len() {
+        if self.options.max_array_length < output.len() {
             grouped.push(output[length].clone());
         }
         grouped
@@ -1596,15 +1791,47 @@ enum Numeric {
 fn utf16(bytes: &[u8]) -> Text {
     String::from_utf8_lossy(bytes).encode_utf16().collect()
 }
+/// `addNumericSeparator`: `_` before every group of three integer digits.
+fn numeric_separators(integer: &[u16]) -> Text {
+    let start = usize::from(integer.first() == Some(&u16::from(b'-')));
+    let mut groups: Vec<&[u16]> = Vec::new();
+    let mut at = integer.len();
+    while at >= start + 4 {
+        groups.push(&integer[at - 3..at]);
+        at -= 3;
+    }
+    if at == integer.len() {
+        return integer.to_vec();
+    }
+    let mut text = integer[..at].to_vec();
+    for group in groups.iter().rev() {
+        text.push(u16::from(b'_'));
+        text.extend_from_slice(group);
+    }
+    text
+}
+/// `addNumericSeparatorEnd`: `_` after every group of three fraction
+/// digits but the last.
+fn numeric_separators_end(fraction: &[u16]) -> Text {
+    let mut text = Text::new();
+    let mut at = 0;
+    while at + 3 < fraction.len() {
+        text.extend_from_slice(&fraction[at..at + 3]);
+        text.push(u16::from(b'_'));
+        at += 3;
+    }
+    text.extend_from_slice(&fraction[at..]);
+    text
+}
 /// `isBelowBreakLength`.
-fn below_break_length(output: &[Text], start: usize, base: &[u16]) -> bool {
+fn below_break_length(output: &[Text], start: usize, base: &[u16], break_length: usize) -> bool {
     let mut total = output.len() + start;
-    if total + output.len() > BREAK_LENGTH {
+    if total + output.len() > break_length {
         return false;
     }
     for entry in output {
         total += entry.len();
-        if total > BREAK_LENGTH {
+        if total > break_length {
             return false;
         }
     }

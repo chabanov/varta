@@ -28,6 +28,7 @@ pub(crate) const METHODS: &[&str] = &[
     "substr",
     "isWellFormed",
     "toWellFormed",
+    "normalize",
     "toLocaleUpperCase",
     "toLocaleLowerCase",
     "hasOwnProperty",
@@ -236,6 +237,7 @@ impl Lower<'_> {
             "at" => "stringAt",
             "substr" => "stringSubstr",
             "isWellFormed" => "stringIsWellFormed",
+            "normalize" => "stringNormalize",
             "toWellFormed" => "stringToWellFormed",
             _ => {
                 return Err(self

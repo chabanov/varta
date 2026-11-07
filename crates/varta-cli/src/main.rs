@@ -221,7 +221,7 @@ struct ExecutionFlags {
 /// then return the failure (printed by `main` as the diagnostic).
 fn finish(report: varta_project::RunReport, budget_report: bool) -> Result<i32, ProjectError> {
     for line in &report.output.lines {
-        println!("{line}");
+        console_line(&line);
     }
     if budget_report && let Some(budget) = &report.budget {
         for line in budget.lines() {
@@ -236,7 +236,7 @@ fn finish(report: varta_project::RunReport, budget_report: bool) -> Result<i32, 
 
 fn output(result: varta_project::RunOutput) -> i32 {
     for line in result.lines {
-        println!("{line}");
+        console_line(&line);
     }
     result.exit_code
 }
@@ -368,7 +368,7 @@ fn execute(
             // The output, the snapshot of a run that did not fail, then the
             // budget report and the failure.
             for line in std::mem::take(&mut report.output.lines) {
-                println!("{line}");
+                console_line(&line);
             }
             let snapshot_json = if report.failure.is_none() {
                 snapshot
@@ -565,7 +565,7 @@ fn observer(budget_report: bool) -> varta_project::RuntimeObserver {
         varta_project::RuntimeEvent::Listening {
             address, scheme, ..
         } => eprintln!("varta listening: {scheme}://{address}"),
-        varta_project::RuntimeEvent::Output(line) => println!("{line}"),
+        varta_project::RuntimeEvent::Output(line) => console_line(&line),
         varta_project::RuntimeEvent::Diagnostic(message) => eprintln!("varta HTTP: {message}"),
         varta_project::RuntimeEvent::HttpRequest(report) => {
             if budget_report && let Some(budget) = &report.budget {
@@ -687,5 +687,16 @@ fn main() {
             eprintln!("varta failed: {error}");
             std::process::exit(1);
         }
+    }
+}
+
+/// Print one captured console line to its stream: standard-error lines
+/// (`console.error`, `console.warn` and the other v38 standard-error
+/// methods) to standard error, every other line to standard output.
+fn console_line(line: &str) {
+    if varta_project::is_standard_error(line) {
+        eprintln!("{line}");
+    } else {
+        println!("{line}");
     }
 }

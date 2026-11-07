@@ -86,6 +86,7 @@ const COMMON_CORE: &[&str] = &[
     "crates/varta-common/src/abi.rs",
     "crates/varta-common/src/abi/static_region.rs",
     "crates/varta-common/src/bigint.rs",
+    "crates/varta-common/src/console.rs",
     "crates/varta-common/src/exceptions.rs",
     "crates/varta-common/src/fuel.rs",
     "crates/varta-common/src/json/mod.rs",

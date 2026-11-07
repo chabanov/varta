@@ -66,6 +66,9 @@ const EFFECTS: &[H] = &[
     H::LogFloatV2,
     H::LogUndefined,
     H::LogString16,
+    // V38 standard error (`console_methods`): forwarded to the page's
+    // `console.error`/`console.warn` by the loader.
+    H::LogStderr16,
     H::EnvGet16,
     H::EnvHas16,
     H::PromiseReact,
@@ -427,7 +430,7 @@ impl BrowserArtifact {
             "manifest":file(MANIFEST,&manifest),"worker":file(WORKER_FILE,&worker),
             "booleanCapabilities":registry_data["booleanCapabilities"],"network":registry_data["network"],
             "view":registry_data["view"],"hasView":self.inspection.imports.iter().any(|import|import.name==H::ViewCommit.name()),
-            "permissions":registry_data["permissions"],"environment":registry_data["environment"],"effects":registry_data["effects"],
+            "permissions":registry_data["permissions"],"environment":registry_data["environment"],"effects":registry_data["effects"],"console":registry_data["console"],
             "hasPermissions":!self.original.manifest.capabilities.is_empty(),
             "budgets":budgets,"budgetRules":rules,"requestedBudgets":wanted,"turnBudgets":profile.turn_budgets(),"imports":self.inspection.imports,
             "memoryExport":varta_common::abi::MEMORY_EXPORT,
@@ -453,7 +456,7 @@ impl BrowserArtifact {
         let parent_view = embedded_sources(true);
         // The loader validates an embedder's recorded network log with the
         // transport module's reader before any file loads.
-        let loader = format!("const descriptor = {descriptor};\nconst registry = {{network:descriptor.network,view:descriptor.view,permissions:descriptor.permissions,environment:descriptor.environment}};\n{parent_view}\n{NETWORK_POLICY}\n{TRANSPORT}\n{LOADER}").into_bytes();
+        let loader = format!("const descriptor = {descriptor};\nconst registry = {{network:descriptor.network,view:descriptor.view,permissions:descriptor.permissions,environment:descriptor.environment,console:descriptor.console}};\n{parent_view}\n{NETWORK_POLICY}\n{TRANSPORT}\n{LOADER}").into_bytes();
         let origins = varta_common::browser::request_origins(&self.original.manifest)?;
         // URL domains admit punctuation that CSP host-source tokens do not.
         // Reject it before HTML generation: neither attribute escaping nor a

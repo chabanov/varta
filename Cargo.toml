@@ -36,6 +36,10 @@ license = "MIT"
 rust-version = "1.95.0"
 
 [workspace.dependencies]
+# Unicode normalization (`String.prototype.normalize`, v38) in the linked
+# intrinsics: already locked through the vendored `parley`; `no_std` with
+# the compiled ICU4X data, the same release as the text stack.
+icu_normalizer = { version = "=2.4.0", default-features = false, features = ["compiled_data"] }
 clap = { version = "4.6", features = ["derive"] }
 thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"] }

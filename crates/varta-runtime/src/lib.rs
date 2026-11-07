@@ -140,9 +140,11 @@ mod replay;
 pub use replay::NetworkMode;
 pub use varta_common::net::replay::{NetworkLog, NetworkLogError, ReplayError};
 #[cfg(test)]
-mod declaration_form_tests;
+mod console_method_tests;
 #[cfg(test)]
 mod console_tests;
+#[cfg(test)]
+mod declaration_form_tests;
 #[cfg(test)]
 mod expression_form_tests;
 #[cfg(test)]

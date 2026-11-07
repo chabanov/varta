@@ -938,6 +938,14 @@ impl Lower<'_> {
             return self.math_call(call, member);
         }
         if call.args.iter().any(|arg| arg.spread.is_some()) {
+            // V38 console methods take spread arguments (`console_methods`).
+            if self.types.profile.console_methods()
+                && crate::link::links(self.types.profile, Host::ValueFormatV12)
+                && let Some(method) = callee_name(callee)
+                    .and_then(|name| console::Method::of(&name, self.types.profile))
+            {
+                return self.console_call(call, method);
+            }
             if let ast::Expr::Ident(id) = &**callee
                 && self.timer_builtin(id.sym.as_ref())
             {
@@ -1427,16 +1435,15 @@ impl Lower<'_> {
                 kind: E::Status,
             });
         }
+        // Under the host-import test switch that hosts the formatter, the
+        // host's `value_log_v12` renders values in the earlier notation, so
+        // v38 lowers logging as v37 does.
+        if crate::link::links(self.types.profile, Host::ValueFormatV12)
+            && let Some(method) = console::Method::of(&name, self.types.profile)
+        {
+            return self.console_call(call, method);
+        }
         let (host, expected, result) = match name.as_str() {
-            // Under the host-import test switch that hosts the formatter,
-            // the host's `value_log_v12` renders values in the earlier
-            // notation, so v38 lowers logging as v37 does.
-            "console.log" | "log" | "console.info" | "console.debug"
-                if self.types.profile.node_console()
-                    && crate::link::links(self.types.profile, Host::ValueFormatV12) =>
-            {
-                return self.console_log(call);
-            }
             "console.log" | "log" => {
                 if call.args.len() != 1 {
                     return Err(invalid("log expects one argument"));

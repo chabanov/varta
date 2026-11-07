@@ -6,3 +6,10 @@ false true false
 fffd 78 fffd
 abc
 STRASSE àb
+NFC 1e9b 323 c5 fb01 bd
+NFD 17f 323 307 41 30a fb01 bd
+NFKC 1e69 c5 66 69 31 2044 32
+NFKD 73 323 307 41 30a 66 69 31 2044 32
+e9 61 d800 301 c5 dc00 301
+8 true
+RangeError: The normalization form should be one of NFC, NFD, NFKC, NFKD.

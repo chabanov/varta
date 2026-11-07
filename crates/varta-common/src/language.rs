@@ -864,6 +864,19 @@ impl LanguageProfile {
     pub fn node_console(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 D1 console methods (owner decision 2026-11-06): the
+    /// standard-error host operation `log_stderr16`
+    /// ([`crate::HostOperation::LogStderr16`], levels
+    /// [`crate::console::StderrLevel`]) behind `console.error` and
+    /// `console.warn`, and the rest of Node's console (`trace`, `assert`,
+    /// `table`, `dir`, `group`/`groupEnd` indentation, `count`/`countReset`,
+    /// `time`/`timeEnd`/`timeLog` under the `time.now` grant) in the engine
+    /// prelude `<varta>/builtins/console.ts`. Earlier profiles keep refusing
+    /// every console method but `log`.
+    #[must_use]
+    pub fn console_methods(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, wave-3 bytes stream: a `Uint8Array` carries its own value
     /// tag ([`crate::value::ValueKind::Bytes`], an additive tag of the
     /// in-development value layout 18) in record fields, array elements,

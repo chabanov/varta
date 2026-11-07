@@ -17,6 +17,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+pub use varta_common::console::is_standard_error;
 pub use varta_common::permission::DecisionFile;
 pub use varta_common::profile::{FuelProfile, FunctionFuel};
 use varta_runtime::{ApplicationOptions, RunOptions, VartaRuntime};

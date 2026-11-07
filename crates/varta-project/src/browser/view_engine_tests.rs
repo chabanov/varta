@@ -456,6 +456,7 @@ fn view_engine_matches_its_sources() {
             "src/abi.rs",
             "src/abi/static_region.rs",
             "src/bigint.rs",
+            "src/console.rs",
             "src/exceptions.rs",
             "src/fuel.rs",
             "src/json/mod.rs",

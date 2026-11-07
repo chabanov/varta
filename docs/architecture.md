@@ -11805,12 +11805,21 @@ prelude loads only for programs that name one of its methods
   `instanceof`, `cause`, `toString`). `Promise.all`/`allSettled`/`any`/`race`
   over an array literal that mixes `Promise.reject(...)` with promises of one
   type give the rejections that type (TypeScript's `Promise<never>`).
-  `Promise.any` still rejects with an `Error` named `Error`, not an
-  `AggregateError`.
+  `Promise.any` rejects with an `AggregateError` whose `errors` are the
+  elements' reasons in input order (ECMA-262 §27.2.4.3; the aggregate
+  prelude's `anyRejection`, loaded by `Promise.any`), and with an empty
+  one for an empty array (K9 D1, 2026-11-06). V37 keeps its `Error`.
 - **Math and strings.** `Math.max(...xs)`/`Math.min(...xs)` with spread
   `number[]` arguments (NaN wins, +0 above −0). `String.prototype.at`,
   `substr` (Annex B), `isWellFormed`, `toWellFormed` and locale-free
-  `toLocaleUpperCase`/`toLocaleLowerCase`.
+  `toLocaleUpperCase`/`toLocaleLowerCase`. `String.prototype.normalize`
+  (`NFC` by default, `NFD`, `NFKC`, `NFKD`; any other form throws
+  `RangeError`) through the linked `string_normalize16` (pure, never
+  imported; form word `text::NormalizationForm`) with ICU4X's compiled
+  normalization data (`icu_normalizer` 2.4.0, already locked through the
+  text stack). A lone surrogate is a normalization boundary kept as it is,
+  as V8 keeps it; the Unicode version is ICU4X's, which may differ from
+  Node's ICU for characters assigned after it.
 - **Date.** The v38 date prelude replaces the v37 class with the complete
   `Date` (§21.4): `Date.UTC`, the component constructor (local time,
   years 0–99 as 1900–1999), every local and UTC getter and setter (with
@@ -12250,7 +12259,9 @@ and their one-argument rule.
   `value_format_v12` returns for the array's cell. Under v38
   `value_format_v12` therefore takes the cell of the *argument list*, not of
   one value; it stays a linked intrinsic with no host import. A spread
-  argument and a `void` expression are refused at compile time. Logging
+  argument contributes its elements in source order (the array literal
+  path, so its elements box as `unknown` values do), and a call of a `void`
+  function logs `undefined` after the call (`console_methods`). Logging
   admits every value `unknown` holds and, for logging only, `Map` and `Set`
   values, `Date` instances and class instances with `#private` fields;
   values that may reach a URL, a RegExp match array or another builtin
@@ -12314,8 +12325,70 @@ and their one-argument rule.
   time value); `%o` of a function or a typed array shows no hidden
   properties; the column width of non-ASCII entries uses Node's non-ICU
   width tables instead of ICU's; `%j` of a value holding a BigInt ends the
-  execution with the serializer's failure where Node throws. `console.error`
-  and `console.warn` (standard error) stay unsupported.
+  execution with the serializer's failure where Node throws. Standard error
+  and the rest of Node's console: [console methods](#console-methods-console_methods).
+
+#### Console methods (`console_methods`)
+
+K9 D1, owner decision 2026-11-06. V38 has the whole Node 24 console of
+`lib/internal/console/constructor.js`, printed as Node prints it; earlier
+profiles keep refusing every method but `log`.
+
+- **Standard error (host ABI 34, additive).** `log_stderr16(level, ptr,
+  len)` (`HostOperation::LogStderr16`) writes one standard-error line of
+  the UTF-16 text at `ptr`/`len`. The level word
+  (`console::StderrLevel`: 0 `error`, 1 `warn`) names the console method
+  that wrote it; any other word traps before the text is read. It is
+  capability-free and bounded like `log_string16`: the module's string limit,
+  one host call, fair fuel per byte and the shared output budget. The native
+  runtime records the line in the execution's ordered output with the
+  level's prefix (`varta error: `, `varta warn: `; standard output keeps
+  `varta log: `), so a host routes a line by its prefix alone
+  (`console::is_standard_error`); `varta` and `varta-runtime` print those
+  lines to standard error. The official browser host's worker implements
+  the same import, and its loader only forwards each standard-error line to
+  the page's `console.error` or `console.warn` (the registry's `console`
+  section names prefixes and methods); the line stays in the ordered output.
+  Validation admits the import only under host ABI 34 profiles.
+- **Methods.** `console.error` and `console.warn` format as `console.log`
+  does and write standard error at their level; `console.dirxml` is
+  `console.log`. The other methods live in the engine prelude
+  `<varta>/builtins/console.ts` (`modules::engine::CONSOLE`), which a
+  program loads by naming one of them: `trace` (the stack of a `Trace`
+  error without frames: `Trace: message`, or `Trace`), `assert` (a falsy
+  condition writes `Assertion failed[: first string]` and the remaining
+  arguments through `warn`), `group`/`groupCollapsed`/`groupEnd` (two
+  spaces of indentation before every line, standard error included, as
+  `kWriteToConsole` indents), `count`/`countReset`, `time`/`timeEnd`/
+  `timeLog` (`formatTime` of `internal/util/debuglog`), `dir` and `table`.
+  A program that loads the prelude writes every console call through its
+  `consoleWrite`, so the indentation applies to all of them; a program
+  that names none of these methods writes directly and keeps its bytes.
+- **`dir` and `table`.** The linked intrinsic `console_render(mode, cell)`
+  (`HostOperation::ConsoleRender`, `console::RenderMode`, never imported)
+  renders the request array the prelude builds:
+  `util.inspect(value, options)` for `dir` with `depth` (`null` unbounded),
+  `showHidden`, `breakLength`, `compact` (a number, `false` or `true`),
+  `maxArrayLength`, `maxStringLength`, `sorted` (`true`) and
+  `numericSeparator`, and `Console.prototype.table` with
+  `internal/cli_table` for `table` (index, column and `Values` columns,
+  `Map` and `Set` iteration tables, `properties` filters, cells inspected
+  at depth 0 or `-1` with `maxArrayLength` 3 and no line breaking, column
+  widths by `getStringWidth`). A primitive or a function given to `table`
+  is logged as `console.log` logs it.
+- **Clock.** `time`, `timeEnd` and `timeLog` read the `time.now` clock of
+  `Date.now` (its grant decides; a denial reports itself as `Date.now`
+  does). Durations therefore have whole milliseconds.
+- **Deviations from Node** (documented, not silent): Node writes its process
+  warnings (`countReset` of an unknown label, a repeated `time` label, an
+  unknown `timeEnd`/`timeLog` label) asynchronously as `(node:PID) Warning:
+  …` with a one-time `--trace-warnings` hint; Varta writes them at once as
+  one `Warning: …` line on standard error (`warn` level, outside the group
+  indentation). Timer durations come from the millisecond `time.now` clock,
+  not a monotonic high-resolution one. `dir` ignores `colors`,
+  `customInspect`, `getters` and `showProxy` (no ANSI colors, no custom
+  inspection or accessor properties exist) and admits only `sorted: true`
+  (a comparator function is a type error of its typed options).
 
 #### Bytes held by unknown (`byte_values`)
 
