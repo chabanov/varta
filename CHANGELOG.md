@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- K8 T2 S5 (first part), selectors: complex selectors with the four
+  combinators, type and universal selectors, `:is()`, `:where()`, `:not()`,
+  `:root`, `:host`, the structural pseudo-classes with `An+B`, `:focus`,
+  `:focus-within` and `:enabled`, Selectors 4 specificity, bounded matching
+  charged to the cascade work estimate; a winning `margin`, `padding` or
+  `gap` shorthand now overrides its longhands in the engine's computed
+  values (the browser bridge applied a losing longhand last). Tailwind
+  application candidates accepted: 228 to 251 of 312; the theme's
+  `:root, :host` rule is admitted.
 - K8 T2 S4 (first part), layout and text properties: CSS Logical 1
   `padding-`/`margin-`/`inset-` `inline`/`block` properties (with
   `-start`/`-end`), `inset` and `flex` map onto physical longhands at their

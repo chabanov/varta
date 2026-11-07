@@ -84,7 +84,7 @@ test("refusals happen before any effect and keep the committed engine state", ()
   const model = createViewModel({ viewEngine });
   model.commit(encodeViewBatch([{ name: "create_element", node: 2, tag: "div" }, { name: "insert", parent: 1, node: 2, before: 0 }, { name: "set_class", node: 2, text: "sm:flex" }, { name: "stylesheet", sheet: 1, text: ".sm\\:flex { color: oklch(0.5 0.1 10) }" }]));
   const before = Object.fromEntries(model.engine.computed(2));
-  assert.throws(() => model.commit(encodeViewBatch([{ name: "stylesheet", sheet: 1, text: ".sm\\:flex { color: #fff }" }, { name: "stylesheet", sheet: 2, text: ".a > .b {}" }])), /stylesheet value/);
+  assert.throws(() => model.commit(encodeViewBatch([{ name: "stylesheet", sheet: 1, text: ".sm\\:flex { color: #fff }" }, { name: "stylesheet", sheet: 2, text: "#b {}" }])), /stylesheet value/);
   assert.deepEqual(Object.fromEntries(model.engine.computed(2)), before);
   assert.throws(() => model.commit(encodeViewBatch([{ name: "set_class", node: 2, text: "a\u0001" }])), /class value/);
   assert.throws(() => model.commit(encodeViewBatch([{ name: "set_style", node: 2, property: "border-radius", text: "calc(100% - 1rem)" }])), /style value/);

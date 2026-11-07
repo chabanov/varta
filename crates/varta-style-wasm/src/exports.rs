@@ -177,8 +177,14 @@ pub extern "C" fn view_engine_environment(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn view_engine_state(focus: u32, hovered: u32, active: u32) {
-    with(|session, _| session.set_state(focus, hovered, active));
+pub extern "C" fn view_engine_state(focus_visible: u32, hovered: u32, active: u32) {
+    with(|session, _| session.set_state(focus_visible, hovered, active));
+}
+
+/// The focused element (`:focus`, `:focus-within`), or 0.
+#[unsafe(no_mangle)]
+pub extern "C" fn view_engine_focus(focus: u32) {
+    with(|session, _| session.set_focus(focus));
 }
 
 /// The committed computed values of `id` as output bytes

@@ -3487,6 +3487,133 @@
      "1px"
     ]
    ]
+  },
+  {
+   "name": "s5-root-host",
+   "sheet": ":root, :host { --c: #123 } .t { color: var(--c) }",
+   "classes": [
+    "",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-child",
+   "sheet": ".a > .t { color: #111 } .t { color: #222 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-descendant",
+   "sheet": ".a .t { color: #111 } .b > .t { color: #333 }",
+   "classes": [
+    "a",
+    "b",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-where-zero",
+   "sheet": ":where(.a > .t) { color: #111 } .t { color: #222 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-is-max",
+   "sheet": ":is(.a .t, .x.y.z) { color: #111 } .a.a .t { color: #222 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-not",
+   "sheet": ".t:not(.x) { color: #111 } .t:not(.t) { color: #222 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-structural",
+   "sheet": ".t:first-child:last-child:only-child:nth-child(1):nth-last-of-type(1) { color: #111 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-type",
+   "sheet": "div.t { color: #111 } button.t { color: #222 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-universal",
+   "sheet": "* { color: #111 } .a * { padding-top: 1px }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-shorthand-over-longhand",
+   "sheet": ":where(.t) { margin-right: 6px } .t { margin: 2px } .t { padding-left: 3px } .t { padding: 1px 2px }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-longhand-over-shorthand",
+   "sheet": ".t { margin: 2px } .a .t { margin-left: 7px } .t { gap: 1px 2px } :where(.t) { row-gap: 5px }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-pseudo-element-refused",
+   "sheet": ".t::after { color: #111 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-has-refused",
+   "sheet": ".t:has(.x) { color: #111 }",
+   "classes": [
+    "a",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-group-hover",
+   "sheet": "@media (hover: hover) { :is(:where(.group):hover .t) { color: #111 } }",
+   "classes": [
+    "group",
+    "t"
+   ],
+   "style": []
   }
  ]
 }

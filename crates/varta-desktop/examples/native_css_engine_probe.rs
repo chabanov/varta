@@ -471,6 +471,27 @@ const SCENES: &[Scene] = &[
             ("d", "AHx 0A"),
         ],
     },
+    Scene {
+        name: "complex-selectors",
+        sheet: ":root, :host { --c: #c00 } .r { display: flex; flex-wrap: wrap; align-items: flex-start } .r > div { width: 30px; height: 12px; margin: 2px; background-color: #ccc } .r > :first-child { background-color: var(--c) } .r > :nth-child(3n+2) { background-color: #0a0 } .r > div:last-child { background-color: #00c } :where(.r > :not(:last-child)) { margin-right: 6px } .x + .y { background-color: #cc0 } .x ~ .z { height: 20px } .g .inner { width: 8px; height: 6px; background-color: #0cc } :is(.a, .b.c) div { width: 10px; height: 6px; background-color: #f80 } .r .q:only-child { background-color: #808 } div:not(.p):not(.x):nth-of-type(even) { border: 2px solid #000 } .r > .p:nth-last-child(1) { opacity: 0.5 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("p", &[]),
+                Node("x", &[]),
+                Node("y", &[]),
+                Node("p", &[]),
+                Node("z", &[]),
+                Node("g", &[Node("inner", &[])]),
+                Node("a", &[Node("q", &[])]),
+                Node("p", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
 ];
 
 /// A text measurer over the scene's packaged faces.

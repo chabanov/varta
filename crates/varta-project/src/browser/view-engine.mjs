@@ -87,7 +87,8 @@ export function createViewEngine(module, { fontMetrics } = {}) {
     defaultFamily(family) { input(family ?? ""); return exports.view_engine_default_family(); },
     charge: () => exports.view_engine_charge(),
     environment: (width, height, rootFontSize, mediumFontSize, flags) => exports.view_engine_environment(width, height, rootFontSize, mediumFontSize, flags),
-    state: (focus, hovered, active) => exports.view_engine_state(focus, hovered, active),
+    state: (focusVisible, hovered, active) => exports.view_engine_state(focusVisible, hovered, active),
+    focus: (focused) => exports.view_engine_focus(focused),
     /** The committed computed values of element `id`: property name to CSS text. */
     computed(id) {
       const length = exports.view_engine_computed(id);

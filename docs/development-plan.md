@@ -8078,6 +8078,36 @@ same day ([contract](architecture.md#view-css-engine-k8-t2-and-t3)).
   `text-transform`, `inline-block`, `inline-flex`, `fit-content`, `sticky`,
   `-webkit-box` line clamping, `rotate`.
 
+#### K8 T2 S5, first part: complex selectors (2026-11-06)
+
+- **Model.** `stylesheet::selector` parses selector lists into complex
+  selectors (compounds and combinators) with Selectors 4 specificity; the
+  engine (`varta_style::selectors`) matches them over the host's tree with
+  Servo's restart rules, and the cascade index anchors a rule by its
+  subject's first class, `:root`, or else every element. Matching moved out
+  of `varta-common`; `PSEUDO_CLASSES` is now the selector module's list.
+- **Admitted:** the four combinators, type and universal selectors, `:is()`,
+  `:where()`, `:not()`, `:root`, `:host` (matches nothing in view sheets),
+  the structural pseudo-classes with `An+B`, `:focus`, `:focus-within`,
+  `:enabled`. Bounds: nesting 4, compounds 16, and a per-candidate work
+  estimate charged before values are computed.
+- **Found on the way:** a `margin`/`padding`/`gap` shorthand that won the
+  cascade over its longhand lost in the browser (the bridge sets the
+  longhand inline after the shorthand); the engine now gives the longhand
+  the shorthand's component. Natively, cached style reads now also
+  invalidate on child order.
+- **Evidence.** Corpus: 14 new selector cases on all hosts. Chrome oracle
+  scene `complex-selectors` (combinators, `:where`/`:is`/`:not`,
+  structural, `:root, :host`, shorthand against `:where()` longhand):
+  `bridge` 795 and `platform` 783 checks at 1x, 1.25x and 2x.
+- **Tailwind acceptance:** 228 → 251 of 312 candidates (80.4%). Open S5
+  items: attribute selectors (`aria-*` need the attributes mirrored into
+  the engine session; `data-*` need protocol support), `:has()` (with a
+  subtree work bound), pseudo-elements (`::after`, `::placeholder`,
+  `::backdrop`: generated boxes natively, per-element pseudo rules in the
+  bridge), the form-validity pseudo-classes (`:invalid`), and the
+  `transition`/`animation` interplay with `translate`/`scale`.
+
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
 Goal: the native HTTP server runs at current standards, secure and fast enough

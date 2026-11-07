@@ -15121,11 +15121,37 @@ oracle, not the definition.
   `translate`, then `scale`, then `transform` list (Transforms 2 §6.1)
   around the `transform-origin`; letter spacing is added after every
   typographic character unit by the shaper.
+- **Selectors (S5, first part; Selectors 4).** Selector lists of complex
+  selectors (`stylesheet::selector`): type and universal selectors (the view
+  tags), classes, the descendant, child, next-sibling and
+  subsequent-sibling combinators, `:is()` and `:where()` (forgiving lists)
+  and `:not()`, nested at most `selector::MAX_SELECTOR_NESTING` deep with at
+  most `selector::MAX_COMPOUNDS` compounds per complex selector; `:root`;
+  `:host`, which in the view's sheets matches nothing (Scoping 1 §3.2.1);
+  `:first-child`, `:last-child`, `:only-child`, their `-of-type` forms and
+  `:nth-child()`, `:nth-last-child()`, `:nth-of-type()`,
+  `:nth-last-of-type()` with `An+B` (no `of S`), counting element siblings;
+  `:hover`, `:active`, `:focus`, `:focus-within`, `:focus-visible`,
+  `:enabled`, `:disabled` and `:checked`. Specificity is the
+  `(ids, classes, types)` triple of §17 (`:where()` adds nothing, `:is()`
+  and `:not()` their most specific argument). The engine matches right to
+  left with the restart rules of Servo's matcher, so a failed descendant
+  search never retries above its closest failing ancestor; selectors that
+  search ancestors, siblings or arguments charge
+  `compounds × (ancestors + siblings + 1)` to the cascade work estimate per
+  candidate element. The browser bridge records the focused element
+  (`view_engine_focus`) apart from the focus-visible one; natively every
+  focus is visible, as before. A shorthand that wins over its longhand
+  (`margin`, `padding`, `gap`) gives the longhand its component in the
+  computed values, so the bridge's inline order cannot reverse the
+  cascade. Native style reads are recomputed when an element's children
+  change order. Refused: pseudo-elements, attribute and id selectors,
+  `:has()`, `:nth-child(… of S)` and the form-validity pseudo-classes.
 - **Not yet admitted:** `@keyframes`, `@container`, nesting, the rest of
   S4 (per-side border longhands, `overflow-x`/`-y`, `visibility`,
   `text-transform`, `rotate`, and the display types and sizes native
   layout lacks: `inline-block`, `inline-flex`, `fit-content`, `sticky`),
-  and the selector and paint stages S5–S8.
+  the rest of S5 (above), and the paint stages S6–S8.
 
 **Browser bridge (K8 T3).** The official browser host runs the engine as
 `view-engine.wasm`: `varta-style-wasm`, a `wasm32` shim of `varta-style`

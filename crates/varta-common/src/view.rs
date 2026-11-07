@@ -1183,13 +1183,7 @@ pub const ROOT_BASE_STYLE: &str = "display: block; height: 100%";
 
 /// Pseudo-classes a stylesheet selector may use (ASCII case-insensitive in
 /// the engine, Selectors 4 §3.1).
-pub const PSEUDO_CLASSES: &[&str] = &[
-    ":hover",
-    ":active",
-    ":focus-visible",
-    ":disabled",
-    ":checked",
-];
+pub const PSEUDO_CLASSES: &[&str] = stylesheet::selector::PSEUDO_CLASS_NAMES;
 /// Media features of `@media` conditions in the L0 browser host's contract.
 /// The engine ([`stylesheet::media`]) admits Media Queries 4/5 beyond them;
 /// the browser host keeps this list until it runs the engine through Wasm.

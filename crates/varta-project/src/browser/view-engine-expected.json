@@ -38,7 +38,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "comments": {
@@ -999,6 +1001,230 @@
       0
     ]
   },
+  "s5-child": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-descendant": {
+    "computed": {
+      "color": "#333"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-group-hover": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-has-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s5-is-max": {
+    "computed": {
+      "color": "#222"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-longhand-over-shorthand": {
+    "computed": {
+      "gap": "1px 2px",
+      "margin": "2px",
+      "margin-left": "7px",
+      "row-gap": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-not": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-pseudo-element-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s5-root-host": {
+    "computed": {
+      "color": "#123"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-shorthand-over-longhand": {
+    "computed": {
+      "margin": "2px",
+      "margin-right": "2px",
+      "padding": "1px 2px",
+      "padding-left": "2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-structural": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-type": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-universal": {
+    "computed": {
+      "color": "#111",
+      "padding-top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-where-zero": {
+    "computed": {
+      "color": "#222"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
   "supports": {
     "computed": {
       "color": "#333"
@@ -1040,7 +1266,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-10": {
@@ -1250,7 +1478,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-112": {
@@ -1262,7 +1492,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-113": {
@@ -1286,7 +1518,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-115": {
@@ -1298,7 +1532,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-116": {
@@ -1721,7 +1957,9 @@
     ]
   },
   "tailwind-app-143": {
-    "computed": {},
+    "computed": {
+      "padding-bottom": "0px"
+    },
     "statuses": [
       0,
       0,
@@ -1729,7 +1967,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-144": {
@@ -2193,7 +2433,9 @@
     ]
   },
   "tailwind-app-171": {
-    "computed": {},
+    "computed": {
+      "background-color": "#fff"
+    },
     "statuses": [
       0,
       0,
@@ -2201,7 +2443,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-172": {
@@ -2398,7 +2642,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-184": {
@@ -3728,7 +3974,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-261": {
@@ -3740,7 +3988,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-262": {
@@ -4940,7 +5190,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-51": {
@@ -5222,7 +5474,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-71": {
@@ -5234,7 +5488,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-72": {
@@ -5306,7 +5562,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-77": {
@@ -5326,7 +5584,9 @@
     ]
   },
   "tailwind-app-78": {
-    "computed": {},
+    "computed": {
+      "padding-top": "0px"
+    },
     "statuses": [
       0,
       0,
@@ -5334,7 +5594,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-79": {
@@ -5514,7 +5776,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-9": {
@@ -5538,7 +5802,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-91": {
@@ -5550,7 +5816,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-92": {
@@ -5562,7 +5830,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-93": {
@@ -5574,7 +5844,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-94": {
@@ -5586,7 +5858,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-95": {
@@ -5610,7 +5884,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-97": {
@@ -5622,7 +5898,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-98": {

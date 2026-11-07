@@ -12,12 +12,13 @@
 //! a violation: the subset fails closed instead of dropping what it does not
 //! admit. Forbidden constructs are found on decoded tokens, so no escape can
 //! hide them.
-use super::{CssProperty, PSEUDO_CLASSES, css, syntax};
+use super::{CssProperty, css, syntax};
 #[allow(unused_imports)]
 use crate::view::prelude::*;
 use syntax::{Spanned, Token};
 
 pub mod media;
+pub mod selector;
 mod supports;
 pub use media::{Media, MediaQueryList};
 
@@ -57,29 +58,7 @@ impl Name {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Pseudo {
-    Hover,
-    Active,
-    FocusVisible,
-    Disabled,
-    Checked,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Selector {
-    pub root: bool,
-    pub classes: Vec<String>,
-    pub pseudo: Vec<Pseudo>,
-}
-impl Selector {
-    /// Classes plus pseudo-classes; `:root` counts as one pseudo-class
-    /// (Selectors 4 §17: all of them are the B component).
-    #[must_use]
-    pub fn specificity(&self) -> usize {
-        self.classes.len() + self.pseudo.len() + usize::from(self.root)
-    }
-}
+pub use selector::{Combinator, Compound, Nth, Pseudo, Selector, Specificity};
 
 /// One segment of a layer name (Cascade 5 §6.4.2); each anonymous layer is
 /// distinct.
@@ -153,17 +132,6 @@ impl Registration {
     }
 }
 
-/// What an element exposes to selector matching.
-pub struct Subject<'a> {
-    pub root: bool,
-    pub classes: &'a [&'a str],
-    pub focused: bool,
-    pub hovered: bool,
-    pub active: bool,
-    pub disabled: bool,
-    pub checked: bool,
-}
-
 impl Rule {
     /// The number of media feature tests that guard this rule.
     #[must_use]
@@ -177,10 +145,7 @@ impl Rule {
         let weight = super::DRAFT_STYLESHEET_NODE_WORK;
         let mut work = weight.saturating_mul(1 + self.media_features());
         for selector in &self.selectors {
-            work = work.saturating_add(weight.saturating_mul(1 + selector.pseudo.len()));
-            for class in &selector.classes {
-                work = work.saturating_add(weight + class.len());
-            }
+            work = work.saturating_add(selector_work(selector));
         }
         for (name, value) in &self.declarations {
             work = work.saturating_add(weight + value.len());
@@ -194,35 +159,6 @@ impl Rule {
     #[must_use]
     pub fn applies(&self, media: &Media) -> bool {
         self.media.iter().all(|list| list.matches(media))
-    }
-    /// The highest specificity among the selectors that match `subject`.
-    #[must_use]
-    pub fn matching(&self, subject: &Subject<'_>) -> Option<usize> {
-        self.matching_with_classes(subject, |class| subject.classes.contains(&class))
-    }
-    /// The same matcher with a caller-owned class membership index.
-    #[must_use]
-    pub fn matching_with_classes(
-        &self,
-        subject: &Subject<'_>,
-        contains: impl Fn(&str) -> bool,
-    ) -> Option<usize> {
-        self.selectors
-            .iter()
-            .filter(|selector| {
-                selector.root == subject.root
-                    && (selector.root || !selector.classes.is_empty())
-                    && selector.classes.iter().all(|class| contains(class))
-                    && selector.pseudo.iter().all(|pseudo| match pseudo {
-                        Pseudo::Hover => subject.hovered,
-                        Pseudo::Active => subject.active,
-                        Pseudo::FocusVisible => subject.focused,
-                        Pseudo::Disabled => subject.disabled,
-                        Pseudo::Checked => subject.checked,
-                    })
-            })
-            .map(Selector::specificity)
-            .max()
     }
 }
 
@@ -780,14 +716,7 @@ impl Parser<'_> {
             ),
         )?;
         let open = self.prelude(false)?;
-        let mut selectors = Vec::new();
-        let mut start = self.at;
-        for index in self.at..=open {
-            if index == open || self.tokens[index].token == Token::Comma {
-                selectors.push(self.selector(start, index)?);
-                start = index + 1;
-            }
-        }
+        let selectors = self.selectors(self.at, open)?;
         let close = self.block_end(open + 1).map_or_else(
             || self.fail_at(self.tokens.len(), Violation::Unterminated),
             Ok,
@@ -856,8 +785,8 @@ impl Parser<'_> {
     }
     /// One compound selector of tokens `start..end` (Selectors 4 §3.1, the
     /// subset: class selectors and pseudo-classes, or `:root` alone).
-    fn selector(&mut self, start: usize, end: usize) -> Parsed<Selector> {
-        self.node()?;
+    /// The selector list of a style rule's prelude (`start..end`).
+    fn selectors(&mut self, start: usize, end: usize) -> Parsed<Vec<Selector>> {
         let mut first = start;
         let mut last = end;
         while first < last && self.tokens[first].token == Token::Whitespace {
@@ -866,64 +795,36 @@ impl Parser<'_> {
         while last > first && self.tokens[last - 1].token == Token::Whitespace {
             last -= 1;
         }
-        let tokens: Vec<&Token> = self.tokens[first..last].iter().map(|t| &t.token).collect();
-        if let [Token::Colon, Token::Ident(name)] = tokens.as_slice()
-            && name.eq_ignore_ascii_case("root")
-        {
-            return Ok(Selector {
-                root: true,
-                classes: Vec::new(),
-                pseudo: Vec::new(),
-            });
+        let selectors = selector::parse_list(&self.tokens[first..last], self.text)
+            .or_else(|failure| self.fail_at(first + failure, Violation::Selector))?;
+        for parsed in &selectors {
+            let work = selector_work(parsed);
+            self.charge(work)?;
         }
-        let mut classes = Vec::new();
-        let mut pseudo = Vec::new();
-        let mut index = first;
-        while index < last {
-            let pair = (
-                self.tokens[index].token.clone(),
-                self.tokens.get(index + 1).map(|t| t.token.clone()),
-            );
-            match (&pair.0, pair.1.as_ref()) {
-                (Token::Delim('.'), Some(Token::Ident(class))) if index + 1 < last => {
-                    if !css::class_name(class) {
-                        return self.fail_at(index + 1, Violation::Selector);
-                    }
-                    let class = class.clone();
-                    self.node()?;
-                    self.charge(class.len())?;
-                    classes.push(class);
-                }
-                (Token::Colon, Some(Token::Ident(name))) if index + 1 < last => {
-                    self.node()?;
-                    let Some(found) = PSEUDO_CLASSES
-                        .iter()
-                        .position(|known| known[1..].eq_ignore_ascii_case(name))
-                    else {
-                        return self.fail_at(index, Violation::Selector);
-                    };
-                    pseudo.push(match &PSEUDO_CLASSES[found][1..] {
-                        "hover" => Pseudo::Hover,
-                        "active" => Pseudo::Active,
-                        "focus-visible" => Pseudo::FocusVisible,
-                        "disabled" => Pseudo::Disabled,
-                        "checked" => Pseudo::Checked,
-                        _ => return self.fail_at(index, Violation::Selector),
-                    });
-                }
-                _ => return self.fail_at(index, Violation::Selector),
-            }
-            index += 2;
-        }
-        if classes.is_empty() {
-            return self.fail_at(first, Violation::Selector);
-        }
-        Ok(Selector {
-            root: false,
-            classes,
-            pseudo,
-        })
+        Ok(selectors)
     }
+}
+
+/// The parse and cascade work of a selector: a node per complex selector,
+/// per further compound and per pseudo-class, and a node plus the name per
+/// class (the charges of the class-only grammar it extends).
+fn selector_work(parsed: &Selector) -> usize {
+    let weight = super::DRAFT_STYLESHEET_NODE_WORK;
+    let mut work = weight.saturating_mul(parsed.compounds.len());
+    for compound in &parsed.compounds {
+        for class in &compound.classes {
+            work = work.saturating_add(weight + class.len());
+        }
+        for pseudo in &compound.pseudo {
+            work = work.saturating_add(weight);
+            if let Pseudo::Is(list) | Pseudo::Where(list) | Pseudo::Not(list) = pseudo {
+                for inner in list {
+                    work = work.saturating_add(selector_work(inner));
+                }
+            }
+        }
+    }
+    work
 }
 
 /// Whether an `initial-value` is computationally independent (Properties

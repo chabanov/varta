@@ -94,6 +94,7 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
     engine.environment(inputs.width, inputs.height, inputs.rootFontSize, Number.isFinite(medium) ? medium : inputs.rootFontSize, inputs.flags | packagedMonospace);
     const focused = shadow.activeElement?.matches?.(":focus-visible") ? idOf(shadow.activeElement) : W.noNode;
     engine.state(focused, deepest(":hover"), deepest(":active"));
+    engine.focus(shadow.activeElement ? idOf(shadow.activeElement) : W.noNode);
     for (const [id, element] of nodes) {
       if (element.nodeType !== 1) continue;
       const values = engine.computed(id), previous = applied.get(element) ?? new Map();

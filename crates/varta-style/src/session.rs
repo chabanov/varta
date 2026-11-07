@@ -49,6 +49,7 @@ struct Mirror {
     nodes: BTreeMap<u32, Node>,
     styles: Styles,
     focus: u32,
+    focus_visible: u32,
     hovered: u32,
     active: u32,
 }
@@ -67,6 +68,7 @@ impl Default for Mirror {
             nodes,
             styles: Styles::default(),
             focus: 0,
+            focus_visible: 0,
             hovered: 0,
             active: 0,
         }
@@ -114,6 +116,9 @@ impl Document for Mirror {
     }
     fn focused(&self, id: u32) -> bool {
         self.focus == id
+    }
+    fn focus_visible(&self, id: u32) -> bool {
+        self.focus_visible == id
     }
     fn hovered(&self, id: u32) -> bool {
         self.contains(self.hovered, id)
@@ -356,10 +361,17 @@ impl Session {
         self.environment = environment;
     }
     /// The recorded selector state of the committed tree (0 is none).
-    pub fn set_state(&mut self, focus: u32, hovered: u32, active: u32) {
-        self.committed.focus = focus;
+    pub fn set_state(&mut self, focus_visible: u32, hovered: u32, active: u32) {
+        self.committed.focus_visible = focus_visible;
         self.committed.hovered = hovered;
         self.committed.active = active;
+    }
+    /// The focused element (`:focus`, `:focus-within`), or 0.
+    pub fn set_focus(&mut self, focus: u32) {
+        self.committed.focus = focus;
+        if let Some((mirror, _)) = self.working.as_mut() {
+            mirror.focus = focus;
+        }
     }
     /// The committed computed values of element `id` (empty for a text
     /// node or an unknown id).

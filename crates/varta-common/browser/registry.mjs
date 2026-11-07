@@ -12361,9 +12361,27 @@ export const registry = freeze({
       "pseudo": [
         ":hover",
         ":active",
+        ":focus",
+        ":focus-within",
         ":focus-visible",
         ":disabled",
-        ":checked"
+        ":enabled",
+        ":checked",
+        ":root",
+        ":host",
+        ":first-child",
+        ":last-child",
+        ":only-child",
+        ":first-of-type",
+        ":last-of-type",
+        ":only-of-type",
+        ":nth-child()",
+        ":nth-last-child()",
+        ":nth-of-type()",
+        ":nth-last-of-type()",
+        ":is()",
+        ":where()",
+        ":not()"
       ]
     },
     "tags": [

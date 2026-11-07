@@ -25,13 +25,14 @@ mod prelude {
 pub mod font;
 pub mod fonts;
 pub mod index;
+pub mod selectors;
 pub mod session;
 pub mod variables;
 
 use prelude::*;
 use varta_common::view::css::{self, Context};
 use varta_common::view::stylesheet::{
-    self, Media, Name, ParsedStylesheet, Rule, StylesheetError, Subject,
+    self, Media, Name, ParsedStylesheet, Rule, Specificity, StylesheetError,
 };
 use varta_common::view::{
     CssProperty, DRAFT_MAX_STYLESHEET_BYTES, DRAFT_MAX_STYLESHEET_WORK, DRAFT_STYLESHEET_NODE_WORK,
@@ -60,7 +61,13 @@ pub trait Document {
     /// Every node without a parent: the root and detached subtrees.
     fn top_level(&self) -> Vec<u32>;
     /// Selector states (Selectors 4 §9): the host's recorded inputs.
+    /// `focused`: `id` has the focus (`:focus`).
     fn focused(&self, id: u32) -> bool;
+    /// `id` has the focus and the host indicates it (`:focus-visible`); by
+    /// default every focus.
+    fn focus_visible(&self, id: u32) -> bool {
+        self.focused(id)
+    }
     fn hovered(&self, id: u32) -> bool;
     fn active(&self, id: u32) -> bool;
 }
@@ -109,6 +116,9 @@ pub struct BudgetExceeded;
 pub struct Winner<'a> {
     pub value: &'a str,
     pub part: Option<varta_common::view::mapped::Part>,
+    /// Its place in the element's cascade order (higher wins): what decides
+    /// between a shorthand and its longhands ([`Styles::computed`]).
+    pub rank: usize,
 }
 
 /// One declaration of the cascade.
@@ -171,6 +181,83 @@ fn wide(value: &str) -> Option<Wide> {
         () if value.eq_ignore_ascii_case("revert-layer") => Wide::RevertLayer,
         () => return None,
     })
+}
+
+/// The box shorthands whose longhands are registered properties too, and
+/// the longhands in component order (the box rule, or row then column).
+const SHORTHANDS: [(CssProperty, &[CssProperty]); 3] = [
+    (
+        CssProperty::Margin,
+        &[
+            CssProperty::MarginTop,
+            CssProperty::MarginRight,
+            CssProperty::MarginBottom,
+            CssProperty::MarginLeft,
+        ],
+    ),
+    (
+        CssProperty::Padding,
+        &[
+            CssProperty::PaddingTop,
+            CssProperty::PaddingRight,
+            CssProperty::PaddingBottom,
+            CssProperty::PaddingLeft,
+        ],
+    ),
+    (
+        CssProperty::Gap,
+        &[CssProperty::RowGap, CssProperty::ColumnGap],
+    ),
+];
+
+/// Cascade 5 §1.2: a shorthand sets each of its longhands at its own place
+/// in the cascade. Where a shorthand's declaration wins over a longhand's,
+/// the longhand's computed value is the shorthand's component, so a host
+/// that applies the shorthand and then the longhands (the browser bridge)
+/// gets the cascade's result; an invalid winning shorthand leaves the
+/// longhand unset.
+fn shorthands_over_longhands(
+    out: &mut BTreeMap<CssProperty, Computed>,
+    ranks: &BTreeMap<CssProperty, usize>,
+    wanted: &impl Fn(CssProperty) -> bool,
+) {
+    for (shorthand, longhands) in SHORTHANDS {
+        let Some(rank) = ranks.get(&shorthand).filter(|_| wanted(shorthand)) else {
+            continue;
+        };
+        let components = out.get(&shorthand).map(|computed| match computed {
+            Computed::Value(value) => {
+                let parts: Vec<&str> = value.split_ascii_whitespace().collect();
+                let pick = |index: usize| {
+                    let at = match (longhands.len(), parts.len()) {
+                        (_, 1) => 0,
+                        (2, _) => index.min(1),
+                        (_, 2) => index % 2,
+                        (_, 3) => [0, 1, 2, 1][index],
+                        _ => index,
+                    };
+                    parts
+                        .get(at)
+                        .map(|part| Computed::Value((*part).to_owned()))
+                };
+                (0..longhands.len()).map(pick).collect::<Vec<_>>()
+            }
+            keyword => vec![Some(keyword.clone()); longhands.len()],
+        });
+        for (index, longhand) in longhands.iter().enumerate() {
+            if ranks.get(longhand).is_none_or(|own| own > rank) {
+                continue;
+            }
+            match components.as_ref().and_then(|parts| parts[index].clone()) {
+                Some(component) => {
+                    out.insert(*longhand, component);
+                }
+                None => {
+                    out.remove(longhand);
+                }
+            }
+        }
+    }
 }
 
 /// Whether `property` inherits (its definition's "Inherited" line).
@@ -331,24 +418,6 @@ impl Styles {
         Ok(())
     }
 
-    /// The selector subject of `id`.
-    fn subject<'a>(
-        document: &impl Document,
-        id: u32,
-        element: &Element<'_>,
-        classes: &'a [&'a str],
-    ) -> Subject<'a> {
-        Subject {
-            root: id == ROOT_NODE,
-            classes,
-            focused: document.focused(id),
-            hovered: document.hovered(id),
-            active: document.active(id),
-            disabled: element.disabled,
-            checked: element.checked,
-        }
-    }
-
     /// The matching declarations of `id` (Cascade 5 §6.1).
     #[must_use]
     pub fn cascade<'a>(&'a self, document: &impl Document, id: u32, media: &Media) -> Cascade<'a> {
@@ -356,16 +425,13 @@ impl Styles {
             return Cascade::default();
         };
         let classes: BTreeSet<&str> = element.class.split_ascii_whitespace().collect();
-        let class_list: Vec<&str> = classes.iter().copied().collect();
-        let subject = Self::subject(document, id, &element, &class_list);
         let ranks = self.index.ranks(media);
         let mut normal = Vec::new();
         let mut important = Vec::new();
-        for (sheet, index) in self.index.candidates(subject.root, &classes) {
+        for (sheet, index) in self.index.candidates(id == ROOT_NODE, &classes) {
             let rule = &self.sheets[&sheet].rules[index];
             if rule.applies(media)
-                && let Some(specificity) =
-                    rule.matching_with_classes(&subject, |class| classes.contains(class))
+                && let Some(specificity) = selectors::matching(document, id, &rule.selectors)
             {
                 let layer = ranks.rank(sheet, rule.layer);
                 if rule.important {
@@ -383,7 +449,7 @@ impl Styles {
         important.sort_by_key(|(layer, specificity, sheet, index, _)| {
             (core::cmp::Reverse(*layer), *specificity, *sheet, *index)
         });
-        let flatten = |list: Vec<(usize, usize, u32, usize, &'a Rule)>| {
+        let flatten = |list: Vec<(usize, Specificity, u32, usize, &'a Rule)>| {
             list.into_iter()
                 .flat_map(|(layer, _, _, _, rule)| {
                     rule.declarations.iter().map(move |(name, value)| Declared {
@@ -488,28 +554,40 @@ impl Styles {
         // declaration (inline values are element-attached, outside layers).
         // A mapped longhand declares its physical property (Logical 1 §4).
         let mut candidates: Vec<(Option<usize>, Winner<'a>)> = Vec::new();
-        let rule = |declared: &Declared<'a>| {
-            (declared.name.property() == Some(property)).then(|| {
-                (
-                    Some(declared.layer),
-                    Winner {
-                        value: declared.value,
-                        part: declared.name.part(),
-                    },
-                )
-            })
+        let inline_rank = cascade.normal.len();
+        let rule = |offset: usize| {
+            move |(index, declared): (usize, &Declared<'a>)| {
+                (declared.name.property() == Some(property)).then(|| {
+                    (
+                        Some(declared.layer),
+                        Winner {
+                            value: declared.value,
+                            part: declared.name.part(),
+                            rank: offset + index,
+                        },
+                    )
+                })
+            }
         };
-        candidates.extend(cascade.important.iter().rev().filter_map(rule));
+        candidates.extend(
+            cascade
+                .important
+                .iter()
+                .enumerate()
+                .rev()
+                .filter_map(rule(inline_rank + 1)),
+        );
         if let Some(value) = inline.and_then(|inline| inline.get(&property)) {
             candidates.push((
                 None,
                 Winner {
                     value: value.as_str(),
                     part: None,
+                    rank: inline_rank,
                 },
             ));
         }
-        candidates.extend(cascade.normal.iter().rev().filter_map(rule));
+        candidates.extend(cascade.normal.iter().enumerate().rev().filter_map(rule(0)));
         let mut at = 0;
         while let Some((layer, Winner { value, .. })) = candidates.get(at) {
             match wide(value) {
@@ -594,6 +672,10 @@ impl Styles {
             provider: font_context,
         };
         let mut out = BTreeMap::new();
+        let ranks: BTreeMap<CssProperty, usize> = declared
+            .iter()
+            .map(|(property, winner)| (*property, winner.rank))
+            .collect();
         for (property, raw) in declared {
             if !wanted(property) {
                 continue;
@@ -609,6 +691,7 @@ impl Styles {
                 out.insert(property, computed);
             }
         }
+        shorthands_over_longhands(&mut out, &ranks, &wanted);
         out
     }
 
@@ -707,12 +790,11 @@ impl Styles {
                 Ok(())
             }
         };
-        let mut pending: Vec<(u32, usize)> = document
-            .top_level()
-            .into_iter()
-            .map(|id| (id, 0usize))
-            .collect();
-        while let Some((id, ancestors)) = pending.pop() {
+        // (node, inherited scope work, its ancestors, its siblings).
+        let top = document.top_level();
+        let mut pending: Vec<(u32, usize, usize, usize)> =
+            top.iter().map(|id| (*id, 0usize, 0usize, 0usize)).collect();
+        while let Some((id, ancestors, depth, siblings)) = pending.pop() {
             charge(weight)?;
             let mut own = weight;
             let mut variables = false;
@@ -731,13 +813,25 @@ impl Styles {
                     charge(cost.work)?;
                     own = own.saturating_add(cost.work);
                     variables |= cost.variables;
+                    // Selectors that search ancestors, siblings or nested
+                    // arguments charge that search (`selectors`).
+                    for selector in &self.sheets[&sheet].rules[index].selectors {
+                        if selector.searches() {
+                            charge(selectors::selector_work(selector, depth, siblings))?;
+                        }
+                    }
                 }
             }
             let scope = ancestors.saturating_add(own);
             if variables && self.index.has_custom() {
                 charge(scope)?;
             }
-            pending.extend(document.children(id).iter().map(|child| (*child, scope)));
+            let children = document.children(id);
+            pending.extend(
+                children
+                    .iter()
+                    .map(|child| (*child, scope, depth + 1, children.len())),
+            );
         }
         Ok(total)
     }
