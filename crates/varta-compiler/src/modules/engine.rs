@@ -1007,7 +1007,7 @@ pub(crate) fn is_prelude_source(source: &crate::source::Source) -> bool {
 
 /// The v37 builtin preludes (`collections`), whose class instances are
 /// private to every host value reader.
-pub(crate) const BUILTINS: [&Prelude; 8] = [
+pub(crate) const BUILTINS: [&Prelude; 9] = [
     &TEXT,
     &COLLECTIONS,
     &BINARY,

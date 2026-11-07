@@ -13287,7 +13287,7 @@ ABI number changes; v37 and earlier reject every name below
   `Map`'s: logging, JSON and `unknown` refuse a value holding one.
 - **Value layout.** The value ABI number stays 18. An **ephemeron table**
   (`varta_common::weak`) is a heap block with the additive value18 heap flag
-  `weak::HEAP_WEAK_FLAG` and no edge flag, so ordinary tracing marks it and
+  `weak::HEAP_WEAK_FLAG` (bit 16, disjoint from every integrity-level bit) and no edge flag, so ordinary tracing marks it and
   never reads its slots, and no value tag names it (no host reader can meet
   one). Its header link word chains it into the module's weak list (a
   global, no root); its payload holds the capacity, kind bits
