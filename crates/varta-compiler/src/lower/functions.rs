@@ -437,6 +437,11 @@ impl Lower<'_> {
             _ => Type::Void,
         };
         let (outer_narrows, stable) = self.capture_narrows(arrow.span.lo);
+        // V38 (`expression_forms`): an object-literal method that uses `this`.
+        let method_receiver = self
+            .core
+            .method_receivers
+            .remove(&(arrow.span.lo.0, arrow.span.hi.0));
         let mut child = Lower {
             source: self.source,
             types: self.types,
@@ -518,7 +523,11 @@ impl Lower<'_> {
         };
         // The async body takes its promise right after the parameters.
         let promise_slot = asynchronous.then(|| child.hidden(Type::Void));
-        let mut prologue = child.initialize_parameters(&plans, receiver.is_some())?;
+        let mut prologue = match method_receiver {
+            Some((name, ty)) => child.receiver_prologue(&name, ty, arrow.span)?,
+            None => Vec::new(),
+        };
+        prologue.extend(child.initialize_parameters(&plans, receiver.is_some())?);
         let body = match &*arrow.body {
             ast::ArrowFunctionBody::FunctionBody(block) => child.block(&block.stmts, false)?,
             ast::ArrowFunctionBody::Expr(expr) if asynchronous => {

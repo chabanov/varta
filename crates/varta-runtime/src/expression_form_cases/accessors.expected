@@ -1,0 +1,13 @@
+212 212
+32 reads 3
+10 10
+22
+stored,value
+{"stored":22,"value":22}
+{"celsius":0,"fahrenheit":32}
+3 22 {"stored":22,"value":3}
+celsius=0 fahrenheit=32
+TypeError
+3 2
+{"count":2,"list":[{"celsius":10,"fahrenheit":50},{"celsius":20,"fahrenheit":68}]}
+7

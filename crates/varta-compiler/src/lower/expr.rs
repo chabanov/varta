@@ -701,6 +701,7 @@ impl Lower<'_> {
                 let (left, right) = classes::common_operands(left, right, self.types);
                 let (left, right) =
                     subtyping::identity_operands(binary.op, left, right, self.types);
+                let (left, right) = tagged_templates::operands(left, right, self.types);
                 let (left, right) = if self.types.profile.has_undefined() {
                     match super::undefined::binary(
                         binary.op,
@@ -1270,6 +1271,8 @@ impl Lower<'_> {
                     .locate(collections::opaque("JSON.stringify"), value.span));
             }
             let value = self.physical_array(value)?;
+            // V38 (`object_accessors`): accessors are read by their getters.
+            let value = self.json_materialized(value)?;
             if value.ty.profile_kind(self.types.profile).is_none()
                 || value.ty == Type::BigInt && !self.types.profile.bigint_values()
             {

@@ -279,6 +279,15 @@ pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes)
         });
     }
     let value = literals::conform(value, expected, types)?;
+    // A tagged template's strings array (v38) is the `string[]` it is
+    // wherever that type or a union with it is expected.
+    let value = if tagged_templates::is_strings(value.ty, types)
+        && expected.is_some_and(|expected| expected != value.ty)
+    {
+        tagged_templates::plain(value, types)
+    } else {
+        value
+    };
     // A tuple (v37) is its physical array where that array, or `unknown`, is
     // expected (TypeScript's tuple-to-array assignability).
     let value = match value.ty {

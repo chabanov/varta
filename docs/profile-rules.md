@@ -4035,10 +4035,42 @@ Contract: [architecture.md](architecture.md#expression-forms-expression_forms).
   bindings), never an expression with effects. Hidden bindings start with
   `#`, which no source identifier can.
 - Object-literal methods that use `this` go through `object_methods`:
-  the shape is noted with `Views::note_bound`, and `spread_views` refuses
-  any key copy or enumeration of it or of a view of it. A new key-copying
-  form must note its shape (see `sdk_paths`), or it would copy bound
-  methods. Getters/setters stay refused until records have accessors.
+  the method is an arrow whose entry (`receiver_prologue`, keyed by the
+  arrow's span in `core::State::method_receivers`) takes the receiver from
+  the register and checks it (`IsClass` with the `VIEW_SOURCES` marker,
+  completed by `receiver_shapes` after `subtyping::resolve`). The register
+  exists only when `object_methods::scan` finds such a method; then every
+  `E::FunctionCall` emission stores its receiver after the arguments
+  (`emit::functions::function_call`), and a new function-value call path
+  must go through `E::FunctionCall` so a method never reads a stale
+  receiver. `o.m(...)` of a plain function field takes `o` into a hidden
+  local (`method_call`); a receiver that is not such a local stores
+  `undefined`.
+- Object-literal accessors (`object_accessors`): the physical shape names
+  getter and setter fields with `accessor_field`'s reserved prefixes
+  (interned by `records::intern_accessors`, the only intern that admits
+  them); the value is a view (`Views::note_view`) of that shape as the
+  literal's type. `subtyping` reads (`accessor_call`), writes (setter or
+  the stored read-only `TypeError`), `has` and own-key names understand the
+  reserved fields. Every host read of a value that may hold such an object
+  must go through a `JSON.stringify` materializer or is refused by
+  `refuse_host_reads`; a new host operation that reads records needs no
+  change, but a new path that serializes guest values on the guest side
+  must call the getters itself.
+- Top-level `await` (`top_level_await`): a module that awaits is one
+  async initializer (`module_constants::link_module`, split with
+  `split_async`); the evaluator text is generated from the static plan and
+  compiled like the HTTP adapters, over one body function per module named
+  `__varta_module_<n>`. Keep `requests` in source order and type-only
+  requests erased; the entry's `main` call is appended to its async
+  initializer or to its synthesized body. Every initializer list goes
+  through `top_level_await::ordered`.
+- Template objects (`tagged_templates`): one site per (module, span); the
+  cooked and raw arrays live in module-constant slots numbered from `BASE`
+  until `finish` places them, and the initializer `finish` returns runs
+  before every other initializer. `TemplateStringsArray` values become
+  `string[]` (`tagged_templates::plain`) wherever another array type is
+  expected or compared; only `.raw` keeps the type.
 - Computed keys resolve only through `constant_key`: literals and
   `ValueTypes::constant_keys` (filled for `const` bindings and module
   constants with literal initializers). Never infer a key from a value
@@ -4104,7 +4136,8 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   their instance members, `C.m` a static method) in `module_constants::
   check`, reserve the initializer index for effectful chunks, and never let
   `prune::unread_constants` drop an initializer that calls code. Top-level
-  `await` stays refused.
+  `await` is the K9 C stream's (`top_level_await`, under
+  `expression_forms`).
 - Class forms are a pre-layout rewrite (`classes::forms`, after
   `private_names` and `parameter_properties`): setters become methods named
   `forms::setter_key` (no string key can spell it), abstract members get an

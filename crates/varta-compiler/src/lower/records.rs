@@ -64,7 +64,23 @@ pub(super) fn property_key(name: &ast::PropName) -> Result<String> {
         _ => Err(unsupported("computed object initializer")),
     }
 }
-pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -> Result<Type> {
+pub(super) fn intern(fields: Vec<RecordField>, types: &mut ir::ValueTypes) -> Result<Type> {
+    intern_shape(fields, types, false)
+}
+/// The physical shape of an object literal with accessors (v38
+/// `expression_forms`): its getter and setter fields carry the reserved
+/// names of `object_methods::accessor_field`.
+pub(super) fn intern_accessors(
+    fields: Vec<RecordField>,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    intern_shape(fields, types, true)
+}
+fn intern_shape(
+    mut fields: Vec<RecordField>,
+    types: &mut ir::ValueTypes,
+    accessors: bool,
+) -> Result<Type> {
     if fields.iter().any(|f| matches!(f.ty, Type::Generator(_))) {
         return Err(generators::opaque("an object"));
     }
@@ -84,9 +100,10 @@ pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -
     // V37 keeps `#`-prefixed keys for private state (rewritten private names
     // and engine prelude fields), which `JSON.stringify` skips.
     if types.profile.class_generics()
-        && let Some(field) = fields
-            .iter()
-            .find(|f| f.name.starts_with(classes::PRIVATE_PREFIX))
+        && let Some(field) = fields.iter().find(|f| {
+            f.name.starts_with(classes::PRIVATE_PREFIX)
+                && !(accessors && object_accessors::accessor_field(&f.name).is_some())
+        })
     {
         return Err(unsupported(&format!(
             "object key {} starting with {} (reserved for private names)",

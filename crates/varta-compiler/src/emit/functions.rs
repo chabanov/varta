@@ -175,6 +175,23 @@ impl Emitter<'_> {
             self.expr(value)?;
             self.scratch_set(*slot, value.ty);
         }
+        // V38 (`expression_forms`): pass the receiver of `o.m(...)` (held
+        // in a local) to an object-literal method through the register,
+        // after the arguments; any other call passes none (`undefined`).
+        if let Some(register) = self.receiver_register {
+            self.code.push(I::I32Const(register));
+            match ignored_receiver {
+                Some(
+                    value @ Expr {
+                        kind: E::Local(_),
+                        ty: Type::Record(_) | Type::Class(_),
+                        ..
+                    },
+                ) => self.expr(value)?,
+                _ => self.code.push(I::I64Const(0)),
+            }
+            self.code.push(I::I64Store(strings::ROOT));
+        }
         let done = self.push_label(I::Block(BlockType::Empty), false, false);
         for target in targets {
             self.code.extend([

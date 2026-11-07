@@ -865,7 +865,7 @@
     },
     {
       "id": "tagged-templates",
-      "title": "Tagged templates with cooked strings and String.raw",
+      "title": "Tagged templates with per-site template objects and String.raw",
       "core": [
         "CORE-01"
       ],
@@ -892,13 +892,23 @@
     },
     {
       "id": "object-literal-methods",
-      "title": "Object-literal methods that use this",
+      "title": "Object-literal methods with a dynamic this",
       "core": [
         "CORE-02",
         "CORE-03"
       ],
       "origin": "ecmascript2025",
       "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-method-definitions"
+    },
+    {
+      "id": "object-literal-accessors",
+      "title": "Object-literal getters and setters (accessor properties)",
+      "core": [
+        "CORE-02",
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-runtime-semantics-methoddefinitionevaluation"
     },
     {
       "id": "computed-property-keys",
@@ -945,6 +955,16 @@
       ],
       "origin": "ecmascript2025",
       "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-promise-resolve-functions"
+    },
+    {
+      "id": "top-level-await",
+      "title": "Top-level await in module initializers",
+      "core": [
+        "CORE-02",
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-scripts-and-modules.html#sec-innermoduleevaluation"
     },
     {
       "id": "ts-conditional-types",
@@ -3614,6 +3634,29 @@
       }
     },
     {
+      "id": "template-objects",
+      "feature": "tagged-templates",
+      "path": "cases/template-objects.ts",
+      "sha256": "823ad80f6ec9bd1dbba0329c3757eee5098c30a8a12c8b4a2e8ee22b37e9a3ec",
+      "stdout": [
+        "varta log: [\"a\\\\nb\",\"c\\\\u0041\\\\\\\\d\"] [\"a\\nb\",\"cA\\\\d\"] 1",
+        "varta log: [\"line1\\nline2\",\"\\\\t\"] [\"line1\\nline2\",\"\\t\"] 1",
+        "varta log: [x\\`y][\\${z}]21",
+        "varta log: true true",
+        "varta log: false 4",
+        "varta log: true false",
+        "varta log: a b 2",
+        "varta log: a+b true",
+        "varta log: b AB",
+        "varta log: p1q2r\\n",
+        "varta log: [\"[\",\"]\"] [\"[\",\"]\"] 1 [\"[\",\"]\"] [\"[\",\"]\"] 1",
+        "varta log: [\"x\",\"\"] [\"x\",\"\"] 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "spread-arguments",
       "feature": "spread-arguments",
       "path": "cases/spread-arguments.ts",
@@ -3657,6 +3700,51 @@
         "varta log: 2",
         "varta log: 4",
         "varta log: x!x?"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "method-receivers",
+      "feature": "object-literal-methods",
+      "path": "cases/method-receivers.ts",
+      "sha256": "4c69a4f8ff8f7b79f804656255e3ea9881f50d852b8013fc2201d8aab0b4da47",
+      "stdout": [
+        "varta log: count=4 step=2",
+        "varta log: count=4 step=2 | count=6 step=2",
+        "varta log: count=4 step=2 | count=10 step=10",
+        "varta log: TypeError",
+        "varta log: count,step,bump,describe",
+        "varta log: 10",
+        "varta log: 10 5",
+        "varta log: count=1 step=1, count=5 step=5",
+        "varta log: 15 11 15 11",
+        "varta log: widget#3"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "object-literal-accessors",
+      "feature": "object-literal-accessors",
+      "path": "cases/object-literal-accessors.ts",
+      "sha256": "4fa948949a5d4c981200701cbc48f96a26d02789c7c86be6f4ed52b03a9da9dd",
+      "stdout": [
+        "varta log: 212 212",
+        "varta log: 32 reads 3",
+        "varta log: 10 10",
+        "varta log: 22",
+        "varta log: stored,value",
+        "varta log: {\"stored\":22,\"value\":22}",
+        "varta log: {\"celsius\":0,\"fahrenheit\":32}",
+        "varta log: 3 22 {\"stored\":22,\"value\":3}",
+        "varta log: celsius=0 fahrenheit=32",
+        "varta log: TypeError",
+        "varta log: 3 2",
+        "varta log: {\"count\":2,\"list\":[{\"celsius\":10,\"fahrenheit\":50},{\"celsius\":20,\"fahrenheit\":68}]}",
+        "varta log: 7"
       ],
       "baseline": {
         "status": "supported"
@@ -3778,6 +3866,18 @@
         "varta log: resolve returned",
         "varta log: then called 4",
         "varta log: lazy4"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "top-level-await",
+      "feature": "top-level-await",
+      "path": "cases/top-level-await.ts",
+      "sha256": "2abe6a1845389f2a445d5c59bb497ec9d7d746dc2f58d8bfb2b1e2372eb857f3",
+      "stdout": [
+        "varta log: start, microtask, awaited, after 2, main 4"
       ],
       "baseline": {
         "status": "supported"
