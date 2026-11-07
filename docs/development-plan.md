@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with the K9 C expression and function forms (integrated with K9 A steps 1–2 and K9 B), K9 B declarations and classes, the K8 CSS engine's font-relative units, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, gated on the K9 C integration commit 1414396 whose sources equal merged `main` except the gate records: **4379 Rust tests passed, 0 failures, 25 ignored; 185 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-213007-y3wpjbwk/report.json` in that worktree. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **191 passed, 5 known unsupported out of 196** after the K9 A, B, C, D and D4 (`date-local-time`) cases, module evaluation, enum and namespace objects, enum assignability and class index signatures (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **198 passed, 5 known unsupported out of 203** after the K9 A (steps 1–3), B, C, D, D3 and D4 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures and full RegExp (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -313,7 +313,8 @@ Not done, with the reason:
 - **Local-time `Date`**: the time zone is ambient host state; reading it
   needs a host policy (a grant or a fixed zone) decided by the owner.
 - **Wider RegExp** (backreferences, lookaround, `\p{…}`): the matcher is
-  linear-time by contract; these need a new matcher contract.
+  linear-time by contract; these need a new matcher contract (done in v38
+  by the [K9 D3 full RegExp](architecture.md#full-regexp-full_regexp)).
 - **Object wrappers and object-to-primitive coercion**: rare in typed
   library code; they need `valueOf`/`toString` dispatch on objects.
 
@@ -2883,7 +2884,7 @@ inferred from the current regression suite.
 | CORE-03 | Functions and control flow | Partial | Typed functions, closures, control flow, generators, async functions and async generators | Complete receiver/binding/call behavior, general iterables and remaining generator forms |
 | CORE-04 | Exceptions | Partial | Typed exceptions, Error subclasses, unknown catches and rooted propagation across suspension/finally | General thrown-value admission and complete error-family/propagation inventory |
 | CORE-05 | Standard collections and binary values | Partial | Map/Set, tuples, Uint8Array, encoding/base64 and v38 Web byte APIs | Full typed-array/ArrayBuffer/DataView contracts and ownership/interop inventory; general tagged collection values |
-| CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, the v38 complete Date in the UTC zone, ES2025 Array/Set/iterator/JSON library methods (K9 D) and ahead-of-time RegExp | General Math object/call semantics, host time zones, Intl, Symbol, weak references and remaining RegExp features |
+| CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, the v38 complete Date in the UTC zone, ES2025 Array/Set/iterator/JSON library methods (K9 D) and ahead-of-time RegExp with the full ES2025 pattern language (K9 D3) | General Math object/call semantics, host time zones, Intl, Symbol, weak references, run-time RegExp patterns and RegExp symbol protocols |
 | CORE-07 | Garbage collection and resource lifecycle | Partial; large-heap idle-work fix verified | Exact tracing, liveness frames, incremental collection/idle maintenance and bounded bitmap clearing before the root snapshot under v38 | Sustained retained-root/leak/cancellation validation, collector tuning and target peak-memory evidence remain open |
 | CORE-08 | Event loop and promise jobs | Partial; implemented checked scheduler | Bounded FIFO Promise jobs, adoption, microtask checkpoints, timer/network tasks and generation-checked tokens | Structural thenable support (currently rejected), remaining scheduling semantics and cross-host ordering beyond supported network replay |
 | CORE-09 | Async language and cancellation | Partial | Async/await, timers, abort listeners/timeout/any, async generators, for-await, cancellable fetch and focused v38 HTTP lifecycle checks including synchronous network waits | Top-level await, wider async iterable forms, broader host-call lifecycle and sustained owned shutdown acceptance |
@@ -3674,6 +3675,7 @@ The selectors are registered; the table records what each stream admits.
 | `local_time()` | K9 D4 local time (2026-11-06): `Date` in the host's time zone, zone and locale as recorded host inputs | Implemented ([contract](architecture.md#local-time-local_time), [record](#k9-d4-local-time--2026-11-06)): `intl_time_zone`/`intl_locale` (host ABI 34, no capability), linked `date_zone_offset`/`date_zone_name` over `varta-intl` (tzdata 2026e, ICU4X 2.4 / CLDR 49), linked indirect calls. Pending owner decisions: CLDR 49 vs Node's 48, Intl data selection; pending work: Intl and `toLocale*` |
 | `expression_forms()` | K9 C — expressions and functions (2026-11-06): `await` anywhere, comma, `new.target` comparisons, tagged templates, spreads into fixed parameters, `this` parameters and field arrows, object-literal methods with `this`, computed keys, destructuring everywhere, hand-written iterators, `using`, structural thenables | Implemented in part ([contract](architecture.md#expression-forms-expression_forms), [record](#k9-c--expressions-and-functions-2026-11-06)): no ABI, value-layout, scheduler or host change. Pending: top-level `await` (needs module-level evaluation), object-literal getters/setters, `TemplateStringsArray.raw`, `SuppressedError` for double throws in `using`, `await` in `switch` case tests |
 | `declaration_forms()` | Declarations and classes (K9 B, 2026-11-06): enums, namespaces and merging, abstract classes, overloads, setters and accessors, static fields, class expressions | Implemented ([contract](architecture.md#declarations-and-classes-declaration_forms), [record](#k9-b--declarations-and-classes--2026-11-06)): pre-scan lowering of enums (constant evaluation, reverse mapping), namespaces (hoisting with scope-aware renaming, cross-module), static fields (module variables), class expressions and local classes, overload signatures; pre-layout class rewrite for abstract members, setters and auto-accessors; overload resolution with checked results. No ABI, value-layout or host change. Pending (owner decision): static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
+| `full_regexp()` | K9 D3 full RegExp (2026-11-06): the ES2025 pattern language with a backtracking matcher bounded by fuel, match indices, the `v` flag | Implemented ([contract](architecture.md#full-regexp-full_regexp), [record](#k9--typescript-completeness-and-the-first-release-agreed-2026-11-06)): program format 2 and the linked `regexp_exec`; V37 keeps the linear-time subset. Pending: run-time patterns, `matchAll` iterators, match-array methods, symbol protocols |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module
 under v38, scratch copies only, no live API call): the unmodified pilot checks
@@ -7973,6 +7975,43 @@ predicate should keep its `TypeError` (Node continues with the wrong type)
 and whether branded primitives (`string & { __brand: … }`) may be admitted
 as their primitive.
 
+**K9 D3 record (2026-11-06, full RegExp).** Owner decision (K9 D,
+2026-11-06): full RegExp with a backtracking matcher bounded by fuel.
+Admitted in v38 under the selector `full_regexp`
+([contract](architecture.md#full-regexp-full_regexp),
+[rules](profile-rules.md#full-regexp-full_regexp-v38)): the whole ECMAScript
+2025 pattern language (numbered and named backreferences, lookahead and
+lookbehind, pattern modifiers, duplicate named groups, Unicode property
+escapes from the ICU4X 2.4 data, the `d` and `v` flags with class set
+notation and the Unicode Emoji 17.0 properties of strings), match indices,
+`hasIndices`/`unicodeSets`, participating-group `groups` objects and
+`$<name>`, and AdvanceStringIndex by code point under `v`. Patterns compile
+ahead of time to program format 2 (`varta_common::regexp`), run by the
+linked intrinsic `regexp_exec` (`varta_intrinsics::regexp`, rebuilt
+`intrinsics.wasm`): matching is guest code, every step is fuel and the
+backtracking stack is arena memory, so a catastrophic pattern ends with the
+turn's typed fuel exhaustion (pinned for four classic ReDoS patterns on 65
+units, about half a second each under the production budget). V37 keeps the
+linear-time subset, format 1 and the emitted Pike VM byte for byte.
+Evidence: `varta-runtime` `full_regexp_tests` (six Node 24.20.0 programs,
+one a seeded 600-pattern differential corpus over backreferences,
+lookaround, quantifiers and flags; three further seeds of 800 patterns
+matched Node during development), adversarial fuel and per-unit fuel
+measurements, the compiler's early-error table with V8's texts, and four
+conformance cases in four new feature rows (175 → 179 passing of 180 → 184,
+5 known unsupported). Fuel goldens: v37 programs keep
+their figures; under v38 the matcher costs about 3 700 fuel per run, 33 per skipped input
+unit and 160 per unit of a nested quantifier on a matching input, and the
+v37 ReDoS corpus `regexp_cases/redos.ts` becomes a recorded v38 deviation
+(it exhausts the fuel, as intended), excluded from the v37/v38 comparisons.
+Not done (each a documented deviation): run-time patterns and
+`RegExp.escape` (would need the pattern compiler in the guest),
+`matchAll` iterators (an array), array methods of match arrays, `undefined`
+split captures, and the `Symbol.match`/`replace`/`search`/`split`/
+`matchAll` protocols (waiting for symbol values). Owner decisions open:
+whether to admit run-time patterns (a guest pattern compiler under its own
+budget) and whether match arrays become real arrays.
+
 **K9 A step 2 (2026-11-06).** Owner decisions: a lying predicate keeps its
 `TypeError` (an intentional deviation, like checked `as`); branded
 primitives are their primitive; `typeof` of locals is supported. Admitted
@@ -7988,6 +8027,28 @@ type parameters or rest parameters, generic construct signatures,
 `unique symbol` (track D's Symbol values). Evidence: five more Node-pinned
 `type_level_cases`, the deviation test, a second language-guide example and
 conformance 155 → 160 passing of 160 → 165 cases.
+
+**K9 A step 3 (2026-11-06).** Owner decision: a class array viewed as an
+ancestor array (`B[]` and `(B | C)[]` as `A[]`) is one shared array, as in
+JavaScript, and a read through a narrower name of an element it does not
+admit throws `TypeError` (replacing step 2's copy). `type_level::covariance`
+joins the converted array types into components with one element
+representation (instances, or union cells when a union admits `null` or
+`undefined`) and tests the narrower reads; both representations are existing
+canonical array layouts, so no value ABI change was needed. Pattern template
+literal types and `Uppercase<string>` (and the other intrinsic types over
+`string` and over patterns) are checked as in tsc: pattern members of string
+literal sets, matched by literals, template expressions and other patterns,
+never by `string`. Admitted: `infer` in intersection patterns, `this` in
+generic declarations together with generic declarations that refer to the
+same instantiation of themselves, `asserts this [is T]` methods, and
+overloads with rest parameters. Still refused: callable objects with
+properties, overloads with `this` or type parameters, generic construct
+signatures (each needs a design decision, recorded in the report), and
+`unique symbol` (track D's Symbol values are not in main yet). Evidence:
+three new Node-pinned `type_level_cases` (each rejected by v37), the shared
+array deviation test, the pattern rejection test and conformance 190 → 193
+passing of 195 → 198 cases (on top of K9 C).
 
 **Release readiness** additionally needs, after K9 and K8 merge: the release
 profile frozen (v38 becomes a released profile; later admissions go to a new
@@ -8283,6 +8344,132 @@ Owner decision of the same day: (2) and (5) are required by the standards.
   available at all; the goal is Chrome's values with no recorded deviation
   for system fonts. Sums with percentages in `border-radius`, `transform`,
   `object-position` and grid tracks wait for those consumers.
+
+#### K8 T2 font-metric units (2026-11-06)
+
+The remainder of item (2), by the owner decision "fonts plus host" of the
+same day ([contract](architecture.md#view-css-engine-k8-t2-and-t3)).
+
+- **Engine** (`varta_style::fonts`): an element's first available font is
+  the first family of its computed list that the view's font set has a face
+  for (named or aliased; a generic family without a packaged face is the
+  host's), else the default family, else the host's default font; faces are
+  matched by Fonts 4 §5.2 step 4. Packaged faces are read from their own
+  tables: `OS/2` x-height (else the `x` outline's top, else 0.5em), `OS/2`
+  cap-height (else the ascent), the `0` and `水` advances (`hmtx` + `HVAR`;
+  else 0.5em, 1em), and for `normal` the shaper's ascent/descent/line gap
+  each rounded at the used size (Blink's line spacing); variable faces at
+  `wght`/`opsz`/`ital` with `avar` and `MVAR`. The engine now also computes
+  `font-weight` (Fonts 4 §2.2.1 `bolder` table, which the native renderer
+  had approximated) and `font-style` with the user-agent rows, and the
+  native renderer takes them from it. In `font-size`, `ex`/`cap`/`ch`/`ic`
+  are the parent's; `lh` with `normal` and `rlh` now resolve.
+- **Hosts.** Natively `TextMeasurer::font_set` gives the view its faces
+  (`View::set_fonts`, set by the runtime with the layout measurer) and the
+  desktop shell's `host_fonts` measures the platform fonts through CoreText
+  exactly as Blink on macOS does (rounded CoreText ascent/descent/leading
+  with the enlarged ascent of Times/Helvetica/Courier, CoreText cap-height,
+  the `x` glyph's CoreText bounds, advances from the platform face's tables
+  at its location): Chrome's values for `serif`, `sans-serif`, `monospace`,
+  `system-ui` (regular, bold; 13, 16, 100 px) and the default font are
+  reproduced to binary32 precision (`font_metrics` test). On the web the
+  engine module gains its one import, `varta_view.font_metrics`; the DOM
+  bridge answers it by reading `1ex`/`1cap`/`1ch`/`1ic`/`1lh` of a hidden
+  probe through `computedStyleMap` (no metric logic in JavaScript), and
+  passes the packaged faces' bytes to the engine (`view_engine_face`).
+  Found on the way: the bridge's packaged-`monospace` flag compared a
+  quoted lookup and was always set; fixed.
+- **Dependency record:** `read-fonts` 0.41.0 (already locked through
+  skrifa) becomes a direct dependency of `varta-style`; its `no_std` build,
+  which the wasm32 engine needs, requires its `libm` feature, adding the
+  one package `core_maths` 0.1.1 (MIT, a float extension trait over the
+  locked `libm`). Alternatives rejected: skrifa (its `no_std` feature needs
+  the same package), and a second hand-written sfnt reader. The engine
+  module grows from 467 to 508 KB.
+- **Evidence.** Cross-host corpus: twelve new font cases decided identically
+  by the Wasm module, the native session and the native renderer, and by
+  the browser view model in Node, with a deterministic stand-in for the
+  platform's measurements. Chrome oracle: three new scenes (platform fonts,
+  font-metric references in `font-size`/`line-height`/registered lengths
+  and math, packaged faces with weights and a variable face); `bridge` 621
+  and `platform` 609 checks pass at 1x, 1.25x and 2x, every new box placed
+  at whole pixels so each edge carries one length Chrome snaps to 1/64 px.
+  Fixtures: `scripts/generate-style-metrics-fonts.py`.
+- **Recorded deviations of Chrome on macOS** (packaged faces only; none for
+  system fonts): it measures the `x` outline rather than the `OS/2`
+  x-height (equal in the fixtures), uses CoreText's estimates for faces
+  without `OS/2` x/cap-heights, applies no `MVAR` cap-height delta, and
+  ignores `USE_TYPO_METRICS`. Not done: other platforms' measurements
+  (Linux falls back to Values 4 without metrics), weights other than normal
+  and bold for multi-weight platform families (CoreText traits).
+- **Tailwind acceptance:** unchanged at 70.4% of 588 uses; no verdict of the
+  corpus's 312 application candidates changed (it uses none of these units).
+
+#### K8 T2 S4, first part: mapped and transform properties (2026-11-06)
+
+- **Mapped properties** (`varta_common::view::mapped`): CSS Logical 1 §4
+  flow-relative padding, margin and inset properties in the subset's one
+  writing mode, `inset` and `flex` expand when a sheet is parsed into the
+  physical longhands, each at the declaration's place in the cascade; with
+  `var()` each longhand keeps the whole value and its part
+  (`Name::Mapped`) and is split after substitution. The native renderer's
+  ordered geometry walk and the engine's cascade both take the parts, so
+  `padding-left` and `padding-inline` win over each other by cascade order
+  on both hosts; the bridge only ever sees physical longhands.
+- **New properties** (registry codes 81–84): `translate`, `scale`,
+  `transform-origin` (lowered to two lengths or percentages) and
+  `letter-spacing`. Native: the effective transform list is `translate`,
+  `scale`, `transform` around the origin (Transforms 2 §6.1), and the
+  shaper adds letter spacing. Not animated natively yet: transitions of
+  `translate` and `scale` (Chrome animates them; final states agree).
+- **Evidence.** Corpus: 18 new cases decided identically by the Wasm module,
+  the native session and the renderer and the Node view model. Chrome
+  oracle: scenes `logical-and-mapped`, `individual-transforms` and
+  `letter-spacing` (text in a packaged face, transparent so the box widths
+  carry the spacing), `bridge` 739 and `platform` 727 checks at 1x, 1.25x
+  and 2x.
+- **Tailwind acceptance** (the corpus's 312 application candidates, the
+  distinct-candidate measure; the 588-use weighting needs the scratch
+  inventory, which is not in the tree): 203 → 228 (65.1% → 73.1%).
+  Remaining S4 items, each needing native layout or paint work: per-side
+  border longhands (`border-b`), `overflow-x`/`-y`, `visibility`,
+  `text-transform`, `inline-block`, `inline-flex`, `fit-content`, `sticky`,
+  `-webkit-box` line clamping, `rotate`.
+
+#### K8 T2 S5, first part: complex selectors (2026-11-06)
+
+- **Model.** `stylesheet::selector` parses selector lists into complex
+  selectors (compounds and combinators) with Selectors 4 specificity; the
+  engine (`varta_style::selectors`) matches them over the host's tree with
+  Servo's restart rules, and the cascade index anchors a rule by its
+  subject's first class, `:root`, or else every element. Matching moved out
+  of `varta-common`; `PSEUDO_CLASSES` is now the selector module's list.
+- **Admitted:** the four combinators, type and universal selectors, `:is()`,
+  `:where()`, `:not()`, `:root`, `:host` (matches nothing in view sheets),
+  the structural pseudo-classes with `An+B`, `:focus`, `:focus-within`,
+  `:enabled`. Bounds: nesting 4, compounds 16, and a per-candidate work
+  estimate charged before values are computed.
+- **Found on the way:** a `margin`/`padding`/`gap` shorthand that won the
+  cascade over its longhand lost in the browser (the bridge sets the
+  longhand inline after the shorthand); the engine now gives the longhand
+  the shorthand's component. Natively, cached style reads now also
+  invalidate on child order.
+- **Evidence.** Corpus: 14 new selector cases on all hosts. Chrome oracle
+  scene `complex-selectors` (combinators, `:where`/`:is`/`:not`,
+  structural, `:root, :host`, shorthand against `:where()` longhand):
+  `bridge` 795 and `platform` 783 checks at 1x, 1.25x and 2x.
+- **Tailwind acceptance:** 228 → 251 of 312 candidates (80.4%). Open S5
+  items: attribute selectors (`aria-*` need the attributes mirrored into
+  the engine session; `data-*` need protocol support), `:has()` (with a
+  subtree work bound), pseudo-elements (`::after`, `::placeholder`,
+  `::backdrop`: generated boxes natively, per-element pseudo rules in the
+  bridge), the form-validity pseudo-classes (`:invalid`), and the
+  `transition`/`animation` interplay with `translate`/`scale`.
+- Gate (font-metric units, S4 and S5 first parts together, merged with
+  main at `cc298823`): `python3 scripts/verify.py full` PASS at `e0030a37`
+  (4376 Rust tests passed, 0 failed, 25 ignored; 186 browser Node tests;
+  conformance baseline; sources unchanged), report
+  `target/verification/20261106-231206-57zwplmi/report.json` (macOS only).
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 

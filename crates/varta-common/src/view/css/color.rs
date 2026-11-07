@@ -341,6 +341,8 @@ const NO_LENGTHS: math::Resolution = math::Resolution {
     rem: 0.0,
     lh: None,
     rlh: None,
+    metrics: None,
+    root_metrics: None,
     viewport_width: 0.0,
     viewport_height: 0.0,
 };

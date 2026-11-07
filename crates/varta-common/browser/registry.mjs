@@ -5113,6 +5113,30 @@ export const registry = freeze({
       "timerBookkeeping": false
     },
     {
+      "admittedUnder": [],
+      "capability": null,
+      "instanceBookkeeping": false,
+      "kvBookkeeping": false,
+      "minHostAbi": 34,
+      "name": "regexp_exec",
+      "networkBookkeeping": false,
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "f64",
+        "i32"
+      ],
+      "resultGlobals": true,
+      "results": [
+        "i32"
+      ],
+      "scheduler": false,
+      "stringResult": true,
+      "timerBookkeeping": false
+    },
+    {
       "admittedUnder": [
         "checked-f64-utf16-v34",
         "checked-f64-utf16-v35",
@@ -11859,6 +11883,30 @@ export const registry = freeze({
         "grammar": "from-image | none",
         "name": "image-orientation",
         "note": "inherited"
+      },
+      {
+        "code": 81,
+        "grammar": "none | <length-percentage> <length-percentage>?",
+        "name": "translate",
+        "note": null
+      },
+      {
+        "code": 82,
+        "grammar": "none | <number> <number>?",
+        "name": "scale",
+        "note": "positive factors"
+      },
+      {
+        "code": 83,
+        "grammar": "<length-percentage> <length-percentage>",
+        "name": "transform-origin",
+        "note": null
+      },
+      {
+        "code": 84,
+        "grammar": "normal | <length>",
+        "name": "letter-spacing",
+        "note": "inherited"
       }
     ],
     "cssTypes": {
@@ -12427,9 +12475,27 @@ export const registry = freeze({
       "pseudo": [
         ":hover",
         ":active",
+        ":focus",
+        ":focus-within",
         ":focus-visible",
         ":disabled",
-        ":checked"
+        ":enabled",
+        ":checked",
+        ":root",
+        ":host",
+        ":first-child",
+        ":last-child",
+        ":only-child",
+        ":first-of-type",
+        ":last-of-type",
+        ":only-of-type",
+        ":nth-child()",
+        ":nth-last-child()",
+        ":nth-of-type()",
+        ":nth-last-of-type()",
+        ":is()",
+        ":where()",
+        ":not()"
       ]
     },
     "tags": [

@@ -4,13 +4,13 @@
 //!
 //! A template whose placeholders are finite literal sets evaluates to the
 //! string literal set of the cross product. A placeholder of `string`,
-//! `number` or `bigint` would make a pattern literal type, which has no
-//! finite member set and no static representation here: it is admitted only
-//! as an `extends` pattern of a conditional type, where it is matched
-//! against string literals.
+//! `number` or `bigint` (or of a pattern) makes a pattern template literal
+//! type (`patterns`), a member of a string literal set that admits the
+//! strings matching it; `` `${string}` `` alone is `string`.
 use super::*;
 use crate::lower::literals::LiteralValue;
 use ir::LiteralBase;
+use patterns::{Hole, Piece};
 use std::collections::BTreeSet;
 
 /// The text of one template piece in UTF-16 code units.
@@ -22,12 +22,13 @@ fn quasi(element: &ast::TplElement) -> Result<Vec<u16>> {
     Ok(cooked.as_wtf8().to_ill_formed_utf16().collect())
 }
 
-/// The finite texts of a placeholder type, in UTF-16 code units; `None` for
-/// a type with infinitely many texts (`string`, `number`, `bigint`).
-fn texts(ty: Type, types: &mut ir::ValueTypes) -> Result<Option<Vec<Vec<u16>>>> {
-    let mut texts = Vec::new();
+/// The alternatives of a placeholder type as pattern pieces: a text per
+/// literal value, a hole for `string`, `number` and `bigint`, the pieces of
+/// a pattern member. `None` for a type that is not a placeholder type.
+fn alternatives(ty: Type, types: &mut ir::ValueTypes) -> Result<Option<Vec<Vec<Piece>>>> {
+    let mut out = Vec::new();
     for member in split(ty, types) {
-        let text = match member {
+        let pieces = match member {
             Type::Literal(_, id) => {
                 let value = types
                     .literals
@@ -36,35 +37,69 @@ fn texts(ty: Type, types: &mut ir::ValueTypes) -> Result<Option<Vec<Vec<u16>>>> 
                     .cloned()
                     .ok_or_else(|| invalid("empty literal type"))?;
                 match &value {
-                    LiteralValue::String(_) => literals::string_units(&value, types.profile)
-                        .ok_or_else(|| invalid("malformed string literal type"))?,
-                    LiteralValue::Number(bits) => {
-                        number_text(f64::from_bits(*bits)).encode_utf16().collect()
+                    LiteralValue::String(_) => vec![Piece::Text(
+                        literals::string_units(&value, types.profile)
+                            .ok_or_else(|| invalid("malformed string literal type"))?,
+                    )],
+                    LiteralValue::Number(bits) => vec![Piece::Text(
+                        number_text(f64::from_bits(*bits)).encode_utf16().collect(),
+                    )],
+                    LiteralValue::Boolean(flag) => {
+                        vec![Piece::Text(flag.to_string().encode_utf16().collect())]
                     }
-                    LiteralValue::Boolean(flag) => flag.to_string().encode_utf16().collect(),
+                    LiteralValue::Pattern(id) => types.literals.pattern(*id).clone(),
                 }
             }
-            Type::Null => "null".encode_utf16().collect(),
-            Type::Undefined => "undefined".encode_utf16().collect(),
+            Type::Null => vec![Piece::Text("null".encode_utf16().collect())],
+            Type::Undefined => vec![Piece::Text("undefined".encode_utf16().collect())],
+            Type::String => vec![Piece::Hole(Hole::String)],
+            Type::Number | Type::Float64 => vec![Piece::Hole(Hole::Number)],
+            Type::BigInt => vec![Piece::Hole(Hole::BigInt)],
             Type::Never => continue,
-            // A pattern literal type (`` `on${string}` ``): see `evaluate`.
             _ => return Ok(None),
         };
-        texts.push(text);
+        out.push(pieces);
     }
-    Ok(Some(texts))
+    Ok(Some(out))
 }
 
-/// `` `a${X}b${Y}` ``: the string literal set of every combination.
+/// The string literal set of the piece sequences `results`: finite texts
+/// are string values, the others patterns; `` `${string}` `` is `string`.
+fn pattern_type(results: Vec<Vec<Piece>>, types: &mut ir::ValueTypes) -> Result<Type> {
+    let mut values = BTreeSet::new();
+    for pieces in results {
+        let pieces = patterns::canonical(pieces);
+        match &pieces[..] {
+            [] => {
+                values.insert(literals::string_value(&[], types.profile));
+            }
+            [Piece::Text(units)] => {
+                values.insert(literals::string_value(units, types.profile));
+            }
+            [Piece::Hole(Hole::String)] => return Ok(Type::String),
+            _ => {
+                values.insert(types.literals.pattern_value(pieces));
+            }
+        }
+    }
+    if values.is_empty() {
+        return Ok(Type::Never);
+    }
+    literals::of_values(LiteralBase::String, values, types)
+}
+
+/// `` `a${X}b${Y}` ``: the string literal set of every combination, with
+/// pattern members for the placeholders of infinitely many texts.
 pub(super) fn evaluate(template: &ast::TsTplLitType, types: &mut ir::ValueTypes) -> Result<Type> {
-    let mut results: Vec<Vec<u16>> = vec![quasi(&template.quasis[0])?];
+    let mut results: Vec<Vec<Piece>> = vec![vec![Piece::Text(quasi(&template.quasis[0])?)]];
     for (placeholder, next) in template.types.iter().zip(&template.quasis[1..]) {
         let ty = keyword_type(placeholder, types)?;
-        // A pattern literal type (`` `on${string}` ``) has no finite member
-        // set: its values are strings, so it is `string` (TypeScript would
-        // also check each literal assigned to it against the pattern).
-        let Some(choices) = texts(ty, types)? else {
-            return Ok(Type::String);
+        let Some(choices) = alternatives(ty, types)? else {
+            return Err(type_error(format!(
+                "type {} is not valid in a template literal type placeholder (string, number, \
+                 bigint, boolean, null, undefined and their literal types are)",
+                subtyping::describe(ty, types)
+            )));
         };
         let tail = quasi(next)?;
         if results.len().saturating_mul(choices.len()) > literals::MAX_LITERAL_MEMBERS {
@@ -76,26 +111,50 @@ pub(super) fn evaluate(template: &ast::TsTplLitType, types: &mut ir::ValueTypes)
         let mut combined = Vec::new();
         for prefix in &results {
             for choice in &choices {
-                let mut text = prefix.clone();
-                text.extend_from_slice(choice);
-                text.extend_from_slice(&tail);
-                combined.push(text);
+                let mut pieces = prefix.clone();
+                pieces.extend(choice.iter().cloned());
+                pieces.push(Piece::Text(tail.clone()));
+                combined.push(pieces);
             }
         }
         results = combined;
     }
-    if results.is_empty() {
-        return Ok(Type::Never);
+    pattern_type(results, types)
+}
+
+/// The template type of a template literal expression whose substitutions
+/// have the types `parts` (TypeScript types a template expression in a
+/// template literal type context by its parts); `None` when a part is not
+/// a placeholder type.
+pub(in crate::lower) fn expression_type(
+    quasis: &[Vec<u16>],
+    parts: &[Type],
+    types: &mut ir::ValueTypes,
+) -> Result<Option<Type>> {
+    let mut results: Vec<Vec<Piece>> = vec![vec![Piece::Text(quasis[0].clone())]];
+    for (part, next) in parts.iter().zip(&quasis[1..]) {
+        let Some(choices) = alternatives(*part, types)? else {
+            return Ok(None);
+        };
+        if results.len().saturating_mul(choices.len()) > literals::MAX_LITERAL_MEMBERS {
+            return Ok(None);
+        }
+        let mut combined = Vec::new();
+        for prefix in &results {
+            for choice in &choices {
+                let mut pieces = prefix.clone();
+                pieces.extend(choice.iter().cloned());
+                pieces.push(Piece::Text(next.clone()));
+                combined.push(pieces);
+            }
+        }
+        results = combined;
     }
-    let values: BTreeSet<LiteralValue> = results
-        .iter()
-        .map(|units| literals::string_value(units, types.profile))
-        .collect();
-    literals::of_values(LiteralBase::String, values, types)
+    pattern_type(results, types).map(Some)
 }
 
 /// One placeholder of a template pattern.
-enum Hole<'a> {
+enum Slot<'a> {
     /// `infer X` (with an optional constraint).
     Infer(&'a ast::TsInferType),
     /// A type the matched text must belong to (`string`, `number`, literals).
@@ -112,10 +171,33 @@ pub(super) fn matches(
     bindings: &mut generics::Frame,
     types: &mut ir::ValueTypes,
 ) -> Result<bool> {
+    // Without `infer` the template is a type and the relation decides.
+    if !template
+        .types
+        .iter()
+        .any(|placeholder| matches!(&**placeholder, ast::TsType::TsInferType(_)))
+    {
+        let target = with_bindings(
+            &ast::TsType::TsLitType(ast::TsLitType {
+                span: template.span,
+                lit: ast::TsLit::Tpl(template.clone()),
+            }),
+            bindings,
+            types,
+        )?;
+        return Ok(extends(ty, target, types));
+    }
     let Type::Literal(LiteralBase::String, id) = ty else {
         return Ok(false);
     };
     let values: Vec<_> = types.literals.values(id).iter().cloned().collect();
+    // A pattern has no single text to infer from.
+    if values
+        .iter()
+        .any(|value| matches!(value, LiteralValue::Pattern(_)))
+    {
+        return Ok(false);
+    }
     let [value] = &values[..] else {
         // A set matches when every member does; bind the union of each.
         let mut all = true;
@@ -130,8 +212,8 @@ pub(super) fn matches(
     let mut holes = Vec::new();
     for placeholder in &template.types {
         holes.push(match &**placeholder {
-            ast::TsType::TsInferType(infer) => Hole::Infer(infer),
-            other => Hole::Type(with_bindings(other, bindings, types)?),
+            ast::TsType::TsInferType(infer) => Slot::Infer(infer),
+            other => Slot::Type(with_bindings(other, bindings, types)?),
         });
     }
     let quasis = template
@@ -187,7 +269,7 @@ fn find(haystack: &[u16], needle: &[u16]) -> Option<usize> {
 }
 
 fn hole_matches(
-    hole: &Hole<'_>,
+    hole: &Slot<'_>,
     piece: &[u16],
     bindings: &mut generics::Frame,
     types: &mut ir::ValueTypes,
@@ -198,8 +280,8 @@ fn hole_matches(
         types,
     )?;
     match hole {
-        Hole::Type(ty) => Ok(piece_belongs(piece, *ty, types)),
-        Hole::Infer(infer) => {
+        Slot::Type(ty) => Ok(piece_belongs(piece, *ty, types)),
+        Slot::Infer(infer) => {
             let name = infer.type_param.name.sym.to_string();
             let mut candidate = string;
             if let Some(constraint) = &infer.type_param.constraint {
@@ -242,7 +324,9 @@ fn piece_belongs(piece: &[u16], ty: Type, types: &mut ir::ValueTypes) -> bool {
             }
             LiteralValue::Number(bits) => number_text(f64::from_bits(*bits)) == text,
             LiteralValue::Boolean(flag) => flag.to_string() == text,
+            LiteralValue::Pattern(id) => patterns::text_matches(piece, types.literals.pattern(*id)),
         }),
+        Type::BigInt => patterns::hole_accepts(Hole::BigInt, piece),
         Type::Null => text == "null",
         Type::Undefined => text == "undefined",
         _ => false,
@@ -297,8 +381,8 @@ pub(super) fn number_text(value: f64) -> String {
 }
 
 /// The intrinsic string types over a string literal set.
-#[derive(Clone, Copy)]
-pub(super) enum Intrinsic {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Intrinsic {
     Uppercase,
     Lowercase,
     Capitalize,
@@ -314,7 +398,7 @@ impl Intrinsic {
             _ => return None,
         })
     }
-    fn name(self) -> &'static str {
+    pub(super) fn name(self) -> &'static str {
         match self {
             Self::Uppercase => "Uppercase",
             Self::Lowercase => "Lowercase",
@@ -324,7 +408,7 @@ impl Intrinsic {
     }
     /// JavaScript's `toUpperCase`/`toLowerCase` over UTF-16 code units
     /// (whole string, or only the first code unit for (Un)capitalize).
-    fn apply(self, units: &[u16]) -> Vec<u16> {
+    pub(super) fn apply(self, units: &[u16]) -> Vec<u16> {
         let convert = |units: &[u16], upper: bool| -> Vec<u16> {
             char::decode_utf16(units.iter().copied())
                 .flat_map(|decoded| match decoded {
@@ -363,9 +447,14 @@ impl Intrinsic {
                 if member == Type::Never {
                     continue;
                 }
-                // `Uppercase<string>` is a pattern type of strings: `string`.
+                // `Uppercase<string>`: the strings the mapping leaves unchanged.
                 if member == Type::String {
-                    return Ok(Type::String);
+                    values.insert(
+                        types
+                            .literals
+                            .pattern_value(vec![Piece::Hole(Hole::Mapped(self))]),
+                    );
+                    continue;
                 }
                 return Err(type_error(format!(
                     "type {} does not satisfy the constraint string of {}",
@@ -374,6 +463,14 @@ impl Intrinsic {
                 )));
             };
             for value in types.literals.values(id).clone() {
+                if let LiteralValue::Pattern(pattern) = value {
+                    let mapped = self.map_pattern(types.literals.pattern(pattern).clone())?;
+                    values.insert(match &mapped[..] {
+                        [Piece::Text(units)] => literals::string_value(units, types.profile),
+                        _ => types.literals.pattern_value(mapped),
+                    });
+                    continue;
+                }
                 let units = literals::string_units(&value, types.profile)
                     .ok_or_else(|| invalid("malformed string literal type"))?;
                 values.insert(literals::string_value(&self.apply(&units), types.profile));
@@ -384,10 +481,67 @@ impl Intrinsic {
         }
         literals::of_values(LiteralBase::String, values, types)
     }
+    /// The mapping of a pattern (TypeScript maps its texts and wraps its
+    /// `string` placeholders): `Uppercase<`on${string}`>` is
+    /// `` `ON${Uppercase<string>}` ``; (Un)capitalize maps the first piece.
+    fn map_pattern(self, pattern: Vec<Piece>) -> Result<Vec<Piece>> {
+        let whole = matches!(self, Self::Uppercase | Self::Lowercase);
+        let mut mapped = Vec::with_capacity(pattern.len());
+        for (index, piece) in pattern.into_iter().enumerate() {
+            if !whole && index > 0 {
+                mapped.push(piece);
+                continue;
+            }
+            mapped.push(match piece {
+                Piece::Text(units) => Piece::Text(self.apply(&units)),
+                Piece::Hole(Hole::String) => Piece::Hole(Hole::Mapped(self)),
+                Piece::Hole(Hole::Mapped(inner)) if inner == self => {
+                    Piece::Hole(Hole::Mapped(inner))
+                }
+                Piece::Hole(hole) => {
+                    return Err(unsupported(&format!(
+                        "{} of a template literal type with a {} placeholder",
+                        self.name(),
+                        match hole {
+                            Hole::Number => "number".to_owned(),
+                            Hole::BigInt => "bigint".to_owned(),
+                            Hole::Mapped(inner) => format!("{}<string>", inner.name()),
+                            Hole::String => "string".to_owned(),
+                        }
+                    )));
+                }
+            });
+        }
+        Ok(patterns::canonical(mapped))
+    }
 }
 
 /// `toLowerCase` of one character: Unicode's default mapping, with the final
 /// sigma rule of JavaScript left to its context-free form.
 fn lower_case(c: char) -> String {
     c.to_lowercase().collect()
+}
+
+impl Lower<'_> {
+    /// A template literal expression where a string literal type is
+    /// expected: typed by its parts (`` `on${name}` `` with `name: string` is
+    /// `` `on${string}` ``), so the literal context checks it like tsc.
+    pub(in crate::lower) fn contextual_template(&mut self, template: &ast::Tpl) -> Result<Expr> {
+        let (value, parts) = self.template_literal_parts(template)?;
+        let quasis = template
+            .quasis
+            .iter()
+            .map(|element| {
+                element
+                    .cooked
+                    .as_ref()
+                    .map(|cooked| cooked.as_wtf8().to_ill_formed_utf16().collect::<Vec<u16>>())
+                    .ok_or_else(|| invalid("template literal contains an invalid escape sequence"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(match expression_type(&quasis, &parts, self.types)? {
+            Some(ty @ Type::Literal(..)) => Expr { ty, ..value },
+            _ => value,
+        })
+    }
 }

@@ -327,6 +327,13 @@ operations! {
     /// surrogates kept; pure and capability-free.
     StringToUpperCase16,
     StringToLowerCase16,
+    /// V38 (`full_regexp`) RegExp match: run a compiled backtracking program
+    /// (`crate::regexp`, format 2) over a UTF-16 string from a start index,
+    /// sticky or searching; returns the capture slots (32-bit each, -1 when
+    /// unset) as an owned string, empty without a match. Pure and
+    /// capability-free; always linked (`varta_intrinsics::regexp`), so its
+    /// matching is guest code metered as fuel.
+    RegExpExec,
     /// V37 (`collections`) `Date.now()`: milliseconds since the Unix epoch as
     /// binary64, under the exact `time.now` grant (a denial is fatal).
     DateNow,
@@ -534,6 +541,7 @@ impl HostOperation {
                 | Self::StringCharAt16
                 | Self::StringToUpperCase16
                 | Self::StringToLowerCase16
+                | Self::RegExpExec
                 | Self::EnvGet
                 | Self::FsRead
                 | Self::NetGet
@@ -805,6 +813,7 @@ impl HostOperation {
             Self::DateZoneName => "date_zone_name",
             Self::StringToUpperCase16 => "string_to_upper_case16",
             Self::StringToLowerCase16 => "string_to_lower_case16",
+            Self::RegExpExec => "regexp_exec",
             Self::LogFloatV2 => "log_f64_v2",
             Self::LogFloat => "log_f64",
             Self::FloatRemainder => "number_remainder",
@@ -911,6 +920,8 @@ impl HostOperation {
                 | Self::StringCharCodeAt16
                 | Self::StringToUpperCase16
                 | Self::StringToLowerCase16
+                // The v38 backtracking RegExp matcher.
+                | Self::RegExpExec
                 // The value18 primitive conversions and the primitive
                 // comparisons (`varta_intrinsics::bigint`): codegen v2 answers
                 // their common cases inline (integral Numbers, strings,
@@ -1065,7 +1076,7 @@ impl HostOperation {
             || self.web_bytes()
             || self.kv()
             || self.local_time()
-            || self == Self::ViewCommit
+            || matches!(self, Self::ViewCommit | Self::RegExpExec)
         {
             return crate::abi::PROGRAM_LIMITS_VERSION;
         }
@@ -1573,6 +1584,7 @@ impl HostOperation {
             Self::StringCharAt16 => (&[I32, I32, F64], &[I32]),
             Self::StringCharCodeAt16 => (&[I32, I32, F64], &[F64]),
             Self::StringToUpperCase16 | Self::StringToLowerCase16 => (&[I32, I32], &[I32]),
+            Self::RegExpExec => (&[I32, I32, I32, I32, F64, I32], &[I32]),
             Self::DateNow => (&[], &[F64]),
             Self::IntlTimeZone | Self::IntlLocale => (&[], &[I32]),
             Self::DateZoneOffset => (&[I32, I32, F64, F64], &[F64]),
@@ -1804,6 +1816,7 @@ impl HostOperation {
             "date_now" => Self::DateNow,
             "string_to_upper_case16" => Self::StringToUpperCase16,
             "string_to_lower_case16" => Self::StringToLowerCase16,
+            "regexp_exec" => Self::RegExpExec,
             "log_f64_v2" => Self::LogFloatV2,
             "log_f64" => Self::LogFloat,
             "number_remainder" => Self::FloatRemainder,
@@ -2046,6 +2059,7 @@ impl HostOperation {
             | Self::StringCharCodeAt16
             | Self::StringToUpperCase16
             | Self::StringToLowerCase16
+            | Self::RegExpExec
             | Self::LogInt
             | Self::LogFloatV2
             | Self::LogFloat

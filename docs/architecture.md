@@ -6367,7 +6367,9 @@ finished body fills the reservation, so the interned type graph is cyclic but
 finite. Direct cycles without such a step stay rejected with `recursive type
 declaration` (`type A = B; type B = A`), a recursive alias as a direct union
 member is rejected (`type A = string | A`), and recursive generic declarations
-are rejected. V33 and earlier keep rejecting every self-reference.
+are rejected (v38 [`type_level`](#type-level-type_level) admits a generic
+declaration that refers to the same instantiation of itself, reserved per
+type argument list). V33 and earlier keep rejecting every self-reference.
 
 Recursive graphs are ordinary values: their runtime JSON depth (64) and visit
 (4096) bounds and the encoder's cycle check are unchanged, and the collector is
@@ -8559,7 +8561,9 @@ and the clock.
 
 #### RegExp (`regexp()`)
 
-Selector `regexp()`. V37 admits regular expression literals, `new RegExp`
+V38 replaces this subset with the [full RegExp](#full-regexp-full_regexp)
+language and a backtracking matcher; everything below stays the v37
+contract. Selector `regexp()`. V37 admits regular expression literals, `new RegExp`
 with constant arguments, `RegExp.prototype.exec`/`test`, `lastIndex`, match
 arrays and the regex string methods `search`, `match`, `matchAll`, `replace`,
 `replaceAll` and `split` (with RegExp and string patterns). It adds no value
@@ -11938,6 +11942,109 @@ new.
   (about 2.5 MB). The data lives in the intrinsic region of memory 0 and
   counts toward the memory budget.
 
+#### Full RegExp (`full_regexp`)
+
+K9 D3 (2026-11-06), under the selector `LanguageProfile::full_regexp()`: the
+whole ECMAScript 2025 pattern language (§22.2) replaces the v37
+[linear-time subset](#regexp-regexp) in v38. Patterns are still compiled
+only ahead of time (literals and `new RegExp` with constant arguments, as in
+v37); V37 keeps its subset, its program format 1, its emitted Pike VM and
+its diagnostics and bytes unchanged.
+
+- **Admitted syntax.** Everything v37 admits, plus numbered and named
+  backreferences (`\1`, `\k<name>`, forward references match empty),
+  lookahead and lookbehind (`(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)`; Annex B
+  quantified lookahead without `u`), pattern modifiers `(?ims-ims:…)`
+  (ES2025), duplicate named groups in different alternatives (ES2025
+  MightBothParticipate), `\u` escapes in group names, Unicode property
+  escapes `\p{…}`/`\P{…}` (`General_Category`/`gc` values and groups,
+  `Script`/`sc`, `Script_Extensions`/`scx`, the binary properties of
+  ECMA-262's table, `Any`, `ASCII`, `Assigned`), the `d` (`hasIndices`) and
+  `v` (`unicodeSets`) flags, and under `v` the class set notation: nested
+  classes, `&&`, `--`, `\q{…|…}` and the emoji properties of strings
+  (`Basic_Emoji`, `Emoji_Keycap_Sequence`, `RGI_Emoji_Modifier_Sequence`,
+  `RGI_Emoji_Flag_Sequence`, `RGI_Emoji_Tag_Sequence`,
+  `RGI_Emoji_ZWJ_Sequence`, `RGI_Emoji`). Early errors are compile-time
+  `invalid` diagnostics with V8's text (`Duplicate capture group name`,
+  `Invalid named capture referenced`, `Repeated flag in flag group`,
+  `Invalid property name`, `Invalid set operation in character class`,
+  `Negated character class may contain strings`, …); `u` with `v` is
+  `Invalid flags supplied to RegExp constructor 'uv'`. Flags print in
+  `dgimsuvy` order.
+- **Property data.** Code point properties come from the ICU4X 2.4 compiled
+  data (`icu_properties`, already locked; strict name matching as the
+  specification requires), resolved at compile time into class ranges; the
+  properties of strings come from the Unicode Emoji 17.0 data
+  (`regexp/emoji_sequences.txt`, from `emoji-sequences.txt` and
+  `emoji-zwj-sequences.txt`). Node 24.20.0 ships ICU 78.3 with Unicode 17.0,
+  and every case pinned against it agrees.
+- **Programs (format 2).** The compiler (`regexp::backtrack`) emits a
+  backtracking program, a static string of UTF-16 code units shared with the
+  matcher through `varta_common::regexp`: a header (format version 2,
+  `UNICODE`/`ANCHORED`/`PREFILTER` flags, capture and register counts, the
+  code offset and an ASCII first-unit prefilter), variable-length
+  instructions (`MATCH`, `CHAR`, `CHAR32`, `ANY`, `CLASS`, `JUMP`, `SPLIT`,
+  `SAVE`, `RESET`, `ASSERT`, `BACKREF`, `LOOK`, `LOOK_END`, `REPEAT_INIT`,
+  `REPEAT`, `ENTER`, `REPEAT_END`, `STAR`) whose consuming instructions and
+  backreferences carry a backward bit inside lookbehind, and sorted class
+  range tables. Offsets are single code units, so a program has at most
+  65 535 units (`RegExp program larger than 65535 code units` beyond);
+  counted repetitions use counters and are not expanded (`a{100000}` is
+  small). Case-insensitive characters and classes are widened at compile
+  time as in v37 (under `v` with `i`, operands are folded with simple case
+  folding before set operations and complemented among the folded
+  characters, MaybeSimpleCaseFolding); only case-insensitive
+  backreferences compare by Canonicalize at run time.
+- **Matcher.** `regexp_exec` is a linked intrinsic (`HostOperation::RegExpExec`,
+  pure, capability-free, linked in every v38 module and imported by no
+  profile, see the [linked intrinsics table](embedding.md)): the backtracking interpreter
+  `varta_intrinsics::regexp`, one implementation compiled into the guest.
+  It follows §22.2.2 as a continuation machine: `SPLIT` and quantifiers push
+  choice points, every capture and register write is undone when matching
+  backtracks past it, `REPEAT` counts iterations (RepeatMatcher: the
+  minimum without choice, then greedy or lazy priority, captures cleared per
+  iteration, an optional iteration that consumes nothing fails), `STAR`
+  runs a quantified single character without captures without
+  per-iteration state, lookarounds are atomic (a positive one keeps its
+  captures and drops its choice points, a negative one undoes its body) and
+  lookbehind bodies read backward with their captures recorded end first.
+  Under `u` or `v` the matcher reads code points, a start inside a surrogate
+  pair backs up to the pair, and the search advances by code point.
+- **Work is fuel.** Matching may take time exponential in the input, as in
+  every backtracking engine. Because the matcher is guest code, every step
+  is metered as ordinary fuel and its backtracking stack is arena memory
+  under the memory budget: a catastrophic pattern (`/^(a+)+$/` on 64 `a`s
+  and `!`) ends with the turn's typed `BudgetExhausted` fuel error, the same
+  on every run, instead of hanging, and an exhausted memory budget is the
+  typed memory failure. Browser hosts run the same Wasm, so the official
+  metered browser bundle charges matching like any guest code. Measured under the
+  production budgets (`full_regexp_tests`): about 3 700 fuel of fixed work
+  per run including the RegExp object (v37: about 3 000), about 33 fuel per
+  skipped input unit for a search led by a literal or a class (the prefilter
+  skips units without a run), and about 160 fuel per unit for `/^(a+)+$/`
+  on a matching input (v37: about 1 450). Production budgets are unchanged.
+- **Prelude.** V38 compiles `prelude/regexp_v38.ts` in place of the v37
+  prelude (`Prelude::lifted`): `hasIndices` and `unicodeSets` reflect their
+  flags; `exec`, `match` without `g`, `matchAll` and replacer match arrays
+  carry `indices` (a `RegExpIndicesArray` of `[start, end]` pairs or
+  `undefined`, with `groups`, when the RegExp has `d`, otherwise
+  `undefined`); a groups object holds one key per name in first-group order
+  whose value is the group that took part; `$<name>` substitutes the
+  participating group of a shared name; AdvanceStringIndex is by code point
+  under `u` or `v`. A replacer's groups parameter is the (defined) groups
+  object. Match arrays and indices arrays are read like v37 match arrays
+  (index, destructuring, `for…of`).
+- **Deviations.** Patterns are compiled ahead of time only (a run-time
+  pattern, `new RegExp(regexp)`, `RegExp(…)` without `new`, `RegExp.escape`
+  and Annex B `compile` stay compile-time errors: a run-time pattern would
+  need the pattern compiler in the guest); `matchAll` returns an array;
+  match arrays have no array methods; `split` throws for a capture that did
+  not take part (its result is `string[]`); `Symbol.match`/`matchAll`/
+  `replace`/`search`/`split` protocols wait for symbol values; legacy static
+  properties are not modelled. Behaviour is pinned against Node 24.20.0
+  (`varta-runtime` `full_regexp_cases`, including a 600-pattern
+  differential corpus) and conformance cases `regexp-*`.
+
 #### Type level (`type_level`)
 
 K9 track A (2026-11-06), under the selector `LanguageProfile::type_level()`:
@@ -12109,10 +12216,30 @@ refused with an `unsupported …` diagnostic that names it (list below).
     types map them); an array's and tuple's `number`, positions and
     `Array.prototype` string keys; a primitive's prototype string keys
     (`number` for strings). Symbol-keyed members have no key type here.
-  - *Pattern template literal types* (`` `on${string}` ``) and intrinsic
-    string types over `string` are `string` outside an `extends` clause (a
-    lenient deviation: TypeScript would also check each literal assigned to
-    them against the pattern).
+  - *Pattern template literal types* (`` `on${string}` ``, `` `${number}px` ``,
+    `` `id-${bigint}` ``) and the intrinsic string types over `string`
+    (`Uppercase<string>`, and over a pattern: `` Uppercase<`on${string}`> ``
+    is `` `ON${Uppercase<string>}` ``) are checked as in tsc (step 3,
+    2026-11-06). A pattern is a member of a string literal set
+    (`LiteralValue::Pattern`), physically a string like every literal type.
+    A string literal is assignable to it when it matches (TypeScript's
+    inference from a literal to a template: a placeholder followed by text
+    takes the text up to that text's first occurrence, the last one the
+    rest; `${number}` takes a non-empty text whose ECMAScript `ToNumber` is
+    finite, `${bigint}` a bigint literal's text, `${Uppercase<string>}` a
+    text the mapping leaves unchanged); a pattern is assignable to another
+    when every string it describes matches the other; `string` is
+    assignable to none. A template literal expression where a string
+    literal type is expected takes the template type of its parts
+    (`` `on${name}` `` with `name: string` is `` `on${string}` ``). A union
+    drops the string literals its patterns match, and `` `${string}` `` is
+    `string`. `Record` and mapped types over a pattern key type are string
+    index signatures (their keys are not checked against the pattern), and
+    `Omit` drops the keys a pattern matches. Refused by name: a checked
+    assertion (`x as T`, `JSON.parse(text) as T`) to a type with a pattern,
+    which has no run-time test, `Pick` with pattern keys, and an intrinsic
+    type over a pattern with a `number`, `bigint` or other mapped
+    placeholder.
   - *`infer`* inside a declared generic type's arguments (`Box<infer U>`: the
     declaration body with its parameters as inference positions), in a union
     pattern with one inferring member (`infer U | undefined`) and over
@@ -12127,30 +12254,69 @@ refused with an `unsupported …` diagnostic that names it (list below).
     receiver of `x.isT()`.
   - *Class subtyping in containers*: a subclass instance is accepted wherever
     an ancestor is expected in arrays (`push`, literals, element writes),
-    tuples, records, `Map`/`Set` values and unions. An array of a class
-    converts to an array of an ancestor class (`B[]` to `A[]`) by a shallow
-    copy (an array literal is retyped), and an array of a union of classes
-    to an array of their common ancestor by a new array of the unboxed
-    elements.
+    tuples, records, `Map`/`Set` values and unions.
+- **Shared class arrays (step 3, owner decision of 2026-11-06).** An array
+  whose elements are class instances, or a union of classes with `null` or
+  `undefined`, converts to an array type whose element type admits every
+  one of them (`B[]` and `(B | C)[]` to `A[]`, `(B | null)[]` to `(A |
+  null)[]`) without a copy, as in JavaScript: both names hold one array, so
+  every write through one is seen through the other. The compiler joins the
+  array types that such conversions connect into components
+  (`type_level::covariance`) and gives every array type of a component one
+  element representation, so no element is converted: instance handles
+  (the arrays of unions of classes hold the instances, boxing on read and
+  unboxing on write) or, when a union of the component admits `null` or
+  `undefined`, union cells (the arrays of one class box on write and unbox
+  on read). Both are existing canonical array layouts (element kind Record
+  or ReferenceUnion), so no value layout, value ABI or host import changes.
+  TypeScript's array covariance is unsound: through the wider name an
+  `A` (or `null`) may be stored that a narrower name does not admit. Every
+  element read (`xs[i]`, `at`, `pop`, iteration, callbacks, destructuring,
+  library methods) through an array type of a component whose element type
+  does not admit every value stored through the component's other types
+  tests the element (the class descriptor against the admitted classes and
+  their subclasses; `null`/`undefined` against the element union) and
+  throws `TypeError` (`array element is not a value of the array's element
+  type`) on a mismatch, consistent with the checked predicate reads.
+  Programs without such conversions keep their code. A collection whose
+  key vector is an array type with a changed representation is refused by
+  name.
 - **Intentional deviations from Node.** (1) A type predicate that lies
   (narrows to a member the value does not hold) throws `TypeError` at the
   narrowed read (`value does not have the type its type predicate
   asserted`), consistent with the checked `as` assertions; Node continues
-  with the mistyped value. (2) A `B[]` converted to `A[]` is a copy: a write
-  through one name is not seen through the other, where Node aliases one
-  array (a shared alias could store an `A` into the `B[]`).
+  with the mistyped value. (2) An element of a shared class array that the
+  read's element type does not admit (an `A` stored through `A[]` and read
+  through `B[]`) throws `TypeError` at the read; Node continues with the
+  mistyped value.
+
+- **Step 3 admissions (2026-11-06).** `infer` inside an intersection pattern
+  (`T extends { a: infer A } & { b: infer B }`: the check type matches
+  every member, sharing the bindings; a name inferred twice joins its
+  candidates). `this` in a generic interface or object type alias is the
+  instantiation being resolved, and a generic declaration may refer to the
+  same instantiation of itself (`interface Link<T> { next: Link<T> | null
+  }`): the recursive reservation is kept per type argument list. An
+  `asserts this` or `asserts this is T` method narrows the receiver binding
+  of its call statement for the rest of the block (a subclass narrowing
+  reads through the descriptor test, `TypeError` when the method lied). An
+  overload set with a rest parameter merges into one rest parameter of the
+  union of every parameter type (`{ (...parts: string[]): string; (n:
+  number): string }` is `(...args: (string | number)[]) => string`); the
+  call selects the first overload whose parameters (rest elements
+  included) accept the arguments.
 
 Still refused, each by name: `unique symbol` (no Symbol values in this
-profile), `import("…")` types, callable objects with properties (a call
-signature together with other members: no closed layout holds a function
-value and fields), overloads with a `this` parameter, type parameters or a
-rest parameter, generic construct signatures and constructor types,
+profile; track D's Symbol values are not in this profile yet), `import("…")`
+types, callable objects with properties (a call signature together with
+other members: no closed layout holds a function value and fields),
+overloads with a `this` parameter or type parameters, generic construct
+signatures and constructor types (a monomorphized class has one layout per
+instantiation, so one constructor value cannot build every instantiation),
 intersections of object types whose shared property has no common type,
-mapped types over `number` or symbol key sets, `keyof never`, `this` in a
-generic declaration, `typeof` of a generic function or class and of a
-module initializer whose type would need lowering, `infer` inside an
-intersection pattern or a union with several inferring members, and an
-`asserts this` method.
+mapped types over `number` or symbol key sets, `keyof never`, `typeof` of a
+generic function or class and of a module initializer whose type would need
+lowering, and `infer` in a union with several inferring members.
 
 #### Declarations and classes (`declaration_forms`)
 
@@ -15495,14 +15661,61 @@ oracle, not the definition.
   font size of 9px for sizes no absolute length fixed (em lengths keep the
   specified size, as in Blink). A computed `line-height` is `normal`, a
   number (a multiple of each element's size), or a length (a percentage of
-  the element's computed size). The native renderer shapes text with these
-  sizes; the browser host's Chrome derives the same ones from its user-agent
-  sheet.
+  the element's computed size). It computes `font-weight` (`normal`, `bold`,
+  numbers; the user-agent rows: `h1`–`h3` bold, `strong` `bolder` by the
+  Fonts 4 §2.2.1 table, form controls `normal`) and `font-style` (`em`
+  italic, form controls `normal`) the same way. The native renderer shapes
+  text with these fonts; the browser host's Chrome derives the same ones
+  from its user-agent sheet.
+- **First available font and its metrics (Values 4 §6.1.1, Fonts 4 §5).**
+  `ex`, `cap`, `ch`, `ic`, their root forms `rex`, `rcap`, `rch`, `ric`,
+  `lh` where `line-height` is `normal` and `rlh` take the metrics of the
+  element's (the root's) first available font (`varta_style::fonts`): the
+  first family of its computed `font-family` list that the view's font set
+  has a face for, else the set's default family, else the host's default
+  font. A named family matches a packaged face's family or a named alias
+  (ASCII case-insensitively), a generic family a face it aliases or else
+  the host's own font for it; a family with neither is skipped. Within a
+  family the face is matched by Fonts 4 §5.2 step 4 (stretch, then style:
+  italic, oblique, normal or the reverse, then weight with the 400–500
+  rule), weight ranges of variable faces included. A **packaged face** is
+  read from its own tables (`read-fonts`, the same code in both hosts): the
+  `OS/2` x-height, else the top of the `x` glyph's `glyf` outline, else
+  0.5em; the `OS/2` cap-height, else the ascent; the `0` and `水` (U+6C34)
+  advances (`hmtx` with `HVAR` deltas), else 0.5em and 1em; and for
+  `normal` the ascent, descent and line gap of the shaper's selection
+  (`OS/2` typographic metrics under `USE_TYPO_METRICS`, else `hhea`, else
+  typographic, else Windows), each rounded to whole pixels at the used size
+  and summed, as Blink's line spacing. A variable face is read at its
+  location for the element (`wght` the matched weight, `opsz` the used size,
+  `ital` for italic; `fvar`/`avar` normalization and `MVAR` deltas). A
+  **host font** (a generic family no packaged face names, the default font,
+  a native system-font set's families, a packaged face the engine cannot
+  read) is measured by the host (`HostFonts`): natively through CoreText as
+  Chrome on macOS measures it (CoreText's ascent, descent and leading
+  rounded, with Blink's enlarged ascent of Times, Helvetica and Courier;
+  CoreText's cap-height; the top of the `x` glyph's CoreText bounds; the
+  `0` and `水` advances from the platform face's own tables at its location),
+  and in the browser host by the bridge through the browser's own units (a
+  hidden probe element in the view's shadow tree reports `1ex`, `1cap`,
+  `1ch`, `1ic` and `1lh` through `computedStyleMap`); the engine decides
+  which font is asked for. The root element's font is the initial family
+  at the root font size. In `font-size`, `ex`, `cap`, `ch` and `ic` take the
+  parent's font, and the result is an absolute size. Only when no font has
+  metrics (a native host without faces or platform measurements) do the
+  Values 4 fallbacks apply: `ex` and `ch` 0.5em, `ic` 1em; `cap` and a
+  `normal` `lh` then stay unresolved. Recorded deviations of Chrome on
+  macOS for packaged faces: it measures the `x` outline instead of the
+  `OS/2` x-height (equal in well-formed faces), takes CoreText's estimates
+  for a face without `OS/2` x- and cap-heights (without `x` and `H` glyphs,
+  2/3 and 8/9 of the ascent) instead of the `x` outline, the ascent and the
+  Values 4 fallbacks, applies no `MVAR` cap-height delta, and ignores
+  `USE_TYPO_METRICS` for `normal`.
 - **Lowering.** After `var()` substitution (Variables 1 §3), a valid value
   is lowered to the host grammar the renderer's consumers read
   (`css::lower`): math functions are evaluated, absolute and viewport units
-  become `px`, `em`, `lh` and `rlh` become `px` against the element's font
-  (Values 4 §6.1.1; in `font-size`, `em` alone stays a percentage of the
+  become `px`, the font-relative units become `px` against the element's
+  font (Values 4 §6.1.1; in `font-size`, `em` alone stays a percentage of the
   parent's size and a sum with other lengths is the parent's absolute size;
   in `font-size` and `line-height`, `lh` is the parent's), named colours and
   colour functions `rgba()` with 8-bit channels after gamut mapping, and
@@ -15519,17 +15732,71 @@ oracle, not the definition.
   tree resolve calc handles), and the browser host sets it inline. A value
   the native renderer cannot render yet is refused at parse time with
   `Unrenderable` and, when it only appears after substitution, is invalid at
-  computed-value time natively: `ex`, `ch`, `cap`, `ic` and their root forms,
-  `lh` where `line-height` is `normal` and `rlh` (they need the metrics of
-  the first available font), a sum of lengths and percentages in other
+  computed-value time natively: `cap` and a `normal` `lh` without any font
+  metrics, a sum of lengths and percentages in other
   properties (`border-radius`, `transform`, `object-position`, grid tracks),
   and values of the specifications that native layout lacks
   (`display: inline-block` and the other inner/outer display types,
   `position: sticky`, intrinsic sizes, `overflow: scroll | clip`,
   `white-space: pre-line | break-spaces`, `text-align: justify`, border
   styles other than `solid`).
-- **Not yet admitted:** `@keyframes`, `@container`, nesting, and the
-  selector, layout and paint stages S4–S8.
+- **Layout and text properties (S4).** Mapped properties are expanded
+  when a stylesheet is parsed (`view::mapped`): the flow-relative box
+  properties of CSS Logical 1 §4 (`padding-`, `margin-` and `inset-`
+  `inline`/`block` with their `-start`/`-end` forms) in the subset's only
+  writing mode (`horizontal-tb`, `ltr`: inline start left, block start
+  top), `inset` (Positioned Layout 3 §3.1, the box rule) and `flex`
+  (Flexbox 1 §7.1: `none`, `auto`, factors with omitted factors 1 and an
+  omitted basis `0%`, Chrome's computed form of the specification's 0).
+  Each mapped declaration declares its physical longhands at its own place
+  in the cascade, so a mapped property and its physical longhand win over
+  each other by the ordinary order (Logical 1 §4). A value with `var()`
+  gives every longhand the whole value and its part, split after
+  substitution (Variables 1 §3.1, pending-substitution values); a split
+  that fails is invalid at computed-value time. Mapped properties are
+  stylesheet-only: the engine's computed values, the native renderer and
+  the browser bridge see only physical longhands. New properties:
+  `translate` and `scale` (Transforms 2 §4, two-dimensional; `scale`
+  percentages compute to numbers; the renderer takes positive factors
+  only), `transform-origin` (Transforms 1 §5, keywords and two
+  length-percentages, lowered to `<x> <y>` lengths or percentages; a sum of
+  a length and a percentage is refused as unrenderable) and
+  `letter-spacing` (Text 3 §8.2, `normal | <length>`, inherited, absolute
+  at computed-value time). Natively the effective transform is the
+  `translate`, then `scale`, then `transform` list (Transforms 2 §6.1)
+  around the `transform-origin`; letter spacing is added after every
+  typographic character unit by the shaper.
+- **Selectors (S5, first part; Selectors 4).** Selector lists of complex
+  selectors (`stylesheet::selector`): type and universal selectors (the view
+  tags), classes, the descendant, child, next-sibling and
+  subsequent-sibling combinators, `:is()` and `:where()` (forgiving lists)
+  and `:not()`, nested at most `selector::MAX_SELECTOR_NESTING` deep with at
+  most `selector::MAX_COMPOUNDS` compounds per complex selector; `:root`;
+  `:host`, which in the view's sheets matches nothing (Scoping 1 §3.2.1);
+  `:first-child`, `:last-child`, `:only-child`, their `-of-type` forms and
+  `:nth-child()`, `:nth-last-child()`, `:nth-of-type()`,
+  `:nth-last-of-type()` with `An+B` (no `of S`), counting element siblings;
+  `:hover`, `:active`, `:focus`, `:focus-within`, `:focus-visible`,
+  `:enabled`, `:disabled` and `:checked`. Specificity is the
+  `(ids, classes, types)` triple of §17 (`:where()` adds nothing, `:is()`
+  and `:not()` their most specific argument). The engine matches right to
+  left with the restart rules of Servo's matcher, so a failed descendant
+  search never retries above its closest failing ancestor; selectors that
+  search ancestors, siblings or arguments charge
+  `compounds × (ancestors + siblings + 1)` to the cascade work estimate per
+  candidate element. The browser bridge records the focused element
+  (`view_engine_focus`) apart from the focus-visible one; natively every
+  focus is visible, as before. A shorthand that wins over its longhand
+  (`margin`, `padding`, `gap`) gives the longhand its component in the
+  computed values, so the bridge's inline order cannot reverse the
+  cascade. Native style reads are recomputed when an element's children
+  change order. Refused: pseudo-elements, attribute and id selectors,
+  `:has()`, `:nth-child(… of S)` and the form-validity pseudo-classes.
+- **Not yet admitted:** `@keyframes`, `@container`, nesting, the rest of
+  S4 (per-side border longhands, `overflow-x`/`-y`, `visibility`,
+  `text-transform`, `rotate`, and the display types and sizes native
+  layout lacks: `inline-block`, `inline-flex`, `fit-content`, `sticky`),
+  the rest of S5 (above), and the paint stages S6–S8.
 
 **Browser bridge (K8 T3).** The official browser host runs the engine as
 `view-engine.wasm`: `varta-style-wasm`, a `wasm32` shim of `varta-style`
@@ -15538,7 +15805,16 @@ built by `scripts/build-view-engine.py` with the locked toolchain and the
 with `view-engine.json` (source fingerprint, target, compiler and size; a
 test fails when the sources change without a rebuild), as
 `varta-kv-codec-wasm` is. Its only `unsafe` code reads and writes its
-arguments in linear memory. The view model mirrors every batch into an
+arguments in linear memory and calls its one import,
+`varta_view.font_metrics(kind, family, family_len, weight, italic, size,
+out) -> u32`, through which the DOM bridge measures a host font (`kind` 0 a
+named family, 1 a generic family, 2 the default font; five `f64` written at
+`out`: `ex`, `cap`, `ch`, `ic` and the `normal` line height; 1 when
+measured, 0 when the browser renders no such font); the module keeps at
+most 1024 answers. The packaged faces reach it through `view_engine_face`
+(family name and font file in the input buffer, a bit per generic family it
+stands for) and the default family through `view_engine_default_family`;
+the Worker's view model, which has no DOM, measures nothing. The view model mirrors every batch into an
 engine `Session` inside a transaction (`begin`, then `commit` or `abort`,
 so a refused batch changes nothing), and the engine checks each class,
 style value and stylesheet with the native verdicts. The DOM bridge keeps

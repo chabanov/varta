@@ -104,9 +104,19 @@ pub(super) fn matches(
         ast::TsType::TsUnionOrIntersectionType(ast::TsUnionOrIntersectionType::TsUnionType(
             union,
         )) => union_pattern(union, ty, bindings, types),
-        ast::TsType::TsUnionOrIntersectionType(_) => Err(unsupported(
-            "infer inside an intersection pattern (the matched part of each member is ambiguous)",
-        )),
+        // `A & B`: the check type is assignable to the intersection when it
+        // is assignable to every member, so each member matches it (sharing
+        // the bindings; a name inferred twice joins its candidates).
+        ast::TsType::TsUnionOrIntersectionType(
+            ast::TsUnionOrIntersectionType::TsIntersectionType(intersection),
+        ) => {
+            for member in &intersection.types {
+                if !matches(member, ty, bindings, types)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
         _ => Err(unsupported("infer in this position of an extends pattern")),
     }
 }

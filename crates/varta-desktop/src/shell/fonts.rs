@@ -27,6 +27,8 @@ pub struct FontSet {
     /// Families whose ascent the platform's browser enlarges (a system set
     /// on macOS).
     enlarged_ascent: &'static [&'static str],
+    /// The registered families of the platform's UI font (a system set).
+    ui_families: Vec<String>,
 }
 
 /// Where a set's faces come from, which selects how the shaper loads them.
@@ -64,6 +66,7 @@ impl FontSet {
             origin: Origin::Packaged,
             fallback: None,
             enlarged_ascent: &[],
+            ui_families: Vec::new(),
         })
     }
 
@@ -79,6 +82,7 @@ impl FontSet {
             origin: Origin::Explicit,
             fallback: None,
             enlarged_ascent: &[],
+            ui_families: Vec::new(),
         }
     }
 
@@ -89,6 +93,7 @@ impl FontSet {
         faces: Vec<(Vec<u8>, String, Vec<&str>)>,
         fallback: super::fallback::SystemFallback,
         enlarged_ascent: &'static [&'static str],
+        ui_families: Vec<String>,
     ) -> Self {
         Self {
             faces: faces
@@ -102,6 +107,7 @@ impl FontSet {
             origin: Origin::System,
             fallback: Some(fallback),
             enlarged_ascent,
+            ui_families,
         }
     }
 
@@ -149,6 +155,10 @@ impl FontSet {
             measurer.set_fallback(Some(Box::new(fallback.clone())));
         }
         measurer.set_enlarged_ascent_families(self.enlarged_ascent);
+        // The platform measures the fonts it renders with itself (a system
+        // set's families, and the generic families and default font no
+        // packaged face names) for the font-relative units.
+        measurer.set_host_fonts(super::host_fonts(self.ui_families.clone()));
         Ok(measurer)
     }
 

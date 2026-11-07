@@ -5,9 +5,13 @@ use varta_common::view::Tag;
 use varta_common::view::stylesheet::REM_PIXELS;
 use varta_style::session::{self, Session, status};
 
-/// The one session of this instance and its input and output buffers.
+use crate::fonts;
+
+/// The one session of this instance, its fonts and its input and output
+/// buffers.
 struct State {
     session: Option<Session>,
+    fonts: Option<fonts::Fonts>,
     input: Vec<u8>,
     output: Vec<u8>,
 }
@@ -19,6 +23,7 @@ unsafe impl Sync for Cell {}
 
 static STATE: Cell = Cell(UnsafeCell::new(State {
     session: None,
+    fonts: None,
     input: Vec::new(),
     output: Vec::new(),
 }));
@@ -34,15 +39,26 @@ fn state() -> &'static mut State {
 /// input is not UTF-8), with one borrow of the state.
 fn with<R>(f: impl FnOnce(&mut Session, Option<&str>) -> R) -> R {
     let state = state();
-    let session = state.session.get_or_insert_with(|| {
-        Session::new(session::environment(
-            (1024.0, 768.0),
-            REM_PIXELS,
-            REM_PIXELS,
-            0,
-        ))
-    });
-    f(session, core::str::from_utf8(&state.input).ok())
+    let input = core::str::from_utf8(&state.input).ok();
+    let session = state.session.get_or_insert_with(new_session);
+    f(session, input)
+}
+
+/// A session with the bridge's measurements for the browser's fonts.
+fn new_session() -> Session {
+    let mut session = Session::new(session::environment(
+        (1024.0, 768.0),
+        REM_PIXELS,
+        REM_PIXELS,
+        0,
+    ));
+    session.set_fonts(alloc::sync::Arc::new(fonts::Fonts::new().set));
+    session
+}
+
+/// The state's session.
+fn session_of(state: &mut State) -> &mut Session {
+    state.session.get_or_insert_with(new_session)
 }
 
 /// Reserve a `len`-byte input buffer; returns its address.
@@ -161,8 +177,14 @@ pub extern "C" fn view_engine_environment(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn view_engine_state(focus: u32, hovered: u32, active: u32) {
-    with(|session, _| session.set_state(focus, hovered, active));
+pub extern "C" fn view_engine_state(focus_visible: u32, hovered: u32, active: u32) {
+    with(|session, _| session.set_state(focus_visible, hovered, active));
+}
+
+/// The focused element (`:focus`, `:focus-within`), or 0.
+#[unsafe(no_mangle)]
+pub extern "C" fn view_engine_focus(focus: u32) {
+    with(|session, _| session.set_focus(focus));
 }
 
 /// The committed computed values of `id` as output bytes
@@ -173,4 +195,61 @@ pub extern "C" fn view_engine_computed(id: u32) -> u32 {
     let state = state();
     state.output = bytes;
     u32::try_from(state.output.len()).unwrap_or(0)
+}
+
+/// Add a packaged face: the input holds the family name (`family_len`
+/// UTF-8 bytes) followed by the font file; `generics` has the bit of each
+/// generic family it stands for (`Generic::ALL` order). A file the engine
+/// cannot read is measured by the bridge under its family name.
+#[unsafe(no_mangle)]
+pub extern "C" fn view_engine_face(family_len: u32, generics: u32) -> u32 {
+    let state = state();
+    let Some((family, data)) = state.input.split_at_checked(family_len as usize) else {
+        return status::MISUSE;
+    };
+    let Ok(family) = core::str::from_utf8(family) else {
+        return status::MISUSE;
+    };
+    let fonts = state.fonts.get_or_insert_with(fonts::Fonts::new);
+    let aliases = fonts::generics(generics);
+    let added = match fonts.set.add_file(family, &aliases, data) {
+        Ok(_) => Ok(()),
+        Err(varta_style::fonts::FaceError::Unreadable) => {
+            fonts.set.add_host_family(family, &aliases)
+        }
+        Err(error) => Err(error),
+    };
+    if added.is_err() {
+        return status::INVALID;
+    }
+    publish_fonts(state);
+    status::OK
+}
+
+/// Set the default family of text without `font-family` to the input's
+/// UTF-8 name, or with an empty input to the browser's default font.
+#[unsafe(no_mangle)]
+pub extern "C" fn view_engine_default_family() -> u32 {
+    let state = state();
+    let Ok(family) = core::str::from_utf8(&state.input) else {
+        return status::MISUSE;
+    };
+    let family = (!family.is_empty()).then(|| alloc::string::String::from(family));
+    state
+        .fonts
+        .get_or_insert_with(fonts::Fonts::new)
+        .set
+        .set_default_family(family);
+    publish_fonts(state);
+    status::OK
+}
+
+/// Give the session the current font set.
+fn publish_fonts(state: &mut State) {
+    let set = state
+        .fonts
+        .get_or_insert_with(fonts::Fonts::new)
+        .set
+        .clone();
+    session_of(state).set_fonts(alloc::sync::Arc::new(set));
 }

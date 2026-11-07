@@ -4066,6 +4066,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "046a7d674daf459825b32f5062056d6882db0d2f5a479fbd76ccfc870ac18709"
 dependencies = [
  "bytemuck",
+ "core_maths",
  "font-types",
  "once_cell",
 ]
@@ -5368,6 +5369,7 @@ dependencies = [
 name = "varta-compiler"
 version = "0.1.0"
 dependencies = [
+ "icu_properties",
  "swc_common",
  "swc_ecma_ast",
  "swc_ecma_parser",
@@ -5417,6 +5419,7 @@ dependencies = [
  "varta-artifact",
  "varta-common",
  "varta-runtime",
+ "varta-style",
  "varta-view",
  "vello_gpu",
  "wgpu",
@@ -5556,6 +5559,8 @@ dependencies = [
 name = "varta-style"
 version = "0.1.0"
 dependencies = [
+ "libm",
+ "read-fonts",
  "varta-common",
 ]
 

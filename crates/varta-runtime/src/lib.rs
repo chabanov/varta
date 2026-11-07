@@ -146,6 +146,8 @@ mod declaration_form_tests;
 #[cfg(test)]
 mod expression_form_tests;
 #[cfg(test)]
+mod full_regexp_tests;
+#[cfg(test)]
 mod iteration_protocol_tests;
 #[cfg(test)]
 mod local_time_tests;

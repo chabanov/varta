@@ -223,9 +223,7 @@ impl Order {
                 // zero in tree order.
                 let z = if scheme.positioned() || item { z } else { None };
                 // Any transform makes a stacking context (CSS Transforms 1 §3).
-                let transformed = properties
-                    .get(&CssProperty::Transform)
-                    .is_some_and(|value| value.trim() != "none");
+                let transformed = crate::transform::effective(&properties).is_some();
                 let real = translucent || transformed || scheme == Scheme::Fixed || z.is_some();
                 self.placements.insert(
                     id,

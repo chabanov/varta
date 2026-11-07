@@ -1,6 +1,8 @@
 //! The view subset's CSS `transform`: a list of `translate()`,
-//! `translateX()`, `translateY()` and `scale()` functions, resolved against
-//! the element's border box with the initial `transform-origin` (its centre).
+//! `translateX()`, `translateY()` and `scale()` functions, preceded by the
+//! individual `translate` and `scale` properties (CSS Transforms 2 §6.1),
+//! resolved against the element's border box around its `transform-origin`
+//! (by default its centre).
 //!
 //! A translation-only list moves the element's box and everything in it for
 //! paint, hit testing and geometry, and never the layout of other boxes. A
@@ -9,6 +11,8 @@
 //! public geometry (see `layout::boxes_inner` and `paint`). Any transform
 //! makes the element a stacking context. A scale factor must be positive.
 use crate::{BoxRect, units::Units};
+use std::collections::BTreeMap;
+use varta_common::view::CssProperty;
 
 const NONE: &str = "none";
 /// At most this many functions in one transform list.
@@ -17,7 +21,7 @@ pub const MAX_FUNCTIONS: usize = 8;
 /// One length of a translation: pixels plus a fraction of the box's size on
 /// that axis.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-struct Length {
+pub(crate) struct Length {
     pixels: f32,
     fraction: f32,
 }
@@ -210,7 +214,7 @@ impl List {
     }
 
     /// The transform of a box with border box `rect`, around its centre.
-    pub(crate) fn affine(&self, rect: BoxRect) -> Affine {
+    pub(crate) fn affine(&self, rect: BoxRect, origin: Origin) -> Affine {
         let mut matrix = Affine::IDENTITY;
         for function in self.functions() {
             matrix = matrix.then(match *function {
@@ -227,7 +231,11 @@ impl List {
             });
         }
         // Around the origin: translate(origin) · M · translate(-origin).
-        let (origin_x, origin_y) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
+        let [x, y] = origin;
+        let (origin_x, origin_y) = (
+            rect.x + x.pixels + x.fraction * rect.width,
+            rect.y + y.pixels + y.fraction * rect.height,
+        );
         let around = |o: f32, s: f32, t: f32| o + t - s * o;
         Affine {
             x: around(origin_x, matrix.scale_x, matrix.x),
@@ -301,9 +309,64 @@ fn factor(value: &str) -> Option<f32> {
 
 /// The transform of a box with border box `rect` for a computed `transform`
 /// value: `None` for `none`, an error for a value the view cannot resolve.
-pub(crate) fn resolve(value: &str, units: Units, rect: BoxRect) -> Result<Option<Affine>, ()> {
+pub(crate) fn resolve(
+    value: &str,
+    origin: Origin,
+    units: Units,
+    rect: BoxRect,
+) -> Result<Option<Affine>, ()> {
     let list = List::parse(value, units).ok_or(())?;
-    Ok((list.len > 0).then(|| list.affine(rect)))
+    Ok((list.len > 0).then(|| list.affine(rect, origin)))
+}
+
+/// A `transform-origin`: an offset into the border box per axis.
+pub(crate) type Origin = [Length; 2];
+
+/// The initial `transform-origin`, the box's centre (`50% 50%`).
+pub(crate) const CENTRE: Origin = [Length {
+    pixels: 0.0,
+    fraction: 0.5,
+}; 2];
+
+/// The element's `transform-origin` (the style engine lowers it to two
+/// lengths or percentages).
+pub(crate) fn origin(values: &BTreeMap<CssProperty, String>, units: Units) -> Option<Origin> {
+    let Some(value) = values.get(&CssProperty::TransformOrigin) else {
+        return Some(CENTRE);
+    };
+    let mut parts = value.split_ascii_whitespace();
+    let origin = [
+        Length::parse(parts.next()?, units)?,
+        Length::parse(parts.next()?, units)?,
+    ];
+    parts.next().is_none().then_some(origin)
+}
+
+/// The element's effective transform list (CSS Transforms 2 §6.1: its
+/// `translate`, then its `scale`, then its `transform`), or `None` when each
+/// is `none`.
+pub(crate) fn effective(values: &BTreeMap<CssProperty, String>) -> Option<String> {
+    let value = |property| {
+        values
+            .get(&property)
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty() && *value != NONE)
+    };
+    let arguments = |value: &str| {
+        value
+            .split_ascii_whitespace()
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let list: Vec<String> = [
+        value(CssProperty::Translate).map(|value| format!("translate({})", arguments(value))),
+        value(CssProperty::Scale).map(|value| format!("scale({})", arguments(value))),
+        value(CssProperty::Transform).map(str::to_owned),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    (!list.is_empty()).then(|| list.join(" "))
 }
 
 #[cfg(test)]
@@ -323,7 +386,7 @@ mod tests {
     #[test]
     fn translations_resolve_against_the_border_box_and_compose() {
         let resolve = |value| {
-            resolve(value, units(), BOX)
+            resolve(value, CENTRE, units(), BOX)
                 .unwrap()
                 .map(Affine::translation)
         };
@@ -337,22 +400,22 @@ mod tests {
         // A unit scale is the identity; another factor is not a translation.
         assert_eq!(resolve("scale(1) translateX(1px)"), Some(Some((1.0, 0.0))));
         assert_eq!(resolve("scale(0.98)"), Some(None));
-        assert!(super::resolve("rotate(4deg)", units(), BOX).is_err());
+        assert!(super::resolve("rotate(4deg)", CENTRE, units(), BOX).is_err());
         // Factors must be positive.
-        assert!(super::resolve("scale(0)", units(), BOX).is_err());
-        assert!(super::resolve("scale(-1, 1)", units(), BOX).is_err());
+        assert!(super::resolve("scale(0)", CENTRE, units(), BOX).is_err());
+        assert!(super::resolve("scale(-1, 1)", CENTRE, units(), BOX).is_err());
     }
 
     #[test]
     fn scaling_is_around_the_centre_in_list_order() {
-        let affine = resolve("scale(2) translateX(1px)", units(), BOX)
+        let affine = resolve("scale(2) translateX(1px)", CENTRE, units(), BOX)
             .unwrap()
             .unwrap();
         // Centre (30, 35) stays; the translation is scaled.
         assert_eq!(affine.scale_x, 2.0);
         assert_eq!(30.0 * affine.scale_x + affine.x, 32.0);
         assert_eq!(35.0 * affine.scale_y + affine.y, 35.0);
-        let other = resolve("translateX(1px) scale(2)", units(), BOX)
+        let other = resolve("translateX(1px) scale(2)", CENTRE, units(), BOX)
             .unwrap()
             .unwrap();
         assert_eq!(30.0 * other.scale_x + other.x, 31.0);
@@ -365,6 +428,46 @@ mod tests {
                 height: 60.0
             }
         );
+    }
+
+    /// CSS Transforms 2 §6.1: `translate`, then `scale`, then `transform`,
+    /// around the `transform-origin`.
+    #[test]
+    fn individual_properties_compose_before_the_transform_around_the_origin() {
+        let values = BTreeMap::from([
+            (CssProperty::Translate, "4px 50%".to_owned()),
+            (CssProperty::Scale, "2".to_owned()),
+            (CssProperty::Transform, "translateX(1px)".to_owned()),
+            (CssProperty::TransformOrigin, "0 0".to_owned()),
+        ]);
+        let list = effective(&values).unwrap();
+        assert_eq!(list, "translate(4px, 50%) scale(2) translateX(1px)");
+        let origin = origin(&values, units()).unwrap();
+        let affine = resolve(&list, origin, units(), BOX).unwrap().unwrap();
+        // x' = 10 + 4 + 2 * (x - 10 + 1); y' = 20 + 15 + 2 * (y - 20).
+        assert_eq!(
+            affine.rect(BOX),
+            BoxRect {
+                x: 16.0,
+                y: 35.0,
+                width: 80.0,
+                height: 60.0
+            }
+        );
+        assert_eq!(
+            effective(&BTreeMap::from([(CssProperty::Scale, "none".to_owned())])),
+            None
+        );
+        let top_right = BTreeMap::from([(CssProperty::TransformOrigin, "100% 0".to_owned())]);
+        let scaled = resolve(
+            "scale(0.5)",
+            super::origin(&top_right, units()).unwrap(),
+            units(),
+            BOX,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(scaled.rect(BOX).x, 30.0);
     }
 
     #[test]

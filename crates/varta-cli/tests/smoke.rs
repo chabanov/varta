@@ -17259,6 +17259,44 @@ fn v38_declaration_forms_run_in_dev_and_artifacts() {
 }
 
 #[test]
+fn v38_full_regexp_runs_in_dev_and_artifacts() {
+    // K9 D3: backreferences, lookaround, duplicate named groups, match
+    // indices and `v` set notation through the linked backtracking matcher.
+    let source = r"export function main():void{const m=/(?<y>\d{4})-(?<m>\d{2})|(?<m>\d{2})\/(?<y>\d{4})/d.exec('due 11/2026');const at=m?.indices?.groups?.y;const r='aa bb cd'.replace(/(\w)\1/g,'<$1>');const s='camelCaseText'.split(/(?=[A-Z])/).join(' ');const p=/[\p{L}--[a-z]]+/v.exec('abcDEF')?.[0]??'';console.log(`${m?.groups?.y??''} ${at===undefined?'':at[0]} ${r} ${s} ${p} ${String(/^(a+)+$/.test('aaaa'))}`);}";
+    let project = RegressionProject::new(source, serde_json::json!({}));
+    project.language_profile("checked-f64-utf16-v38");
+    // Node 24 prints the same line.
+    let expected = ["varta log: 2026 7 <a> <b> cd camel Case Text DEF true"];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            let output = command
+                .args(["run", artifact])
+                .current_dir(&project.0)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", combined(&output));
+            assert_eq!(logs(&output), expected);
+        }
+    }
+    project.language_profile("checked-f64-utf16-v37");
+    let rejected = project.command(&["dev"]);
+    assert!(!rejected.status.success());
+    assert!(combined(&rejected).contains("unsupported RegExp"));
+}
+
+#[test]
 fn v38_expression_forms_run_in_dev_and_artifacts() {
     let source = "import {Range} from './range.ts';\
          class Lock implements Disposable{[Symbol.dispose]():void{console.log('released');}}\

@@ -16,7 +16,10 @@
 // two colours, which Chrome drops) reports its difference instead of
 // failing in `platform` mode.
 //
-// cargo run -p varta-view --example native_css_engine_probe -- 2 > target/native-css-2.json
+// A scene with packaged faces registers them in both modes: through the
+// bridge's font namespace and the engine (`fontFaces`), or in the document.
+//
+// cargo run -p varta-desktop --example native_css_engine_probe -- 2 > target/native-css-2.json
 // node scripts/test-native-css-engine.mjs target/native-css-2.json [bridge|platform]
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -48,6 +51,9 @@ const {width,height}=oracle.viewport;
 const MAX_MEAN_RGB_DELTA=2; // Same bound as the native/GPU scene probes.
 const MAX_CENTRE_RGB_DELTA=1; // One 8-bit rounding step inside a fill.
 const BOX_TOLERANCE=0.02;
+// Text node ids of the scenes (`native_css_engine_probe::TEXT_IDS`): only
+// element boxes are compared.
+const TEXT_IDS=1000;
 let checks=0;
 const report=[];
 try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engine`,async call=>{
@@ -59,6 +65,7 @@ try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engin
   await evaluate(`(async()=>{document.documentElement.style.colorScheme='light';
     globalThis.viewEngine=await WebAssembly.compileStreaming(fetch('/crates/varta-project/src/browser/view-engine.wasm'));
     globalThis.bridge=await import('/crates/varta-project/src/browser/view-dom.mjs');
+    globalThis.viewFonts=await import('/crates/varta-project/src/browser/view-fonts.mjs');
     globalThis.codec=await import('/crates/varta-project/src/browser/view-codec.mjs');})()`);
   const environment=await evaluate(`(()=>Object.fromEntries(['(hover: hover)','(any-hover: hover)','(pointer: fine)','(any-pointer: fine)','(prefers-reduced-motion: no-preference)','(prefers-contrast: no-preference)','(forced-colors: none)'].map(q=>[q,matchMedia(q).matches])))()`);
   for(const [query,matches]of Object.entries(environment)){assert(matches,`Chrome reports ${query} false; the native defaults assume it true`);checks++;}
@@ -70,18 +77,29 @@ try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engin
     // the specification makes equivalent.
     const registrations=fixture.sheet.match(/@property\s+--[A-Za-z0-9_-]+\s*\{[^}]*\}/g)??[];
     const sheet=rewriteRootSelector(fixture.sheet,registry.view.defaults.rootSelector);
+    // The scene's faces, loaded in the page: for the bridge under its font
+    // namespace, for Chrome's own cascade under their family names.
+    const loadFonts=`document.fonts.clear();
+      const faces=${JSON.stringify(fixture.fonts)};
+      const fonts=viewFonts.createFontNamespace('probe',[...new Set(faces.map(face=>face.family))]);
+      const fontFaces=[];
+      for(const face of faces){const bytes=new Uint8Array(await (await fetch('/'+face.file)).arrayBuffer());
+        const loaded=new FontFace(${JSON.stringify(mode)}==='bridge'?fonts.family(face.family):face.family,bytes,{weight:face.weight});await loaded.load();document.fonts.add(loaded);
+        fontFaces.push({family:face.family,bytes,generics:[]});}`;
     const boxes=mode==='bridge'?await evaluate(`(async()=>{
-      globalThis.app?.close();document.body.replaceChildren();
+      globalThis.app?.close();document.body.replaceChildren();${loadFonts}
       const host=document.createElement('div');host.style.width='${width}px';host.style.height='${height}px';document.body.append(host);
-      const app=globalThis.app=bridge.createViewDom({viewEngine,container:host,interactive:false});
+      const app=globalThis.app=bridge.createViewDom({viewEngine,container:host,interactive:false,...(faces.length?{fonts,fontFaces}:{})});
       const ops=[{name:'stylesheet',sheet:1,text:${JSON.stringify(fixture.sheet)}}];let next=2;
-      const build=(parent,list)=>{for(const n of list){const id=next++;ops.push({name:'create_element',node:id,tag:'div'},{name:'set_class',node:id,text:n.class},{name:'insert',parent,node:id,before:0});build(id,n.children);}};
+      const texts=${JSON.stringify(fixture.texts??[])};let textId=${TEXT_IDS};
+      const build=(parent,list)=>{for(const n of list){const id=next++;ops.push({name:'create_element',node:id,tag:'div'},{name:'set_class',node:id,text:n.class},{name:'insert',parent,node:id,before:0});build(id,n.children);
+        for(const [owner,text] of texts)if(owner===n.class){const node=textId++;ops.push({name:'create_text',node,text},{name:'insert',parent:id,node,before:0});}}};
       build(1,${JSON.stringify(fixture.nodes)});
       app.apply(codec.encodeViewBatch(ops));
       await new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done)));
       return Object.fromEntries(Array.from({length:next-2},(_,i)=>i+2).map(id=>{const r=app.inspectNode(id).getBoundingClientRect();return [id,{x:r.x,y:r.y,width:r.width,height:r.height}];}));
-    })()`):await evaluate(`(()=>{
-      globalThis.app?.close();globalThis.app=undefined;document.body.replaceChildren();
+    })()`):await evaluate(`(async()=>{
+      globalThis.app?.close();globalThis.app=undefined;document.body.replaceChildren();${loadFonts}
       for(const old of document.head.querySelectorAll('style[data-registrations]'))old.remove();
       const registrations=document.createElement('style');registrations.dataset.registrations='';registrations.textContent=${JSON.stringify(registrations.join('\n'))};document.head.append(registrations);
       const host=document.createElement('div');host.style.width='${width}px';host.style.height='${height}px';document.body.append(host);
@@ -89,7 +107,9 @@ try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engin
       const style=document.createElement('style');style.textContent=${JSON.stringify(sheet)};shadow.append(style);
       const root=document.createElement('div');root.setAttribute('data-l0-root','');root.style.cssText=${JSON.stringify(registry.view.defaults.rootStyle)};shadow.append(root);
       let next=2;const nodes=new Map();
-      const build=(parent,list)=>{for(const n of list){const e=document.createElement('div');e.className=n.class;nodes.set(next++,e);parent.append(e);build(e,n.children);}};
+      const texts=${JSON.stringify(fixture.texts??[])};
+      const build=(parent,list)=>{for(const n of list){const e=document.createElement('div');e.className=n.class;nodes.set(next++,e);parent.append(e);build(e,n.children);
+        for(const [owner,text] of texts)if(owner===n.class)e.append(document.createTextNode(text));}};
       build(root,${JSON.stringify(fixture.nodes)});
       return Object.fromEntries([...nodes].map(([id,e])=>{const r=e.getBoundingClientRect();return [id,{x:r.x,y:r.y,width:r.width,height:r.height}];}));
     })()`);

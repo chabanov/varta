@@ -375,7 +375,8 @@ pub(crate) const STANDARD_LOADS: &[&str] = &[
     ".find",
 ];
 /// `RegExp`, `RegExpExecArray` and `RegExpMatchArray` (v37 `regexp`), also
-/// loaded by a regular expression literal or a regex string method call.
+/// loaded by a regular expression literal or a regex string method call;
+/// v38 (`full_regexp`) compiles [`regexp_v38`] instead.
 pub(crate) const REGEXP: Prelude = Prelude {
     path: "<varta>/text/regexp.ts",
     source: include_str!("../prelude/regexp.ts"),
@@ -397,8 +398,13 @@ pub(crate) const REGEXP: Prelude = Prelude {
         ".search",
         ".split",
     ],
-    lifted: None,
+    lifted: Some(regexp_v38),
 };
+/// The v38 RegExp prelude (`full_regexp`): match indices, `hasIndices` and
+/// `unicodeSets`, duplicate named groups and the linked backtracking matcher.
+fn regexp_v38() -> &'static str {
+    include_str!("../prelude/regexp_v38.ts")
+}
 /// `fetch`, `Request`, `Response` and the `ReadableStream` subset (v37
 /// `net_request`) over the `net.request` host operations; it imports the
 /// headers and abort preludes implicitly.
@@ -852,6 +858,9 @@ pub(crate) const REGEXP_CLASS: &str = "RegExp";
 pub(crate) const JSON_FORM_CLASSES: [&str; 3] = ["URL", EXEC_ARRAY_CLASS, MATCH_ARRAY_CLASS];
 pub(crate) const EXEC_ARRAY_CLASS: &str = "RegExpExecArray";
 pub(crate) const MATCH_ARRAY_CLASS: &str = "RegExpMatchArray";
+/// The match indices of a v38 `d` match (`full_regexp`); only the prelude
+/// creates them.
+pub(crate) const INDICES_ARRAY_CLASS: &str = "RegExpIndicesArray";
 /// The reference key of a regular expression literal; no identifier or
 /// property can spell it.
 const REGEXP_LITERAL: &str = "/regexp/";

@@ -85,7 +85,8 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
         ("varta-view", ["varta-common", "varta-style"].as_slice()),
         // The native shell and preview are distribution hosts over the
         // public engine APIs; packaged artifacts are read as the launcher
-        // reads them.
+        // reads them, and the platform measures its own fonts for the style
+        // engine (`varta_style::fonts::HostFonts`).
         (
             "varta-desktop",
             [
@@ -93,6 +94,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                 "varta-artifact",
                 "varta-runtime",
                 "varta-view",
+                "varta-style",
             ]
             .as_slice(),
         ),

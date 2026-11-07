@@ -5,19 +5,20 @@
 //!
 //! The text is tokenized by CSS Syntax 3 ([`super::syntax`]: comments
 //! dropped, escapes decoded) and parsed as a list of rules (§5.4): style
-//! rules whose selectors are compound class selectors with the subset's
-//! pseudo-classes or `:root` (Selectors 4 §6.6, §16), `@media` (Media
+//! rules whose selectors are the subset's complex selectors ([`selector`]:
+//! Selectors 4 combinators, type, class and pseudo-class selectors), `@media` (Media
 //! Queries 4/5, see [`media`]), `@layer` statements and blocks (Cascade 5
 //! §6.4) and `@property` (Properties and Values API 1 §3). Anything else is
 //! a violation: the subset fails closed instead of dropping what it does not
 //! admit. Forbidden constructs are found on decoded tokens, so no escape can
 //! hide them.
-use super::{CssProperty, PSEUDO_CLASSES, css, syntax};
+use super::{CssProperty, css, syntax};
 #[allow(unused_imports)]
 use crate::view::prelude::*;
 use syntax::{Spanned, Token};
 
 pub mod media;
+pub mod selector;
 mod supports;
 pub use media::{Media, MediaQueryList};
 
@@ -34,31 +35,30 @@ pub const MAX_REGISTERED_PROPERTIES: usize = 512;
 pub enum Name {
     Property(CssProperty),
     Custom(String),
+    /// A longhand of a mapped property (`super::mapped`) whose value has
+    /// `var()`: the whole value, split at computed-value time.
+    Mapped(CssProperty, super::mapped::Part),
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Pseudo {
-    Hover,
-    Active,
-    FocusVisible,
-    Disabled,
-    Checked,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Selector {
-    pub root: bool,
-    pub classes: Vec<String>,
-    pub pseudo: Vec<Pseudo>,
-}
-impl Selector {
-    /// Classes plus pseudo-classes; `:root` counts as one pseudo-class
-    /// (Selectors 4 §17: all of them are the B component).
+impl Name {
+    /// The property this declaration declares, if it is not custom.
     #[must_use]
-    pub fn specificity(&self) -> usize {
-        self.classes.len() + self.pseudo.len() + usize::from(self.root)
+    pub fn property(&self) -> Option<CssProperty> {
+        match self {
+            Self::Property(property) | Self::Mapped(property, _) => Some(*property),
+            Self::Custom(_) => None,
+        }
+    }
+    /// The mapped part, for a pending mapped longhand.
+    #[must_use]
+    pub fn part(&self) -> Option<super::mapped::Part> {
+        match self {
+            Self::Mapped(_, part) => Some(*part),
+            _ => None,
+        }
     }
 }
+
+pub use selector::{Combinator, Compound, Nth, Pseudo, Selector, Specificity};
 
 /// One segment of a layer name (Cascade 5 §6.4.2); each anonymous layer is
 /// distinct.
@@ -132,17 +132,6 @@ impl Registration {
     }
 }
 
-/// What an element exposes to selector matching.
-pub struct Subject<'a> {
-    pub root: bool,
-    pub classes: &'a [&'a str],
-    pub focused: bool,
-    pub hovered: bool,
-    pub active: bool,
-    pub disabled: bool,
-    pub checked: bool,
-}
-
 impl Rule {
     /// The number of media feature tests that guard this rule.
     #[must_use]
@@ -156,10 +145,7 @@ impl Rule {
         let weight = super::DRAFT_STYLESHEET_NODE_WORK;
         let mut work = weight.saturating_mul(1 + self.media_features());
         for selector in &self.selectors {
-            work = work.saturating_add(weight.saturating_mul(1 + selector.pseudo.len()));
-            for class in &selector.classes {
-                work = work.saturating_add(weight + class.len());
-            }
+            work = work.saturating_add(selector_work(selector));
         }
         for (name, value) in &self.declarations {
             work = work.saturating_add(weight + value.len());
@@ -174,35 +160,6 @@ impl Rule {
     pub fn applies(&self, media: &Media) -> bool {
         self.media.iter().all(|list| list.matches(media))
     }
-    /// The highest specificity among the selectors that match `subject`.
-    #[must_use]
-    pub fn matching(&self, subject: &Subject<'_>) -> Option<usize> {
-        self.matching_with_classes(subject, |class| subject.classes.contains(&class))
-    }
-    /// The same matcher with a caller-owned class membership index.
-    #[must_use]
-    pub fn matching_with_classes(
-        &self,
-        subject: &Subject<'_>,
-        contains: impl Fn(&str) -> bool,
-    ) -> Option<usize> {
-        self.selectors
-            .iter()
-            .filter(|selector| {
-                selector.root == subject.root
-                    && (selector.root || !selector.classes.is_empty())
-                    && selector.classes.iter().all(|class| contains(class))
-                    && selector.pseudo.iter().all(|pseudo| match pseudo {
-                        Pseudo::Hover => subject.hovered,
-                        Pseudo::Active => subject.active,
-                        Pseudo::FocusVisible => subject.focused,
-                        Pseudo::Disabled => subject.disabled,
-                        Pseudo::Checked => subject.checked,
-                    })
-            })
-            .map(Selector::specificity)
-            .max()
-    }
 }
 
 /// What a stylesheet violates.
@@ -213,7 +170,7 @@ pub enum Violation {
     )]
     Forbidden,
     #[error(
-        "expected a selector: compound class selectors (`.a.b:hover`) or `:root`; combinators, type, id, attribute and other pseudo selectors are outside the subset"
+        "expected a selector: complex selectors of type, class and the subset's pseudo-class selectors with combinators; id and attribute selectors, pseudo-elements and `:has()` are outside the subset"
     )]
     Selector,
     #[error("expected `{0}`")]
@@ -759,14 +716,7 @@ impl Parser<'_> {
             ),
         )?;
         let open = self.prelude(false)?;
-        let mut selectors = Vec::new();
-        let mut start = self.at;
-        for index in self.at..=open {
-            if index == open || self.tokens[index].token == Token::Comma {
-                selectors.push(self.selector(start, index)?);
-                start = index + 1;
-            }
-        }
+        let selectors = self.selectors(self.at, open)?;
         let close = self.block_end(open + 1).map_or_else(
             || self.fail_at(self.tokens.len(), Violation::Unterminated),
             Ok,
@@ -776,20 +726,22 @@ impl Parser<'_> {
         for (name, first, last, is_important) in self.declarations(open + 1, close)? {
             let offset = self.declaration_offset(first);
             let value = self.value_text(first, last);
-            let entry = declaration(&name, &value)
-                .map_err(|violation| StylesheetError { violation, offset })?;
-            self.node()?;
-            self.charge(
-                entry.1.len()
-                    + match &entry.0 {
-                        Name::Custom(name) => name.len(),
-                        Name::Property(_) => 0,
-                    },
-            )?;
-            if is_important {
-                important.push(entry);
-            } else {
-                declarations.push(entry);
+            for entry in declaration(&name, &value)
+                .map_err(|violation| StylesheetError { violation, offset })?
+            {
+                self.node()?;
+                self.charge(
+                    entry.1.len()
+                        + match &entry.0 {
+                            Name::Custom(name) => name.len(),
+                            Name::Property(_) | Name::Mapped(..) => 0,
+                        },
+                )?;
+                if is_important {
+                    important.push(entry);
+                } else {
+                    declarations.push(entry);
+                }
             }
         }
         let layer =
@@ -833,8 +785,8 @@ impl Parser<'_> {
     }
     /// One compound selector of tokens `start..end` (Selectors 4 §3.1, the
     /// subset: class selectors and pseudo-classes, or `:root` alone).
-    fn selector(&mut self, start: usize, end: usize) -> Parsed<Selector> {
-        self.node()?;
+    /// The selector list of a style rule's prelude (`start..end`).
+    fn selectors(&mut self, start: usize, end: usize) -> Parsed<Vec<Selector>> {
         let mut first = start;
         let mut last = end;
         while first < last && self.tokens[first].token == Token::Whitespace {
@@ -843,64 +795,36 @@ impl Parser<'_> {
         while last > first && self.tokens[last - 1].token == Token::Whitespace {
             last -= 1;
         }
-        let tokens: Vec<&Token> = self.tokens[first..last].iter().map(|t| &t.token).collect();
-        if let [Token::Colon, Token::Ident(name)] = tokens.as_slice()
-            && name.eq_ignore_ascii_case("root")
-        {
-            return Ok(Selector {
-                root: true,
-                classes: Vec::new(),
-                pseudo: Vec::new(),
-            });
+        let selectors = selector::parse_list(&self.tokens[first..last], self.text)
+            .or_else(|failure| self.fail_at(first + failure, Violation::Selector))?;
+        for parsed in &selectors {
+            let work = selector_work(parsed);
+            self.charge(work)?;
         }
-        let mut classes = Vec::new();
-        let mut pseudo = Vec::new();
-        let mut index = first;
-        while index < last {
-            let pair = (
-                self.tokens[index].token.clone(),
-                self.tokens.get(index + 1).map(|t| t.token.clone()),
-            );
-            match (&pair.0, pair.1.as_ref()) {
-                (Token::Delim('.'), Some(Token::Ident(class))) if index + 1 < last => {
-                    if !css::class_name(class) {
-                        return self.fail_at(index + 1, Violation::Selector);
-                    }
-                    let class = class.clone();
-                    self.node()?;
-                    self.charge(class.len())?;
-                    classes.push(class);
-                }
-                (Token::Colon, Some(Token::Ident(name))) if index + 1 < last => {
-                    self.node()?;
-                    let Some(found) = PSEUDO_CLASSES
-                        .iter()
-                        .position(|known| known[1..].eq_ignore_ascii_case(name))
-                    else {
-                        return self.fail_at(index, Violation::Selector);
-                    };
-                    pseudo.push(match &PSEUDO_CLASSES[found][1..] {
-                        "hover" => Pseudo::Hover,
-                        "active" => Pseudo::Active,
-                        "focus-visible" => Pseudo::FocusVisible,
-                        "disabled" => Pseudo::Disabled,
-                        "checked" => Pseudo::Checked,
-                        _ => return self.fail_at(index, Violation::Selector),
-                    });
-                }
-                _ => return self.fail_at(index, Violation::Selector),
-            }
-            index += 2;
-        }
-        if classes.is_empty() {
-            return self.fail_at(first, Violation::Selector);
-        }
-        Ok(Selector {
-            root: false,
-            classes,
-            pseudo,
-        })
+        Ok(selectors)
     }
+}
+
+/// The parse and cascade work of a selector: a node per complex selector,
+/// per further compound and per pseudo-class, and a node plus the name per
+/// class (the charges of the class-only grammar it extends).
+fn selector_work(parsed: &Selector) -> usize {
+    let weight = super::DRAFT_STYLESHEET_NODE_WORK;
+    let mut work = weight.saturating_mul(parsed.compounds.len());
+    for compound in &parsed.compounds {
+        for class in &compound.classes {
+            work = work.saturating_add(weight + class.len());
+        }
+        for pseudo in &compound.pseudo {
+            work = work.saturating_add(weight);
+            if let Pseudo::Is(list) | Pseudo::Where(list) | Pseudo::Not(list) = pseudo {
+                for inner in list {
+                    work = work.saturating_add(selector_work(inner));
+                }
+            }
+        }
+    }
+    work
 }
 
 /// Whether an `initial-value` is computationally independent (Properties
@@ -908,17 +832,10 @@ impl Parser<'_> {
 fn independent(value: &str) -> bool {
     !css::contains_variable(value)
         && syntax::tokenize(value).iter().all(|t| match &t.token {
+            // Every length unit but the absolute ones is relative.
             Token::Dimension(_, unit) => !matches!(
                 css::math::length_unit(unit),
-                Some(
-                    css::math::LengthUnit::Em
-                        | css::math::LengthUnit::Rem
-                        | css::math::LengthUnit::ViewportWidth
-                        | css::math::LengthUnit::ViewportHeight
-                        | css::math::LengthUnit::ViewportMin
-                        | css::math::LengthUnit::ViewportMax
-                        | css::math::LengthUnit::Unresolved
-                )
+                Some(unit) if !matches!(unit, css::math::LengthUnit::Absolute(_))
             ),
             Token::Ident(word) => !word.eq_ignore_ascii_case("currentcolor"),
             _ => true,
@@ -977,13 +894,51 @@ pub fn parse_syntax(definition: &str) -> Option<Syntax> {
     Some(Syntax::Grammar(components.join(" | ")))
 }
 
-/// A declaration of a style rule: its checked name and stored value.
-fn declaration(name: &str, value: &str) -> Result<(Name, String), Violation> {
+/// The declarations of a style rule's declaration: its checked name and
+/// stored value, or for a mapped property one per longhand.
+pub(crate) fn declaration(name: &str, value: &str) -> Result<Vec<(Name, String)>, Violation> {
     if let Some(custom) = name.strip_prefix("--") {
         return (css::ident(custom) && css::custom_value(value))
-            .then(|| (Name::Custom(custom.into()), value.into()))
+            .then(|| vec![(Name::Custom(custom.into()), value.into())])
             .ok_or(Violation::Declaration);
     }
+    if let Some(mapped) = super::mapped::Mapped::parse(name) {
+        return mapped_declarations(mapped, value);
+    }
+    property_declaration(name, value).map(|entry| vec![entry])
+}
+
+/// The longhand declarations of a mapped property: each component checked
+/// as its longhand's value, or with `var()` the whole value pending.
+fn mapped_declarations(
+    mapped: super::mapped::Mapped,
+    value: &str,
+) -> Result<Vec<(Name, String)>, Violation> {
+    let targets = mapped.targets();
+    if css::contains_variable(value) {
+        css::check(targets[0], value).map_err(|_| Violation::Declaration)?;
+        return Ok(targets
+            .iter()
+            .enumerate()
+            .map(|(index, target)| {
+                let part = super::mapped::Part {
+                    source: mapped,
+                    index,
+                };
+                (Name::Mapped(*target, part), value.into())
+            })
+            .collect());
+    }
+    let components = mapped.components(value).ok_or(Violation::Declaration)?;
+    targets
+        .iter()
+        .zip(components)
+        .map(|(target, component)| property_declaration(target.name(), &component))
+        .collect()
+}
+
+/// A declaration of a registered property.
+fn property_declaration(name: &str, value: &str) -> Result<(Name, String), Violation> {
     let property = CssProperty::ALL
         .iter()
         .copied()

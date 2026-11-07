@@ -1,14 +1,19 @@
-//! Computed font sizes and line heights (CSS Fonts 4 §2.5, CSS Inline 3
-//! §4.2), the references of the font-relative units of CSS Values 4 §6.1.1.
+//! Computed font sizes, weights, styles and line heights (CSS Fonts 4 §2.2,
+//! §2.4, §2.5, CSS Inline 3 §4.2), the references of the font-relative
+//! units of CSS Values 4 §6.1.1 with the first available font's metrics
+//! ([`crate::fonts`]).
 //!
-//! The user-agent origin's font rows (headings, monospace elements and the
-//! form controls' `-webkit-small-control` font) and Blink's rules where the
-//! generic family switches to or from `monospace` and for the minimum
-//! logical font size are those the native renderer matched against Chrome;
-//! they live here so every host derives `em` from the same sizes.
+//! The user-agent origin's font rows (headings, `strong`, `em`, monospace
+//! elements and the form controls' `-webkit-small-control` font) and
+//! Blink's rules where the generic family switches to or from `monospace`
+//! and for the minimum logical font size are those the native renderer
+//! matched against Chrome; they live here so every host derives the units
+//! from the same fonts.
+use crate::fonts::{FaceStyle, NORMAL_WEIGHT, SizedMetrics};
 use crate::prelude::*;
 use crate::{Computed, Document, Environment, Styles};
-use varta_common::view::css::{Context, FontContext};
+use varta_common::view::css::FontContext;
+use varta_common::view::css::math::FontMetrics;
 use varta_common::view::{CssProperty, Tag};
 
 /// Font size of the form controls' `-webkit-small-control` font: 10pt at 96
@@ -27,14 +32,22 @@ pub const MIN_FONT_SIZE: f64 = 0.01;
 pub const MAX_FONT_SIZE: f64 = 4096.0;
 /// The denominator of a CSS percentage.
 const PERCENT: f64 = 100.0;
-/// The references before an element's own size is known (unused fields).
-const FONT_PLACEHOLDER: FontContext = FontContext {
-    em: 0.0,
-    parent_em: 0.0,
-    lh: None,
-    parent_lh: None,
-    rlh: None,
-};
+/// The `bold` font weight (CSS Fonts 4 §2.2).
+pub const BOLD_WEIGHT: f64 = 700.0;
+/// The admitted numeric font weights (CSS Fonts 4 §2.2).
+const MIN_FONT_WEIGHT: f64 = 1.0;
+const MAX_FONT_WEIGHT: f64 = 1000.0;
+
+/// The `bolder` weight of an inherited weight (CSS Fonts 4 §2.2.1 table).
+#[must_use]
+pub fn bolder(inherited: f64) -> f64 {
+    match inherited {
+        weight if weight < 350.0 => NORMAL_WEIGHT,
+        weight if weight < 550.0 => BOLD_WEIGHT,
+        weight if weight < 900.0 => 900.0,
+        weight => weight,
+    }
+}
 
 /// The host's font inputs: its `medium` size and whether the generic
 /// `monospace` keeps Chrome's fixed-font size (it does not once a packaged
@@ -53,6 +66,16 @@ impl Default for FontBase {
     }
 }
 
+/// How a user-agent row sets the font weight where the author sets none.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum UaWeight {
+    Inherit,
+    /// `bolder` than the inherited weight (`strong`).
+    Bolder,
+    /// An absolute weight (`bold` for headings).
+    Absolute(f64),
+}
+
 /// One tag's font row of the user-agent origin.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UaFont {
@@ -62,8 +85,12 @@ pub struct UaFont {
     /// `font-family: monospace`.
     pub monospace: bool,
     /// `font: -webkit-small-control`: an absent author size is
-    /// [`UA_CONTROL_FONT_SIZE_PX`] and an absent `line-height` is `normal`.
+    /// [`UA_CONTROL_FONT_SIZE_PX`], an absent `line-height` is `normal` and
+    /// absent weight and style are `normal`.
     pub control: bool,
+    pub weight: UaWeight,
+    /// `font-style: italic`.
+    pub italic: bool,
 }
 impl UaFont {
     const fn new(tag: Tag) -> Self {
@@ -72,11 +99,14 @@ impl UaFont {
             scale: None,
             monospace: false,
             control: false,
+            weight: UaWeight::Inherit,
+            italic: false,
         }
     }
-    const fn scaled(tag: Tag, scale: f64) -> Self {
+    const fn heading(tag: Tag, scale: f64) -> Self {
         Self {
             scale: Some(scale),
+            weight: UaWeight::Absolute(BOLD_WEIGHT),
             ..Self::new(tag)
         }
     }
@@ -94,13 +124,22 @@ impl UaFont {
     }
 }
 
-/// The user-agent font rows (Chrome's `h1 { font-size: 2em }`, `pre, code {
-/// font-family: monospace }`, `button, input, select, textarea { font:
-/// -webkit-small-control }`).
+/// The user-agent font rows (Chrome's `h1 { font-size: 2em; font-weight:
+/// bold }`, `strong { font-weight: bolder }`, `em { font-style: italic }`,
+/// `pre, code { font-family: monospace }`, `button, input, select,
+/// textarea { font: -webkit-small-control }`).
 pub const UA_FONTS: &[UaFont] = &[
-    UaFont::scaled(Tag::H1, 2.0),
-    UaFont::scaled(Tag::H2, 1.5),
-    UaFont::scaled(Tag::H3, 1.17),
+    UaFont::heading(Tag::H1, 2.0),
+    UaFont::heading(Tag::H2, 1.5),
+    UaFont::heading(Tag::H3, 1.17),
+    UaFont {
+        weight: UaWeight::Bolder,
+        ..UaFont::new(Tag::Strong)
+    },
+    UaFont {
+        italic: true,
+        ..UaFont::new(Tag::Em)
+    },
     UaFont::monospace(Tag::Pre),
     UaFont::monospace(Tag::Code),
     UaFont::control(Tag::Button),
@@ -210,14 +249,40 @@ impl LineHeight {
 }
 
 /// The font of one element: its size state, whether its family is the sole
-/// generic `monospace`, its nearest family declaration and line height.
+/// generic `monospace`, its nearest family declaration, weight, style and
+/// line height.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Font {
     pub size: FontSize,
     pub monospace: bool,
     /// The nearest declared (or user-agent) family list and its element.
     pub family: Option<(u32, String)>,
+    /// The computed `font-weight` (CSS Fonts 4 §2.2).
+    pub weight: f64,
+    /// The computed `font-style` is `italic` (CSS Fonts 4 §2.4).
+    pub italic: bool,
     pub line_height: LineHeight,
+}
+impl Font {
+    /// The initial font of the host.
+    fn initial(medium: f64) -> Self {
+        Self {
+            size: FontSize::medium(medium),
+            monospace: false,
+            family: None,
+            weight: NORMAL_WEIGHT,
+            italic: false,
+            line_height: LineHeight::Normal,
+        }
+    }
+    /// The face this font asks for.
+    #[must_use]
+    pub fn style(&self) -> FaceStyle {
+        FaceStyle {
+            weight: self.weight,
+            italic: self.italic,
+        }
+    }
 }
 
 /// Why a font cannot be computed.
@@ -253,13 +318,7 @@ impl Styles {
         while let Some(parent) = document.parent(*path.last().unwrap_or(&id)) {
             path.push(parent);
         }
-        let base = environment.font;
-        let mut font = Font {
-            size: FontSize::medium(base.medium),
-            monospace: false,
-            family: None,
-            line_height: LineHeight::Normal,
-        };
+        let mut font = Font::initial(environment.font.medium);
         for ancestor in path.into_iter().rev() {
             font = self.font_step(document, ancestor, environment, font)?;
         }
@@ -277,29 +336,43 @@ impl Styles {
         let base = environment.font;
         let element = document.element(id);
         let ua = element.and_then(|element| ua_font(element.tag));
-        let wanted = [CssProperty::FontSize, CssProperty::FontFamily];
-        let context = Context {
-            font: Some(FontContext {
+        let wanted = [
+            CssProperty::FontSize,
+            CssProperty::FontFamily,
+            CssProperty::FontWeight,
+            CssProperty::FontStyle,
+        ];
+        let root = || self.root_metrics(environment);
+        let parent_metrics = || self.metrics(&parent);
+        // Values 4 §6.1.1: in `font-size`, the font-relative units refer to
+        // the parent's font (`lh` to its line height).
+        let parent_context = || {
+            let parent_metrics = parent_metrics();
+            let parent_lh = line_height_length(&parent, parent_metrics);
+            let root = root();
+            Some(FontContext {
                 em: parent.size.px,
                 parent_em: parent.size.px,
-                lh: parent.line_height.length(parent.size.computed()),
-                parent_lh: parent.line_height.length(parent.size.computed()),
-                rlh: None,
-            }),
-            ..environment.context
+                lh: parent_lh,
+                parent_lh,
+                rlh: root.map(|root| root.line_spacing),
+                metrics: units(&parent, parent_metrics),
+                parent_metrics: units(&parent, parent_metrics),
+                root_metrics: root_units(environment, root),
+            })
         };
-        let lowered = Environment {
-            context,
-            ..*environment
-        };
-        let mut values = self.computed_only(document, id, &lowered, &wanted);
+        let mut values = self.computed_only(document, id, environment, &wanted, &parent_context);
         let present = |property: CssProperty| values.contains_key(&property);
-        let (size_present, family_present) = (
+        let (size_present, family_present, weight_present, style_present) = (
             present(CssProperty::FontSize),
             present(CssProperty::FontFamily),
+            present(CssProperty::FontWeight),
+            present(CssProperty::FontStyle),
         );
         let size_value = declared(values.remove(&CssProperty::FontSize), "medium");
         let family_value = declared(values.remove(&CssProperty::FontFamily), "");
+        let weight_value = declared(values.remove(&CssProperty::FontWeight), "normal");
+        let style_value = declared(values.remove(&CssProperty::FontStyle), "normal");
         let mut font = parent.clone();
         let parent_monospace = parent.monospace;
         if let Some(row) = ua {
@@ -314,9 +387,45 @@ impl Styles {
             {
                 font.size.scale(scale);
             }
+            if row.control {
+                if !weight_present {
+                    font.weight = NORMAL_WEIGHT;
+                }
+                if !style_present {
+                    font.italic = false;
+                }
+            }
+            if !weight_present {
+                font.weight = match row.weight {
+                    UaWeight::Inherit => font.weight,
+                    UaWeight::Bolder => bolder(font.weight),
+                    UaWeight::Absolute(weight) => weight,
+                };
+            }
+            if row.italic && !style_present {
+                font.italic = true;
+            }
         }
         if let Some(family) = family_value.filter(|family| !family.is_empty()) {
             font.family = Some((id, family));
+        }
+        if let Some(value) = weight_value {
+            font.weight = match value.as_str() {
+                "normal" => NORMAL_WEIGHT,
+                "bold" => BOLD_WEIGHT,
+                number => number
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|weight| (MIN_FONT_WEIGHT..=MAX_FONT_WEIGHT).contains(weight))
+                    .ok_or(FontError::Unsupported(id))?,
+            };
+        }
+        if let Some(value) = style_value {
+            font.italic = match value.as_str() {
+                "normal" => false,
+                "italic" => true,
+                _ => return Err(FontError::Unsupported(id)),
+            };
         }
         let monospace = base.fixed_monospace
             && font
@@ -353,19 +462,32 @@ impl Styles {
         {
             return Err(FontError::Unsupported(id));
         }
-        // `line-height` resolves `em` against the element's own size and
-        // `lh` against the parent's line height (Values 4 §6.1.1).
-        let own = Environment {
-            context: Context {
-                font: Some(FontContext {
-                    em: font.size.px,
-                    ..context.font.unwrap_or(FONT_PLACEHOLDER)
-                }),
-                ..environment.context
-            },
-            ..*environment
+        // `line-height` resolves `em`, `ex`, `cap`, `ch` and `ic` against
+        // the element's own font and `lh` against the parent's line height
+        // (Values 4 §6.1.1).
+        let own_context = || {
+            let own = self.metrics(&font);
+            let parent_metrics = parent_metrics();
+            let parent_lh = line_height_length(&parent, parent_metrics);
+            let root = root();
+            Some(FontContext {
+                em: font.size.px,
+                parent_em: parent.size.px,
+                lh: parent_lh,
+                parent_lh,
+                rlh: root.map(|root| root.line_spacing),
+                metrics: units(&font, own),
+                parent_metrics: units(&parent, parent_metrics),
+                root_metrics: root_units(environment, root),
+            })
         };
-        let mut height = self.computed_only(document, id, &own, &[CssProperty::LineHeight]);
+        let mut height = self.computed_only(
+            document,
+            id,
+            environment,
+            &[CssProperty::LineHeight],
+            &own_context,
+        );
         let height_present = height.contains_key(&CssProperty::LineHeight);
         if ua.is_some_and(|row| row.control) && !height_present {
             font.line_height = LineHeight::Normal;
@@ -375,6 +497,24 @@ impl Styles {
                 line_height(&value, &font.size, environment).ok_or(FontError::Unsupported(id))?;
         }
         Ok(font)
+    }
+
+    /// The metrics of `font`'s first available font at its computed size.
+    #[must_use]
+    pub fn metrics(&self, font: &Font) -> Option<SizedMetrics> {
+        self.fonts().metrics(
+            font.family.as_ref().map(|(_, family)| family.as_str()),
+            font.style(),
+            font.size.computed(),
+        )
+    }
+
+    /// The metrics of the root element's font: the initial family, weight
+    /// and style at the root font size (the root element is outside the
+    /// view).
+    fn root_metrics(&self, environment: &Environment) -> Option<SizedMetrics> {
+        self.fonts()
+            .metrics(None, FaceStyle::NORMAL, environment.context.root_font_size)
     }
 
     /// The font-relative references of `id` (CSS Values 4 §6.1.1).
@@ -390,24 +530,49 @@ impl Styles {
         let font = self.font(document, id, environment)?;
         let parent = match document.parent(id) {
             Some(parent) => self.font(document, parent, environment)?,
-            None => Font {
-                size: FontSize::medium(environment.font.medium),
-                monospace: false,
-                family: None,
-                line_height: LineHeight::Normal,
-            },
+            None => Font::initial(environment.font.medium),
         };
-        let root = environment.context.root_font_size;
+        let own = self.metrics(&font);
+        let parent_metrics = self.metrics(&parent);
+        let root = self.root_metrics(environment);
         Ok(FontContext {
             em: font.size.px,
             parent_em: parent.size.px,
-            lh: font.line_height.length(font.size.computed()),
-            parent_lh: parent.line_height.length(parent.size.computed()),
+            lh: line_height_length(&font, own),
+            parent_lh: line_height_length(&parent, parent_metrics),
             // The root element is outside the view: its line height is the
             // initial `normal` of the root font.
-            rlh: LineHeight::Normal.length(root),
+            rlh: root.map(|root| root.line_spacing),
+            metrics: units(&font, own),
+            parent_metrics: units(&parent, parent_metrics),
+            root_metrics: root_units(environment, root),
         })
     }
+}
+
+/// The used line height of `font`: `normal` is its first available font's
+/// line spacing (CSS Inline 3 §4.2), unresolved without metrics.
+fn line_height_length(font: &Font, metrics: Option<SizedMetrics>) -> Option<f64> {
+    font.line_height
+        .length(font.size.computed())
+        .or_else(|| metrics.map(|metrics| metrics.line_spacing))
+}
+
+/// The unit references of `font`: its first available font's, or the
+/// Values 4 fallbacks when no font has metrics.
+fn units(font: &Font, metrics: Option<SizedMetrics>) -> FontMetrics {
+    metrics.map_or_else(
+        || FontMetrics::fallback(font.size.computed()),
+        |metrics| metrics.units,
+    )
+}
+
+/// The root element's unit references.
+fn root_units(environment: &Environment, metrics: Option<SizedMetrics>) -> FontMetrics {
+    metrics.map_or_else(
+        || FontMetrics::fallback(environment.context.root_font_size),
+        |metrics| metrics.units,
+    )
 }
 
 /// A `px` or `rem` length in CSS pixels.
@@ -439,14 +604,20 @@ fn line_height(value: &str, size: &FontSize, environment: &Environment) -> Optio
     (number.is_finite() && number >= 0.0).then_some(LineHeight::Number(number))
 }
 
+/// The two-letter endings of the font-relative units the lowering resolves
+/// from the element's font (`em`, `ex`, `cap`, `ch`, `ic`, `lh` and their
+/// root forms; `rem` matches too, harmlessly).
+const FONT_UNIT_ENDINGS: [&[u8; 2]; 6] = [b"em", b"ex", b"ap", b"ch", b"ic", b"lh"];
+
 /// Whether a value may name a font-relative unit the lowering resolves from
-/// the element's font (`em`, `lh`, `rlh`; `rem` matches too, harmlessly).
+/// the element's font. A false positive only computes the font.
 #[must_use]
 pub fn uses_font_units(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes
-        .windows(2)
-        .any(|pair| pair.eq_ignore_ascii_case(b"em") || pair.eq_ignore_ascii_case(b"lh"))
+    value.as_bytes().windows(2).any(|pair| {
+        FONT_UNIT_ENDINGS
+            .iter()
+            .any(|ending| pair.eq_ignore_ascii_case(*ending))
+    })
 }
 
 #[cfg(test)]

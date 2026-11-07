@@ -139,6 +139,13 @@ fn map_keys(
     let mut dictionary: Option<Type> = None;
     for key_type in split(keys, types) {
         let (name, literal) = match key_type {
+            // A pattern key (`` `on${string}` ``) is a string index
+            // signature: its keys are not checked against the pattern.
+            Type::Literal(LiteralBase::String, id)
+                if types.literals.has_pattern(id) && mapped.name_type.is_none() =>
+            {
+                (String::new(), false)
+            }
             Type::Literal(LiteralBase::String, _) => (
                 literals::string_members(key_type, types)
                     .and_then(|names| names.into_iter().next())
