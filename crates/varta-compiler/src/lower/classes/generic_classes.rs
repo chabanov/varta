@@ -225,6 +225,18 @@ pub(super) fn layout_template(
     let entry = &mut types.classes.list[id as usize];
     entry.statics = statics;
     entry.generic_statics = generic_statics;
+    // V38 (`declaration_forms`): overload signatures of the template's own
+    // static methods (its instances declare their instance overloads).
+    if types.profile.declaration_forms() {
+        let overloads: Vec<_> = entry
+            .forms
+            .overloads
+            .iter()
+            .filter(|overload| overload.is_static)
+            .cloned()
+            .collect();
+        overloads::declare_methods(id, &overloads, source, types)?;
+    }
     Ok(())
 }
 

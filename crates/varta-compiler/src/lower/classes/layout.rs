@@ -449,7 +449,15 @@ fn layout_members(
         forms::check_concrete(id, source, types)?;
         forms::check_accessor_pairs(id, source, types)?;
         index_signatures::check_members(id, source, types)?;
-        let overloads = types.classes.list[id as usize].forms.overloads.clone();
+        // A generic class instance has no statics: its template declares
+        // the static overloads (`generic_classes::layout_template`).
+        let overloads: Vec<_> = types.classes.list[id as usize]
+            .forms
+            .overloads
+            .iter()
+            .filter(|overload| !(instance && overload.is_static))
+            .cloned()
+            .collect();
         overloads::declare_methods(id, &overloads, source, types)?;
     }
     implements::check(id, class, source, types)

@@ -4469,6 +4469,18 @@
       }
     },
     {
+      "id": "class-value-static-fields",
+      "feature": "static-class-members",
+      "path": "cases/class-value-static-fields.ts",
+      "sha256": "ed08b8b5d406cb60e9a47b909ee991ba2e97a54c4b7c5cc1b01c8deb1adeef87",
+      "stdout": [
+        "varta log: Base 1 shared | Derived 2 shared"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "generic-overloads",
       "feature": "overloads",
       "path": "cases/generic-overloads.ts",
@@ -4477,6 +4489,18 @@
         "varta log: 3 h x",
         "varta log: 2ONE true",
         "varta log: a n2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "generic-method-overloads",
+      "feature": "overloads",
+      "path": "cases/generic-method-overloads.ts",
+      "sha256": "7f821f31547f03ac314a8c7e377bbfda59b6ecae651cda1edcc7b66f3e29d409",
+      "stdout": [
+        "varta log: 7X ss"
       ],
       "baseline": {
         "status": "supported"
@@ -4493,6 +4517,18 @@
         "varta log: Cannot access 'STEP' before initialization | 2 | 2",
         "varta log: Cannot access 'total' before initialization | reset 0",
         "varta log: 120"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "reference-error-class",
+      "feature": "temporal-dead-zone",
+      "path": "cases/reference-error-class.ts",
+      "sha256": "2be4d90da7a78d8e32e67696676989cfb2e94b70f0b5331e9b5ad5ea80dafe46",
+      "stdout": [
+        "varta log: ReferenceError true 3 undefined 4"
       ],
       "baseline": {
         "status": "supported"
