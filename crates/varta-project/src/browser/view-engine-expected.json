@@ -1426,7 +1426,93 @@
       0
     ]
   },
+  "s5-attribute-case": {
+    "computed": {
+      "height": "5px",
+      "width": "10px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-attribute-invalid": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s5-attribute-matchers": {
+    "computed": {
+      "color": "#111",
+      "margin-bottom": "2px",
+      "margin-top": "1px",
+      "padding-top": "3px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-attribute-presence": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-attribute-tailwind-aria": {
+    "computed": {
+      "color": "rgba(79, 57, 246, 1)"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
   "s5-child": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-default-button": {
     "computed": {
       "color": "#111"
     },
@@ -1461,6 +1547,51 @@
       0
     ]
   },
+  "s5-direction-language": {
+    "computed": {
+      "color": "#111",
+      "margin-bottom": "2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-file-selector-button": {
+    "computed": {
+      "margin-top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-form-invalid": {
+    "computed": {
+      "color": "#c00"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
   "s5-group-hover": {
     "computed": {},
     "statuses": [
@@ -1475,6 +1606,33 @@
       0
     ]
   },
+  "s5-has-checked": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-has-nested-refused": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
   "s5-has-refused": {
     "computed": {},
     "statuses": [
@@ -1484,7 +1642,87 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-has-relative": {
+    "computed": {
+      "margin-top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-has-unchecked": {
+    "computed": {
+      "margin-top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-id": {
+    "computed": {
+      "color": "#111",
+      "margin-top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-indeterminate": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-invalid-tailwind": {
+    "computed": {
+      "outline-color": "rgba(251, 44, 54, 1)"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
     ]
   },
   "s5-is-max": {
@@ -1494,6 +1732,21 @@
     "statuses": [
       0,
       0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-link-empty": {
+    "computed": {
+      "color": "#111",
+      "margin-top": "1px"
+    },
+    "statuses": [
       0,
       0,
       0,
@@ -1538,6 +1791,65 @@
       0
     ]
   },
+  "s5-number-invalid": {
+    "computed": {
+      "color": "#c00"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-number-valid": {
+    "computed": {
+      "color": "#0a0"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-placeholder-hidden": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s5-placeholder-shown": {
+    "computed": {
+      "color": "#111",
+      "margin-left": "2px",
+      "margin-top": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
   "s5-pseudo-element-refused": {
     "computed": {},
     "statuses": [
@@ -1548,6 +1860,20 @@
       0,
       0,
       5
+    ]
+  },
+  "s5-readonly": {
+    "computed": {
+      "color": "#111"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
     ]
   },
   "s5-root-host": {
@@ -2005,7 +2331,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-119": {
@@ -2017,7 +2345,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-12": {
@@ -2053,7 +2383,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-122": {
@@ -2244,7 +2576,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-135": {
@@ -2844,7 +3178,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-170": {
@@ -5728,7 +6064,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-57": {
@@ -5740,7 +6078,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-58": {
@@ -5752,7 +6092,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-59": {
@@ -5764,7 +6106,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-6": {
@@ -5788,7 +6132,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-61": {
@@ -5800,7 +6146,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-62": {
@@ -5812,7 +6160,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-63": {
@@ -5824,7 +6174,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-64": {
@@ -5836,7 +6188,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-65": {

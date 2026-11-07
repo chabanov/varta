@@ -8415,6 +8415,60 @@ same day ([contract](architecture.md#view-css-engine-k8-t2-and-t3)).
   `hidden`, as Chrome does), and border styles other than `none`,
   `hidden`, `solid` (S6 paint).
 
+#### K8 T2 S5, second part: attributes, `:has()` and input pseudo-classes (2026-11-07)
+
+([contract](architecture.md#view-css-engine-k8-t2-and-t3))
+
+- **Selectors.** Id and attribute selectors with every matcher and the
+  `i`/`s` flags (HTML's case-insensitive attribute values by default),
+  `:has()` with relative selectors (bounded: no `:has()` or pseudo-element
+  inside, the subtree search charged to the cascade work estimate), and
+  the location, input and tree pseudo-classes of the view's elements
+  (`varta_style::forms`: read-write, placeholder, default, indeterminate,
+  HTML constraint validation of the subset's controls with an exact
+  decimal step check). Pseudo-elements parse with their specificity and are
+  kept out of the element's own cascade; a rule naming one the renderers do
+  not draw yet is refused (`PseudoElement`), so nothing is ignored
+  silently. `::file-selector-button` is admitted (no file inputs).
+- **Engine inputs on both hosts.** The style session mirrors attributes,
+  field values, text data and element states (`view_engine_attribute`,
+  `_unattribute`, `_value`, `_states`); the browser view model forwards the
+  attributes and texts it admits and the dialogs' states, the DOM bridge
+  records a number field's bad input and the user validity from the DOM
+  (as it records hover and focus); the native tree answers the same
+  `Document` queries from its own state and sets the user validity on a
+  trusted `change` and on form submission.
+- **Attributes in the view contract (coordinator decision).** The
+  protocol's registered attributes (`id`, `role`, `type`, `name`,
+  `placeholder`, `disabled`, `readonly`, `selected`, `href`, the `aria-*`
+  attributes of the registry, …) now reach selectors on both hosts.
+  `data-*` attributes need a protocol extension and the guest's `View` API
+  and TSX lowering, which live in the compiler (K9's files): designed, not
+  implemented here — see the open items.
+- **Evidence.** Corpus: 22 new cases (tags, attributes, values and checked
+  states are new corpus inputs on every host). Native tests (`css_s5`):
+  attribute writes, `:has()` over checked state, `:invalid`, the user
+  validity after a stepped `change`, `:placeholder-shown`. Chrome oracle:
+  three new scenes (`attribute-selectors`, `has-selectors`,
+  `input-pseudo-classes`; scenes now take tags, attributes, values and
+  checked states): `bridge` 1253 and `platform` 1241 checks pass at 1x,
+  1.25x and 2x, the platform mode (Chrome's own selector matching)
+  pixel-exact.
+- **Tailwind acceptance:** 261 → 275 of 312 candidates (88.1%): the
+  `aria-[current=page]` variant, the `has-checked:` and `invalid:`/
+  `peer-invalid:` variants.
+- **Open items (S5 third part and a protocol decision).** The rendering of
+  `::before`/`::after` (generated boxes with `content`), `::placeholder`,
+  `::marker`, `::selection`, `::backdrop`, `::first-line` and
+  `::first-letter`, natively and through generated per-element rules in
+  the bridge (the engine computes them). `data-*` attributes: proposed as
+  two draft opcodes `set_data(node, name, value)` and `remove_data(node,
+  name)` (an HTML custom data attribute name of at most 64 bytes, at most
+  32 per element, values within `DRAFT_MAX_VALUE_BYTES`), with `View.setData`
+  and TSX `data-*` lowering in the compiler; this needs the K9 owners of
+  the compiler files (9 of the 37 remaining application candidates are
+  Headless UI's `data-*` variants).
+
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
 Goal: the native HTTP server runs at current standards, secure and fast enough

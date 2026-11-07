@@ -3015,7 +3015,7 @@ values:
 <!-- generated:view-stylesheet-tokens:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
 | Item | Values |
 | --- | --- |
-| Pseudo-classes | `:hover`, `:active`, `:focus`, `:focus-within`, `:focus-visible`, `:disabled`, `:enabled`, `:checked`, `:root`, `:host`, `:first-child`, `:last-child`, `:only-child`, `:first-of-type`, `:last-of-type`, `:only-of-type`, `:nth-child()`, `:nth-last-child()`, `:nth-of-type()`, `:nth-last-of-type()`, `:is()`, `:where()`, `:not()` |
+| Pseudo-classes | `:hover`, `:active`, `:focus`, `:focus-within`, `:focus-visible`, `:disabled`, `:enabled`, `:checked`, `:root`, `:host`, `:scope`, `:first-child`, `:last-child`, `:only-child`, `:first-of-type`, `:last-of-type`, `:only-of-type`, `:nth-child()`, `:nth-last-child()`, `:nth-of-type()`, `:nth-last-of-type()`, `:empty`, `:link`, `:any-link`, `:visited`, `:target`, `:target-within`, `:read-only`, `:read-write`, `:placeholder-shown`, `:default`, `:indeterminate`, `:valid`, `:invalid`, `:user-valid`, `:user-invalid`, `:in-range`, `:out-of-range`, `:required`, `:optional`, `:autofill`, `:open`, `:modal`, `:defined`, `:dir()`, `:lang()`, `:is()`, `:where()`, `:not()`, `:has()` |
 | Media features | `prefers-color-scheme`, `min-width`, `max-width` |
 | Forbidden anywhere | `\`, `<`, `>`, `/*`, `@import`, `!important`, `url(`, `image-set(`, `expression(` |
 | Forbidden in `set_style` values | `;`, `{`, `}` |

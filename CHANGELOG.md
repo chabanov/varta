@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- K8 T2 S5 (second part), selectors: id and attribute selectors with every
+  matcher and the `i`/`s` flags, `:has()` with bounded relative selectors,
+  and the location, input and tree pseudo-classes (`:any-link`, `:empty`,
+  `:read-write`, `:placeholder-shown`, `:default`, `:indeterminate`,
+  `:valid`/`:invalid` with HTML constraint validation, `:user-valid`/
+  `:user-invalid`, `:open`, `:modal`, `:dir()`, `:lang()`, …) on both hosts;
+  the engine session mirrors attributes, field values, text data and
+  element states. Pseudo-elements parse and are refused until rendered,
+  except `::file-selector-button`. Tailwind acceptance 261 → 275 of 312.
 - K8 T2 S4 remainder (first part), borders, corners, overflow and text:
   per-side `border-*-width`/`-style`/`-color` and per-corner radius
   longhands (registry codes 85–100), `<line-width>` keywords and one to four

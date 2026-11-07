@@ -10,7 +10,7 @@
 //! cargo run -p varta-desktop --example native_css_engine_probe -- 2 > target/native-css-2.json
 //! node scripts/test-native-css-engine.mjs target/native-css-2.json
 use std::sync::Arc;
-use varta_common::view::Tag;
+use varta_common::view::{Attribute, Tag};
 use varta_style::fonts::FontSet;
 use varta_view::{Access, BatchWriter as B, Broker, Environment, Renderer, View};
 
@@ -44,8 +44,21 @@ struct Scene {
     reduced_motion: bool,
     deviation: Option<&'static str>,
     fonts: &'static [Face],
+    /// Elements of a class with another tag, attributes, a field value or
+    /// a checked state.
+    elements: &'static [Extra],
     /// Text children: every element with this class gets this text.
     texts: &'static [(&'static str, &'static str)],
+}
+
+/// The tag (by name), attributes, value and checked state of the elements
+/// of one class.
+struct Extra {
+    class: &'static str,
+    tag: &'static str,
+    attributes: &'static [(Attribute, &'static str)],
+    value: Option<&'static str>,
+    checked: bool,
 }
 
 /// The first id of text nodes, apart from the elements whose boxes are
@@ -97,6 +110,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -106,6 +120,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -115,6 +130,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -132,6 +148,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -157,6 +174,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -175,6 +193,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: Some("CSS Color 4 §14.2 gamut mapping natively; Chrome clips per channel"),
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -195,6 +214,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -211,6 +231,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -220,6 +241,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: true,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -229,6 +251,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -248,6 +271,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -267,6 +291,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -286,6 +311,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -307,6 +333,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -321,6 +348,7 @@ const SCENES: &[Scene] = &[
             "CSS Color 5 §3 mixes one or more colours; Chrome mixes exactly two and drops the declaration",
         ),
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -338,6 +366,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -355,6 +384,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -377,6 +407,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -394,6 +425,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -414,6 +446,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: METRIC_FACES,
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -434,6 +467,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -452,6 +486,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -470,6 +505,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: METRIC_FACES,
+        elements: &[],
         texts: &[
             ("a", "AHx 0A"),
             ("b", "AHx 0A"),
@@ -497,6 +533,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -518,6 +555,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -537,6 +575,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -557,6 +596,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -576,6 +616,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
     Scene {
@@ -593,6 +634,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: CASE_FACES,
+        elements: &[],
         texts: &[
             ("u", "ab-ß"),
             ("l", "AB"),
@@ -600,6 +642,166 @@ const SCENES: &[Scene] = &[
             ("n", "ab"),
             ("i", "ab"),
         ],
+    },
+    Scene {
+        name: "attribute-selectors",
+        sheet: ".r { display: flex; flex-wrap: wrap; align-items: flex-start } .r > div { width: 30px; height: 20px; margin: 3px; background-color: #ccc } [role] { background-color: #c00 } [aria-current=\"page\"] { background-color: #0a0 } [aria-label~=b] { border-top: 3px solid #00c } [aria-label^=a][aria-label$=c] { border-bottom: 4px solid #c0c } [aria-label|=en] { background-color: #cc0 } #x { background-color: #0cc } .r > [aria-label=\"X\" i] { width: 40px } .r > [aria-label=\"X\" s] { height: 30px } [aria-hidden] { opacity: 0.5 } [aria-label*=\" \"] { margin-left: 8px }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
+                Node("e", &[]),
+                Node("f", &[]),
+                Node("g", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        elements: &[
+            Extra {
+                class: "a",
+                tag: "div",
+                attributes: &[(Attribute::Role, "tab")],
+                value: None,
+                checked: false,
+            },
+            Extra {
+                class: "b",
+                tag: "div",
+                attributes: &[(Attribute::AriaCurrent, "page")],
+                value: None,
+                checked: false,
+            },
+            Extra {
+                class: "c",
+                tag: "div",
+                attributes: &[(Attribute::AriaLabel, "a b c")],
+                value: None,
+                checked: false,
+            },
+            Extra {
+                class: "d",
+                tag: "div",
+                attributes: &[(Attribute::AriaLabel, "en-US")],
+                value: None,
+                checked: false,
+            },
+            Extra {
+                class: "e",
+                tag: "div",
+                attributes: &[(Attribute::Id, "x")],
+                value: None,
+                checked: false,
+            },
+            Extra {
+                class: "f",
+                tag: "div",
+                attributes: &[(Attribute::AriaLabel, "x")],
+                value: None,
+                checked: false,
+            },
+            Extra {
+                class: "g",
+                tag: "div",
+                attributes: &[(Attribute::AriaHidden, "true")],
+                value: None,
+                checked: false,
+            },
+        ],
+        texts: &[],
+    },
+    Scene {
+        name: "has-selectors",
+        sheet: ".r { display: flex; flex-wrap: wrap; align-items: flex-start } .r > div { width: 40px; min-height: 20px; margin: 3px; background-color: #ccc } .r > div > div { width: 10px; height: 8px; background-color: #888 } .m > div { width: 6px; height: 6px; background-color: #444 } .r > :has(> .k) { background-color: #c00 } .r > :has(.deep) { border: 2px solid #00c } .r > :has(+ .z) { background-color: #0a0 } .r > div:not(:has(div)) { background-color: #cc0 } .r > :has(~ .z) { height: 30px } .z:has(.k, .q) { background-color: #0cc } .r:has(> .e:last-child) > .e { width: 20px }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[Node("k", &[])]),
+                Node("b", &[Node("m", &[Node("deep", &[])])]),
+                Node("c", &[]),
+                Node("z", &[Node("q", &[])]),
+                Node("e", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        elements: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "input-pseudo-classes",
+        sheet: ".r { display: flex; flex-wrap: wrap; align-items: flex-start } .r > div, .r > form { width: 40px; height: 20px; margin: 3px; background-color: #ccc } input { display: none } .r > div > div, .r > form > div { width: 12px; height: 12px; background-color: #888 } .p:has(:checked) { background-color: #c00 } .p:has(:indeterminate) { background-color: #00c } input:invalid ~ .v { background-color: #f80 } input:valid ~ .v { background-color: #0a0 } .f:invalid { border: 3px solid #c0c } input:read-write ~ .w { height: 6px } input:optional + div { margin-left: 4px } input:placeholder-shown ~ .s { background-color: #fff }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("p", &[Node("cb", &[])]),
+                Node("p", &[Node("rd", &[])]),
+                Node("n", &[Node("bad", &[]), Node("v w", &[])]),
+                Node("n", &[Node("good", &[]), Node("v", &[])]),
+                Node("f", &[Node("half", &[]), Node("v s", &[])]),
+                Node("n", &[Node("empty", &[]), Node("s", &[])]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        elements: &[
+            Extra {
+                class: "cb",
+                tag: "input",
+                attributes: &[(Attribute::Type, "checkbox")],
+                value: None,
+                checked: true,
+            },
+            Extra {
+                class: "rd",
+                tag: "input",
+                attributes: &[(Attribute::Type, "radio"), (Attribute::Name, "g")],
+                value: None,
+                checked: false,
+            },
+            Extra {
+                class: "bad",
+                tag: "input",
+                attributes: &[(Attribute::Type, "number")],
+                value: Some("1.5"),
+                checked: false,
+            },
+            Extra {
+                class: "good",
+                tag: "input",
+                attributes: &[(Attribute::Type, "number")],
+                value: Some("2"),
+                checked: false,
+            },
+            Extra {
+                class: "f",
+                tag: "form",
+                attributes: &[],
+                value: None,
+                checked: false,
+            },
+            Extra {
+                class: "half",
+                tag: "input",
+                attributes: &[(Attribute::Type, "number")],
+                value: Some("-0.25"),
+                checked: false,
+            },
+            Extra {
+                class: "empty",
+                tag: "input",
+                attributes: &[(Attribute::Placeholder, "Name")],
+                value: None,
+                checked: false,
+            },
+        ],
+        texts: &[],
     },
     Scene {
         name: "box-sizing",
@@ -616,6 +818,7 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
         fonts: &[],
+        elements: &[],
         texts: &[],
     },
 ];
@@ -652,18 +855,36 @@ fn font_set(scene: &Scene) -> Result<FontSet, Box<dyn std::error::Error>> {
 fn append(
     batch: &mut B,
     parent: u32,
-    (nodes, texts): (&[Node], &[(&str, &str)]),
+    (nodes, scene): (&[Node], &Scene),
     (next, text_id): (&mut u32, &mut u32),
 ) {
     for Node(class, children) in nodes {
         let id = *next;
         *next += 1;
+        let extra = scene.elements.iter().find(|extra| extra.class == *class);
+        let tag = extra.map_or(Tag::Div, |extra| {
+            *Tag::ALL
+                .iter()
+                .find(|tag| tag.name() == extra.tag)
+                .expect("scene tag")
+        });
         batch
-            .create_element(id, Tag::Div)
+            .create_element(id, tag)
             .set_class(id, class)
             .insert(parent, id, 0);
-        append(batch, id, (children, texts), (&mut *next, &mut *text_id));
-        for (_, text) in texts.iter().filter(|(owner, _)| owner == class) {
+        if let Some(extra) = extra {
+            for (attribute, value) in extra.attributes {
+                batch.set_attribute(id, *attribute, value);
+            }
+            if let Some(value) = extra.value {
+                batch.set_value(id, value, 0);
+            }
+            if extra.checked {
+                batch.set_checked(id, 1, 0);
+            }
+        }
+        append(batch, id, (children, scene), (&mut *next, &mut *text_id));
+        for (_, text) in scene.texts.iter().filter(|(owner, _)| owner == class) {
             batch.create_text(*text_id, text).insert(id, *text_id, 0);
             *text_id += 1;
         }
@@ -710,7 +931,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         append(
             &mut batch,
             1,
-            (scene.nodes, scene.texts),
+            (scene.nodes, scene),
             (&mut next, &mut text_id),
         );
         view.commit(&batch.finish(), false, &mut Denied)
@@ -744,6 +965,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "reducedMotion": scene.reduced_motion,
             "deviation": scene.deviation,
             "texts": scene.texts,
+            "elements": scene.elements.iter().map(|extra| serde_json::json!({
+                "class": extra.class,
+                "tag": extra.tag,
+                "attributes": extra.attributes.iter().map(|(attribute, value)| [attribute.name(), value]).collect::<Vec<_>>(),
+                "value": extra.value,
+                "checked": extra.checked,
+            })).collect::<Vec<_>>(),
             "fonts": scene.fonts.iter().map(|Face(family, file, weight)| serde_json::json!({"family": family, "file": file, "weight": weight})).collect::<Vec<_>>(),
             "boxes": boxes,
             "computed": view.snapshot()["tree"],

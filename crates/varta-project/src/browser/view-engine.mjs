@@ -18,6 +18,9 @@ export const ENGINE_INPUTS = Object.freeze({
   noHover: 1 << 5, noAnyHover: 1 << 6, pointerShift: 7, anyPointerShift: 9,
   packagedMonospace: 1 << 11,
 });
+/** Element state bits (`varta_style::ElementState`): the model records the
+ * dialog states, the DOM bridge the platform's field states. */
+export const ENGINE_STATES = Object.freeze({ open: 1, modal: 1 << 1, badInput: 1 << 2, userValidity: 1 << 3 });
 /** The tag argument of `create` for a text node. */
 const TEXT_NODE = 0xffffffff;
 /** The family kinds the engine asks `fontMetrics` to measure
@@ -71,6 +74,18 @@ export function createViewEngine(module, { fontMetrics } = {}) {
     setStyle(id, property, text) { input(text); return exports.view_engine_style(id, code(property)); },
     removeStyle: (id, property) => exports.view_engine_unstyle(id, code(property)),
     setFlags: (id, disabled, checked) => exports.view_engine_flags(id, disabled ? 1 : 0, checked ? 1 : 0),
+    /** An attribute the model admitted, by name. */
+    setAttribute(id, name, value) {
+      const key = encoder.encode(name), text = encoder.encode(value), at = exports.view_engine_input(key.length + text.length);
+      const buffer = new Uint8Array(exports.memory.buffer, at, key.length + text.length);
+      buffer.set(key); buffer.set(text, key.length);
+      return exports.view_engine_attribute(id, key.length);
+    },
+    removeAttribute(id, name) { input(name); return exports.view_engine_unattribute(id); },
+    /** A form control's value or a text node's data. */
+    setValue(id, value) { input(value); return exports.view_engine_value(id); },
+    /** The `ENGINE_STATES` bits of `mask`. */
+    setStates: (id, bits, mask) => exports.view_engine_states(id, bits, mask),
     stylesheet(id, text) { input(text); return exports.view_engine_sheet(id); },
     /** A packaged face: its family, font file bytes and the generic
      * families it stands for. */

@@ -24,6 +24,7 @@ mod prelude {
 }
 pub mod font;
 pub mod fonts;
+mod forms;
 pub mod index;
 pub mod selectors;
 pub mod session;
@@ -40,6 +41,7 @@ use varta_common::view::{
     ROOT_NODE,
 };
 
+pub use forms::valid_float;
 pub use index::{CascadeIndex, LayerRanks, RuleCost, RuleIndex};
 pub use variables::{Registered, Scope};
 
@@ -71,6 +73,55 @@ pub trait Document {
     }
     fn hovered(&self, id: u32) -> bool;
     fn active(&self, id: u32) -> bool;
+    /// The value of the attribute named `name` (ASCII lowercase) of element
+    /// `id` (Selectors 4 §6); a boolean attribute's value is empty.
+    fn attribute(&self, _id: u32, _name: &str) -> Option<&str> {
+        None
+    }
+    /// The current value of form control `id` (`input`, `textarea`,
+    /// `select`): `:placeholder-shown` and constraint validation read it.
+    fn value(&self, _id: u32) -> Option<&str> {
+        None
+    }
+    /// Whether text node `id` has data (`:empty`); `None` for an element.
+    fn text_data(&self, _id: u32) -> Option<bool> {
+        None
+    }
+    /// The host's recorded element states (`:open`, `:modal`, a number
+    /// field's bad input, the user validity of `:user-valid`).
+    fn state(&self, _id: u32) -> ElementState {
+        ElementState::default()
+    }
+}
+
+/// Element states a host records (HTML §4.16.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ElementState {
+    /// A `dialog` that is shown.
+    pub open: bool,
+    /// A `dialog` shown modally (in the top layer).
+    pub modal: bool,
+    /// A number field whose user input does not convert to a number.
+    pub bad_input: bool,
+    /// The control's user validity (HTML §4.10.18.4.1): the user changed it
+    /// or its form's submission was attempted.
+    pub user_validity: bool,
+}
+impl ElementState {
+    pub const OPEN: u32 = 1;
+    pub const MODAL: u32 = 1 << 1;
+    pub const BAD_INPUT: u32 = 1 << 2;
+    pub const USER_VALIDITY: u32 = 1 << 3;
+    /// The states of a bit set of the constants above.
+    #[must_use]
+    pub fn from_bits(bits: u32) -> Self {
+        Self {
+            open: bits & Self::OPEN != 0,
+            modal: bits & Self::MODAL != 0,
+            bad_input: bits & Self::BAD_INPUT != 0,
+            user_validity: bits & Self::USER_VALIDITY != 0,
+        }
+    }
 }
 
 /// The host inputs of style resolution: media features and the reference
@@ -359,7 +410,7 @@ impl Styles {
         for (sheet, index) in self.index.candidates(id == ROOT_NODE, &classes) {
             let rule = &self.sheets[&sheet].rules[index];
             if rule.applies(media)
-                && let Some(specificity) = selectors::matching(document, id, &rule.selectors)
+                && let Some(specificity) = selectors::matching(document, id, &rule.selectors, None)
             {
                 let layer = ranks.rank(sheet, rule.layer);
                 if rule.important {
@@ -718,6 +769,19 @@ impl Styles {
                 Ok(())
             }
         };
+        // `:has()` searches subtrees: their sizes and heights bound it.
+        let has = self.sheets.values().any(|sheet| {
+            sheet.rules.iter().any(|rule| {
+                rule.selectors
+                    .iter()
+                    .any(|selector| !selector.has_arguments().is_empty())
+            })
+        });
+        let subtrees = if has {
+            selectors::subtree_extents(document)
+        } else {
+            BTreeMap::new()
+        };
         // (node, inherited scope work, its ancestors, its siblings).
         let top = document.top_level();
         let mut pending: Vec<(u32, usize, usize, usize)> =
@@ -746,6 +810,13 @@ impl Styles {
                     for selector in &self.sheets[&sheet].rules[index].selectors {
                         if selector.searches() {
                             charge(selectors::selector_work(selector, depth, siblings))?;
+                        }
+                        if has {
+                            charge(selectors::has_work(
+                                selector,
+                                (document, id, &subtrees),
+                                (depth, siblings),
+                            ))?;
                         }
                     }
                 }

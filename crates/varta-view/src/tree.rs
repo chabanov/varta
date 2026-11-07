@@ -28,6 +28,9 @@ pub(crate) struct Preedit {
 }
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct EditorState {
+    /// The control's user validity (HTML §4.10.18.4.1): set by a trusted
+    /// `change` and by its form's submission (`:user-valid`).
+    pub user_validity: bool,
     pub anchor: usize,
     pub focus: usize,
     pub preedit: Option<Preedit>,
@@ -609,7 +612,7 @@ impl Tree {
     pub(crate) fn document_order(&self) -> Vec<u32> {
         self.subtree_order(ROOT_NODE)
     }
-    fn subtree_order(&self, root: u32) -> Vec<u32> {
+    pub(crate) fn subtree_order(&self, root: u32) -> Vec<u32> {
         let mut out = Vec::new();
         let mut stack = vec![root];
         while let Some(id) = stack.pop() {
@@ -1882,5 +1885,43 @@ impl varta_style::Document for Tree {
     }
     fn active(&self, id: u32) -> bool {
         self.pointer_contains(self.active.as_ref(), id)
+    }
+    fn attribute(&self, id: u32, name: &str) -> Option<&str> {
+        let attribute = Attribute::ALL
+            .iter()
+            .copied()
+            .find(|attribute| attribute.name() == name)?;
+        Tree::element(self, id)?
+            .attributes
+            .get(&attribute)
+            .map(String::as_str)
+    }
+    fn value(&self, id: u32) -> Option<&str> {
+        let element = Tree::element(self, id)?;
+        (element.text_field() || element.tag == Tag::Select).then_some(element.value.as_str())
+    }
+    fn text_data(&self, id: u32) -> Option<bool> {
+        match &self.nodes.get(&id)?.content {
+            Content::Text(text) => Some(!text.is_empty()),
+            Content::Element(_) => None,
+        }
+    }
+    fn state(&self, id: u32) -> varta_style::ElementState {
+        let Some(element) = Tree::element(self, id) else {
+            return varta_style::ElementState::default();
+        };
+        // A number field's text that is no valid floating-point number is
+        // the user's bad input (HTML §4.10.5.1.12).
+        let bad_input = element.tag == Tag::Input
+            && element.input_type() == "number"
+            && !element.value.is_empty()
+            && !varta_style::valid_float(&element.value);
+        varta_style::ElementState {
+            // The view shows dialogs only modally (`show_modal`).
+            open: element.open,
+            modal: element.open,
+            bad_input,
+            user_validity: element.editor.user_validity,
+        }
     }
 }

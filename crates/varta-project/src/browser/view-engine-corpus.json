@@ -3881,6 +3881,385 @@
     "a"
    ],
    "style": []
+  },
+  {
+   "name": "s5-id",
+   "sheet": "#a { color: #111 } #b { color: #222 } .x#a { margin-top: 1px }",
+   "classes": [
+    "x"
+   ],
+   "style": [],
+   "attributes": [
+    [
+     0,
+     "id",
+     "a"
+    ]
+   ]
+  },
+  {
+   "name": "s5-attribute-presence",
+   "sheet": "[role] { color: #111 } [aria-hidden] { margin-top: 1px }",
+   "classes": [
+    "x"
+   ],
+   "style": [],
+   "attributes": [
+    [
+     0,
+     "role",
+     "tab"
+    ]
+   ]
+  },
+  {
+   "name": "s5-attribute-tailwind-aria",
+   "sheet": ":root{--color-indigo-600:oklch(51.1% 0.262 276.966)} .aria-\\[current\\=page\\]\\:text-indigo-600[aria-current=\"page\"]{color:var(--color-indigo-600)}",
+   "classes": [
+    "aria-[current=page]:text-indigo-600"
+   ],
+   "style": [],
+   "attributes": [
+    [
+     0,
+     "aria-current",
+     "page"
+    ]
+   ]
+  },
+  {
+   "name": "s5-attribute-matchers",
+   "sheet": "[aria-label~=b] { color: #111 } [aria-label^=a] { margin-top: 1px } [aria-label$=c] { margin-bottom: 2px } [aria-label*=\" b \"] { padding-top: 3px } [aria-label|=a] { padding-left: 4px } [aria-label~=\"\"] { padding-right: 5px }",
+   "classes": [
+    "x"
+   ],
+   "style": [],
+   "attributes": [
+    [
+     0,
+     "aria-label",
+     "a b c"
+    ]
+   ]
+  },
+  {
+   "name": "s5-attribute-case",
+   "sheet": "[type=CHECKBOX] { width: 10px } [aria-label=X i] { height: 5px } [aria-label=X s] { color: #111 } [aria-label=X] { margin-top: 1px }",
+   "classes": [
+    "x"
+   ],
+   "style": [],
+   "tags": [
+    "input"
+   ],
+   "attributes": [
+    [
+     0,
+     "type",
+     "checkbox"
+    ],
+    [
+     0,
+     "aria-label",
+     "x"
+    ]
+   ]
+  },
+  {
+   "name": "s5-attribute-invalid",
+   "sheet": "[aria-label=1] { color: #111 }",
+   "classes": [
+    "x"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-has-checked",
+   "sheet": ".g:has(:checked) input { color: #111 } .g:has(> input:not(:checked)) input { margin-top: 1px }",
+   "classes": [
+    "g",
+    "t"
+   ],
+   "style": [],
+   "tags": [
+    "div",
+    "input"
+   ],
+   "attributes": [
+    [
+     1,
+     "type",
+     "checkbox"
+    ]
+   ],
+   "checked": [
+    1
+   ]
+  },
+  {
+   "name": "s5-has-unchecked",
+   "sheet": ".g:has(:checked) input { color: #111 } .g:has(> input:not(:checked)) input { margin-top: 1px }",
+   "classes": [
+    "g",
+    "t"
+   ],
+   "style": [],
+   "tags": [
+    "div",
+    "input"
+   ],
+   "attributes": [
+    [
+     1,
+     "type",
+     "checkbox"
+    ]
+   ]
+  },
+  {
+   "name": "s5-has-relative",
+   "sheet": ".g:has(> .t) .t { margin-top: 1px } .g:has(+ .x) .t { margin-left: 1px } .g:has(.t .u) .t { margin-right: 1px }",
+   "classes": [
+    "g",
+    "t"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-has-nested-refused",
+   "sheet": ".g:has(.a:has(.b)) { color: #111 }",
+   "classes": [
+    "g"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-placeholder-shown",
+   "sheet": "input:placeholder-shown { color: #111 } input:read-write { margin-top: 1px } input:optional { margin-left: 2px } input:required { margin-right: 3px }",
+   "classes": [
+    "x"
+   ],
+   "style": [],
+   "tags": [
+    "input"
+   ],
+   "attributes": [
+    [
+     0,
+     "placeholder",
+     "Name"
+    ]
+   ]
+  },
+  {
+   "name": "s5-placeholder-hidden",
+   "sheet": "input:placeholder-shown { color: #111 } input:read-only { margin-top: 1px }",
+   "classes": [
+    "x"
+   ],
+   "style": [],
+   "tags": [
+    "input"
+   ],
+   "attributes": [
+    [
+     0,
+     "placeholder",
+     "Name"
+    ]
+   ],
+   "values": [
+    [
+     0,
+     "x"
+    ]
+   ]
+  },
+  {
+   "name": "s5-readonly",
+   "sheet": "input:read-only { color: #111 } input:valid { margin-top: 1px } input:invalid { margin-top: 2px }",
+   "classes": [
+    "x"
+   ],
+   "style": [],
+   "tags": [
+    "input"
+   ],
+   "attributes": [
+    [
+     0,
+     "readonly",
+     ""
+    ]
+   ]
+  },
+  {
+   "name": "s5-number-invalid",
+   "sheet": "input:invalid { color: #c00 } input:valid { color: #0a0 }",
+   "classes": [
+    "x"
+   ],
+   "style": [],
+   "tags": [
+    "input"
+   ],
+   "attributes": [
+    [
+     0,
+     "type",
+     "number"
+    ]
+   ],
+   "values": [
+    [
+     0,
+     "1.5"
+    ]
+   ]
+  },
+  {
+   "name": "s5-number-valid",
+   "sheet": "input:invalid { color: #c00 } input:valid { color: #0a0 }",
+   "classes": [
+    "x"
+   ],
+   "style": [],
+   "tags": [
+    "input"
+   ],
+   "attributes": [
+    [
+     0,
+     "type",
+     "number"
+    ]
+   ],
+   "values": [
+    [
+     0,
+     "-2e1"
+    ]
+   ]
+  },
+  {
+   "name": "s5-invalid-tailwind",
+   "sheet": ":root{--color-red-500:oklch(63.7% 0.237 25.331)} .invalid\\:outline-red-500:invalid{outline-color:var(--color-red-500)}",
+   "classes": [
+    "invalid:outline-red-500"
+   ],
+   "style": [],
+   "tags": [
+    "input"
+   ],
+   "attributes": [
+    [
+     0,
+     "type",
+     "number"
+    ]
+   ],
+   "values": [
+    [
+     0,
+     "0.5"
+    ]
+   ]
+  },
+  {
+   "name": "s5-form-invalid",
+   "sheet": "form:invalid input { color: #c00 } :default { margin-top: 1px }",
+   "classes": [
+    "f",
+    "x"
+   ],
+   "style": [],
+   "tags": [
+    "form",
+    "input"
+   ],
+   "attributes": [
+    [
+     1,
+     "type",
+     "number"
+    ]
+   ],
+   "values": [
+    [
+     1,
+     "0.25"
+    ]
+   ]
+  },
+  {
+   "name": "s5-link-empty",
+   "sheet": "a:any-link { color: #111 } a:link:empty { margin-top: 1px } a:visited { margin-left: 1px }",
+   "classes": [
+    "x"
+   ],
+   "style": [],
+   "tags": [
+    "a"
+   ],
+   "attributes": [
+    [
+     0,
+     "href",
+     "/x"
+    ]
+   ]
+  },
+  {
+   "name": "s5-default-button",
+   "sheet": "form :default { color: #111 }",
+   "classes": [
+    "f",
+    "b"
+   ],
+   "style": [],
+   "tags": [
+    "form",
+    "button"
+   ]
+  },
+  {
+   "name": "s5-indeterminate",
+   "sheet": "input:indeterminate { color: #111 }",
+   "classes": [
+    "x"
+   ],
+   "style": [],
+   "tags": [
+    "input"
+   ],
+   "attributes": [
+    [
+     0,
+     "type",
+     "radio"
+    ],
+    [
+     0,
+     "name",
+     "g"
+    ]
+   ]
+  },
+  {
+   "name": "s5-direction-language",
+   "sheet": ":dir(ltr) { color: #111 } :lang(en) { margin-top: 1px } :dir(rtl) { margin-left: 1px } div:read-only:defined { margin-bottom: 2px }",
+   "classes": [
+    "x"
+   ],
+   "style": []
+  },
+  {
+   "name": "s5-file-selector-button",
+   "sheet": "::file-selector-button { color: #111 } .x { margin-top: 1px }",
+   "classes": [
+    "x"
+   ],
+   "style": []
   }
  ]
 }

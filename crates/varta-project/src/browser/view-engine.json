@@ -1,6 +1,6 @@
 {
-  "sourceFingerprint": "33d72c6583d8c868",
+  "sourceFingerprint": "2985fa1e4a02ef40",
   "target": "wasm32-wasip2",
   "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-  "bytes": 565271
+  "bytes": 601642
 }
