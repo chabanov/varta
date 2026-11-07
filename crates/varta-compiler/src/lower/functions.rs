@@ -113,6 +113,11 @@ impl Lower<'_> {
         if signature.index == self.entry {
             return Err(unsupported("main as a function value"));
         }
+        // V38 (`declaration_forms`): an overloaded function has no single
+        // function type.
+        if self.types.overloads.has_function(signature.index) {
+            return Err(unsupported("overloaded function used as a value"));
+        }
         let ty = intern_full(
             signature.receiver,
             signature.params.clone(),

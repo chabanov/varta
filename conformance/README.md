@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 96 feature rows and 165 cases:
-160 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 105 feature rows and 180 cases:
+175 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -440,3 +440,56 @@ expected output is Node.js v24.20.0's with `TZ=UTC`. `Array.prototype.shift`,
 listed above as a rejected form, is admitted now. The `symbol-type` gap is
 unchanged: `Symbol()` is refused with the reason (a value tag awaiting an
 owner decision).
+
+The v38 declarations-and-classes review (K9 B, 2026-11-06) uses the
+`typescript_handbook` origin for language features that ECMAScript does not
+define. It adds eight feature rows and
+eleven original cases, each printing what Node.js v24.20.0 prints for the
+tsc 5.9.3 emit (strict, ES2022, `useDefineForClassFields`, `await main();`
+appended):
+
+- `enums` (typescript_handbook; CORE-01, CORE-02) with `enum-members` (auto-increment,
+  string and bit-flag members, reverse mapping of constant and dynamic keys,
+  an exhaustive `switch`, `let` widening to the enum type) and `const-enum`
+  (string and computed `const enum` members in interface fields);
+- `namespaces` (typescript_handbook; CORE-02, CORE-03) with `namespace-merging`
+  (merged namespace declarations, a nested namespace, a namespace type and a
+  function merged with a namespace);
+- `abstract-classes` (typescript_handbook; CORE-02) with `abstract-members`
+  (abstract methods and getters dispatched through an abstract base type);
+- `overloads` (typescript_handbook; CORE-03) with `function-overloads` (function and
+  method overloads selecting their result types);
+- `class-accessors` (ECMAScript method definitions; CORE-02, CORE-03) with
+  `class-setters` (getter/setter pairs, a setter-only accessor, compound
+  assignment and update through accessors) and `auto-accessor`;
+- `static-class-members` (ECMAScript class definitions; CORE-02, CORE-03)
+  with `static-fields` (static fields, `readonly` statics and `this` in a
+  static method called through a subclass) and the known gap
+  `static-block` (`unsupported_syntax`: static blocks run code at class
+  definition, pending the module-initialization design);
+- `class-expressions` (ECMAScript class definitions; CORE-02, CORE-03) with
+  `class-expression` (anonymous and named class expressions bound by
+  `const` at module level and in a function);
+- `decorators` (typescript_handbook; CORE-02, CORE-03) with the known gap
+  `class-decorator` (`unsupported_syntax`, for the same reason as static
+  blocks).
+
+Classes declared inside functions are hoisted to module classes like class
+expressions (a class that would capture the function's locals is refused),
+so the `class-instance` gap is promoted to supported with its pinned hash
+and output.
+
+Module evaluation (K9 B, 2026-11-06) runs static blocks where their class is
+defined, so the `static-block` gap passes with its pinned hash and output.
+Enum and namespace objects add `enum-object` (own keys, values and entries
+of numeric, string and heterogeneous enum objects, `typeof` and `keyof
+typeof`) and `namespace-object` (a namespace object's keys, its use as a
+`typeof NS` argument and a nested namespace object), both matching Node.js
+v24.20.0.
+`enum-assignability` pins tsc 5's enum assignability (a `number` value to a
+numeric enum, nominal string enums, `'x' as E`); tsc accepts it and Node.js
+v24.20.0 prints the stored output.
+The `class-index-signatures` row (typescript_handbook; CORE-02) adds
+`class-index-signature`: undeclared members of instances with a string index
+signature, by name and computed key, also through a subclass; it matches
+Node.js v24.20.0.

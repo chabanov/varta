@@ -806,6 +806,16 @@ impl LanguageProfile {
     pub fn iteration_protocol(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 B declarations-and-classes stream: `enum` (numeric,
+    /// string, heterogeneous and `const`, with reverse mapping), `namespace`
+    /// and its declaration merging, abstract classes and members, function
+    /// and method overloads, class setters, static fields and blocks, class
+    /// expressions and standard decorators. Every form is lowered to the
+    /// checked subset; it changes no host ABI or value layout.
+    #[must_use]
+    pub fn declaration_forms(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, K9 D standard-library stream: the ECMAScript 2025
     /// `Array.prototype` copying and reordering methods (`sort` and
     /// `toSorted` with V8's TimSort comparator order, `flat`, `flatMap`,
@@ -818,6 +828,16 @@ impl LanguageProfile {
     /// or value layout.
     #[must_use]
     pub fn standard_library(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
+    /// Batch v38, K9 B module evaluation: a module initializer may run
+    /// program code (calls, `new`), as ECMAScript evaluates a module body once
+    /// per instance in source order, so static field initializers and static
+    /// blocks run where their class is defined. A read of a binding before
+    /// its initialization that the initializer can reach is refused at
+    /// compile time. Earlier profiles keep the call-free initializer subset.
+    #[must_use]
+    pub fn module_evaluation(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
     /// Batch v38, wave-3 bytes stream: a `Uint8Array` carries its own value
@@ -3298,6 +3318,8 @@ mod tests {
                 profile.file_roots(),
                 profile.json_decoders(),
                 profile.iteration_protocol(),
+                profile.declaration_forms(),
+                profile.module_evaluation(),
                 profile.type_level(),
                 profile.standard_library(),
             ] {

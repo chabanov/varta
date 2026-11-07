@@ -84,6 +84,9 @@ pub(crate) struct Unit {
     /// A text resource (v38): its source is the resource text and its AST
     /// the one constant `default`.
     pub text: bool,
+    /// The enums, namespaces and classes with static fields the module
+    /// exports (v38 `declaration_forms`), lowered by [`crate::desugar`].
+    pub declarations: crate::desugar::Exports,
     /// TSX `class`/`className` expressions that compose a class name from
     /// parts at run time (see [`crate::classes`]).
     pub class_compositions: Vec<crate::classes::Composition>,
@@ -175,17 +178,26 @@ impl Builder<'_> {
         // A `.tsx` module parses JSX only where `tsx()` admits it; earlier
         // profiles keep parsing every module as TypeScript.
         let tsx = self.profile.tsx() && crate::jsx::is_tsx(&input.path);
-        let mut ast = parse::parse_module(&source, tsx)?;
+        let mut ast = parse::parse_module_with(&source, tsx, self.profile.declaration_forms())?;
         let mut class_compositions = Vec::new();
         if tsx {
             class_compositions = crate::jsx::desugar(&mut ast, &source)?;
         }
+        // V38 (`declaration_forms`): enums, namespaces, static fields, class
+        // expressions and overload signatures lower to the checked subset
+        // before the module is scanned.
+        let mut declarations =
+            if self.profile.declaration_forms() && !engine::is_prelude(&input.path) {
+                crate::desugar::declarations(&mut ast, &source)?
+            } else {
+                crate::desugar::Exports::default()
+            };
         if self.profile.web_bytes() && !engine::is_prelude(&input.path) {
             global_members::rewrite(&mut ast);
         }
         let syntax::Scan {
             mut imports,
-            exports,
+            mut exports,
             stars,
         } = syntax::scan(&mut ast, &source, &input.path, self.loader, self.profile)?;
         if let Some(import) = imports.iter().find(|i| engine::is_prelude(&i.target)) {
@@ -254,6 +266,21 @@ impl Builder<'_> {
             visit.map_err(|e| source.locate(e, import.span))?;
         }
         self.visiting.pop();
+        if self.profile.declaration_forms() && !engine::is_prelude(&input.path) {
+            let units = &self.graph.units;
+            crate::desugar::imports(
+                &mut ast,
+                &source,
+                (&mut imports, &mut exports, &stars),
+                &mut declarations,
+                &|path| {
+                    units
+                        .get(path)
+                        .filter(|unit| !unit.declarations.is_empty())
+                        .map(|unit| unit.declarations.clone())
+                },
+            )?;
+        }
         text::check_stylesheets(&ast, &imports, &self.graph.units)?;
         self.graph.order.push(input.path.clone());
         self.graph.units.insert(
@@ -265,6 +292,7 @@ impl Builder<'_> {
                 exports,
                 stars,
                 text: false,
+                declarations,
                 class_compositions,
             },
         );

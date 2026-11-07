@@ -1,0 +1,16 @@
+0 1 10 11
+Red Cyan Cyan
+-1 -> undefined
+0 -> Red
+1 -> Green
+2 -> undefined
+blue UP direction UP color 11
+0 YES 6 After
+3 -1 16 15
+6 2 11
+1 plain
+cyan,red,green
+blue/UP
+down true
+cyan green blue
+local shadowed
