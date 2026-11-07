@@ -11880,11 +11880,12 @@ prelude loads only for programs that name one of its methods
   `toJSON` are prelude functions the compiler calls for `Date` receivers (a
   class cannot declare them); `JSON.stringify` of a `Date`, `String(date)`
   and the `toLocale*String` forms stay refused.
-- **Refused by name.** `Symbol()`/`Symbol.for`/`Symbol.keyFor`, `WeakMap`,
+- **Refused by name.** `WeakMap`,
   `WeakSet`, `WeakRef`, `FinalizationRegistry`, `Proxy`, `Reflect.*`,
   `structuredClone`, `Object.freeze`/`seal`/`preventExtensions` and their
   predicates, descriptor and prototype functions, and `Intl` fail with the
-  missing value-model part in the diagnostic.
+  missing value-model part in the diagnostic. `Symbol()` values are
+  admitted by the [symbol stream](#symbol-values-symbol_values).
 
 #### Full RegExp (`full_regexp`)
 
@@ -12250,9 +12251,8 @@ refused with an `unsupported …` diagnostic that names it (list below).
   call selects the first overload whose parameters (rest elements
   included) accept the arguments.
 
-Still refused, each by name: `unique symbol` (no Symbol values in this
-profile; track D's Symbol values are not in this profile yet), `import("…")`
-types, callable objects with properties (a call signature together with
+`unique symbol` is a `symbol` under the [symbol
+stream](#symbol-values-symbol_values). Still refused, each by name: `import("…")` types, callable objects with properties (a call signature together with
 other members: no closed layout holds a function value and fields),
 overloads with a `this` parameter or type parameters, generic construct
 signatures and constructor types (a monomorphized class has one layout per
@@ -12602,6 +12602,91 @@ tag of the in-development value layout 18, not a step to a new value ABI.
   logging a typed `Uint8Array`; a tagged `Uint8Array` in a KV value;
   identity comparisons of two values that may both hold a `Uint8Array`;
   checked JSON decode targets that reach a `Uint8Array`.
+
+#### Symbol values (`symbol_values`)
+
+K9 track D2 (owner decision of 2026-11-06, replacing the earlier refusal),
+selector `LanguageProfile::symbol_values()`: ECMAScript `Symbol` values
+([ECMA-262 §20.4](https://tc39.es/ecma262/2025/#sec-symbol-objects)) with
+Node 24.20.0 as the oracle. No host import, budget or ABI number changes;
+v37 and earlier keep value layout 17, which has no symbol tag, and reject
+every form below (`symbol_forms_stay_refused_by_v37`).
+
+- **Value layout.** The value ABI number stays 18. `ValueKind::Symbol`
+  (tag 16) is an additive value18 tag (`value::symbol_layout`), next to the
+  byte-array tag 15, with the same precedent (v38 is unreleased). Its
+  payload is the handle of the symbol's private record block: a record of
+  the builtin symbol prelude class with exactly the two present fields
+  `#description` (String, empty for a symbol without one) and `#described`
+  (Boolean), checked by `value::symbol_record` (layout, field names and
+  kinds, string bounds, an undescribed symbol's empty text). The block
+  address is the symbol's identity; no reader compares symbols by their
+  fields. The tag appears wherever a symbol is stored: union and `unknown`
+  cells, record and class fields (descriptor kind 16), array elements and
+  dictionary values. This change touches no record descriptor layout (the
+  concurrent D1 change adds class names to descriptors; the two are
+  independent).
+- **Readers.** `ReferenceBox::read_in` validates the record. JSON
+  serialization (the host `json_stringify_*` encoder and the linked
+  serializer) checks the record and then treats a symbol as `undefined`
+  (§25.5.2.2 SerializeJSONProperty): omitted as an object property or
+  dictionary value, `null` as an array element. The diagnostic notation
+  (`value_format_v12`, `value_log_v12`) shows `Symbol(description)`. KV
+  staging refuses one with `a Symbol cannot be stored in a KV value` (a
+  recoverable `TypeError`), on the native host and in the browser's KV
+  codec. The linked `typeof` reader answers `"symbol"`, truthiness `true`,
+  strict equality by identity; the inline fast paths leave the tag to the
+  linked readers.
+- **Language.** `symbol` and `unique symbol` annotations (a `unique
+  symbol` is a `symbol`; its identity is the declaration's value);
+  `Symbol()`, `Symbol(description)` with a string, number or optional
+  string description (extra arguments are evaluated and ignored);
+  `Symbol.for`/`Symbol.keyFor` over the global symbol registry, a guest
+  dictionary module constant of the prelude, so it belongs to the instance
+  (each HTTP request Store starts empty); the fifteen well-known symbols of
+  ES2025 and explicit resource management as values (`Symbol.iterator`,
+  `asyncIterator`, `hasInstance`, `isConcatSpreadable`, `match`,
+  `matchAll`, `replace`, `search`, `species`, `split`, `toPrimitive`,
+  `toStringTag`, `unscopables`, `dispose`, `asyncDispose`), each created
+  once per instance; `description`, `toString()`, `valueOf()`,
+  `String(symbol)`, `String(x)` of an `unknown` holding one; `Number(symbol)`
+  throws V8's `TypeError`; `typeof` and its narrowing of unions and
+  `unknown`; `===`, `!==`, `Object.is`; symbols in records, classes,
+  arrays, unions, dictionaries, `unknown`, and as `Map`/`Set` keys (hashed by
+  block address). Implicit string conversion (`+`, template literals)
+  stays a compile-time error, as in tsc (TS2731). A module constant may be
+  initialized with `Symbol()` or `Symbol(literal)`, which only allocate
+  (`module_constants::initializer_form`); `Symbol.for` and the well-known
+  symbols read the prelude's own constants and stay out of initializers.
+- **Symbol-keyed members.** A computed key `[k]` whose `k` is a module-level
+  `unique symbol` constant (`const k = Symbol(…)` or annotated `unique
+  symbol`, declared, imported, re-exported or renamed) or one of
+  `Symbol.toPrimitive`, `Symbol.toStringTag` and `Symbol.hasInstance` names a
+  statically known member, as tsc types it: in object literals, interfaces
+  and type literals (property, method and getter signatures), class fields,
+  methods and accessors, and member reads, writes and calls
+  (`modules::symbol_keys`, run when the module graph is built, after the
+  module's dependencies). The member's key is `#[<declaring module's graph
+  index>:<name>]` (or `#[Symbol.<name>]`): the private-name prefix, so JSON,
+  KV and the value readers skip it like every non-string key, and no quoted
+  key may spell one (`reserved for symbol keys`). The key never depends on
+  the symbol value, which is created once per instance. A constant shadowed
+  by any other binding of its name in the module keeps the computed-key
+  rules. `Object.keys`/`values`/`entries` and `for...in` of a record with a
+  symbol-keyed member are refused by name (the string-key enumeration that
+  skips them is not implemented); `Object.getOwnPropertySymbols` and
+  symbol keys known only at run time stay refused.
+- **Protocols.** A class instance converts through its
+  `[Symbol.toPrimitive](hint)` method (§7.1.1) in `String`, `Number`,
+  template literals and unary `+`/`-` (hints `"string"` and `"number"`; the
+  method must return a primitive type); `String(x)` and template literals of
+  an instance without one but with a `[Symbol.toStringTag]` getter give
+  `[object <tag>]` (§20.1.3.6); `x instanceof C` calls a class's static
+  `[Symbol.hasInstance](x)` and applies ToBoolean (§13.10.2).
+  `JSON.stringify(symbol)` statically typed `symbol` is `undefined`; a value
+  of type `unknown` (or a union) that holds no JSON form keeps Varta's
+  `TypeError`, because the result is typed `string` as in TypeScript's lib
+  (see the K9 D2 record for the owner question).
 
 #### Virtual file roots (`file_roots`)
 

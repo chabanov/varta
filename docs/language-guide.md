@@ -6010,8 +6010,55 @@ export function main(): void {
 Two behaviours deviate from Node on purpose: a type predicate that lies
 throws `TypeError` where its narrowed value is read, and a `Square[]` used
 as `Shape[]` is copied, so pushing through one name is not seen through the
-other. Still refused by name: `unique symbol`, callable objects that also
-have properties, and overloads with type parameters or rest parameters.
+other. `unique symbol` is a `symbol` (see Symbol values below). Still refused
+by name: callable objects that also have properties, and overloads with type parameters or rest parameters.
+
+#### Symbol values (opt-in v38)
+
+`Symbol()` values, the global registry and the well-known symbols, with
+their own value tag, so records, arrays, unions, `unknown` and `Map`/`Set`
+keys hold them; `JSON.stringify` skips them as Node does:
+
+```ts
+const RED: unique symbol = Symbol('red');
+
+function describe(value: string | symbol): string {
+  return typeof value === 'symbol' ? `symbol ${String(value.description)}` : value;
+}
+
+export function main(): void {
+  const names = new Map<symbol, string>([[RED, 'red']]);
+  console.log(describe(RED)); // symbol red
+  console.log(String(names.get(RED))); // red
+  console.log(String(Symbol.for('app') === Symbol.for('app'))); // true
+  console.log(Symbol.iterator.toString()); // Symbol(Symbol.iterator)
+  console.log(JSON.stringify({ tag: RED, name: 'x' })); // {"name":"x"}
+}
+```
+
+A `unique symbol` constant keys members of records, interfaces and classes,
+across modules; `[Symbol.toPrimitive]`, `[Symbol.toStringTag]` and
+`static [Symbol.hasInstance]` drive conversions and `instanceof`:
+
+```ts
+const COUNT: unique symbol = Symbol('count');
+
+class Money {
+  readonly cents: number;
+  constructor(cents: number) {
+    this.cents = cents;
+  }
+  [COUNT] = 1;
+  [Symbol.toPrimitive](hint: string): string | number {
+    return hint === 'number' ? this.cents / 100 : `$${(this.cents / 100).toFixed(2)}`;
+  }
+}
+
+export function main(): void {
+  const price = new Money(1250);
+  console.log(`${price} ${+price * 2} ${price[COUNT]}`); // $12.50 25 1
+}
+```
 
 #### Standard library (opt-in v38)
 

@@ -246,10 +246,6 @@ fn unsupported_standard_forms_are_refused_by_name() {
             "to a Math function (a number[] is required)",
         ),
         (
-            "export function main(): void { const s = Symbol('x'); console.log(s.description); }",
-            "Symbol values (they need their own value tag",
-        ),
-        (
             "class K {} export function main(): void { const m = new WeakMap<K, number>(); m.set(new K(), 1); }",
             "weak collections and references",
         ),

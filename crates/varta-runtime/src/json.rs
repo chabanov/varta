@@ -409,6 +409,16 @@ impl<'a, 'b> Encoder<'a, 'b> {
             }
             return Ok((ValueKind::Undefined as u32, 0));
         }
+        // A symbol (value18, v38 `symbol_values`) is skipped in JSON like
+        // `undefined` once its record is checked; diagnostics show it.
+        if kind == ValueKind::Symbol as u32 {
+            varta_common::value::symbol_record(self.data, value, self.version, self.module)
+                .map_err(wasmtime::Error::new)?;
+            if self.diagnostic_budget.is_some() {
+                return Ok((kind, value));
+            }
+            return Ok((ValueKind::Undefined as u32, 0));
+        }
         if kind == ValueKind::ReferenceUnion as u32 {
             if !matches!(
                 self.version,
@@ -640,8 +650,33 @@ impl<'a, 'b> Encoder<'a, 'b> {
             ValueKind::Function if self.diagnostic_budget.is_some() => {
                 self.write(FUNCTION_DISPLAY.as_bytes())
             }
+            ValueKind::Symbol if self.diagnostic_budget.is_some() => self.symbol(packed),
             _ => Err(error("noncanonical scalar")),
         }
+    }
+    /// A symbol in the diagnostic notation, `Symbol(description)`.
+    fn symbol(&mut self, packed: u64) -> Result<(), wasmtime::Error> {
+        let record =
+            varta_common::value::symbol_record(self.data, packed, self.version, self.module)
+                .map_err(wasmtime::Error::new)?;
+        let description = match record.description {
+            Some(text) => {
+                let length = (text >> i32::BITS) as usize;
+                String::from_utf16_lossy(
+                    &varta_common::text::units(self.bytes(text as u32 as usize, length)?)
+                        .map_err(|_| error("invalid UTF-16 byte length"))?,
+                )
+            }
+            None => String::new(),
+        };
+        self.write(
+            format!(
+                "{}{description}{}",
+                varta_intrinsics::json::SYMBOL_OPEN,
+                varta_intrinsics::json::SYMBOL_CLOSE
+            )
+            .as_bytes(),
+        )
     }
     fn managed(
         &self,

@@ -11,14 +11,24 @@ pub(super) fn key(name: String) -> Result<String> {
     }
     Ok(name)
 }
+/// A quoted key: never a symbol key (v38 `symbol_values`), which only a
+/// `unique symbol` or well-known symbol spells (`modules::symbol_keys`).
+fn quoted_key(text: &str) -> Result<String> {
+    if crate::modules::symbol_keys::is_symbol_key(text) {
+        return Err(unsupported(&format!(
+            "object key {text} (reserved for symbol keys)"
+        )));
+    }
+    Ok(text.into())
+}
 pub(super) fn expression_key(expr: &ast::Expr) -> Result<String> {
     key(match expr {
         ast::Expr::Ident(id) => id.sym.to_string(),
-        ast::Expr::Lit(ast::Lit::Str(s)) => s
-            .value
-            .as_str()
-            .ok_or_else(|| unsupported("non-UTF-8 object key"))?
-            .into(),
+        ast::Expr::Lit(ast::Lit::Str(s)) => quoted_key(
+            s.value
+                .as_str()
+                .ok_or_else(|| unsupported("non-UTF-8 object key"))?,
+        )?,
         ast::Expr::Lit(ast::Lit::Num(n))
             if n.value.fract() == 0.0 && n.value >= 0.0 && n.value <= u32::MAX as f64 =>
         {
@@ -55,11 +65,11 @@ pub(super) fn undeclared(name: &str, owner: Type, types: &ir::ValueTypes) -> Com
 pub(super) fn property_key(name: &ast::PropName) -> Result<String> {
     match name {
         ast::PropName::Ident(id) => key(id.sym.to_string()),
-        ast::PropName::Str(s) => key(s
-            .value
-            .as_str()
-            .ok_or_else(|| unsupported("non-UTF-8 object key"))?
-            .into()),
+        ast::PropName::Str(s) => key(quoted_key(
+            s.value
+                .as_str()
+                .ok_or_else(|| unsupported("non-UTF-8 object key"))?,
+        )?),
         ast::PropName::Num(n) => expression_key(&ast::Expr::Lit(ast::Lit::Num(n.clone()))),
         _ => Err(unsupported("computed object initializer")),
     }
@@ -99,10 +109,14 @@ fn intern_shape(
     }
     // V37 keeps `#`-prefixed keys for private state (rewritten private names
     // and engine prelude fields), which `JSON.stringify` skips.
+    // V38 (`symbol_values`): symbol keys share the prefix; no quoted key can
+    // spell one (`quoted_key`).
     if types.profile.class_generics()
         && let Some(field) = fields.iter().find(|f| {
             f.name.starts_with(classes::PRIVATE_PREFIX)
                 && !(accessors && object_accessors::accessor_field(&f.name).is_some())
+                && !(types.profile.symbol_values()
+                    && crate::modules::symbol_keys::is_symbol_key(&f.name))
         })
     {
         return Err(unsupported(&format!(
