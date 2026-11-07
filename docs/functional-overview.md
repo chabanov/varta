@@ -1,6 +1,6 @@
 # Varta functional overview
 
-Checkpoint: 2026-11-06, implementation on `main` (audit fixes of that day).
+Checkpoint: 2026-11-07, recovered integration batch (final verification pending).
 
 Varta compiles strictly typed TypeScript ahead of time into portable WebAssembly.
 Native applications execute in Wasmtime through a capability-checked host;
@@ -270,13 +270,11 @@ pilot/browser/hardware observation.
 
 ## Verification and completion boundary
 
-The full gate recorded in
-`target/verification/20261105-225401-b9bonnxr/report.json` passes all ten commands
-on unchanged inputs: **3861 Rust tests, zero failures, 17 ignored, and 218 browser
-Node tests**. It includes the large-heap idle-work test and the corrected
-codegen-v2 fuel comparison. Its recorded HEAD is `6dfb06e` with the GC changes
-present; `10ff9ae` commits that verified code. See
-[current verification evidence](verification.md#current-verification-evidence--2026-11-06).
+The previous full gate at `0a2ab63a`, recorded in
+`target/verification/20261107-025634-207xufk2/report.json`, passed 4447 Rust tests
+and 186 browser Node tests on unchanged inputs. It predates the recovered
+integration batch and does not verify that batch. See
+[current verification evidence](verification.md#current-verification-evidence--2026-11-07).
 
 The recovery batch combines the K9 A type-level steps, B declarations and
 classes, C expressions and accessors, D1 console and standard-library additions,

@@ -260,6 +260,15 @@ enum Target {
     Cell,
 }
 
+/// A materialized getter result is a cache, not an own data property.
+/// User writes have already become setter calls (or the getter-only error)
+/// during subtyping resolution; direct writes to this slot refresh the cache.
+fn accessor_cache(shape: &ir::RecordShape, name: &str) -> bool {
+    shape.fields.iter().any(|field| {
+        object_accessors::accessor_field(&field.name).is_some_and(|(property, _)| property == name)
+    })
+}
+
 /// The fields of a record shape that are own properties: string- and
 /// symbol-keyed fields, with their slots and whether they are data
 /// properties; an accessor property is listed once (by its getter or, when
@@ -281,7 +290,9 @@ fn properties(shape: &ir::RecordShape) -> Vec<(u32, bool, bool)> {
             }
             continue;
         }
-        if classes::is_private_name(&field.name) && !symbol_keys::is_symbol_key(&field.name) {
+        if accessor_cache(shape, &field.name)
+            || classes::is_private_name(&field.name) && !symbol_keys::is_symbol_key(&field.name)
+        {
             continue;
         }
         result.push((slot as u32, field.optional, true));
@@ -985,7 +996,9 @@ impl Guard<'_> {
         let Some(field) = self.types.records[shape as usize].fields.get(slot as usize) else {
             return S::SetField(object, slot, value);
         };
-        if classes::is_private_name(&field.name) && !symbol_keys::is_symbol_key(&field.name) {
+        if accessor_cache(&self.types.records[shape as usize], &field.name)
+            || classes::is_private_name(&field.name) && !symbol_keys::is_symbol_key(&field.name)
+        {
             return S::SetField(object, slot, value);
         }
         let (key, optional) = (field.name.clone(), field.optional);

@@ -1512,6 +1512,10 @@ impl Rewriter<'_> {
                                 S::RecordEnumerate { slots, .. } => *slots,
                                 _ => unreachable!("matched above"),
                             },
+                            symbols: match &original {
+                                S::RecordEnumerate { symbols, .. } => *symbols,
+                                _ => unreachable!("matched above"),
+                            },
                             values: mapped,
                         };
                         let descriptor = self.locals.len() as u32;

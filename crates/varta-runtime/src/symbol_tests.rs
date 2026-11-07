@@ -96,6 +96,57 @@ fn symbol_values_in_aggregates_and_json_match_node() {
 }
 
 #[test]
+fn symbols_returned_by_getters_keep_their_json_semantics() {
+    let source = r#"export function main(): void {
+  const token = Symbol.for("json-getter");
+  const scalar = { get value(): symbol { return token; } };
+  console.log(JSON.stringify(scalar));
+  const array = { get value(): symbol[] { return [token]; } };
+  console.log(JSON.stringify(array));
+  let symbolic = true;
+  const union = { get value(): symbol | number { return symbolic ? token : 7; } };
+  console.log(JSON.stringify(union));
+  symbolic = false;
+  console.log(JSON.stringify(union));
+}"#;
+    assert_eq!(
+        logs(source),
+        ["{}", r#"{"value":[null]}"#, "{}", r#"{"value":7}"#]
+    );
+}
+
+#[test]
+fn assigning_symbol_properties_to_a_callable_copies_them_once() {
+    let source = r#"const TAG: unique symbol = Symbol("tag");
+let calls = 0;
+function source(): { [TAG]: string; count: number } {
+  calls += 1;
+  return { [TAG]: "copied", count: 4 };
+}
+export function main(): void {
+  const f = Object.assign((n: number) => n + 1, source());
+  console.log(`${f[TAG]} ${f.count} ${f(2)} ${calls}`);
+  console.log(Object.keys(f).join(","));
+}"#;
+    assert_eq!(logs(source), ["copied 4 3 1", "count"]);
+}
+
+#[test]
+fn callable_assign_evaluates_arguments_before_reading_getters() {
+    let source = r#"let trace = "";
+function later(): { last: number } {
+  trace += "argument ";
+  return { last: 2 };
+}
+export function main(): void {
+  const first = { get value(): number { trace += "getter "; return 1; } };
+  const f = Object.assign((n: number) => n, first, later());
+  console.log(`${trace}${f.value} ${f.last}`);
+}"#;
+    assert_eq!(logs(source), ["argument getter 1 2"]);
+}
+
+#[test]
 fn declared_symbols_match_node() {
     matches_node("declared");
 }

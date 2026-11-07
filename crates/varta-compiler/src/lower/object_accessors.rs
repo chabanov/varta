@@ -1167,7 +1167,8 @@ impl Lower<'_> {
     /// `JSON.stringify` of `value` by the host serializer, as the call
     /// itself lowers it: the text, or `undefined` for a value without one.
     fn json_host_text(&mut self, value: Expr, span: swc_common::Span) -> Result<Expr> {
-        let function = |ty: &Type| matches!(ty, Type::Function(_));
+        // Symbol values, like functions, have no JSON text (v38).
+        let function = |ty: &Type| matches!(ty, Type::Function(_) | Type::Symbol);
         let ty = if value.ty == Type::Unknown
             || value.ty.is_union()
                 && unions::members(value.ty, self.types)

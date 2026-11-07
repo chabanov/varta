@@ -25,10 +25,9 @@ use varta_common::{
     value::{
         ARRAY_META_BYTES, ARRAY_SLOT_BYTES, Dictionary, ErrorObject,
         HASHED_DICTIONARY_VALUE_VERSION as VERSION, INDEX_SIGNATURE_KEY, ModuleBounds,
-        PRIVATE_KEY_PREFIX, PROMISE_REASON_FIELD, PROMISE_STATE_FIELD, PROMISE_VALUE_FIELD,
-        PrimitiveBox, PromiseState, RecordShape, ReferenceBox, ValueKind as Kind, Vector,
-        array_index_units, byte_at, byte_vector, function_field_layout, read_record_with,
-        record_descriptor, string_range, symbol_record,
+        PRIVATE_KEY_PREFIX, PrimitiveBox, RecordShape, ReferenceBox, ValueKind as Kind, Vector,
+        array_index_units, byte_at, byte_vector, read_record_with, record_descriptor, string_range,
+        symbol_record,
     },
 };
 
@@ -521,9 +520,6 @@ impl<'m, 's, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, M, S> {
         if kind == Kind::Function as u32 {
             check_closure_envelope(self.memory, payload, &self.bounds.limits, VERSION)
                 .map_err(layout)?;
-            if function_field_layout(VERSION) && self.mode == Mode::Diagnostic {
-                return Ok((kind, payload));
-            }
             return Ok((Kind::Undefined as u32, 0));
         }
         // A symbol (v38 `symbol_values`) is skipped in JSON like `undefined`

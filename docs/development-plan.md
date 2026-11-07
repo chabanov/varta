@@ -2,19 +2,22 @@
 
 ## Status
 
-Updated 2026-11-05 from `main` at `10ff9ae`. The native inline painting and
-horizontal-edge packages, waves 1–3, the browser console leg and the native
-console batch are integrated. Their earlier branch names and scoped measurements
-below describe the original checkpoints, not outstanding merges. Current work
-includes the v38 HTTP streaming/keep-alive server and the recorded changes to
-application budgets, lifetime serials and network inactivity handling.
+Updated 2026-11-07 for the recovered integration batch, based on `b19c6900`.
+All fourteen previously unmerged branch tips are included through nine feature
+heads: K9 A4, B, C, D1, D2, D3, D4 locale data, D5, and K8 CSS/TSX. Earlier
+branch names and their measurements identify historical checkpoints, not
+outstanding integration work. The original worktrees remain available.
 
-The large-heap incremental-GC bitmap-clearing fix is committed in `10ff9ae`.
-Its full gate passes **3861 Rust tests and 218 browser Node tests**, with
-17 ignored Rust tests and unchanged inputs across all ten commands. The earlier
-codegen-v2 fuel comparison failure is superseded by this successful run; the
-existing cost measurements were updated for the collector change. See
-[current verification evidence](verification.md#current-verification-evidence--2026-11-06).
+The recovered batch fixes the weak-table/object-integrity heap-flag collision,
+combines the callable/accessor/symbol paths, preserves reactive TSX data
+attributes, and rebuilds the shared guest modules. Scoped checks precede one
+full verification of the completed batch. That final verification is pending;
+previous branch passes do not verify the combined tree. The scoped fuel check
+pins the regenerated v38 modules at 34241 units for the JSON fixture and 26845
+for unknown assertions; the corpus comparison retains the same two costlier
+fixtures (26845 and 178744 units). Earlier-profile snapshots and production
+budgets are unchanged. These are local measurements, not new budget limits. See
+[current verification evidence](verification.md#current-verification-evidence--2026-11-07).
 
 Varta remains an experimental research project: a working compiler for an
 explicit checked TypeScript subset, a capability-checked Wasmtime runtime,
@@ -33,7 +36,7 @@ their current limitations and the evidence behind this checkpoint.
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with K9 D2 Symbol values and symbol-keyed properties, K9 D4 local-time `Date` with host zone and locale inputs, and the stack-frame fix, on top of the K9 C expression forms with object-literal accessors and top-level `await`, K9 D3 full RegExp, K9 A steps 1–3, K9 B declarations and classes, the K8 CSS engine's font-metric units, logical properties and selectors, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-07, the commit that records it: **4447 Rust tests passed, 0 failures, 25 ignored; 186 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261107-025634-207xufk2/report.json`. Linux CI and other platforms not run |
-| Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
+| Current GC / verification state | Weak tables use a heap-kind bit distinct from object integrity flags. The recovered batch includes a sealed/frozen WeakMap/WeakSet GC-stress regression. Combined scoped verification is in progress; the final full gate is pending. Previous full-gate evidence predates this integration. |
 | Compatibility inventory | Merged recovery inventory: **240 cases, 236 supported baselines, 4 known unsupported; 131 feature rows, 7 without cases**. Includes K9 A4, B, C and D1–D5. Combined baseline execution is pending; these are manifest counts, not test results or a completion percentage ([conformance README](../conformance/README.md)) |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |

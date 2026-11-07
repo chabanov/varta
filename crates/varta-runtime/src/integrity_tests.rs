@@ -145,3 +145,42 @@ fn integrity_members_stay_refused_by_v37() {
         );
     }
 }
+
+/// Accessor cache refreshes are internal writes even when the object is frozen.
+#[test]
+fn frozen_accessor_caches_refresh_without_admitting_user_writes() {
+    let source = r#"
+export function main(): void {
+  let stored = 1;
+  const accessor = {
+    get value(): number { return stored; },
+    set value(next: number) { stored = next; },
+  };
+  Object.seal(accessor);
+  console.log(Object.isFrozen(accessor));
+  console.log(JSON.stringify(accessor));
+  Object.freeze(accessor);
+  accessor.value = 5;
+  console.log(JSON.stringify(accessor));
+  const getterOnly = { get value(): number { return stored; } };
+  Object.freeze(getterOnly);
+  try { (getterOnly as { value: number }).value = 10; } catch (error) {
+    console.log(error instanceof TypeError);
+  }
+  console.log(JSON.stringify(getterOnly));
+}
+"#;
+    let expected = [
+        "true",
+        r#"{"value":1}"#,
+        r#"{"value":5}"#,
+        "true",
+        r#"{"value":5}"#,
+    ];
+    assert_eq!(logs(source), expected);
+    for units in STRESS_UNITS {
+        let run = run_test_budgets(&stressed(source, units), STRESS_BUDGETS);
+        assert_eq!(printed(&run.lines), expected);
+        assert!(run.error.is_none(), "{:?}", run.error);
+    }
+}

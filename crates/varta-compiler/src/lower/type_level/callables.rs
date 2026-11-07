@@ -373,9 +373,8 @@ impl Lower<'_> {
         let storage = self.hidden(plain);
         let mut roots = vec![function, storage];
         let mut body = vec![S::Init(function, target)];
-        let installed = self.function_property_storage(local(function, target_ty), plain)?;
-        body.push(S::Init(storage, installed));
         let mut fields = Vec::new();
+        let mut sources = Vec::new();
         for arg in &call.args[1..] {
             let source = self.expr(&arg.expr)?;
             match source.ty {
@@ -396,9 +395,24 @@ impl Lower<'_> {
                     ));
                 }
             }
-            let (_, held, copied) = self.spread_entries(source, local(storage, plain), &[])?;
+            // Evaluate every argument before reading any source's own
+            // properties, as a call to Object.assign does.
+            let ty = source.ty;
+            let slot = self.hidden(ty);
+            roots.push(slot);
+            body.push(S::Init(slot, source));
+            sources.push((slot, ty));
+        }
+        let installed = self.function_property_storage(local(function, target_ty), plain)?;
+        body.push(S::Init(storage, installed));
+        for (source, ty) in sources {
+            let (_, held, copied) =
+                self.spread_entries(local(source, ty), local(storage, plain), &[])?;
             roots.extend(held);
             body.extend(copied);
+            // String-key enumeration deliberately omits symbols. Copy them
+            // afterwards through the shared Object.assign symbol path.
+            body.extend(self.assign_symbols(span, (storage, plain), (source, ty), &mut roots)?);
         }
         let ty = with_properties(target_ty, fields, self.types)
             .map_err(|e| self.source.locate(e, span))?;

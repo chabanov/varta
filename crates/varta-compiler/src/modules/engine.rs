@@ -345,6 +345,7 @@ pub(crate) const AGGREGATE: Prelude = Prelude {
     // `Promise.any` rejects with an `AggregateError` (`anyRejection`).
     loads: &["Promise.any"],
     lifted: None,
+    required: None,
 };
 /// `SuppressedError` (ES2026 explicit resource management; v38, K9 D1), an
 /// `Error` subclass of typed guest code like [`AGGREGATE`].
@@ -373,6 +374,7 @@ pub(crate) const CONSOLE: Prelude = Prelude {
     extended: None,
     loads: CONSOLE_LOADS,
     lifted: None,
+    required: None,
 };
 /// The console methods whose reference loads [`CONSOLE`].
 pub(crate) const CONSOLE_LOADS: &[&str] = &[
@@ -428,6 +430,7 @@ pub(crate) const INTEGRITY: Prelude = Prelude {
         ".isExtensible",
     ],
     lifted: None,
+    required: None,
 };
 /// `WeakMap`, `WeakSet`, `WeakRef` and `FinalizationRegistry` (v38
 /// `weak_references`, K9 D5) over the ephemeron tables of `lower::weak`; a
@@ -448,6 +451,7 @@ pub(crate) const WEAK: Prelude = Prelude {
     extended: None,
     loads: &[],
     lifted: None,
+    required: None,
 };
 /// The weak prelude function the synthesized checkpoint export calls
 /// (`varta_common::weak::CHECKPOINT_EXPORT`).

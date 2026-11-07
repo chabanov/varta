@@ -391,7 +391,7 @@ impl Lower<'_> {
     }
     /// The writes of the present symbol-keyed members of the record in
     /// `source` into `target`, in their insertion order.
-    fn assign_symbols(
+    pub(super) fn assign_symbols(
         &mut self,
         span: swc_common::Span,
         (target, target_ty): (u32, Type),
@@ -427,6 +427,17 @@ impl Lower<'_> {
             };
             let write = if let Type::Record(destination) = target_ty {
                 self.assign_record_field(span, target, destination, &field.name, value)?
+            } else if let Type::Dictionary(destination) = target_ty {
+                // A callable object's property dictionary stores the same
+                // encoded symbol keys its member reads and writes use.
+                let element = self.types.dictionaries[destination as usize].value;
+                let value = unions::widen(value, Some(element), self.types)?;
+                let key = Expr {
+                    span,
+                    ty: Type::String,
+                    kind: E::String(self.types.profile.string_bytes(&field.name)),
+                };
+                S::Expr(self.dictionary_set(local(span, target, target_ty), key, value, element)?)
             } else {
                 self.assign_array_named(span, target, target_ty, &field.name, value)?
             };

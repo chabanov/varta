@@ -6,9 +6,12 @@ gate once on the completed code batch before committing. A full pass does not ne
 to be repeated after a documentation-only edit. New code/build inputs invalidate
 any previous check whose scope includes those inputs.
 
-## Current verification evidence — 2026-11-06
+## Current verification evidence — 2026-11-07
 
-- **Latest successful full gate:**
+- **Recovered integration batch:** all fourteen original unmerged branch tips
+  are included. Focused checks cover the cross-branch fixes; one full gate will
+  run after the complete code batch. It has not run yet.
+- **Previous successful full gate (before recovery):**
   `target/verification/20261107-025634-207xufk2/report.json` passes every
   command with unchanged inputs: **4447 Rust tests, 0 failures, 25 ignored; 186
   browser Node tests**; checked-v38 conformance matches its baseline (205

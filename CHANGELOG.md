@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Integration fixes: weak-table heap flags no longer overlap object integrity
+  flags; sealed/frozen accessor caches retain their property semantics. JSON
+  getter traversal omits Symbol values, and callable `Object.assign` preserves
+  symbol properties and argument evaluation order. Guest-intrinsic builds now
+  respect Cargo's configured target directory.
+
 - K8 T2 custom data attributes: view-protocol operations `set_data` (19)
   and `remove_data` (20) with names `data-[a-z0-9._-]+` (at most 64 bytes,
   32 per element) on both hosts, `View.setData`/`removeData`/`bindData`, and

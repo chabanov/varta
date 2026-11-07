@@ -38,7 +38,7 @@ The latest full gate passes on merged `main` of 2026-11-07: 4447 Rust tests,
 25 ignored, 186 browser Node tests and the reviewed v38 conformance baseline.
 These are local macOS implementation checks, with browser Node tests;
 real-browser and other-target acceptance retain their separate scope.
-See [current verification evidence](docs/verification.md#current-verification-evidence--2026-11-06).
+See [current verification evidence](docs/verification.md#current-verification-evidence--2026-11-07).
 
 Real-window/native system-input acceptance, sustained live-service sessions,
 complete browser/platform matrices and release/security/performance acceptance
