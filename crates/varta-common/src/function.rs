@@ -11,6 +11,29 @@ pub const CLOSURE_BYTES: usize = 24;
 pub const ENVIRONMENT_OFFSET: u64 = 16;
 pub const FUNCTION_FIELDS: i32 = 2;
 pub const ENVIRONMENT_MASK: i32 = 2;
+/// Value layout 18 (v38 `type_level`, K9 A step 4): every closure also has
+/// a property storage edge, a dictionary storage record holding the
+/// function's own properties (`fn.count = 1`, `Object.assign(fn, …)`), or
+/// zero until the first property is defined
+/// (`value::function_properties_layout`). The edge's mask bit is always set;
+/// the collector skips a zero handle.
+pub const PROPERTY_CLOSURE_BYTES: usize = 32;
+pub const PROPERTIES_OFFSET: u64 = 24;
+pub const PROPERTY_FUNCTION_FIELDS: i32 = 3;
+pub const PROPERTIES_MASK: i32 = 4;
+/// The closure block size, field count and fixed mask bits of a layout.
+#[must_use]
+pub const fn closure_layout(properties: bool) -> (usize, i32, i32) {
+    if properties {
+        (
+            PROPERTY_CLOSURE_BYTES,
+            PROPERTY_FUNCTION_FIELDS,
+            PROPERTIES_MASK,
+        )
+    } else {
+        (CLOSURE_BYTES, FUNCTION_FIELDS, 0)
+    }
+}
 pub const ENVIRONMENT_FLAG: i32 = 256;
 pub const BINDING_FLAG: i32 = 512;
 pub const MAX_CAPTURES: usize = 32;

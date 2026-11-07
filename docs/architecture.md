@@ -7803,7 +7803,8 @@ iteration is not implemented yet)`) and the annotations below.
   (`yield` and `return` await their operands). Optional, default and rest
   parameters are admitted; parameter defaults run during the call, before the
   object is returned, so an exception there throws from the call as in
-  ECMAScript. Async generator function expressions and object methods,
+  ECMAScript. Async generator function expressions and object methods
+  (admitted by v38's [generator closures](#expression-forms-expression_forms)),
   computed member names such as `[Symbol.asyncIterator]`, a `this` parameter
   and an async generator entry point are rejected with construct-specific
   diagnostics.
@@ -8991,7 +8992,9 @@ identities of its own (see the [version matrix](#version-matrix)):
 - **Value ABI and layout** `value::HASHED_DICTIONARY_VALUE_VERSION`
   (value18, [dictionary hashing](#dictionary-hashing-dictionary_hashing)),
   for v38 alone: every value17 tag and layout with its value17 meaning except
-  the dictionary storage record, which gains a hole count and a hash table.
+  the dictionary storage record, which gains a hole count and a hash table,
+  and the closure, which gains an
+  [own-property overflow storage](#own-property-overflow-storage) edge.
   `LanguageProfile::value_layout` equals `value_abi`, so descriptors,
   catalogs, frames and exception cells are stamped value18. V38 binds the
   twelve value18 readers (`HostOperation::value17_counterpart`: `value_log_v12`,
@@ -10354,9 +10357,63 @@ such members.
   source fields that are present; fields only optional sources provide are
   optional. `...x` of `R | undefined` or `R | null` copies nothing when
   nullish. A spread whose first source is a dictionary builds a dictionary;
-  dictionary spreads also accept `D | undefined`. Key order: fields every
-  member provides come first in member order, the others follow in the order
-  they become present (JavaScript orders by first definition).
+  dictionary spreads also accept `D | undefined`. A field only optional
+  sources provide stores `undefined` in its absent slot (its type includes
+  `undefined`), as every reader of a record checks. Key order: under v38
+  (`expression_forms`) it follows CopyDataProperties and property
+  definition — each key takes its position when it is first defined, a
+  spread's keys in the source object's own-key order (integer keys first,
+  ascending), a literal member in its place, and rest patterns and
+  `Object.assign` keep the source's order; earlier profiles put the fields
+  every member provides first in member order and the others in the order
+  they become present.
+- **Layout spreads** (v38 `expression_forms`, `lower::layout_spreads`): a
+  value of a closed object type may hold an object of another record
+  layout (a view), whose own properties are more or in another order.
+  `{ ...v }` and the rest of `{ a, ...rest } = v` copy every own property
+  of the actual object, so the result's layout depends on the source's
+  run-time layout. Lowering runs in passes (`link::LAYOUT_PASSES`, a named
+  bound): a pass that finds a spread or rest site whose source type has
+  view sources with other own keys (`subtyping::spread_views`) lowers the
+  program again with those sites copied by layout, until no new site
+  appears; the last pass refuses a remaining site by name. A layout site
+  evaluates the members before the spread, then `copy_T(source)`: one
+  branch per record layout the type may hold, tested by the record
+  descriptor, each a plain spread (or rest) of that exact layout (an object
+  with accessors through the type it is viewed as, so its getters run in
+  its own-key order), viewed as the static type; then the literal over the
+  copy (members after the spread are evaluated after the copy, as in
+  JavaScript); then `widen(result, copy)`: by the copy's layout, the result
+  with the copy's extra own properties at the spread's position (the key
+  order replays the members). A nullish source copies nothing. The copies,
+  widened results and per-layout JSON walks (`object_accessors`) are
+  further view sources, which a later pass may need. A literal with several
+  layout spreads widens by every combination of their layouts (an extra key
+  two copies have takes the first one's place and the last one's value).
+  `Object.keys` and `for...in` of a view enumerate the actual layout's own
+  keys (`subtyping` dispatches the enumeration on the descriptor; a key the
+  view does not declare cannot be deleted). A class instance the type may
+  hold (of a class viewed as it, or a subclass) copies its declared fields
+  in declaration order, private names left out. A layout spread into a
+  dictionary reads the object's own entries through its JSON-object read,
+  whose branches cover every record layout the boxed types may hold; into a
+  dictionary of another value type, each value is checked against the type
+  of the entry it is stored at (its key's declared type, else the index
+  type), and a value outside it (a property the view does not declare)
+  throws `TypeError: own property value is not of the dictionary's value
+  type` where it is read (checked reads at TypeScript unsoundness; Node
+  copies it). Into a literal with accessors, the copy's other properties
+  widen the object at the spread's position into a layout that keeps the
+  accessor fields, viewed as the literal's type with those properties, so
+  its getters and setters keep working. A widened layout is a view source
+  of the types it is viewed as, so the copies of those types are written
+  again until no new layout appears (a spread of a value that may hold a
+  widened object copies its extra properties). Refused by name for now:
+  `Object.assign` onto an existing object (pending overflow own
+  properties). `Object.values`/`entries` of a view list the actual object's
+  own values with checked reads (intentional deviation (4) of the type
+  level), and `Object.assign` into a fresh object literal is that spread
+  literal.
 - `obj.m?.()` on a class method is the ordinary call.
 - V38 boolean discriminants: `if (result.ok)`, its negation, logical guards
   and ternaries narrow the owning record/class union like an explicit comparison
@@ -10400,7 +10457,7 @@ such members.
 
 Not yet admitted: `A[] | B[]` of record element types, `instanceof
 Map/Set/Uint8Array`, a `Uint8Array` held by `unknown`, record spreads that
-keep JavaScript's key order, and converting a function value already held by
+keep JavaScript's key order (admitted by layout spreads above), and converting a function value already held by
 a union (`F | undefined`, such as an optional function member) to another
 signature. Of these, `instanceof` of collections and key-order spreads came
 with the wave-2 [SDK paths](#sdk-paths-sdk_paths) and a `Uint8Array` held by
@@ -11709,12 +11766,39 @@ Node 24 is the reference for every output below.
   methods; the receiver must be an object of that type or of a type viewed
   as it ([structural subtyping](#structural-subtyping-structural_subtyping)),
   otherwise the call throws `TypeError: object literal method called on an
-  object that is not of its literal type` (deviation: JavaScript would read
-  the other object's properties; a spread copy with more fields than the
-  literal is such an object). Spreads, `Object.assign` and own-key
-  enumeration of such objects are admitted. Generator methods that use
-  `this` and a spread in a literal whose methods use `this` stay refused by
-  name.
+  object that is not of its literal type` only for a receiver the
+  compiler cannot see (one no `o.m(...)` call names). Every object type `L`
+  of an `o.m(...)` call whose field `m` may hold such a method is a view
+  source of the method's type (`object_methods::loose_receivers`): an
+  ordinary view when `L` is assignable to it (a spread copy with more
+  fields, an object of another layout), else a checked view source whose
+  members are read by name with the checked reads of TypeScript
+  unsoundness (intentional deviation (3) of the type level). Spreads,
+  `Object.assign` and own-key
+  enumeration of such objects are admitted, and such a literal may spread
+  closed objects around its methods. Generator and async generator methods
+  that use `this` are generator closures (below) whose prologue takes the
+  receiver.
+- **Generator closures.** `function*` and `async function*` expressions and
+  generator and async generator methods of object literals (with or without
+  `this`) are closures, typed by their `Generator`/`AsyncGenerator`
+  annotation or their function context (one of the two is required, as for
+  generator declarations). Each is split into a wrapper, the closure itself
+  (its function value, shape, receiver and self binding), and a body: an
+  environment generator function over the same captured cells, which the
+  wrapper's direct call passes its own environment, so a captured binding
+  stays one cell shared with the enclosing function and every other
+  closure. Calling the wrapper creates the generator object. Its prologue
+  (parameter defaults and patterns, an object-literal method's receiver
+  from the register) runs during the call, before the object is returned,
+  as FunctionDeclarationInstantiation does: a synchronous body with a
+  prologue suspends once at its end inside the call (a generator suspended
+  there behaves as one suspended at its start: no `try` is entered and the
+  first `next` argument is discarded), and an async generator body reaches
+  its usual start point. The body itself starts at the first `next`. A
+  `Generator` or `AsyncGenerator` whose `TNext` is `unknown` accepts the
+  `undefined` that `for...of`, `for await` and spreads send, as in
+  TypeScript.
 - **Object-literal getters and setters.** `get p() {…}` and `set p(v) {…}`
   define accessor properties (owner decision 2026-11-06): reading `o.p`
   calls the getter and assigning it calls the setter, with the object as
@@ -11722,32 +11806,77 @@ Node 24 is the reference for every output below.
   read through the getter and write through the setter; an assignment to a
   getter-only property throws `TypeError: Cannot set property p of
   #<Object> which has only a getter`; `in` and `Object.hasOwn` report the
-  property; spreads, `Object.keys`/`values`/`entries`, `Object.assign`
-  sources and `for...in` read through the getter, so a spread copy has a
-  data property. The literal's type is its contextual record type, or the
-  record of its data fields, annotated methods and annotated accessors (a
-  getter's return or a setter's parameter type). The object has a physical
-  shape of its own: its data fields and, per accessor, the getter and
-  setter closures in fields with reserved private names, and the literal's
-  value is a [structural view](#structural-subtyping-structural_subtyping)
-  of that shape as its type, so member accesses select the layout by the
-  object's descriptor and call the accessor functions. No value layout or
-  host ABI changes (the owner had accepted a new value ABI version; none is
-  needed): hosts read records as data and skip private fields, so the
-  compiler never lets an object with accessors reach a host read silently.
-  `JSON.stringify` of a record or array that may hold such an object
-  serializes a copy made by a synthesized materializer, which reads every
-  property through its getter (nested records and arrays included); every
-  other host operation (`varta.kv`, logging of objects, HTTP bodies) of a
-  value that may hold one, and an `unknown` cell that may hold one, is
-  refused by name. Deviations: the own keys of an object with accessors,
-  and of the objects a `JSON.stringify` materializer copies, are in the
-  order of the type's members (sorted by name) rather than creation order,
-  and a cyclic graph of such objects exhausts the materializer instead of
-  throwing JavaScript's `TypeError`. Refused: a setter without a getter, a
-  spread in a literal with accessors, a `this` parameter of a setter, an
-  optional member in a type whose objects `JSON.stringify` copies, and
-  accessors in an `unknown` or other non-record context.
+  property. The literal's type is its contextual record type, or the record
+  of its data fields, annotated methods and annotated accessors (a getter's
+  return or a setter's parameter type).
+  - *Layout* (a value layout 18 addition, approved 2026-11-06 like the
+    `Symbol` tag and the console display trailer): the object is a record of
+    a physical shape of its own whose fields are its data properties, one
+    data slot per accessor property at the property's creation position
+    (holding `undefined` until a structured refresh writes the getter's
+    result into it), and the reserved fields `#get p` and `#set p` (the
+    getter and setter closures).
+    The reserved names cannot be spelled by source keys; they are not
+    properties: enumeration skips them and the KV codec skips them. The
+    literal's value is a [structural view](#structural-subtyping-structural_subtyping)
+    of the physical shape as the literal's type, so member accesses select
+    the layout by the descriptor and call the accessor closures.
+  - *Own keys and multi-property reads* follow OrdinaryOwnPropertyKeys:
+    integer keys ascending, then the object's own insertion order, accessor
+    properties included. `Object.keys`, `for...in`, `Object.values`,
+    `Object.entries`, spreads, rest patterns and `Object.assign` sources
+    enumerate the keys first and read each value (calling its getter) when
+    its key is reached, as EnumerableOwnProperties and CopyDataProperties
+    do; a rest pattern's named properties are not read again.
+  - *`JSON.stringify`* of a value that may hold such an object (a record,
+    array, dictionary, class instance, `unknown` or union) is a guest walk
+    (`object_accessors::json_walk`): each object's
+    own keys in order, each property read (its getter called) when it is
+    reached and serialized at once, as SerializeJSONProperty does — a
+    getter runs once per occurrence of its object, and a getter's
+    exception propagates before any text exists. An object reached again
+    while it is being serialized (a getter returning an ancestor, or a data
+    cycle through such objects) throws V8's `TypeError: Converting circular
+    structure to JSON` with its `-->`/`|`/`---` path lines (the first two
+    levels, `...` for more than three, and the last). A class instance
+    serializes its declared fields (base class first; an instance of a
+    subclass its own class's fields, by its descriptor); an `unknown` cell
+    dispatches on what it holds (records, objects with accessors, class
+    instances and dictionaries by descriptor, arrays as `unknown[]`). Values
+    that cannot hold such an object keep the host serializer.
+  - *Structured readers* read every object once by identity, as
+    StructuredSerializeInternal does: before a reader runs, the structured
+    refresh (`Lower::structured_refreshed`, a hook for every structured
+    reader, `structuredClone` included) visits the reachable objects depth
+    first in own-key order, skipping every object (record or array) it has
+    already seen by identity, so a cycle ends, and calls each getter of an
+    object with accessors once, writing the result into the property's data
+    slot, which the reader then reads as data. KV staging (`varta.kv.set`) uses it; Deno 2.9.7 stores the same
+    value and calls the getter as often.
+  - *View props* are ordinary guest objects: a component reading
+    `props.p` calls the getter on every read, as in JavaScript.
+  - *Held by `unknown`*: when a type an object with accessors is viewed as
+    enters `unknown`, its physical shapes are boxed shapes too, so the
+    JSON-object reads of `unknown` (`as Record<string, unknown>`, checked
+    conversions) call each getter in own-key order and leave out the
+    reserved fields.
+  - *Spreads in such a literal* copy data properties as CopyDataProperties
+    does: members are evaluated in source order, a spread reads its
+    source's properties (calling its getters) in the source's own-key order
+    when it is reached, a later definition of a key replaces the earlier one
+    in its first position (an accessor after a spread drops the copied
+    value, a spread after an accessor makes the property data), and the
+    object takes the members' key order. An optional member of a spread is
+    copied only where its source has it (until a certain definition, the
+    property is optional in the object's shape).
+  - A spread of a view of other layouts copies the object's own properties
+    by its run-time layout (`layout_spreads`), widening the object with
+    accessors.
+  - Refused by name: a setter without a getter, a `this` parameter of a
+    setter, accessors in a context that is not a closed object type, a
+    spread of a class instance into a literal with accessors, a class with an index signature whose fields may
+    hold such an object reaching a host, and (until the console notation
+    shows accessors) logging a value that may hold one.
 - **Computed keys.** `{ [k]: v }` with a constant key — a string or number
   literal, a template without substitutions, or a `const` binding or
   module constant initialized by such a literal — names a closed record
@@ -11795,6 +11924,80 @@ Node 24 is the reference for every output below.
   generators, strings and iterable instances, and `Iterable<T>` value
   annotations. Iterator helpers and `Array.from` with a map function or an
   array-like are admitted by the [standard library](#standard-library-standard_library).
+
+##### Overflow own properties (design; value layout 18 addition, implementation pending)
+
+Owner decision (2026-11-07, delegated): one shared mechanism gives any
+object own properties its closed layout does not declare, as JavaScript
+creates them (`Object.assign` onto an existing object, properties on
+functions, a static `this` write creating a subclass's own property,
+computed writes of new keys, Proxy/Reflect). It is an addition to the
+unreleased value layout 18 under the CLAUDE.md §11 rules: earlier layouts
+and profiles keep their bytes. It shares K9 A4's representation for
+closures, so every host reader handles one shape.
+
+- **Storage.** A record of an *expandable* layout (structural records,
+  class instances, objects with accessors) ends with a `properties: i64`
+  word after its order trailer; other layouts keep their bytes, so memory
+  and fuel accounting, fuel goldens and data limits of programs without
+  such sites do not change (owner review, 2026-11-07). The compiler sees
+  the whole program and marks a record descriptor expandable from every
+  site that can add an own property to an existing object of that layout
+  (`Object.assign` targets, computed writes of keys the type does not
+  declare, B3's static own properties, the coming
+  `Reflect.defineProperty`/Proxy), propagated conservatively through view
+  and source edges. A non-expandable object that would have to gain a key
+  at run time is a compiler bug to report, never a reason to widen every
+  record. The word is zero until the
+  first overflow property is created, then holds the handle of an ordinary
+  dictionary storage record of type `Record<string, unknown>` (value layout
+  18 hashed dictionary: keys in creation order, values as `unknown` cells).
+  Closures carry the same word as their `properties` slot (K9 A4,
+  `PROPERTIES_MASK`). Symbol keys use the symbol-key encoding of
+  `symbol_values` (`modules::symbol_keys`), so the dictionary stays
+  string-keyed. The exact placement of the word for records is settled
+  through main after K9 A4 lands.
+- **Own-key order** (OrdinaryOwnPropertyKeys). Integer-index keys ascend
+  across declared and overflow keys; the other string keys follow creation
+  order. Declared keys created before the storage exists come first, in
+  the order trailer's order. While the storage exists, the first presence
+  of a declared slot (an optional field set, a deleted field re-created)
+  also moves a reserved marker key `#slot <n>` to the end of the storage
+  (deleted and inserted again). Readers then list the declared keys
+  without a marker in trailer order, followed by the storage entries in
+  order, with markers expanded to their declared keys. A marker of an
+  absent slot is skipped. Deleting an overflow key deletes the entry.
+  Symbol keys are listed after the string keys, by the symbol rules.
+- **Collector and barriers.** The collector traces a nonzero
+  `properties` word of every value18 record (and closure) as a reference,
+  marking the storage record. A write that first allocates or replaces the
+  storage goes through the incremental write barrier, as
+  `SetFunctionProperties` does. Storage records are ordinary dictionaries,
+  so their hashing, compaction and limits apply unchanged.
+- **Typed code.** Member access through the declared type reads the
+  declared slots only and never sees overflow keys. Overflow keys are
+  reached through the dynamic paths: own-key enumerations (`Object.keys`,
+  `values`, `entries`, `for...in`), spreads, rests and layout copies,
+  `JSON.stringify`, JSON-object reads of `unknown`, `"k" in o`,
+  `Object.hasOwn` with a run-time key, computed reads, writes and deletes,
+  `Object.assign`. A read of such a key through a wider type (a view whose
+  type declares the key, over an object that holds it only in the storage)
+  follows the checked-read rule: a value of the declared type is returned,
+  a missing key reads `undefined` where the type admits it, and anything
+  else throws `TypeError` at the read.
+- **Host readers.** The JSON serializers (linked and host), the KV stager
+  (`varta-kv-codec`, both hosts), the console notation, `structuredClone`
+  and view props read the word. They validate a nonzero word as a
+  dictionary storage record of `Record<string, unknown>` and merge its
+  entries into the object's own keys by the order rule above, skipping
+  markers. A malformed word is a layout failure, like any malformed cell.
+- **Object.assign onto an existing target** (first user). Every own
+  enumerable property of each source (CopyDataProperties order, getters run
+  when reached) is set on the target. A declared key is written to its slot
+  (a setter of an object with accessors is called; a getter-only property
+  throws as in JavaScript), and any other key is written to the target's
+  storage (created on first use). A source that is a view of other layouts
+  is read through its layout copy (`layout_spreads`).
 
 #### Standard library (`standard_library`)
 
@@ -12100,6 +12303,31 @@ its diagnostics and bytes unchanged.
   (`varta-runtime` `full_regexp_cases`, including a 600-pattern
   differential corpus) and conformance cases `regexp-*`.
 
+#### Own-property overflow storage
+
+Value layout 18 gives an object an **own-property overflow storage**: a slot
+holding zero or the handle of an ordinary dictionary storage record (the
+value18 dictionary layout with its hash table, values held as `unknown`
+cells) that holds the object's own properties beyond its static layout.
+Entries keep ECMAScript own-key order for string keys (array-index keys
+ascending, then other strings in creation order); a symbol-keyed property is
+stored under its member key (`modules::symbol_keys`: the private-key prefix
+and `[`), which the string-key enumerations (`Object.keys`, `entries`,
+`values`, `for…in`, `in`), JSON, KV and the value readers skip. The storage
+is created on the first definition of such a property; the slot is an
+ordinary traced edge (its mask bit is always set, the collector skips a zero
+handle) and is written with the incremental write barrier. Readers check the
+edge to be zero or a record block and read entries through the dictionary
+readers. The first object with the slot is the closure (K9 A step 4,
+[callable objects](#type-level-type_level)): 32 bytes, `[signature:u32,
+fields=3:u32, code:u32, reserved-zero:u32, environment:i64,
+properties:i64]`, mask `function::PROPERTIES_MASK` beside the environment
+bit, selected by `value::function_properties_layout`; the closure envelope
+readers (`function::check_closure_envelope`,
+`ClosureView::read_envelope_within`) take the layout version. Value17 readers
+keep the 24-byte closure. Other objects (records receiving properties they do
+not declare) are to extend the same representation.
+
 #### Type level (`type_level`)
 
 K9 track A (2026-11-06), under the selector `LanguageProfile::type_level()`:
@@ -12109,8 +12337,9 @@ cited source. Varta monomorphizes: every type parameter is bound to a
 resolved type before a type expression is lowered, so each operator below is
 evaluated at compile time over resolved types and yields an existing closed
 type (record, dictionary, literal set, tuple, union, function type). No host
-import, value tag, value layout, frame catalog or ABI changes; nothing generic
-or deferred reaches emission. V1–v37 keep rejecting every form below with
+import, value tag, frame catalog or ABI changes, and no value layout change
+but the value18 closure's property storage edge of step 4 (callable objects,
+below); nothing generic or deferred reaches emission. V1–v37 keep rejecting every form below with
 their earlier diagnostics. A construct without a sound static layout is
 refused with an `unsupported …` diagnostic that names it (list below).
 
@@ -12288,13 +12517,11 @@ refused with an `unsupported …` diagnostic that names it (list below).
     literal type is expected takes the template type of its parts
     (`` `on${name}` `` with `name: string` is `` `on${string}` ``). A union
     drops the string literals its patterns match, and `` `${string}` `` is
-    `string`. `Record` and mapped types over a pattern key type are string
-    index signatures (their keys are not checked against the pattern), and
-    `Omit` drops the keys a pattern matches. Refused by name: a checked
-    assertion (`x as T`, `JSON.parse(text) as T`) to a type with a pattern,
-    which has no run-time test, `Pick` with pattern keys, and an intrinsic
-    type over a pattern with a `number`, `bigint` or other mapped
-    placeholder.
+    `string`. `Record` and mapped types over a pattern key type are index
+    signatures of that key type (step 4, below), and `Omit` drops the keys a
+    pattern matches. Refused by name: `Pick` with pattern keys (a tsc error
+    unless the type has such an index signature) and an intrinsic type over
+    a pattern with a `number`, `bigint` or other mapped placeholder.
   - *`infer`* inside a declared generic type's arguments (`Box<infer U>`: the
     declaration body with its parameters as inference positions), in a union
     pattern with one inferring member (`infer U | undefined`) and over
@@ -12333,9 +12560,11 @@ refused with an `unsupported …` diagnostic that names it (list below).
   their subclasses; `null`/`undefined` against the element union) and
   throws `TypeError` (`array element is not a value of the array's element
   type`) on a mismatch, consistent with the checked predicate reads.
-  Programs without such conversions keep their code. A collection whose
-  key vector is an array type with a changed representation is refused by
-  name.
+  Programs without such conversions keep their code. A `Map` or `Set`
+  keyed by such a class keeps its key vector in the class array's
+  representation; when that is union cells, its hash probes read each
+  cell's payload (`ir::KeyHash::Cell`: the instance, hashed and compared by
+  identity, step 4).
 - **Intentional deviations from Node.** (1) A type predicate that lies
   (narrows to a member the value does not hold) throws `TypeError` at the
   narrowed read (`value does not have the type its type predicate
@@ -12343,7 +12572,27 @@ refused with an `unsupported …` diagnostic that names it (list below).
   with the mistyped value. (2) An element of a shared class array that the
   read's element type does not admit (an `A` stored through `A[]` and read
   through `B[]`) throws `TypeError` at the read; Node continues with the
-  mistyped value.
+  mistyped value. (3) Under the same heading of checked reads at
+  TypeScript's unsoundness (step 4): a checked assertion of a string to a
+  pattern template type it does not match, and of a function held by
+  `unknown` to a function type of another signature, throws `TypeError`;
+  Node continues with the value (pending the owner's confirmation for the
+  function case).
+  (4) An object-literal method that uses `this` called on a
+  receiver of another layout (TypeScript does not check the receiver of a
+  method without a `this` parameter) reads and writes the receiver's
+  members by name on its actual layout, as JavaScript does; a member the
+  receiver lacks (unless the declared type admits `undefined`) or holds
+  with a value outside the declared type throws `TypeError` (`property … of
+  this object does not have the type the method's this type declares`) at
+  that read or write ([expression forms](#expression-forms-expression_forms)).
+  Owner confirmation pending (rule of 2026-11-07, as (1) and (2)). (5)
+  `Object.values` and `Object.entries` of a view list every own value of
+  the actual object, typed as the union of the declared property types
+  (tsc's `any` has no Varta form); a value outside that union throws
+  `TypeError` (`own property value is not of the object type's declared
+  property types`) when the enumeration reads it; Node returns it
+  (coordinator decision 2026-11-07, owner confirmation pending).
 
 - **Step 3 admissions (2026-11-06).** `infer` inside an intersection pattern
   (`T extends { a: infer A } & { b: infer B }`: the check type matches
@@ -12361,12 +12610,115 @@ refused with an `unsupported …` diagnostic that names it (list below).
   call selects the first overload whose parameters (rest elements
   included) accept the arguments.
 
+- **Step 4 admissions (2026-11-06).**
+  - *Index signatures of pattern key types* (TypeScript 4.4): `[key:
+    `on${string}`]: T` in an object type or interface, `Record<K, T>` and
+    mapped types whose key type has pattern members (`Record<"id" |
+    `aria-${string}`, T>` declares `id` beside the index signature) are a
+    dictionary whose static view (`ir::MixedMembers::keys`) admits only the
+    declared fields and the keys the patterns describe, as tsc does: a
+    property name no pattern matches does not exist on the type (reads,
+    writes, compound updates, `delete`; an object literal property is an
+    excess property), and a computed key must have a type assignable to the
+    key type (a `string` key is TS7053). The storage is the plain
+    dictionary's, so the keyed type and `Record<string, T>` convert into
+    each other freely (as in tsc), `keyof` is the pattern type with the
+    declared names, and JSON, `Object.keys`, `in` and `for…in` are the
+    dictionary's. A declared property no pattern matches must be assignable
+    to the index type (every entry is stored as it).
+  - *Checked assertions to pattern types*: `x as T` and `JSON.parse(text) as
+    T` (and the declared reads that convert from `unknown`) test a string
+    against each pattern member of `T` at run time with the compile-time
+    rule (`patternMatches` of the patterns prelude,
+    `prelude/patterns.ts`), throwing `TypeError` on a mismatch like every
+    checked assertion. A JSON target with a pattern takes the general
+    checked conversion, never the direct decoder.
+  - *Overloads with type parameters or `this` parameters*: a generic call
+    signature in an overload set takes part through its erased signature
+    (`unknown` where a type parameter stands, as for generic method
+    signatures); a call tries the overloads in declaration order, as tsc's
+    overload resolution does, instantiating a generic overload from explicit
+    type arguments or by inference from its arguments before testing it, and
+    checks the merged result back to the selected instance's result. A call
+    signature may declare `this`; the merged receiver is the union of the
+    overloads' `this` types, a method-style call (`object.f(…)`) must have a
+    receiver the selected overload admits, and a call without one selects
+    only an overload whose `this` admits `undefined`. A value converts to
+    the overloaded type when its own signature (receiver included) is the
+    merged one. Explicit type arguments are admitted on a call of a generic
+    or overloaded function value.
+  - *Generic construct signatures* (`new <T>(value: T) => Box<T>`, `{ new
+    <T>(value: T): Box<T> }`; coordinator decision under the owner's
+    delegated authority): a whole-program pass gives each constructor value
+    a table of the instantiations the program constructs. A value of such a
+    type is physically a function `(selector: number) => unknown` (so
+    `typeof` is `"function"`, JSON skips it and identity is the function's):
+    `new ctor<T>(args)` takes explicit type arguments or infers them from
+    its arguments as a generic call does (then defaults, then `unknown`),
+    numbers the instantiation, calls the table with that selector and
+    calls the returned closure, typed by the instantiated signature, with the
+    checked arguments. A class named where such a type is expected becomes
+    its table (one per class, signature family and module, so `Box ===
+    Box`); after every body is lowered, `type_level::fill_constructors`
+    gives each table one entry per instantiation constructed through any
+    signature of its family, an instance of a synthesized generic function
+    `__vartaDeclNew…<P…, R>(a…): R { return new C(a…); }` declared in the
+    module that named the class, so each construction is inferred and
+    checked like the source `new C(a…)`; the fill and the generic bodies
+    run to a fixpoint. Converting a value between two generic construct
+    types joins their families; the instance types of an instantiation must
+    then agree (a type error otherwise). Overloaded generic construct
+    signatures are refused by name.
+
+  - *Callable objects with properties* (coordinator decision under the
+    owner's delegated authority: functions are objects, so function values
+    get their own property storage, an addition to value layout 18): a type
+    with call signatures and other members (`interface Counter { (step:
+    number): number; count: number }`), an intersection of a function type
+    with an object type, `Object.assign(fn, …)` and a module function with
+    expando assignments (`tick.calls = 0;` at module level, TypeScript's
+    property assignment declarations; the statement runs in module
+    evaluation order as the initializer of a generated constant,
+    `desugar::expandos`) are a function type marked with its declared own
+    properties (`FunctionType::properties`, a keyed dictionary view of
+    `unknown` whose keys are exactly the declared names). Physically it is
+    the function: every value18 closure has a property storage edge, an
+    ordinary dictionary storage record created on the first property access
+    (`Lower::function_property_storage`), so any function value — a named
+    function, an arrow, a class value — holds own properties, as in
+    JavaScript ([own-property overflow
+    storage](#own-property-overflow-storage)). Member reads, writes,
+    compound updates and `delete` go through that dictionary under the
+    declared view, symbol-keyed members included: a declared read
+    converts the stored value with a checked test (`TypeError` when another
+    view stored a value of another type), an undeclared name does not exist
+    on the type (TS2339). `Object.keys`, `Object.entries`, `in` and `for…in`
+    see the string-keyed own properties in own-key order (none for a function
+    without any); `typeof` stays `"function"`, JSON skips the function, identity is
+    the function's, and `Object.assign` returns the function itself, typed
+    as the callable object with the sources' properties. A function literal
+    whose context is a callable object type with a required property takes
+    the call signature (TS2741 when it is not asserted); the conversion
+    between callable object types of one call signature keeps the function
+    when the target's required properties are declared by the source. A
+    function held by `unknown` is asserted to a function type by its
+    closure's semantic signature (`ir::Intrinsic::FunctionSignature`,
+    `TypeError` on a mismatch). `name` and `length` are the function's own
+    non-writable properties (track D1b) and never storage entries: declaring
+    them on a callable object is refused by name, and `Object.assign` from a
+    source declaring them too. A construct signature together with
+    properties is refused by name (a class's static members are not
+    properties of its constructor value). Console output of a function
+    shows no own properties yet (Node prints `[Function: f] { count: 1 }`;
+    the inspector of track D1 owns function display).
+
 `unique symbol` is a `symbol` under the [symbol
-stream](#symbol-values-symbol_values). Still refused, each by name: `import("…")` types, callable objects with properties (a call signature together with
-other members: no closed layout holds a function value and fields),
-overloads with a `this` parameter or type parameters, generic construct
-signatures and constructor types (a monomorphized class has one layout per
-instantiation, so one constructor value cannot build every instantiation),
+stream](#symbol-values-symbol_values). Still refused, each by name:
+`import("…")` types, a construct signature together with properties, the
+own `name` and `length` of a callable object, expando assignments inside
+function bodies and on `const` function bindings (a module function's
+only), an overload set in which only some overloads declare `this`,
+overloaded generic construct signatures,
 intersections of object types whose shared property has no common type,
 mapped types over `number` or symbol key sets, `keyof never`, `typeof` of a
 generic function or class and of a module initializer whose type would need
@@ -12472,8 +12824,19 @@ time (`new.target.name`, an Error subclass's `name`).
   `TypeError` if the implementation returns a value its overload does not
   admit). Signatures need return annotations and must be compatible with the
   implementation (TS2394); they precede it directly with the same export
-  state (TS2391, TS2383). Generic overloads and an overloaded function used
-  as a value are refused by name.
+  state (TS2391, TS2383). A generic overload signature of a function (owner
+  decision of 2026-11-06) is a candidate instantiated per call, as tsc
+  infers it: its type arguments are inferred from the argument types (a
+  primitive argument keeps its literal type), an unbound one takes its
+  default or `unknown`, and each must satisfy its constraint, or the
+  candidate does not match; the selected instantiation's result type
+  checks the implementation's result as above. Generic overloads do not
+  type arguments contextually and are not checked against the
+  implementation (TS2394 applies to the others). Generic overload
+  signatures of methods and static methods (2026-11-07) are candidates of
+  the same kind; in an instance of a generic class the class's type
+  arguments stay bound while the method's own are inferred. An overloaded
+  function used as a value is refused by name.
 - **Setters and accessors.** `set x(v)` with or without a `get x()`: an
   assignment `o.x = v` evaluates `o`, then `v`, calls the setter and yields
   `v`; `o.x op= v` and `o.x++` read through the getter first. Accessors are
@@ -12489,14 +12852,42 @@ time (`new.target.name`, an Error subclass's `name`).
   initialized by calling the block as an arrow, so both run in the module
   initializer sequence at the class's position, as ECMAScript evaluates
   them at class definition ([module evaluation](#module-evaluation-module_evaluation)).
-  `C.x`, and `this.x` in static code, read and write the field; a subclass
-  reads an inherited static field through the same variable, and writing
-  it through the subclass (which creates an own property of the subclass in
-  JavaScript) is refused. `private`, `protected` (TS2341) and `readonly`
+  `C.x`, and `this.x` in static code, read and write the field of the
+  class that declares it. `private`, `protected` (TS2341) and `readonly`
   (TS2540) are checked. Another module writes an exported class's static
   field through a setter function the declaring module exports
-  (`C.x = v`, `op=`, `++`/`--`); a field without an annotation or literal
-  initializer has none.
+  (`C.x = v`, `op=`, `++`/`--`).
+- **Static fields per class** (coordinator decision of 2026-11-07, per
+  ECMA-262 OrdinarySet on class objects). A subclass inherits a static
+  field through its prototype chain until code assigns it through the
+  subclass (`D.x = v`, `this.x = v` in static code called through `D`, or
+  through a class value holding `D`), which creates `D`'s own property;
+  the declaring class keeps its value, and `D`'s subclasses read `D`'s.
+  Each (subclass, inherited field) pair that code may reach gets three
+  root slots behind the stored module constants (`lower::static_store`):
+  an own flag (`0`/`1`), the value (boxed in a union cell when primitive)
+  and a creation serial. A read through `D` tests `D`'s flag, then its
+  parent's, up to the declaring class's module variable, read and written
+  in its root slot with its initialization checks; a write sets `D`'s own
+  property. Which class declares which static field, with its readonly,
+  accessibility and auto-accessor flags, comes from a generated marker
+  method `static [statics]()` (`desugar::statics_key`, pruned unless
+  called). This works across modules, through generic classes
+  (`extends Base<T>` inherits `Base`'s statics), for local and expression
+  classes and for fields typed by their initializers. A `static accessor
+  x` is a get/set pair over the declaring class's storage, which tsc names
+  through that class, so every subclass reads and writes the declaring
+  class's. Compound, logical and update assignments read once and write
+  once.
+  `Object.keys(C)` lists the static fields `C` declares in definition order
+  (integer keys first, ascending; static methods and auto-accessors are not
+  enumerable), then the properties code created on `C`, in creation order;
+  `for (k in C)` continues with each ancestor's keys that no closer class
+  has. An own property created
+  while the class is still being defined (by its own static block) is
+  listed after the fields it declares, where JavaScript lists it in
+  creation order among them. `Object.values(C)` and `Object.entries(C)`
+  are typed `any[]` by tsc and refused.
 - **Static methods, `this` and `super`.** In static methods, static field
   initializers and static blocks `this` is the class. A static method that
   uses `this` or `super` is copied into each module-level subclass that
@@ -12505,9 +12896,42 @@ time (`new.target.name`, an Error subclass's `name`).
   `Derived.kind()` as in JavaScript. `super.m()` in static code calls the
   parent's `m` with the calling class as `this` (a copy of `m` in the
   calling class when `m` uses `this`), and `super.x` reads the parent's
-  static field. A `this`-using static method inherited from a class of
-  another module, and `super.m()` of such a method from a static field
-  initializer or block, are refused by name.
+  static field. Every static method that uses `this` also gets a receiver
+  version (`[this]m`, owner decision of 2026-11-06: class values) whose
+  first parameter, a class value, is `this`: a subclass without a copy
+  (declared in another module, whose copy could not reach the declaring
+  module's private names, or never named through) and a class value that
+  may hold any subclass call it with their own class, so `this.m()`, `new
+  this()` and `this.name` dispatch over the subclasses, and `this.x` reads
+  and writes the static property of the receiver's class (per-class
+  static fields above). A method whose `super` reaches no module-level
+  parent has no receiver version, and calling it with such a subclass as
+  `this` is refused by name; so is `super.m()` of a `this`-using method
+  from a static field initializer or block.
+- **Class values.** A class named where a value is expected, and a value
+  of type `typeof C`, is a class object (owner decision of 2026-11-06):
+  the identity of `C` or of one of its subclasses, an `i32` class id
+  (`Type::ClassValue`, erased to a Number before emission), with no host,
+  value-layout or ABI change. Classes are a closed world, so `new v(…)`,
+  static calls `v.m(…)` and `v.name` dispatch over the subclasses of `C`
+  known at link time (one direct call when they share the
+  implementation); `typeof v` is `"function"` and `===`/`!==` compare
+  identities. `typeof D` is assignable to `typeof C` when `D` descends
+  from `C` and its constructor accepts `C`'s parameters; `new v(…)`
+  refuses a subclass whose constructor does not (TS2511 for an abstract
+  `C`), and a subclass static method incompatible with `C`'s is TS2417.
+  Where a constructor type `new (…) => T` is expected, a class value
+  binding converts to the closure that constructs through the dispatch,
+  and generic inference sees its constructor type. A class value never
+  enters a union, an array, a record or `unknown` (it has no value tag)
+  and a generic class is no value; each is refused by name (an engine
+  class keeps its own value rules). A static field `x` is read and written
+  through a class value (`v.x`, `v.x = …`, 2026-11-07) with the field's
+  accessibility (TS2341) and readonly (TS2540) checks: `v.x` dispatches
+  over the subclasses, each reading and writing its own or inherited
+  property (per-class static fields above).
+  `ConstructorParameters` and `InstanceType` take `typeof C` through its
+  constructor type. V37 keeps the class name an unknown identifier.
 - **Class expressions and local classes.** `const X = class [N] { … }` at
   module level or in a function body, and a class declaration in a function
   body, is a module class declaration (named `X`, or the class's own name
@@ -12527,13 +12951,22 @@ time (`new.target.name`, an Error subclass's `name`).
   dictionary operation on it (a missing key reads `undefined`). Every
   declared field must be of the index's value type and methods and
   accessors are refused unless it is `unknown` (TS2411). Static, readonly
-  and non-string index signatures are refused by name, and `JSON.stringify`
-  of such an instance is refused (JavaScript would list the extra
-  properties after the fields).
-- **Not admitted yet.** Standard decorators (they need classes as values
-  and the decorator context objects) and generic overload signatures are
-  refused by name (`decorator`, `generic overload signature`). Legacy
-  `experimentalDecorators` are not planned.
+  and non-string index signatures are refused by name. The hidden field's
+  descriptor key is `value::INDEX_SIGNATURE_KEY` (a private key no source
+  can spell). Serialization (owner decision of 2026-11-06), by the linked
+  serializer and the host's `json_stringify_owned` alike, never writes that
+  field: it lists the dictionary's entries as the instance's own properties
+  in JavaScript's own-key order, so `JSON.stringify` (also nested, with a
+  replacer list or indentation) writes the canonical array-index keys of
+  fields and entries ascending, then the fields in insertion order, then
+  the other entries in insertion order; entries holding `undefined` are
+  omitted, as for fields. One difference remains: an extra property that a
+  base constructor adds before a subclass's own fields are defined is
+  listed after those fields, where JavaScript lists it before them.
+- **Not admitted yet.** Standard decorators (they need the decorator
+  context objects, `this` in field initializers and method values) are
+  refused by name (`decorator`). Legacy `experimentalDecorators` are not
+  planned.
 
 #### Module evaluation (`module_evaluation`)
 
@@ -12549,19 +12982,62 @@ is admitted under `expression_forms` (below). A primitive `const` whose initiali
 stored like a module variable that no code may assign. Initializers that
 run code are never pruned as unread (`program_limits`).
 
-JavaScript throws `ReferenceError` when code reads a binding before its
-initialization. Varta refuses such a read at compile time whenever an
-effectful initializer can reach it: the reachable code is the initializer
-plus, transitively, every module function, function-valued binding and
-class it names (a class with its constructor, instance fields and instance
-methods; a static method through `C.m`), and no binding of the module
-declared at or after the initializer may be read by it (`binding used
-before initialization: X is read by code this initializer runs`). The
-analysis over-approximates calls (a program that only names a later
-binding on a path it never takes is refused too); other modules cannot
-reach this module's bindings early, since imports are acyclic and
-initialized first. A module variable whose type is `undefined` or `null`
-alone is refused (it has no boxed form).
+JavaScript throws `ReferenceError` when code reads or writes a binding
+before its initialization (owner decision of 2026-11-06: by the
+specification, at run time). A read while an initializer is evaluated,
+outside function values or in an immediately invoked one, is refused at
+compile time as tsc refuses it (`binding used before initialization: X
+(TS2448)`); inside a function, a direct read before the declaration is the
+same TS2448 error. Every other early access is checked at run time. The
+bindings that code may reach before their initialization are found
+syntactically: those that function values of an earlier (or their own)
+initializer mention, and those that an initializer running code reaches
+through the initializer plus, transitively, every module function,
+function-valued binding and class it names (a class with its constructor,
+instance fields and instance methods; a static method through `C.m`).
+Such a binding is stored in its root slot like a module variable (never
+folded to a literal) with an initialization flag in a further root slot
+(`0` or `1`, below the heap base, so the collector skips it); its
+initializer sets the flag, and every read and write through the root slot
+tests it first and throws a `ReferenceError` with Node's message
+(`Cannot access 'X' before initialization`), a write after evaluating its
+right side. The thrown value (2026-11-07) is an instance of the
+`ReferenceError` class of the errors prelude (`<varta>/builtins/errors.ts`,
+an `Error` subclass of typed guest code like `URIError`, with `EvalError`
+beside it), which every v38 module with such a binding or with a closure's
+early capture loads (`Prelude::required`, `lower::reference_errors`), so
+`e instanceof ReferenceError` and `e instanceof Error` both hold, as does
+`instanceof ReferenceError` of a program's own `new ReferenceError(…)`. The analysis over-approximates calls,
+which costs only the flag test. A binding mentioned by a function value of
+an earlier initializer is reached through its root slot before its own
+initializer is lowered, so its type must follow from its annotation or its
+function syntax (otherwise `annotate the binding`). A module `var` and a
+static field have no temporal dead zone: JavaScript reads `undefined`
+before their definition, also while an initializer is evaluated (`var a =
+b; var b = 1`). Such a read is a checked read (owner decision of
+2026-11-07, the approved category of checked reads at TypeScript's
+unsoundness, `ir::ModuleFlag::hoisted`): it yields `undefined` when the
+declared type admits it and otherwise throws `TypeError` (`X is read
+before its definition: undefined is not a value of its type T`) at that
+read, where Node would continue with `undefined`; a write before the
+definition stores the value and marks the binding defined, and the
+definition later overwrites it, as in JavaScript. Other modules cannot reach this module's bindings early, since
+imports are acyclic and initialized first. A module-level class is a
+binding too (2026-11-07): it is initialized after the class is defined,
+its static elements included, so code outside the class body that reaches
+it earlier throws `ReferenceError` (`Cannot access 'C' before
+initialization`), also a function that a static initializer of the class
+calls; code lexically inside the class sees it initialized. The class's
+binding is the generated module constant `__vartaDecl$class$C` (`true`)
+after its static elements (`desugar::class_binding`), flagged by the same
+analysis, where naming the class reaches the constant; when it is flagged,
+every reference to the class outside its body tests the flag first
+(`lower::class_bindings`): `new C(…)`, `C.m(…)`, `C.x` read or written, `C`
+as a value and `x instanceof C` (tested before `x` is evaluated, where
+JavaScript evaluates `x` first). A direct reference before the declaration
+while an initializer is evaluated is refused (`class C used before its
+declaration (TS2449)`). An unflagged binding folds away. A module variable whose type is
+`undefined` or `null` alone is refused (it has no boxed form).
 
 **Evaluation order and top-level `await`** (2026-11-06, K9 C, owner
 decision; `expression_forms`). Modules are evaluated in the order of

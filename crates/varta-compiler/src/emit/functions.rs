@@ -3,6 +3,19 @@
 use super::*;
 use varta_common::{abi, function as layout};
 impl Emitter<'_> {
+    /// Whether closures carry the value18 property storage edge.
+    fn function_properties(&self) -> bool {
+        varta_common::value::function_properties_layout(self.profile.value_layout())
+    }
+    /// The closure block size, field word and fixed mask bits of this
+    /// profile (v11 cells have no fields).
+    fn closure_layout(&self) -> (usize, i32, i32) {
+        if self.profile.closures() {
+            layout::closure_layout(self.function_properties())
+        } else {
+            (layout::CELL_BYTES, 0, 0)
+        }
+    }
     pub(super) fn function_reference(
         &mut self,
         index: usize,
@@ -33,27 +46,20 @@ impl Emitter<'_> {
         if self.profile.closures() {
             self.environment(captures)?;
         }
-        let bytes = if self.profile.closures() {
-            layout::CLOSURE_BYTES
-        } else {
-            layout::CELL_BYTES
-        };
+        let (bytes, fields, fixed) = self.closure_layout();
         self.code.push(I::I32Const(bytes as i32));
         self.string_helper(strings::Helper::Allocate)?;
         self.code.push(I::LocalSet(self.temporary));
         self.initialize_value(
             strings::ALLOCATED | layout::HEAP_FLAG,
-            if captures.is_empty() {
-                0
-            } else {
-                layout::ENVIRONMENT_MASK
-            },
+            fixed
+                | if captures.is_empty() {
+                    0
+                } else {
+                    layout::ENVIRONMENT_MASK
+                },
             signature as i32,
-            if self.profile.closures() {
-                layout::FUNCTION_FIELDS
-            } else {
-                0
-            },
+            fields,
         );
         self.code.extend([
             I::LocalGet(self.temporary),
@@ -66,6 +72,17 @@ impl Emitter<'_> {
                 I::LocalGet(self.string_temporary),
                 I::I64Store(wasm_encoder::MemArg {
                     offset: layout::ENVIRONMENT_OFFSET,
+                    ..strings::ROOT
+                }),
+            ]);
+        }
+        // Value18: no own property yet.
+        if self.profile.closures() && self.function_properties() {
+            self.code.extend([
+                I::LocalGet(self.temporary),
+                I::I64Const(0),
+                I::I64Store(wasm_encoder::MemArg {
+                    offset: layout::PROPERTIES_OFFSET,
                     ..strings::ROOT
                 }),
             ]);
@@ -100,13 +117,10 @@ impl Emitter<'_> {
     }
     pub(super) fn function_guard(&mut self, slot: u32, signature: u32) {
         let physical = self.local_slots[slot as usize];
+        let (bytes, fields, fixed) = self.closure_layout();
         self.managed_guard(
             physical,
-            if self.profile.closures() {
-                layout::CLOSURE_BYTES
-            } else {
-                layout::CELL_BYTES
-            },
+            bytes,
             layout::HEAP_FLAG,
             if self.profile.closures() {
                 None
@@ -115,14 +129,7 @@ impl Emitter<'_> {
             },
         );
         self.assert_word(layout::SIGNATURE_OFFSET, signature as i32);
-        self.assert_word(
-            layout::RESERVED_OFFSETS[0],
-            if self.profile.closures() {
-                layout::FUNCTION_FIELDS
-            } else {
-                0
-            },
-        );
+        self.assert_word(layout::RESERVED_OFFSETS[0], fields);
         self.assert_word(layout::RESERVED_OFFSETS[1], 0);
         if self.profile.closures() {
             self.code.extend([
@@ -137,9 +144,9 @@ impl Emitter<'_> {
                 }),
                 I::I64Eqz,
                 I::If(BlockType::Result(ValType::I32)),
-                I::I32Const(0),
+                I::I32Const(fixed),
                 I::Else,
-                I::I32Const(layout::ENVIRONMENT_MASK),
+                I::I32Const(fixed | layout::ENVIRONMENT_MASK),
                 I::End,
                 I::I32Ne,
             ]);

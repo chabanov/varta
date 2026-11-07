@@ -2417,7 +2417,16 @@ earlier profiles frozen, and add each stream's rules under its own heading here.
   (`Emitter::environment_param`) and the frame creator stores captured cells as
   shared slots. Do not copy captured values into the body: mutable captures
   must stay one cell. `suspension::admissible` admits environment functions only
-  for v35 scheduled bodies; generator closures and self slots stay rejected.
+  for v35 scheduled bodies and v38 generator closure bodies; self slots stay
+  rejected.
+- V38 generator closures (`Lower::split_generator_closure`, and
+  `split_async_generator` with captures) follow the same rule: the body is an
+  environment generator over the closure's captures, called directly by the
+  wrapper, and `E::Call` of an environment function forwards the caller's
+  environment (`Emitter::forward_environment`). A prologue (parameter
+  initialization, the object-literal receiver register) must run in the call:
+  the synchronous body suspends once after it and the wrapper steps it there.
+  Never read the receiver register from a generator body after a suspension.
 - Keep v34 frozen: async instance methods, async arrows and function
   expressions, async optional/rest parameters and `Promise<T>` inference in
   generic calls are gated on `async_methods()`; v34 keeps its diagnostics.
@@ -4053,11 +4062,50 @@ Contract: [architecture.md](architecture.md#expression-forms-expression_forms).
   them); the value is a view (`Views::note_view`) of that shape as the
   literal's type. `subtyping` reads (`accessor_call`), writes (setter or
   the stored read-only `TypeError`), `has` and own-key names understand the
-  reserved fields. Every host read of a value that may hold such an object
-  must go through a `JSON.stringify` materializer or is refused by
-  `refuse_host_reads`; a new host operation that reads records needs no
-  change, but a new path that serializes guest values on the guest side
-  must call the getters itself.
+  reserved fields (`hidden_field`). Each accessor property has a data slot
+  at its creation position, so own-key order is the object's own; reads of
+  several properties (enumerations, spreads, rest patterns,
+  `Object.assign`) go through `read_in_key_order`/`values_in_key_order` so a
+  getter runs when its key is reached, and spreads and rests set the
+  result's key order with `S::RecordOrder`. Every host read of a value that
+  may hold such an object goes through the JSON walk (`json_serialized`:
+  per occurrence, with the circular-structure stack) or the structured
+  refresh (`structured_refreshed`: once per object by identity; the hook
+  for every structured reader, KV staging today and `structuredClone`
+  next), or `finish` refuses it (`refuse_host_reads`); a new host operation
+  that reads records needs no change, but a new structured reader must call
+  `structured_refreshed` and a new guest-side serializer must call the
+  getters itself. `reaches` decides which types may hold such an object
+  (records, arrays, unions, dictionaries, class instance fields, `unknown`
+  once such an object was boxed, marked by `UNKNOWN_REACHES`); keep it
+  complete, since a type it misses reaches a host as stale data. Only the
+  `DEEP_READERS` host operations read properties; a new host operation that
+  logs, formats or serializes values belongs in that list. Physical shapes
+  of boxed views are boxed too (`note_boxed_shape`), so
+  `graph_branches` calls getters for JSON-object reads of `unknown`.
+- Layout spreads (`layout_spreads`): a record spread or rest of a closed
+  object type notes its site (`KeyCopy::LayoutSpread`); a site whose type
+  has view sources with other own keys is lowered by the next pass
+  (`link::LAYOUT_PASSES`) through `copy_T` and `widen`, which `finish`
+  writes when the view sources are known. Synthesized bodies set
+  `layouts.exact` (their spreads and enumerations read one exact layout and
+  note no key copy); a ValueBlock's rooted locals are not read after the
+  block (the widen runs inside the literal's block). A new reader of own
+  keys of a view must dispatch on the layout as the JSON walk does
+  (`wider_layouts`). Optional fields of merged spread results include
+  `undefined`. A widened layout is a view source of the shapes it is
+  viewed as: `finish` writes a copy again when its shape's view sources
+  changed after it was written, and a widen again when a copy it reads
+  changed its layouts, up to `MAX_LAYOUT_ROUNDS`. Never read
+  `view_sources` once and assume no later synthesized body adds one. A
+  widened object with accessors keeps its accessor fields
+  (`intern_accessors`) and is viewed as its type with the extra
+  properties (`Receivers::widen`), with the same getter-only errors.
+- Receivers (`object_methods::loose_receivers`): `this_methods` and
+  `callers` are recorded while lowering; every caller type that may hold a
+  method becomes a view source of the method's type before
+  `layout_spreads::finish` (`subtyping::note_receiver`), a checked one
+  (`note_loose`, `Rewriter::loose_branch`) when it is not assignable.
 - Top-level `await` (`top_level_await`): a module that awaits is one
   async initializer (`module_constants::link_module`, split with
   `split_async`); the evaluator text is generated from the static plan and
@@ -4131,14 +4179,35 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   dictionary field `INDEX_FIELD` (a private name no source spells); every
   member access path calls `Lower::class_index` before choosing record,
   class or dictionary lowering, and a new member-access path must too.
+  Its descriptor key is `value::INDEX_SIGNATURE_KEY`; both serializers
+  (`varta_intrinsics::json` `index_members`, the host's
+  `json::presence`) splice its entries into the instance in own-key order
+  and must stay identical (`linked_stringify_tests` compares them on every
+  case program).
 - Module evaluation (`module_evaluation`, `lower::module_evaluation`): an
-  initializer may run code. Keep the compile-time temporal-dead-zone check
-  (`reachable` over-approximates: names reach whole declarations, classes
-  their instance members, `C.m` a static method) in `module_constants::
-  check`, reserve the initializer index for effectful chunks, and never let
-  `prune::unread_constants` drop an initializer that calls code. Top-level
-  `await` is the K9 C stream's (`top_level_await`, under
-  `expression_forms`).
+  initializer may run code. `module_constants::check` refuses only a read
+  of a `let`, `const` or class binding while an initializer is evaluated
+  (`module_evaluation::immediate`, TS2448); it returns the `Early`
+  bindings (mentioned by function values of earlier initializers, or
+  `reachable` from effectful ones: names reach whole declarations, classes
+  their instance members, `C.m` a static method), with `Early::hoisted`
+  for the `var`s and static fields among them. Those are stored in root
+  slots, never folded, with an `ir::ModuleFlag` in
+  `ValueTypes::module_flags`; `globals::global_read` and `global_store`
+  test it, the initializer sets it (`mark_initialized`). A hoisted flag
+  makes an early read a checked read (`undefined` or `TypeError`, never a
+  `ReferenceError`) and an early write a definition; keep that difference
+  in both paths. `module_constants::has_early_bindings` must agree with
+  `check`, since `lower::reference_errors` loads the errors prelude whose
+  `ReferenceError` the flag test throws (`tdz::reference_error`; v37
+  keeps the Error-root instance). A class name stands for its binding
+  constant (`desugar::class_binding`) in `check` and
+  `has_early_bindings` alike; `lower::class_bindings` tests a flagged one
+  at references outside the class body, and a static element is lowered
+  with `Classes::static_owner` set so its own class takes no test. Reserve the initializer
+  index for effectful chunks, and never let `prune::unread_constants` drop
+  an initializer that calls code. Top-level `await` is the K9 C stream's
+  (`top_level_await`, under `expression_forms`).
 - Class forms are a pre-layout rewrite (`classes::forms`, after
   `private_names` and `parameter_properties`): setters become methods named
   `forms::setter_key` (no string key can spell it), abstract members get an
@@ -4150,7 +4219,44 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   `arguments::accepts`, literal arguments retyped against literal
   parameters, arguments bound to the hidden implementation and the result
   checked with `assert_value`. Keyed by implementation function index for
-  functions and by (declaring class, key, static) for methods.
+  functions and by (declaring class, key, static) for methods. A generic
+  function overload keeps its declaration (`Overload::generic`) and is
+  instantiated per call by `generic_calls::instantiate_overload`
+  (inference, then `generics::bind` for defaults and constraints); it gives
+  no argument context, and its candidates see literal argument types.
+- Class values (`lower::class_values`): `Type::ClassValue(C)` is a
+  lowering-only type erased to `Number` in `literal_erasure`; give it no
+  value tag, keep it out of `unions::intern`, aggregates and `unknown`, and
+  compare or store its id retyped as `Number`. Every dispatch (`new`,
+  static call, `name`) iterates `family` (all non-template, non-prelude
+  descendants) and ends in `S::Trap`. Assignability is
+  `class_values::assignable` (descent plus constructor compatibility),
+  reached through `classes::upcast`. `typeof C` resolves to the class value
+  (`type_level::queries`); `type_level::utilities` and generic inference
+  convert it to the constructor type.
+- Static receivers (`desugar::statics::receiver_version`): each
+  `this`-using static method also becomes `[this]m` (key
+  `desugar::receiver_key`) with a `typeof C` first parameter, or an
+  `[unshared]m` marker when its `super` reaches no module-level parent.
+  `Lower::receiver_method` routes a static call of a subclass without its
+  own copy to the receiver version (or refuses through the marker); static
+  calls and class-value dispatch must both ask it.
+- Static fields per class (`lower::static_store`): `desugar::statics`
+  rewrites only `C.x` of a field `C` declares; an inherited field stays a
+  member access and every read and write of it goes through the class
+  value path (`static_field`, hooked into the accessor functions of
+  `classes::accessors`, so simple, compound, update and logical
+  assignments share it). Never write a subclass's property into the
+  declaring class's module variable, and never read a subclass's slot
+  without its flag. Store slots are placeholders (`BASE`) renumbered by
+  `static_store::finish` after every body; allocate them only through
+  `static_store`. The declaring class's field is its module variable,
+  recorded by `note_static_variable` when module constants are linked and
+  accessed only through `module_slot_read`/`module_slot_store` (which keep
+  the early-read checks); declarations and flags come only from the
+  `[statics]` marker (`classes::static_declarations`), and an
+  auto-accessor is always the declaring class's. `extends Base<T>` takes
+  its statics from the template (`Classes::static_class`).
 - Tests: `varta-runtime` `declaration_form_tests` (the
   `declaration_form_cases/*.expected` files are Node 24.20.0 output of the
   tsc 5.9.3 emit; the collector stress builds must print the same, and the
@@ -4317,16 +4423,65 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   `BTreeSet::contains` alone; `exhausted_by` never counts a pattern as
   covered. A reader that needs a finite text (`string_units`,
   `string_members`, `constants`) gets `None`/skips the pattern and must
-  refuse it by name or fall back to a string index signature; checked
-  assertions and JSON targets refuse patterns (`has_pattern`,
-  `contains_pattern`).
+  refuse it by name or handle it as below. A checked assertion tests each
+  pattern member with `Lower::pattern_test` (the patterns prelude's
+  `patternMatches`, loaded by the `/template-type/` reference key of every
+  template literal type with a placeholder and intrinsic string type; keep
+  its algorithm identical to `patterns::text_matches`); a JSON target with
+  a pattern never takes the direct decoder (`contains_pattern`).
+- Step 4 (2026-11-06): a pattern index signature is a dictionary whose
+  `MixedMembers::keys` holds the pattern key set (`mixed_records::
+  intern_keyed`, built by `dictionaries::index_signature`, `Record` and
+  mapped types through `index_keys::split_patterns`). Every static or
+  computed member access of a dictionary checks its key with
+  `Lower::index_key` after `dictionary_key` (which keeps the key's literal
+  type under v38) and every object literal property with `literal_key`; a
+  new dictionary access form must do the same. The storage is the plain
+  dictionary's: never give a keyed type its own layout.
+- Overload sets (step 4) may hold generic overloads (`FunctionType::generic`,
+  merged through their erased signatures: `merge` makes a position with an
+  erased `unknown` `unknown`) and `this` parameters (the merged receiver is
+  the union). `overloaded_call` takes the call's receiver: plain calls,
+  function field calls (`function_field_call`) and receiver field calls
+  (`receiver_field_call`) all route an overloaded callee there; a generic
+  candidate is instantiated with `erased_instance` and its result checked
+  with `erased_result`.
+- Generic construct signatures (step 4) are `FunctionType::constructors`
+  entries of `type_level::generic_constructors`; their values are selector
+  functions `(number) => unknown`. Only `generic_constructor_value` makes
+  one from a class, only `generic_construct` invokes one, and
+  `fill_constructors` (called by `link` in a fixpoint with
+  `generics::bodies`) is the only place that builds a table. Instance
+  closures are unboxed at their exact instantiated function type, which
+  `fill` guarantees; never widen a selector result to another function
+  type. A conversion between generic construct types goes through
+  `generic_constructors::convert` (it joins the families).
+- Callable objects (step 4): `FunctionType::properties` is the keyed
+  dictionary view (`MixedMembers::keys` = the declared names) of a
+  function's own properties; build it only with `callables::with_properties`.
+  Every value18 closure is `function::PROPERTY_CLOSURE_BYTES` with the
+  properties edge (emitted zero, mask bit always set); read and install the
+  storage only through `Lower::function_property_storage`
+  (`Intrinsic::FunctionProperties`/`SetFunctionProperties`, the latter with
+  the write barrier). Member access reaches it through `class_index` (every
+  read, write, update and `delete` site calls it) and object enumeration
+  through `object_value` (`function_object`); a new member or enumeration
+  form of function values must go through one of them. Closure envelope
+  readers take the value layout version; rebuild `intrinsics.wasm` when the
+  envelope changes. Expando statements are rewritten by `desugar::expandos`
+  and typed by `queries::expando_fields`.
+- `Map`/`Set` probes of a key vector stored as union cells use
+  `KeyHash::Cell` (set by `covariance`); the probe helpers read the cell
+  payload before hashing and comparing.
 - Predicate narrowing of a class instance to a subclass reads through
   `checked_downcast` (descriptor test, `TypeError`), of `unknown` to an
   object type through `assert_value`; `this is T` predicates are recorded per
   (declaring class, method) by `member_signature`.
 - Tests: `varta-runtime` `type_level_tests` with the Node 24 logs of
-  `type_level_cases` (each also rejected by v37), the deviation test
-  `checked_predicates_and_shared_array_reads_deviate_from_node`, the compiler's
+  `type_level_cases` (each also rejected by v37, the step 4 cases with the
+  tsc 5.9 rejections of their invalid forms), the deviation tests
+  `checked_predicates_and_shared_array_reads_deviate_from_node` and the
+  pattern mismatches of `checked_assertions_test_pattern_template_types`, the compiler's
   `composed_class_names_follow_the_checker_types` scanner test, and the
   nine `typescript_handbook` conformance rows.
 

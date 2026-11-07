@@ -1,0 +1,12 @@
+twice,b,a,c,label
+{"twice":4,"b":1,"a":2,"c":"x","label":"wide"}
+4 2
+twice,a,b,label {"twice":10,"a":5,"b":6,"label":"plain"}
+3
+13
+{"b":1,"a":2,"c":"x","total":13}
+b
+a
+c
+total
+Cannot set property twice of #<Object> which has only a getter

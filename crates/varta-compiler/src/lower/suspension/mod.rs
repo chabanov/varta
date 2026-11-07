@@ -130,7 +130,10 @@ fn admissible(program: &ir::Program, index: usize) -> Result<()> {
     let function = &program.functions[index];
     let profile = program.types.profile;
     if function.generator.is_some() {
-        let reason = if function.environment || function.self_slot.is_some() {
+        // V38 (`expression_forms`): the body of a generator closure is an
+        // environment function whose captured cells its frame shares.
+        let closure = function.environment && !profile.expression_forms();
+        let reason = if closure || function.self_slot.is_some() {
             Some("generator closure")
         } else if function.receiver.is_some() {
             Some("generator method")

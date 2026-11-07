@@ -59,13 +59,37 @@ pub(crate) struct Views {
     /// another field order (`spread_views`): JavaScript copies and
     /// enumerates every own property of the object in its own key order.
     spreads: RefCell<Vec<(u32, KeyCopy, crate::source::Source, swc_common::Span)>>,
+    /// V38 (`expression_forms`, `layout_spreads`): the record spread sites an
+    /// earlier lowering pass found reading a view of objects of other
+    /// layouts; this pass copies their sources by their run-time layout.
+    pub(crate) layout_sites: BTreeSet<Site>,
+    /// The record spread sites of this pass that read such a view
+    /// statically: the next pass lowers them with a layout copy.
+    missing_sites: RefCell<BTreeSet<Site>>,
+    /// The last lowering pass (`link::LAYOUT_PASSES`): a missing site is
+    /// refused by name.
+    pub(crate) last_pass: bool,
+    /// V38 (`expression_forms`): checked view sources (an object type that
+    /// receives a method of a literal type it is not assignable to), with
+    /// the `TypeError` of each member a read or write of which fails.
+    loose: RefCell<BTreeSet<(Type, u32)>>,
+    loose_errors: RefCell<BTreeMap<(u32, String), Expr>>,
+}
+/// A spread site: the source file and the spread expression's span.
+pub(crate) type Site = (String, u32, u32);
+/// The site of `span` in `source`.
+pub(crate) fn site(source: &crate::source::Source, span: swc_common::Span) -> Site {
+    (source.file.name.to_string(), span.lo.0, span.hi.0)
 }
 /// A form that copies or enumerates the own keys of a closed record (v38
 /// `sdk_paths`), checked against the view sources in `resolve`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum KeyCopy {
     /// `{ ...value }` into a record or dictionary literal.
     Spread,
+    /// `{ ...value }` into a closed record literal, which a later lowering
+    /// pass copies by the source's run-time layout (`layout_spreads`).
+    LayoutSpread,
     /// `Object.keys`/`values`/`entries`, an `Object.assign` source or
     /// `for...in`.
     Enumeration,
@@ -73,7 +97,7 @@ pub(crate) enum KeyCopy {
 impl KeyCopy {
     fn name(self) -> &'static str {
         match self {
-            Self::Spread => "object spread",
+            Self::Spread | Self::LayoutSpread => "object spread",
             Self::Enumeration => {
                 "own-key enumeration (Object.keys, values, entries, an Object.assign source or for...in)"
             }
@@ -97,6 +121,33 @@ impl Views {
     /// Note that objects of `source` are viewed as record `target` (v38
     /// `expression_forms`: an object literal with accessors is a view of its
     /// physical shape as its type, `object_accessors`).
+    /// Whether objects of `source` are a checked view source of `target`.
+    pub(crate) fn is_loose(&self, source: Type, target: u32) -> bool {
+        self.loose.borrow().contains(&(source, target))
+    }
+    /// The classes whose instances a value of record `shape` may hold (view
+    /// sources, directly or through another view).
+    pub(crate) fn class_sources_of(&self, shape: u32) -> Vec<u32> {
+        let edges = self.edges.borrow();
+        let mut seen = BTreeSet::from([shape]);
+        let mut stack = vec![shape];
+        let mut classes = Vec::new();
+        while let Some(target) = stack.pop() {
+            for (source, _) in edges.iter().filter(|(_, t)| *t == target) {
+                match source {
+                    Type::Class(class) if !classes.contains(class) => classes.push(*class),
+                    Type::Record(id) if seen.insert(*id) => stack.push(*id),
+                    _ => {}
+                }
+            }
+        }
+        classes
+    }
+    /// The spread sites this pass lowered statically although their source
+    /// is a view of other layouts.
+    pub(crate) fn take_missing_sites(&self) -> BTreeSet<Site> {
+        std::mem::take(&mut self.missing_sites.borrow_mut())
+    }
     pub(crate) fn note_view(&self, source: Type, target: u32) {
         self.edges.borrow_mut().insert((source, target));
     }
@@ -130,6 +181,29 @@ impl Views {
             views.extend(more);
         }
     }
+    /// The record shapes with an edge into record `target` (before
+    /// `resolve`), transitively.
+    pub(crate) fn view_sources(&self, target: u32) -> Vec<u32> {
+        let edges = self.edges.borrow();
+        let mut found = Vec::new();
+        let mut stack = vec![target];
+        while let Some(shape) = stack.pop() {
+            for (source, _) in edges.iter().filter(|(_, t)| *t == shape) {
+                if let Type::Record(id) = source
+                    && !found.contains(id)
+                {
+                    found.push(*id);
+                    stack.push(*id);
+                }
+            }
+        }
+        found
+    }
+    /// Note that values of record `shape` may be held by `unknown` (the
+    /// physical shapes of objects with accessors, `object_accessors`).
+    pub(crate) fn note_boxed_shape(&self, shape: u32) {
+        self.boxed.borrow_mut().insert(shape);
+    }
     /// Whether a value of record `shape` entered an `unknown` cell.
     pub(crate) fn is_boxed(&self, shape: u32) -> bool {
         self.boxed.borrow().contains(&shape)
@@ -157,6 +231,12 @@ impl Views {
                     stack.extend(types.unions[id as usize].iter().copied());
                 }
                 Type::Dictionary(id) => stack.push(types.dictionaries[id as usize].value),
+                // A class instance's fields (v38 `object_accessors`: an
+                // object with accessors in a field may reach `unknown`).
+                Type::Class(class) => {
+                    let shape = types.classes.shape(class);
+                    stack.extend(types.records[shape as usize].fields.iter().map(|f| f.ty));
+                }
                 _ => {}
             }
         }
@@ -468,6 +548,14 @@ impl<'a> Check<'a> {
                     .to_owned(),
             ]);
         }
+        // V38 (`type_level`): a callable object's required own properties
+        // must be declared by the source (an adapter has none).
+        if into.properties.is_some() && from.properties != into.properties {
+            return Err(vec![
+                "a callable object's own properties are not declared by the source function"
+                    .to_owned(),
+            ]);
+        }
         let mark = self.edges.len();
         let reasons = self.call_through(
             Callee {
@@ -620,6 +708,114 @@ pub(super) fn method_reasons(
 
 /// Whether a value of `actual` is assignable to `expected` through a view
 /// (no edge is committed).
+/// `source`, an object type that receives a method of literal type
+/// `target`, as a view source of `target` (`object_methods`): an ordinary
+/// view when it is assignable, else a checked one. JavaScript reads the
+/// receiver's properties by name; TypeScript does not check the receiver of
+/// a method without a `this` parameter, so a member the object lacks or
+/// holds with another type throws `TypeError` when it is read or written
+/// (checked reads at TypeScript unsoundness).
+pub(crate) fn note_receiver(source: Type, target: u32, types: &mut ir::ValueTypes) -> Result<()> {
+    if types.subtyping.edges.borrow().contains(&(source, target)) {
+        return Ok(());
+    }
+    let mut check = Check::new(types);
+    if check.object(source, target).is_ok() {
+        check.commit();
+        return Ok(());
+    }
+    note_loose(source, target, types)
+}
+
+/// The key of the `TypeError` of a values enumeration of record `shape`
+/// that meets a value outside the declared property types.
+const VALUES_ERROR: &str = "#values";
+
+/// Prepare the checked values enumeration of record `shape` (v38): the
+/// `TypeError` its view rewrite throws for an undeclared value of another
+/// type.
+pub(crate) fn note_values(shape: u32, types: &mut ir::ValueTypes) -> Result<()> {
+    if types
+        .subtyping
+        .loose_errors
+        .borrow()
+        .contains_key(&(shape, VALUES_ERROR.to_owned()))
+    {
+        return Ok(());
+    }
+    let message = unions::intern(vec![Type::String, Type::Undefined], types)?;
+    let thrown = super::exceptions::exception_union(types)?;
+    let span = swc_common::DUMMY_SP;
+    let text = Expr {
+        span,
+        ty: Type::String,
+        kind: E::String(types.profile.string_bytes(
+            "own property value is not of the object type's declared property types",
+        )),
+    };
+    let error = Expr {
+        span,
+        ty: Type::from_error_class(varta_common::value::ErrorClass::TypeError),
+        kind: E::NewError(
+            varta_common::value::ErrorClass::TypeError,
+            Box::new(unions::widen(text, Some(message), types)?),
+        ),
+    };
+    let error = unions::widen(error, Some(thrown), types)?;
+    types
+        .subtyping
+        .loose_errors
+        .borrow_mut()
+        .insert((shape, VALUES_ERROR.to_owned()), error);
+    Ok(())
+}
+
+/// Note `source` as a checked view source of `target`.
+pub(crate) fn note_loose(source: Type, target: u32, types: &mut ir::ValueTypes) -> Result<()> {
+    let names: Vec<String> = types.records[target as usize]
+        .fields
+        .iter()
+        .map(|field| field.name.clone())
+        .collect();
+    let message = unions::intern(vec![Type::String, Type::Undefined], types)?;
+    let thrown = super::exceptions::exception_union(types)?;
+    for name in names {
+        if types
+            .subtyping
+            .loose_errors
+            .borrow()
+            .contains_key(&(target, name.clone()))
+        {
+            continue;
+        }
+        let span = swc_common::DUMMY_SP;
+        let text = Expr {
+            span,
+            ty: Type::String,
+            kind: E::String(types.profile.string_bytes(&format!(
+                "property {name} of this object does not have the type the method's this type declares"
+            ))),
+        };
+        let error = Expr {
+            span,
+            ty: Type::from_error_class(varta_common::value::ErrorClass::TypeError),
+            kind: E::NewError(
+                varta_common::value::ErrorClass::TypeError,
+                Box::new(unions::widen(text, Some(message), types)?),
+            ),
+        };
+        let error = unions::widen(error, Some(thrown), types)?;
+        types
+            .subtyping
+            .loose_errors
+            .borrow_mut()
+            .insert((target, name), error);
+    }
+    types.subtyping.loose.borrow_mut().insert((source, target));
+    types.subtyping.edges.borrow_mut().insert((source, target));
+    Ok(())
+}
+
 pub(super) fn assignable(expected: Type, actual: Type, types: &ir::ValueTypes) -> bool {
     if !types.profile.structural_subtyping() || expected == actual {
         return false;
@@ -878,25 +1074,17 @@ fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result
         };
         let fields = &types.records[shape as usize].fields;
         // V38 (`object_accessors`): an accessor object's own keys are its
-        // data fields and accessor properties, in the order of its type's
-        // members (records keep their fields sorted by name).
-        if matches!(ty, Type::Record(_))
-            && fields
-                .iter()
-                .any(|field| super::object_accessors::accessor_field(&field.name).is_some())
-        {
-            let mut names: Vec<&str> = fields
-                .iter()
-                .filter_map(
-                    |field| match super::object_accessors::accessor_field(&field.name) {
-                        Some((property, true)) => Some(property),
-                        Some((_, false)) => None,
-                        None => Some(field.name.as_str()),
-                    },
-                )
-                .collect();
-            names.sort_unstable();
-            return Some(names);
+        // data fields and the data slots of its accessor properties (the
+        // object enumerates them in its own creation order); the getter and
+        // setter fields are not properties.
+        if matches!(ty, Type::Record(_)) {
+            return Some(
+                fields
+                    .iter()
+                    .filter(|field| !super::object_accessors::hidden_field(&field.name))
+                    .map(|field| field.name.as_str())
+                    .collect(),
+            );
         }
         Some(fields.iter().map(|field| field.name.as_str()).collect())
     };
@@ -914,6 +1102,19 @@ fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result
                 }
                 if names(*wider).as_deref() == Some(declared.as_slice()) {
                     continue;
+                }
+                // A record spread is copied by the source's run-time layout
+                // in the next lowering pass.
+                if *form == KeyCopy::LayoutSpread
+                    && !types.subtyping.last_pass
+                    && matches!(wider, Type::Record(_) | Type::Class(_))
+                {
+                    types
+                        .subtyping
+                        .missing_sites
+                        .borrow_mut()
+                        .insert(self::site(source, *span));
+                    break;
                 }
                 return Err(source.locate(
                     unsupported(&format!(
@@ -939,6 +1140,10 @@ pub(super) fn resolve(program: &mut ir::Program) -> Result<()> {
     }
     let edges = program.types.subtyping.edges.borrow().clone();
     spread_views(&edges, &program.types)?;
+    // Layout spread sites are lowered again (`link::LAYOUT_PASSES`).
+    if !program.types.subtyping.missing_sites.borrow().is_empty() {
+        return Ok(());
+    }
     if edges.is_empty()
         && program.types.subtyping.graph.is_none()
         && program.types.subtyping.adapters.borrow().is_empty()
@@ -1067,6 +1272,18 @@ struct Rewriter<'a> {
     adapt_only: bool,
 }
 impl Rewriter<'_> {
+    /// The record layouts (not class instances) viewed as record `view`.
+    fn record_sources(&self, view: u32) -> Vec<u32> {
+        self.types
+            .subtyping
+            .sources_of(view)
+            .iter()
+            .filter_map(|source| match source {
+                Type::Record(id) => Some(*id),
+                _ => None,
+            })
+            .collect()
+    }
     fn view(&self, ty: Type) -> Option<u32> {
         if self.adapt_only {
             return None;
@@ -1096,6 +1313,92 @@ impl Rewriter<'_> {
             | S::ContinueLabel(_)
             | S::Break
             | S::Continue => {}
+            S::RecordOrder {
+                target,
+                shape,
+                source: Some((local_slot, from)),
+                mapping,
+                start,
+                slots,
+            } => {
+                if let Some(view) = self.view(Type::Record(*from)) {
+                    // An object of another layout maps its slots by name.
+                    let span = self.span;
+                    let original = S::RecordOrder {
+                        target: *target,
+                        shape: *shape,
+                        source: Some((*local_slot, *from)),
+                        mapping: mapping.clone(),
+                        start: *start,
+                        slots: *slots,
+                    };
+                    let view_fields = self.types.records[view as usize].fields.clone();
+                    let mut chain = Vec::new();
+                    for source in self
+                        .types
+                        .subtyping
+                        .sources_of(view)
+                        .to_vec()
+                        .into_iter()
+                        .rev()
+                    {
+                        let layout = match source {
+                            Type::Record(id) => id,
+                            Type::Class(id) => self.types.classes.shape(id),
+                            _ => continue,
+                        };
+                        let fields = &self.types.records[layout as usize].fields;
+                        let remapped = mapping
+                            .iter()
+                            .filter_map(|(old, new)| {
+                                let name = &view_fields[*old as usize].name;
+                                fields
+                                    .iter()
+                                    .position(|field| field.name == *name)
+                                    .map(|slot| (slot as u32, *new))
+                            })
+                            .collect();
+                        let descriptor = self.locals.len() as u32;
+                        self.locals.push(Type::Number);
+                        chain = vec![S::If(
+                            Expr {
+                                span,
+                                ty: Type::Boolean,
+                                kind: E::IsClass {
+                                    value: Box::new(local(span, *local_slot, Type::Record(view))),
+                                    shapes: vec![layout],
+                                    slot: descriptor,
+                                },
+                            },
+                            vec![S::RecordOrder {
+                                target: *target,
+                                shape: *shape,
+                                source: Some((*local_slot, layout)),
+                                mapping: remapped,
+                                start: *start,
+                                slots: *slots,
+                            }],
+                            chain,
+                        )];
+                    }
+                    let descriptor = self.locals.len() as u32;
+                    self.locals.push(Type::Number);
+                    *statement = S::If(
+                        Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::IsClass {
+                                value: Box::new(local(span, *local_slot, Type::Record(view))),
+                                shapes: vec![view],
+                                slot: descriptor,
+                            },
+                        },
+                        vec![original],
+                        chain,
+                    );
+                }
+            }
+            S::RecordOrder { .. } => {}
             S::RecordRest { from, .. } => {
                 if self.view(Type::Record(*from)).is_some() {
                     return Err(self.locate(
@@ -1148,7 +1451,81 @@ impl Rewriter<'_> {
                     let span = self.span;
                     let descriptor = self.locals.len() as u32;
                     self.locals.push(Type::Number);
-                    let viewed = self.view_enumeration(view, source, target, values)?;
+                    let mut viewed = self.view_enumeration(view, source, target, values.clone())?;
+                    // An object of another record layout (one with
+                    // accessors included) enumerates its own slots in its
+                    // own insertion order (OrdinaryOwnPropertyKeys).
+                    for accessor in self.record_sources(view) {
+                        let fields = self.types.records[view as usize].fields.clone();
+                        // A key the view does not declare is its own name; its
+                        // value is checked against the declared property
+                        // types (checked reads at TypeScript unsoundness).
+                        let keys = values
+                            .first()
+                            .is_some_and(|value| matches!(value.kind, E::String(_)));
+                        let mut mapped = Vec::new();
+                        let own_fields = self.types.records[accessor as usize].fields.clone();
+                        for (from, field) in own_fields.iter().enumerate() {
+                            let value = match fields.iter().position(|own| own.name == field.name) {
+                                Some(slot) => values[slot].clone(),
+                                // A reserved accessor field is no property
+                                // (the enumeration skips it).
+                                None if super::object_accessors::hidden_field(&field.name) => {
+                                    values[0].clone()
+                                }
+                                None if keys => Expr {
+                                    span,
+                                    ty: Type::String,
+                                    kind: E::String(self.types.profile.string_bytes(&field.name)),
+                                },
+                                None => self.checked_value(
+                                    view,
+                                    accessor,
+                                    source,
+                                    from as u32,
+                                    field.ty,
+                                    target,
+                                )?,
+                            };
+                            mapped.push(value);
+                        }
+                        // The layout's own entries, compacted to the present
+                        // ones in its own-key order.
+                        let array = self.locals[target as usize];
+                        let fill = S::Set(
+                            target,
+                            Expr {
+                                span,
+                                ty: array,
+                                kind: E::Array(mapped.iter().cloned().map(Some).collect()),
+                            },
+                        );
+                        let own = S::RecordEnumerate {
+                            source,
+                            target,
+                            shape: accessor,
+                            slots: match &original {
+                                S::RecordEnumerate { slots, .. } => *slots,
+                                _ => unreachable!("matched above"),
+                            },
+                            values: mapped,
+                        };
+                        let descriptor = self.locals.len() as u32;
+                        self.locals.push(Type::Number);
+                        viewed = S::If(
+                            Expr {
+                                span,
+                                ty: Type::Boolean,
+                                kind: E::IsClass {
+                                    value: Box::new(local(span, source, Type::Record(view))),
+                                    shapes: vec![accessor],
+                                    slot: descriptor,
+                                },
+                            },
+                            vec![fill, own],
+                            vec![viewed],
+                        );
+                    }
                     *statement = S::If(
                         Expr {
                             span,
@@ -1283,6 +1660,90 @@ impl Rewriter<'_> {
         }
         body.push(S::Set(target, local(span, fresh, array)));
         Ok(S::Block(body))
+    }
+    /// The value of field `from` of an object of layout `layout` (in local
+    /// `source`, typed as view `view`) that the view does not declare, as an
+    /// element of the array in local `target`: a value of the element type
+    /// is the element; any other throws `TypeError` (checked reads at
+    /// TypeScript unsoundness: tsc types such values `any`).
+    fn checked_value(
+        &mut self,
+        view: u32,
+        layout: u32,
+        source: u32,
+        from: u32,
+        actual: Type,
+        target: u32,
+    ) -> Result<Expr> {
+        let span = self.span;
+        let types = self.types;
+        let Type::Array(array) = self.locals[target as usize] else {
+            return Err(CompilerError::Internal("values enumeration target".into()));
+        };
+        let element = types.arrays[array as usize];
+        let read = Expr {
+            span,
+            ty: actual,
+            kind: E::Field(
+                Box::new(Expr {
+                    span,
+                    ty: Type::Record(layout),
+                    kind: E::Reinterpret(Box::new(local(span, source, Type::Record(view)))),
+                }),
+                from,
+            ),
+        };
+        let fits = |expected: Type, actual: Type| {
+            expected == actual || assignable(expected, actual, types)
+        };
+        if fits(element, actual) {
+            return convert(read, element, types);
+        }
+        let error = types
+            .subtyping
+            .loose_errors
+            .borrow()
+            .get(&(view, VALUES_ERROR.to_owned()))
+            .cloned()
+            .ok_or_else(|| CompilerError::Internal("values enumeration error".into()))?;
+        let held = self.locals.len() as u32;
+        self.locals.push(actual);
+        let output = self.locals.len() as u32;
+        self.locals.push(element);
+        let marker = self.locals.len() as u32;
+        self.locals.push(Type::Number);
+        let mut body = vec![S::Init(held, read)];
+        let mut tested = vec![S::Throw(error)];
+        for member in unions::members(actual, types).into_iter().rev() {
+            if !fits(element, member) {
+                continue;
+            }
+            let value = Expr {
+                span,
+                ty: member,
+                kind: E::UnboxUnion(Box::new(local(span, held, actual))),
+            };
+            tested = vec![S::If(
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::IsUnionMember(Box::new(local(span, held, actual)), member),
+                },
+                vec![S::Init(output, convert(value, element, types)?)],
+                tested,
+            )];
+        }
+        body.extend(tested);
+        Ok(Expr {
+            span,
+            ty: element,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![held, output],
+                body,
+            },
+        })
     }
     fn boxed(&mut self, values: &mut [&mut Box<Expr>]) -> Result<()> {
         for value in values {
@@ -1749,52 +2210,56 @@ impl Rewriter<'_> {
                 Type::Class(class) => types.classes.family_shapes(class),
                 _ => return Err(CompilerError::Internal("view source type".into())),
             };
-            let branch = match access {
-                Access::Get(result) => {
-                    finish(self.read(*source, name, result, span, &mut locals)?)
-                }
-                Access::Has => finish(self.has(*source, name, span)),
-                Access::Set(value) => {
-                    self.write(*source, shape, &wanted, value, span, &mut locals)?
-                }
-                Access::Call(function) => {
-                    let Type::Function(id) = function else {
-                        return Err(CompilerError::Internal("view call".into()));
-                    };
-                    match self.method(*source, name) {
-                        Some((index, owner, method)) => {
-                            // The method receives its full parameter list.
-                            let args = forwarded(
-                                &types.functions[id as usize],
-                                &method.params,
-                                &method.shape,
-                                1,
-                                span,
-                                types,
-                            )?;
-                            let call = Expr {
-                                span,
-                                ty: method.result,
-                                kind: E::Call(
-                                    index,
-                                    std::iter::once(receiver(Type::Class(owner)))
-                                        .chain(args)
-                                        .collect(),
-                                ),
-                            };
-                            if result == Type::Void {
-                                vec![S::Expr(call), S::Return(None)]
-                            } else {
-                                vec![S::Return(Some(convert(call, result, types)?))]
+            let branch = if types.subtyping.is_loose(*source, shape) {
+                self.loose_branch(*source, shape, &wanted, access, span, &mut locals)?
+            } else {
+                match access {
+                    Access::Get(result) => {
+                        finish(self.read(*source, name, result, span, &mut locals)?)
+                    }
+                    Access::Has => finish(self.has(*source, name, span)),
+                    Access::Set(value) => {
+                        self.write(*source, shape, &wanted, value, span, &mut locals)?
+                    }
+                    Access::Call(function) => {
+                        let Type::Function(id) = function else {
+                            return Err(CompilerError::Internal("view call".into()));
+                        };
+                        match self.method(*source, name) {
+                            Some((index, owner, method)) => {
+                                // The method receives its full parameter list.
+                                let args = forwarded(
+                                    &types.functions[id as usize],
+                                    &method.params,
+                                    &method.shape,
+                                    1,
+                                    span,
+                                    types,
+                                )?;
+                                let call = Expr {
+                                    span,
+                                    ty: method.result,
+                                    kind: E::Call(
+                                        index,
+                                        std::iter::once(receiver(Type::Class(owner)))
+                                            .chain(args)
+                                            .collect(),
+                                    ),
+                                };
+                                if result == Type::Void {
+                                    vec![S::Expr(call), S::Return(None)]
+                                } else {
+                                    vec![S::Return(Some(convert(call, result, types)?))]
+                                }
                             }
+                            None => finish(invoke(self.read(
+                                *source,
+                                name,
+                                function,
+                                span,
+                                &mut locals,
+                            )?)),
                         }
-                        None => finish(invoke(self.read(
-                            *source,
-                            name,
-                            function,
-                            span,
-                            &mut locals,
-                        )?)),
                     }
                 }
             };
@@ -1844,6 +2309,147 @@ impl Rewriter<'_> {
             generator: None,
         })
     }
+    /// The branch of a checked view source (`note_loose`): a member the
+    /// object has with a value of the declared type is read, written or
+    /// called as through an ordinary view; a missing member reads
+    /// `undefined` where the declared type admits it, and every other access
+    /// throws the member's `TypeError`.
+    fn loose_branch(
+        &self,
+        source: Type,
+        shape: u32,
+        wanted: &ir::RecordField,
+        access: Access,
+        span: swc_common::Span,
+        locals: &mut Vec<Type>,
+    ) -> Result<Vec<S>> {
+        let types = self.types;
+        let name = wanted.name.as_str();
+        let fail = || -> Result<Vec<S>> {
+            let error = types
+                .subtyping
+                .loose_errors
+                .borrow()
+                .get(&(shape, name.to_owned()))
+                .cloned()
+                .ok_or_else(|| CompilerError::Internal("checked view error".into()))?;
+            Ok(vec![S::Throw(error)])
+        };
+        let field = match source {
+            Type::Record(id) => types.records[id as usize]
+                .fields
+                .iter()
+                .find(|field| field.name == name)
+                .map(|field| field.ty),
+            Type::Class(class) => types.classes.field(class, name).map(|(_, field)| field.ty),
+            _ => None,
+        };
+        let fits = |expected: Type, actual: Type| {
+            expected == actual || assignable(expected, actual, types)
+        };
+        let finish = |value: Expr, result: Type| {
+            if result == Type::Void {
+                vec![S::Expr(value), S::Return(None)]
+            } else {
+                vec![S::Return(Some(value))]
+            }
+        };
+        match (access, field) {
+            (Access::Has, _) => Ok(finish(self.has(source, name, span), Type::Boolean)),
+            (Access::Get(result), None) => {
+                if unions::members(result, types).contains(&Type::Undefined) {
+                    let undefined = Expr {
+                        span,
+                        ty: Type::Undefined,
+                        kind: E::Integer(0),
+                    };
+                    Ok(finish(convert(undefined, result, types)?, result))
+                } else {
+                    fail()
+                }
+            }
+            (Access::Get(result), Some(actual)) => {
+                if fits(result, actual) {
+                    return Ok(finish(
+                        self.read(source, name, result, span, locals)?,
+                        result,
+                    ));
+                }
+                // A member of the declared type in a wider union is tested.
+                let held = locals.len() as u32;
+                locals.push(actual);
+                let mut body = vec![S::Init(
+                    held,
+                    self.read(source, name, actual, span, locals)?,
+                )];
+                for member in unions::members(actual, types) {
+                    if !fits(result, member) {
+                        continue;
+                    }
+                    let value = Expr {
+                        span,
+                        ty: member,
+                        kind: E::UnboxUnion(Box::new(local(span, held, actual))),
+                    };
+                    body.push(S::If(
+                        Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::IsUnionMember(Box::new(local(span, held, actual)), member),
+                        },
+                        finish(convert(value, result, types)?, result),
+                        Vec::new(),
+                    ));
+                }
+                body.extend(fail()?);
+                Ok(body)
+            }
+            (Access::Set(value), Some(actual)) if fits(actual, value) => {
+                self.write(source, shape, wanted, value, span, locals)
+            }
+            (Access::Call(function), Some(actual)) if fits(function, actual) => {
+                let read = self.read(source, name, function, span, locals)?;
+                let Type::Function(id) = function else {
+                    return Err(CompilerError::Internal("checked view call".into()));
+                };
+                let signature = &types.functions[id as usize];
+                let args: Vec<Expr> = signature
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ty)| local(span, i as u32 + 1, *ty))
+                    .collect();
+                let callee = locals.len() as u32;
+                locals.push(function);
+                let arguments: Vec<u32> = signature
+                    .params
+                    .iter()
+                    .map(|ty| {
+                        locals.push(*ty);
+                        locals.len() as u32 - 1
+                    })
+                    .collect();
+                let output = (signature.result != Type::Void).then(|| {
+                    locals.push(signature.result);
+                    locals.len() as u32 - 1
+                });
+                let call = Expr {
+                    span,
+                    ty: signature.result,
+                    kind: E::FunctionCall {
+                        callee: Box::new(read),
+                        ignored_receiver: Some(Box::new(local(span, 0, Type::Record(shape)))),
+                        args,
+                        slot: callee,
+                        arguments,
+                        output,
+                    },
+                };
+                Ok(finish(call, signature.result))
+            }
+            _ => fail(),
+        }
+    }
     /// The read of member `name` of an object of `source` type, converted
     /// to `result`; a missing optional member reads `undefined`.
     fn read(
@@ -1857,6 +2463,12 @@ impl Rewriter<'_> {
         let types = self.types;
         let receiver = |ty: Type| local(span, 0, ty);
         let value = match source {
+            // V38 (`object_accessors`): the getter of an accessor.
+            Type::Record(_)
+                if let Some(call) = accessor_call(source, name, true, &[], span, locals, types) =>
+            {
+                Some(call)
+            }
             Type::Record(id) => types.records[id as usize]
                 .fields
                 .iter()
@@ -1865,9 +2477,7 @@ impl Rewriter<'_> {
                     span,
                     ty: types.records[id as usize].fields[slot].ty,
                     kind: E::Field(Box::new(receiver(source)), slot as u32),
-                })
-                // V38 (`object_accessors`): the getter of an accessor.
-                .or_else(|| accessor_call(source, name, true, &[], span, locals, types)),
+                }),
             Type::Class(class) => match types.classes.field(class, name) {
                 Some((slot, field)) => Some(Expr {
                     span,
@@ -1930,7 +2540,18 @@ impl Rewriter<'_> {
             (locals.len() - 1) as u32
         };
         let slots = [(); 4].map(|()| hidden(Type::Number));
-        let boxed: Vec<u32> = types.subtyping.boxed.borrow().iter().copied().collect();
+        // A boxed shape's record view sources are objects it may hold.
+        let mut boxed: Vec<u32> = types.subtyping.boxed.borrow().iter().copied().collect();
+        for shape in boxed.clone() {
+            for source in types.subtyping.sources_of(shape) {
+                if let Type::Record(id) = source
+                    && types.records[*id as usize].class.is_none()
+                    && !boxed.contains(id)
+                {
+                    boxed.push(*id);
+                }
+            }
+        }
         let widest = boxed
             .iter()
             .map(|shape| types.records[*shape as usize].fields.len())
@@ -1952,6 +2573,10 @@ impl Rewriter<'_> {
             let mut branch = Vec::new();
             let mut names = Vec::new();
             let mut cached = Vec::new();
+            // V38 (`object_accessors`): an object with accessors gives each
+            // accessor property its getter's result, read in own-key order;
+            // its getter and setter fields are not properties.
+            let mut reads = Vec::new();
             for ((slot, field), cache) in fields.iter().enumerate().zip(&caches) {
                 let read = Expr {
                     span,
@@ -1964,24 +2589,52 @@ impl Rewriter<'_> {
                     kind: E::String(types.profile.string_bytes(&field.name)),
                 });
                 cached.push(local(span, *cache, Type::Unknown));
+                if super::object_accessors::hidden_field(&field.name) {
+                    reads.push((slot, S::Set(*cache, undefined.clone())));
+                    continue;
+                }
+                let read = if super::object_accessors::is_accessor(shape, &field.name, types) {
+                    accessor_call(record, &field.name, true, &[], span, locals, types)
+                        .ok_or_else(|| CompilerError::Internal("accessor getter".into()))?
+                } else {
+                    read
+                };
                 // V38 (`byte_values`): a `Uint8Array` field enters `unknown`
                 // with its own tag, as every other field does. An absent
                 // field is left out by the enumeration below.
                 let value = unknown::widen(read, types)?;
-                branch.push(if field.optional {
-                    S::If(
-                        Expr {
-                            span,
-                            ty: Type::Boolean,
-                            kind: E::HasOwn(Box::new(local(span, 0, record)), Some(slot as u32)),
-                        },
-                        vec![S::Set(*cache, value)],
-                        vec![S::Set(*cache, undefined.clone())],
-                    )
-                } else {
-                    S::Set(*cache, value)
-                });
+                reads.push((
+                    slot,
+                    if field.optional {
+                        S::If(
+                            Expr {
+                                span,
+                                ty: Type::Boolean,
+                                kind: E::HasOwn(
+                                    Box::new(local(span, 0, record)),
+                                    Some(slot as u32),
+                                ),
+                            },
+                            vec![S::Set(*cache, value)],
+                            vec![S::Set(*cache, undefined.clone())],
+                        )
+                    } else {
+                        S::Set(*cache, value)
+                    },
+                ));
             }
+            // Integer keys first, ascending, then creation order.
+            let index = |slot: usize| {
+                let name = &fields[slot].name;
+                name.parse::<u32>()
+                    .ok()
+                    .filter(|n| *n != u32::MAX && n.to_string() == *name)
+            };
+            reads.sort_by_key(|(slot, _)| match index(*slot) {
+                Some(n) => (0, u64::from(n)),
+                None => (1, *slot as u64),
+            });
+            branch.extend(reads.into_iter().map(|(_, read)| read));
             // Every field's entry, then only the present ones in own-key
             // order: the values are literals and rooted locals, so the
             // rearrangement does not allocate.
@@ -2107,10 +2760,7 @@ impl Rewriter<'_> {
         // V38 (`object_accessors`): an accessor property calls its setter;
         // one without a setter throws `TypeError`.
         if let Type::Record(id) = source
-            && !types.records[id as usize]
-                .fields
-                .iter()
-                .any(|field| field.name == *name)
+            && super::object_accessors::is_accessor(id, name, types)
         {
             let argument = local(span, 1, value);
             if let Some(call) = accessor_call(source, name, false, &[argument], span, locals, types)
@@ -2419,7 +3069,8 @@ pub(super) fn identity_operands(
             },
         )
     } else {
-        (left, right)
+        // V38 (`type_level`): two function types of one physical signature.
+        type_level::function_operands(op, left, right, types)
     }
 }
 

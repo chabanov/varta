@@ -134,6 +134,8 @@ impl Views {
             Type::Collection(_, id) => self.collections[id as usize],
             Type::Tuple(id) => self.tuples[id as usize],
             Type::Object(_) if self.objects => Type::Unknown,
+            // A class object (v38) is its `i32` class id.
+            Type::ClassValue(_) => Type::Number,
             Type::Symbol => self.symbol.map_or(Type::Symbol, Type::Class),
             other => other,
         }
@@ -235,6 +237,7 @@ impl Eraser {
             S::Trap
             | S::Rebind(_)
             | S::RecordRest { .. }
+            | S::RecordOrder { .. }
             | S::BreakLabel(_)
             | S::ContinueLabel(_)
             | S::Break

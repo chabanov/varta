@@ -1780,3 +1780,39 @@ fn language_guide_example_runs() {
     assert!(lines[3].starts_with("committed ") && lines[3] > format!("committed {}", lines[0]));
     assert_eq!(lines[4], "1");
 }
+
+/// V38 (`object_accessors`): staging reads an object with accessors once
+/// by identity, as structured serialization does; Deno 2.9.7 prints the
+/// same three lines for the same program.
+#[test]
+fn staged_objects_with_accessors_call_each_getter_once() {
+    let tree = Tree::new();
+    let types = "interface Counted { label: string; count: number }\n\
+         interface Stored { first: Counted; second: Counted; list: Counted[] }\n";
+    let source = types.to_owned()
+        + &program(
+            "/data/accessors.kv",
+            "  let calls = 0;\n\
+           const shared: Counted = { get count(): number { calls++; return calls * 10; }, label: 's' };\n\
+           await kv.set(['accessors'], { first: shared, list: [shared], second: shared });\n\
+           console.log(String(calls));\n\
+           const entry = await kv.get<Stored>(['accessors']);\n\
+           console.log(JSON.stringify(entry.value));\n\
+           console.log(String(calls));\n\
+           const table: Record<string, Counted> = { a: shared, b: shared };\n\
+           await kv.set(['table'], table);\n\
+           console.log(String(calls));\n\
+           const stored = await kv.get<Record<string, Counted>>(['table']);\n\
+           console.log(JSON.stringify(stored.value));",
+        );
+    assert_eq!(
+        run(&source, read_write(), tree.roots()),
+        [
+            "1",
+            r#"{"first":{"count":10,"label":"s"},"list":[{"count":10,"label":"s"}],"second":{"count":10,"label":"s"}}"#,
+            "1",
+            "2",
+            r#"{"a":{"count":20,"label":"s"},"b":{"count":20,"label":"s"}}"#,
+        ]
+    );
+}

@@ -23,11 +23,18 @@
 mod class_expressions;
 mod constants;
 mod enums;
+mod expandos;
 mod namespaces;
 mod overloads;
 mod rewrite;
 mod scope;
 mod statics;
+
+pub(crate) use expandos::target as expando_target;
+pub(crate) use statics::{
+    STATIC_ACCESSOR, STATIC_PRIVATE, STATIC_PROTECTED, STATIC_READONLY, STATIC_SEPARATOR,
+    class_binding, is_class_binding, receiver_key, static_owner, statics_key, unshared_key,
+};
 
 use crate::CompilerError;
 use crate::modules::{Dependency, Export};
@@ -55,6 +62,71 @@ pub(crate) fn display_name(name: &str) -> &str {
     match name.strip_prefix(PREFIX) {
         Some(rest) => rest.rsplit(SEPARATOR).next().unwrap_or(rest),
         None => name,
+    }
+}
+
+/// Whether `name` is the generated module variable of a static field of
+/// class `class` (`generated(&[class, field])`), not one of its static
+/// blocks (`generated(&[class, "static", index])`).
+pub(crate) fn is_static_field(name: &str, class: &str) -> bool {
+    let (name, class) = (untagged(name), untagged(class));
+    let Some(field) = name
+        .strip_prefix(&generated(&[&class]))
+        .and_then(|rest| rest.strip_prefix(SEPARATOR))
+    else {
+        return false;
+    };
+    let block = field
+        .strip_prefix(statics::BLOCK)
+        .and_then(|rest| rest.strip_prefix(SEPARATOR))
+        .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()));
+    !field.is_empty() && !block
+}
+
+/// Whether the generated module variable `name` of a class's static
+/// element is a static block (`generated(&[class, "static", index])`), not
+/// a field.
+pub(crate) fn is_static_block(name: &str) -> bool {
+    let mut segments = name.rsplit(SEPARATOR);
+    let index = segments.next().unwrap_or_default();
+    !index.is_empty()
+        && index.bytes().all(|b| b.is_ascii_digit())
+        && segments.next() == Some(statics::BLOCK)
+}
+
+/// Hex digits of a module tag's path hash ([`module_hash`]).
+const MODULE_HASH_DIGITS: usize = 16;
+/// The leading segment character of a module tag ([`tag`]).
+const MODULE_TAG: char = 'm';
+
+/// The module variable that marks the module-level class `class` of the
+/// module `source` initialized (`statics::class_binding`), as [`tag`]
+/// names it; `class` may carry its module tag.
+pub(crate) fn module_class_binding(class: &str, source: &Source) -> String {
+    let name = class_binding(&untagged(class));
+    let rest = name.strip_prefix(PREFIX).unwrap_or(&name);
+    format!(
+        "{PREFIX}{SEPARATOR}{MODULE_TAG}{}{rest}",
+        module_hash(source)
+    )
+}
+
+/// A generated name without the module tag that [`tag`] inserts.
+fn untagged(name: &str) -> String {
+    let tagged = name
+        .strip_prefix(PREFIX)
+        .and_then(|rest| rest.strip_prefix(SEPARATOR))
+        .and_then(|rest| rest.strip_prefix(MODULE_TAG))
+        .filter(|rest| {
+            rest.len() > MODULE_HASH_DIGITS
+                && rest.as_bytes()[..MODULE_HASH_DIGITS]
+                    .iter()
+                    .all(u8::is_ascii_hexdigit)
+                && rest[MODULE_HASH_DIGITS..].starts_with(SEPARATOR)
+        });
+    match tagged {
+        Some(rest) => format!("{PREFIX}{}", &rest[MODULE_HASH_DIGITS..]),
+        None => name.to_owned(),
     }
 }
 
@@ -194,6 +266,7 @@ pub(crate) fn declarations(
         Exports::default()
     };
     overloads::mark(module, source)?;
+    expandos::lower(module);
     Ok(tag(module, exports, source))
 }
 
@@ -220,7 +293,7 @@ fn tag(module: &mut ast::Module, exports: Exports, source: &Source) -> Exports {
             }
         }
     }
-    let mut tag = Tag(format!("{SEPARATOR}m{}", module_hash(source)));
+    let mut tag = Tag(format!("{SEPARATOR}{MODULE_TAG}{}", module_hash(source)));
     module.visit_mut_with(&mut tag);
     let symbols = exports
         .symbols
@@ -236,22 +309,19 @@ fn module_hash(source: &Source) -> String {
     for byte in source.file.name.to_string().bytes() {
         hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
     }
-    format!("{hash:016x}")
+    format!("{hash:0width$x}", width = MODULE_HASH_DIGITS)
 }
 
-/// Whether a module item declares an enum, a namespace or a class with
-/// static members.
+/// Whether a module item declares an enum, a namespace or a class (whose
+/// static members and binding `statics::lower_class` lowers).
 fn declares(item: &ast::ModuleItem) -> bool {
-    match declaration(item) {
-        Some((ast::Decl::TsEnum(_) | ast::Decl::TsModule(_), _)) => true,
-        Some((ast::Decl::Class(class), _)) => class.class.body.iter().any(|member| {
-            matches!(member, ast::ClassMember::ClassProp(p) if p.is_static)
-                || matches!(member, ast::ClassMember::AutoAccessor(a) if a.is_static)
-                || matches!(member, ast::ClassMember::Method(m) if m.is_static)
-                || matches!(member, ast::ClassMember::StaticBlock(_))
-        }),
-        _ => false,
-    }
+    matches!(
+        declaration(item),
+        Some((
+            ast::Decl::TsEnum(_) | ast::Decl::TsModule(_) | ast::Decl::Class(_),
+            _
+        ))
+    )
 }
 
 /// The declaration of a module item and whether it is exported.

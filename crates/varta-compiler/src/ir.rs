@@ -79,6 +79,12 @@ pub(crate) enum Type {
     /// `ValueTypes::tuples[id].array` of the union of its element types.
     /// Erased to that array before emission; see `lower::tuples`.
     Tuple(u32),
+    /// A class object (v38 `declaration_forms`, `typeof C`): the identity of
+    /// the class `C` or of one of its subclasses, the class id. Physically an
+    /// `i32` (erased to `Number` before emission); `new`, static calls and
+    /// `name` dispatch over the closed set of subclasses. It never enters a
+    /// union, an aggregate or `unknown`; see `lower::class_values`.
+    ClassValue(u32),
 }
 
 /// The engine collection families of v37 (`Type::Collection`).
@@ -377,12 +383,37 @@ pub(crate) struct ValueTypes {
     /// The receiver register of object-literal methods that use `this`
     /// (v38 `expression_forms`); see `lower::object_methods`.
     pub receivers: crate::lower::object_methods::Receivers,
+    /// V38 (`module_evaluation`): module bindings that code may read before
+    /// their initialization, by root slot.
+    pub module_flags: std::collections::BTreeMap<u32, ModuleFlag>,
+    /// V38 (`declaration_forms`): the own static properties subclasses
+    /// create by writing inherited static fields; see `lower::static_store`.
+    pub static_stores: crate::lower::static_store::Stores,
+    /// Record spreads of views copied by the source's run-time layout (v38
+    /// `expression_forms`); see `lower::layout_spreads`.
+    pub layouts: crate::lower::layout_spreads::Layouts,
     /// V38 (`symbol_values`, K9 D2): the class id of the symbol prelude's
     /// record class (`SymbolValue`) that every `symbol` value erases to
     /// (`literal_erasure`), so emission tags it with the value18 symbol tag
     /// ([`varta_common::value::ValueKind::Symbol`]) wherever a tag is written
     /// ([`tag_of`]). Set only after erasure.
     pub symbol: Option<u32>,
+}
+/// The initialization flag of a module binding that code may reach before
+/// its initialization (v38 `module_evaluation`).
+#[derive(Clone, Debug)]
+pub struct ModuleFlag {
+    /// The root slot of the flag (`0` or `1`).
+    pub flag: u32,
+    /// The binding's source name (diagnostic text).
+    pub name: String,
+    /// A `var` or a static field: JavaScript reads `undefined` before its
+    /// definition and a write defines it, so an early read is a checked
+    /// read (a `TypeError` when the declared type does not admit
+    /// `undefined`) and an early write sets the flag. Otherwise the binding
+    /// is in its temporal dead zone and every early access throws
+    /// `ReferenceError`.
+    pub hoisted: bool,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1), or under value
@@ -478,6 +509,12 @@ pub(crate) struct MixedMembers {
     /// TypeScript's `object` narrowed by `in` guards: only the proven keys may
     /// be read by name, and dynamic keys are rejected (they would be `any`).
     pub object: bool,
+    /// The key type of a template literal index signature (v38 `type_level`,
+    /// `Record<`on${string}`, T>`): a string literal set of patterns. Only
+    /// the declared fields and keys that are values of this type may be named
+    /// (TypeScript's index signatures of pattern key types); `None` for a
+    /// `string` index signature.
+    pub keys: Option<u32>,
 }
 /// `Promise<T>` (v34): the value type and the private record shape of its
 /// objects; see `lower::promises`.
@@ -648,6 +685,15 @@ pub(crate) struct FunctionType {
     /// overload sets of `lower::type_level`; the physical signature merges
     /// every overload's parameter and result types.
     pub overloads: Option<u32>,
+    /// A generic construct signature (v38 `type_level`, `new <T>(v: T) =>
+    /// Box<T>`): an index into the generic constructors of
+    /// `lower::type_level`. Physically `(selector: number) => unknown`, the
+    /// table of the program's instantiations (`generic_constructors`).
+    pub constructors: Option<u32>,
+    /// A callable object (v38 `type_level`, `{ (): R; count: number }`): the
+    /// dictionary type of its declared own properties, read and written
+    /// through the closure's property storage (`type_level::callables`).
+    pub properties: Option<u32>,
 }
 impl FunctionType {
     pub(crate) fn physical_params(&self) -> Vec<Type> {
@@ -955,6 +1001,17 @@ pub(crate) enum Intrinsic {
     /// BigInt keys use the dictionary probes where one exists).
     /// Allocation-free.
     Collection(CollectionProbe, KeyHash),
+    /// V38 (`type_level`, value18 closures): `(function) -> storage`, the
+    /// handle of a function's own-property dictionary storage, zero while it
+    /// has none. Allocation-free.
+    FunctionProperties,
+    /// V38: `(function, storage) -> void`, install a function's own-property
+    /// dictionary storage (with the incremental write barrier).
+    SetFunctionProperties,
+    /// V38: `(function) -> boolean`, whether the closure's semantic
+    /// signature is the static function type of the operand (a checked
+    /// conversion of a function held by `unknown`). Allocation-free.
+    FunctionSignature,
 }
 impl Intrinsic {
     /// The operand that a [`Self::Collection`] probe takes as a key slot
@@ -999,6 +1056,12 @@ pub(crate) enum KeyHash {
     /// Booleans and references: the slot bits themselves (a reference's
     /// stable heap address), compared by identity.
     Identity,
+    /// References whose key vector holds them in union cells (v38
+    /// `type_level`: a class array type that shares arrays with an array of
+    /// a union admitting `null` or `undefined`, `type_level::covariance`):
+    /// the cell's payload, the reference itself, hashed and compared by
+    /// identity against an instance key.
+    Cell,
 }
 /// The most code units one `Intrinsic::Units` call packs.
 pub(crate) const MAX_PACKED_UNITS: usize = 16;
@@ -1287,6 +1350,21 @@ pub(crate) enum Statement {
         slots: [u32; 4],
         values: Vec<Expr>,
     },
+    /// V38: rewrite the insertion order of the fresh record in local
+    /// `target` (of record `shape`): append, in order and skipping slots
+    /// already placed or absent, the slots `mapping` maps the present slots
+    /// of `source` (a local of record shape, in its own insertion order) to,
+    /// or with no source the mapped slots themselves. `start` begins a new
+    /// order; `slots` are the hidden cursor, index and probe locals.
+    /// CopyDataProperties creates a spread's keys in the source's order.
+    RecordOrder {
+        target: u32,
+        shape: u32,
+        source: Option<(u32, u32)>,
+        mapping: Vec<(u32, u32)>,
+        start: bool,
+        slots: [u32; 3],
+    },
     RecordRest {
         source: u32,
         target: u32,
@@ -1355,6 +1433,7 @@ impl std::fmt::Display for Type {
             Self::Record(_) => "object",
             Self::Dictionary(_) => "dictionary object",
             Self::Class(_) => "class instance",
+            Self::ClassValue(_) => "class",
             Self::Generator(_) => "generator",
             Self::Promise(_) => "promise",
             Self::Collection(kind, _) => kind.name(),

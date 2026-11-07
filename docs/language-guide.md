@@ -3987,8 +3987,9 @@ Generic generators instantiate per type argument.
 
 A generator object lives in locals, parameters, results and closures; arrays,
 records, unions, `JSON.stringify`, `console.log`, `typeof` and equality reject
-it. `yield*`, `async function*`, generator methods and expressions, spread or
-`Array.from` over a generator and `yield` inside calls such as `String(yield x)`
+it. `yield*`, `async function*`, generator methods and expressions (v38 admits
+them, generator expressions and object-literal generator methods as
+closures), spread or `Array.from` over a generator and `yield` inside calls such as `String(yield x)`
 are rejected with a diagnostic.
 
 ### `checked-f64-utf16-v34`
@@ -4895,7 +4896,8 @@ Run it with the timer grant (`"capabilities": { "time": { "timer": true } }`).
 A closure may capture a `let`/`const` or a nested function before its
 declaration; reading or assigning it through the closure before the
 declaration ran throws an error whose `name` is `"ReferenceError"`, as in
-Node (`instanceof ReferenceError` is not available yet: test `e.name`). The
+Node (`instanceof ReferenceError` is not available in v37: test `e.name`;
+v38 throws a `ReferenceError` instance). The
 binding needs a type that is known at the capture: an annotation, an arrow
 or function whose parameters and result are annotated (or whose block body
 returns nothing), or a literal. A read in the same function before the
@@ -5928,14 +5930,70 @@ constant initializer rules, `this` in a static method is the class it is
 called through, and a class expression is admitted as the initializer of its
 own `const`, like a class declared inside a function (neither may capture the
 function's locals).
+
+Classes are values: a parameter of type `typeof Shape` holds `Shape` or any
+subclass, and `new`, static methods, static fields and `name` act on the
+class it holds. Assigning an inherited static field through a subclass
+gives that subclass its own value, as in JavaScript; the parent keeps its
+own. Overload signatures of functions and methods may be generic;
+each call infers their type arguments.
+
+```ts
+abstract class Shape {
+  constructor(public size: number) {}
+  abstract area(): number;
+  static describe(): string { return 'shape'; }
+  static sides: number = 0;
+}
+class Square extends Shape {
+  area(): number { return this.size * this.size; }
+  static describe(): string { return 'square'; }
+  static sides: number = 4;
+}
+function build(kind: typeof Shape, size: number): string {
+  return kind.name + ' ' + kind.describe() + kind.sides; // `new kind(size)` needs a concrete class
+}
+function make(kind: typeof Square, size: number): Square { return new kind(size); }
+
+function first<T>(items: T[]): T | undefined;
+function first(text: string): string;
+function first(value: unknown): unknown {
+  return typeof value === 'string' ? value.charAt(0) : Array.isArray(value) ? value[0] : undefined;
+}
+export function main(): void {
+  console.log(build(Square, 2) + ' ' + String(make(Square, 3).area())); // Square square4 9
+  console.log(String(first([3, 4])) + first('hey')); // 3h
+}
+```
+
 Modules evaluate as in JavaScript: initializers may call functions, and static
-fields and `static { … }` blocks run where their class is defined; reading a
-binding before its declaration, which JavaScript reports as a
-`ReferenceError`, is a compile error. Enums and namespaces are also objects:
-`Object.keys(Color)` lists `"0"`, `"1"`, …, then the member names, and a
-namespace passes as a value of type `typeof NS`. A class with an index
+fields and `static { … }` blocks run where their class is defined. Code that
+runs during module evaluation and reads or writes a binding before its
+declaration throws a `ReferenceError`, as in JavaScript:
+
+```ts
+function limits(): number[] { return LIMITS; }
+function measure(): string {
+  try { return String(limits().length); }
+  catch (e) { return e instanceof ReferenceError ? e.message : 'other'; }
+}
+const early = measure(); // Cannot access 'LIMITS' before initialization
+const LIMITS: number[] = [3, 4];
+const late = measure();  // 2
+```
+
+Only a read while an initializer itself is evaluated (`const a = b; const b
+= 1;`) is a compile error, as in tsc (TS2448). A class is initialized after
+its static fields and blocks: code outside the class that reaches it earlier
+throws a `ReferenceError` too. A `var` or a static field read before its
+definition is `undefined`, as in JavaScript, when its type admits
+`undefined`; otherwise the read throws a `TypeError`, since the value is not
+of the declared type. Enums and namespaces are also
+objects: `Object.keys(Color)` lists `"0"`, `"1"`, …, then the member names,
+and a namespace passes as a value of type `typeof NS`. A class with an index
 signature `[key: string]: T` keeps undeclared members of its instances as own
-properties. Decorators are not supported yet.
+properties, and `JSON.stringify` lists them with the fields in JavaScript's
+key order. Decorators are not supported yet.
 
 #### Type-level TypeScript (opt-in v38)
 
@@ -6000,18 +6058,44 @@ export function main(): void {
   const parse = ((v: string | number) => (typeof v === 'string' ? v.length : String(v))) as Parse;
   const same: Identity = (value) => value;
   const squares: Square[] = [new Square()];
-  const shapes: Shape[] = squares;          // a copy: Varta never aliases a wider view
+  const shapes: Shape[] = squares;          // one array, as in JavaScript
   const point = { x: 1, y: 2 };
   const next: typeof point = { x: 3, y: 4 };
   console.log(`${id} ${parse('abc') + 1} ${same(5)} ${shapes[0].area()} ${next.x}`);
 }
 ```
 
-Two behaviours deviate from Node on purpose: a type predicate that lies
-throws `TypeError` where its narrowed value is read, and a `Square[]` used
-as `Shape[]` is copied, so pushing through one name is not seen through the
-other. `unique symbol` is a `symbol` (see Symbol values below). Still refused
-by name: callable objects that also have properties, and overloads with type parameters or rest parameters.
+Callable objects with properties, generic and `this` overloads, generic
+construct signatures and pattern index signatures are admitted as well:
+
+```ts
+interface Counter { (step: number): number; count: number }
+interface Pick { <T>(value: T, fallback: T): T; (count: number): string }
+interface BoxConstructor { new <T>(value: T): Box<T> }
+class Box<T> { constructor(public value: T) {} }
+
+function tick(): number { return ++tick.calls; }
+tick.calls = 0;                              // an own property of tick
+
+export function main(): void {
+  const counter: Counter = ((step: number) => (counter.count += step)) as Counter;
+  counter.count = 1;
+  const pick = ((v: unknown, f?: unknown) => (f === undefined ? `#${String(v)}` : v)) as Pick;
+  const make: BoxConstructor = Box;
+  const handlers: Record<`on${string}`, number> = { onClick: 1 };
+  tick();
+  console.log(`${counter(2)} ${pick(3, 4)} ${pick(2)} ${new make('x').value} ${tick.calls} ${handlers.onClick}`);
+}
+```
+
+Behaviours that deviate from Node on purpose: a type predicate that lies
+throws `TypeError` where its narrowed value is read; an element of a shared
+`Square[]` read through a name whose element type does not admit it (a
+`Shape` pushed through `Shape[]`) throws `TypeError`; and a checked
+assertion to a pattern template type or to a function type throws
+`TypeError` when the value does not match. `unique symbol` is a `symbol`
+(see Symbol values below). Still refused by name: a construct signature with
+properties and the own `name`/`length` of a callable object.
 
 #### Symbol values (opt-in v38)
 

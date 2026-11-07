@@ -62,6 +62,10 @@ impl Lower<'_> {
         right: &ast::Expr,
         span: Span,
     ) -> Result<std::result::Result<Expr, Expr>> {
+        // A static field through a class value (`static_store`).
+        if let Some(field) = self.static_field(member, &base)? {
+            return self.static_assignment(field, base, right, span).map(Ok);
+        }
         let Some(accessor) = self.accessor(member, &base)? else {
             return Ok(Err(base));
         };
@@ -78,6 +82,9 @@ impl Lower<'_> {
         op: ast::BinaryOp,
         span: Span,
     ) -> Result<std::result::Result<Expr, Expr>> {
+        if let Some(field) = self.static_field(member, &base)? {
+            return self.static_compound(field, base, right, op, span).map(Ok);
+        }
         let Some(accessor) = self.accessor(member, &base)? else {
             return Ok(Err(base));
         };
@@ -94,6 +101,9 @@ impl Lower<'_> {
         base: Expr,
         update: &ast::UpdateExpr,
     ) -> Result<std::result::Result<Expr, Expr>> {
+        if let Some(field) = self.static_field(member, &base)? {
+            return self.static_update(field, base, update).map(Ok);
+        }
         let Some(accessor) = self.accessor(member, &base)? else {
             return Ok(Err(base));
         };
@@ -116,19 +126,26 @@ impl Lower<'_> {
         )
         .map(Ok)
     }
-    /// A logical assignment through a setter is not admitted.
-    pub(in crate::lower) fn reject_accessor_logical(
+    /// A logical assignment of a static field through a class value
+    /// (`static_store`); one through a setter is not admitted.
+    pub(in crate::lower) fn accessor_logical(
         &mut self,
         member: &ast::MemberExpr,
-        base: &Expr,
-    ) -> Result<()> {
-        if self.accessor(member, base)?.is_some() {
+        base: Expr,
+        right: &ast::Expr,
+        op: ast::AssignOp,
+        span: Span,
+    ) -> Result<std::result::Result<Expr, Expr>> {
+        if let Some(field) = self.static_field(member, &base)? {
+            return self.static_logical(field, base, right, op, span).map(Ok);
+        }
+        if self.accessor(member, &base)?.is_some() {
             return Err(self.source.locate(
                 unsupported("logical assignment to a class accessor"),
                 member.span,
             ));
         }
-        Ok(())
+        Ok(Err(base))
     }
     fn setter_parameter(&self, accessor: &Accessor) -> Result<Type> {
         match accessor.setter.signature.params.as_slice() {

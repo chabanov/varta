@@ -31,8 +31,20 @@ pub(super) fn admits_undefined(ty: Type, types: &ir::ValueTypes) -> bool {
 /// `object`, the `object` view of `unknown` narrowed by `in` guards.
 pub(super) fn intern(
     value: Type,
+    fields: Vec<RecordField>,
+    object: bool,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    intern_keyed(value, fields, object, None, types)
+}
+
+/// [`intern`] with the pattern key type `keys` of a template literal index
+/// signature (v38 `type_level`).
+pub(super) fn intern_keyed(
+    value: Type,
     mut fields: Vec<RecordField>,
     object: bool,
+    keys: Option<u32>,
     types: &mut ir::ValueTypes,
 ) -> Result<Type> {
     if !object && !types.profile.mixed_index_records() {
@@ -43,7 +55,7 @@ pub(super) fn intern(
     let Type::Dictionary(plain) = dictionaries::intern(value, types)? else {
         return Err(invalid("missing dictionary type"));
     };
-    if fields.is_empty() && !object {
+    if fields.is_empty() && !object && keys.is_none() {
         return Ok(Type::Dictionary(plain));
     }
     if fields.len() > types.max_record_fields() {
@@ -61,6 +73,26 @@ pub(super) fn intern(
         }
         // TypeScript (TS2411): every property, including the `undefined` of an
         // optional one, must be assignable to the string index type.
+        // A property no pattern of a pattern index signature matches is not
+        // constrained by it in TypeScript, but every entry is stored as the
+        // index type here.
+        if keys.is_some_and(|keys| {
+            !type_level::value_in(
+                &literals::string_value(
+                    &field.name.encode_utf16().collect::<Vec<_>>(),
+                    types.profile,
+                ),
+                types.literals.values(keys),
+                types,
+            )
+        }) && !assignable(value, field.ty, types)
+        {
+            return Err(unsupported(&format!(
+                "property {} of type {} beside a pattern index signature of the unrelated type \
+                 {value} (every entry is stored as the index type)",
+                field.name, field.ty
+            )));
+        }
         if !assignable(value, field.ty, types) {
             return Err(type_error(format!(
                 "property {} of type {} is not assignable to the string index type {value}",
@@ -80,7 +112,11 @@ pub(super) fn intern(
             )));
         }
     }
-    let members = MixedMembers { fields, object };
+    let members = MixedMembers {
+        fields,
+        object,
+        keys,
+    };
     let index = match types.mixed.iter().position(|m| m == &members) {
         Some(index) => index,
         None => {

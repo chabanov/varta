@@ -48,6 +48,28 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("object_methods"),
     case!("method_receivers"),
     case!("accessors"),
+    case!("accessor_order"),
+    case!("accessor_json"),
+    case!("spread_order"),
+    case!("accessor_cycles"),
+    case!("accessor_holders"),
+    case!("accessor_unknown"),
+    case!("accessor_spreads"),
+    case!("layout_spreads"),
+    case!("layout_rests"),
+    case!("loose_receivers"),
+    case!("optional_spreads"),
+    case!("layout_keys"),
+    case!("layout_merges"),
+    case!("layout_classes"),
+    case!("layout_dictionaries"),
+    case!("method_spreads"),
+    case!("assign_literals"),
+    case!("accessor_layout_spreads"),
+    case!("layout_respreads"),
+    case!("generator_closures"),
+    case!("async_generator_closures"),
+    case!("accessor_optional_spreads"),
     case!("computed_keys"),
     case!("destructuring"),
     case!("callback_patterns"),
@@ -87,7 +109,10 @@ fn matches_node(name: &str) {
         .find(|(case, ..)| *case == name)
         .unwrap_or_else(|| panic!("missing case {name}"));
     let expected: Vec<&str> = expected.lines().collect();
-    assert_eq!(logs(source), expected, "{name}");
+    // A logged message may span several lines.
+    let actual = logs(source).join("\n");
+    let actual: Vec<&str> = actual.lines().collect();
+    assert_eq!(actual, expected, "{name}");
 }
 
 fn refused(profile: LanguageProfile, source: &str, diagnostic: &str) {
@@ -147,6 +172,119 @@ fn object_literal_accessors_match_node() {
     matches_node("accessors");
 }
 
+/// Own keys of an object with accessors follow OrdinaryOwnPropertyKeys
+/// (integer keys ascending, then creation order), and `Object.values` and
+/// `Object.entries` call each getter when its key is reached.
+#[test]
+fn accessor_keys_and_getter_calls_follow_node_order() {
+    matches_node("accessor_order");
+}
+
+/// `JSON.stringify` calls a getter once per occurrence of its object, in
+/// SerializeJSONProperty order, and writes keys in the objects' own order.
+/// Class instances whose fields hold objects with accessors serialize their
+/// own fields (a subclass instance its own class's), and such objects held
+/// by `unknown` (directly, in arrays, records and class instances) are read
+/// through their getters by `JSON.stringify` and JSON-object reads.
+#[test]
+fn accessor_objects_in_instances_and_unknown_match_node() {
+    matches_node("accessor_holders");
+    matches_node("accessor_unknown");
+}
+
+/// Spreads and rests of views of objects of other layouts copy the actual
+/// object's own properties (`layout_spreads`: two lowering passes and
+/// run-time copies by layout); an optional spread result keeps `undefined`
+/// in its absent slots, so serializers accept it (it used to trap).
+#[test]
+fn layout_spreads_and_rests_match_node() {
+    matches_node("layout_spreads");
+    matches_node("layout_rests");
+    matches_node("optional_spreads");
+    // Several layout spreads in one literal (one branch per combination of
+    // their layouts), and own keys of a view (`Object.keys`, `for...in`).
+    matches_node("layout_merges");
+    matches_node("layout_keys");
+    // A class instance held by a record type copies its declared fields in
+    // declaration order (private names are no properties).
+    matches_node("layout_classes");
+    // Into a dictionary of `unknown` through the object's JSON-object read,
+    // which knows every record layout a boxed type may hold.
+    matches_node("layout_dictionaries");
+    // `Object.assign` into a fresh object literal is the spread literal.
+    matches_node("assign_literals");
+    // Into a literal with accessors: the widened object keeps them.
+    matches_node("accessor_layout_spreads");
+    // A spread of a value that may hold a widened layout copies its extra
+    // properties too.
+    matches_node("layout_respreads");
+}
+
+/// Methods that use `this` see receivers of other layouts: a spread copy,
+/// and an object that has the members the method reads.
+#[test]
+fn methods_on_receivers_of_other_layouts_match_node() {
+    matches_node("loose_receivers");
+    // Spreads in a literal whose methods use `this`.
+    matches_node("method_spreads");
+}
+
+/// A receiver whose member has another type than the method's `this` type
+/// declares (TypeScript does not check the receiver of a method without a
+/// `this` parameter) throws `TypeError` at that read; Node would read the
+/// value (checked reads at TypeScript unsoundness).
+#[test]
+fn receivers_with_members_of_other_types_throw_at_the_read() {
+    let source = "interface Named { label: string; name(): string }
+         interface Labelled { label: number; name: () => string }
+         export function main(): void {
+           const named: Named = { label: 'n', name(): string { return this.label; } };
+           const labelled: Labelled = { label: 5, name: named.name };
+           try { console.log(labelled.name()); } catch (error) {
+             if (error instanceof TypeError) { console.log(error.message); }
+           }
+           console.log(named.name());
+         }";
+    assert_eq!(
+        logs(source),
+        [
+            "property label of this object does not have the type the method's this type declares",
+            "n"
+        ]
+    );
+}
+
+/// Spreads in a literal with getters and setters copy data properties as
+/// CopyDataProperties does; a later accessor or spread replaces a property
+/// in its first position.
+#[test]
+fn spreads_in_accessor_literals_match_node() {
+    matches_node("accessor_spreads");
+    // Optional members of a spread are copied where the source has them.
+    matches_node("accessor_optional_spreads");
+}
+
+/// SerializeJSONObject/SerializeJSONArray step 1: an ancestor reached
+/// again (here through getters) throws V8's circular-structure `TypeError`
+/// with its path; a repeated object that is no ancestor is serialized again.
+#[test]
+fn json_cycles_through_getters_throw_like_node() {
+    matches_node("accessor_cycles");
+}
+
+/// CopyDataProperties: spreads create their keys in the source's own-key
+/// order (integer keys first), literal members in place, and rest patterns
+/// and `Object.assign` keep it.
+#[test]
+fn spreads_copy_keys_in_source_order_like_node() {
+    matches_node("spread_order");
+}
+
+#[test]
+fn json_of_accessor_objects_matches_node() {
+    matches_node("accessor_json");
+}
+
 #[test]
 fn object_literal_methods_see_their_receiver_like_node() {
     matches_node("method_receivers");
@@ -190,6 +328,22 @@ fn generators_driven_by_next_return_and_throw_match_node() {
     matches_node("generators");
 }
 
+/// `function*` expressions and generator methods of object literals (with
+/// and without `this`) are generator closures: they share their captured
+/// bindings, take their receiver and parameters at the call and start their
+/// body at the first `next`.
+#[test]
+fn generator_closures_match_node() {
+    matches_node("generator_closures");
+    matches_node("async_generator_closures");
+    assert_eq!(
+        logs(
+            "export function main(): void { const o = { n: 1, *g(): Generator<number> { yield this.n; } }; console.log(String([...o.g()].length)); }"
+        ),
+        ["1"]
+    );
+}
+
 #[test]
 fn expression_language_guide_example_matches_node() {
     matches_node("guide");
@@ -207,14 +361,22 @@ fn expression_language_guide_example_matches_node() {
 #[test]
 fn expression_forms_survive_collector_stress() {
     for (name, source, expected) in CASES {
-        let expected: Vec<String> = expected
-            .lines()
-            .map(|line| format!("varta log: {line}"))
-            .collect();
+        let expected: Vec<&str> = expected.lines().collect();
         for units in STRESS_UNITS {
             let run = run_test_budgets(&stressed(source, units), STRESS_BUDGETS);
+            // A logged message may span several lines.
+            let logged = run
+                .lines
+                .iter()
+                .map(|line| {
+                    line.strip_prefix("varta log: ")
+                        .unwrap_or_else(|| panic!("not a log line: {line}"))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let actual: Vec<&str> = logged.lines().collect();
             assert_eq!(
-                (&run.lines, &run.error),
+                (&actual, &run.error),
                 (&expected, &None),
                 "{name}: stress build ({units} units per allocation)"
             );
@@ -230,12 +392,12 @@ fn unsupported_expression_forms_are_refused_by_name() {
             "setter two without a getter",
         ),
         (
-            "export function main(): void { const o = { get x(): number { return 1; } }; const u: unknown = o; console.log(JSON.stringify(u)); }",
-            "held by unknown may be an object with getters",
+            "export function main(): void { const o = { get x(): number { return 1; } }; const u: unknown = o; console.log(u); }",
+            "of a unknown that may hold an object with getters",
         ),
         (
-            "export function main(): void { const base = { n: 1 }; const o = { ...base, get two(): number { return 2; } }; console.log(String(o.two)); }",
-            "spread in an object literal with getters or setters",
+            "class Base { n = 1; } interface O { n: number; readonly two: number } export function main(): void { const o: O = { ...new Base(), get two(): number { return 2; } }; console.log(String(o.two)); }",
+            "spread of a Base into an object literal with getters or setters",
         ),
         (
             "function tag(s: TemplateStringsArray): string { s.raw = ['x']; return s[0]; } export function main(): void { console.log(tag`a`); }",
@@ -250,10 +412,6 @@ fn unsupported_expression_forms_are_refused_by_name() {
             "spread to a class constructor",
         ),
         (
-            "export function main(): void { const base = { n: 1 }; const o = { ...base, get(): number { return this.n; } }; console.log(String(o.get())); }",
-            "spread in an object literal whose methods use this",
-        ),
-        (
             "class C { v = 1; f = () => this.v; } export function main(): void { console.log(String(new C().f())); }",
             "class field function without a return type annotation",
         ),
@@ -264,10 +422,6 @@ fn unsupported_expression_forms_are_refused_by_name() {
         (
             "interface B { v: number; get: (this: B) => number } function make(): B { const b: B = { v: 1, get(this: B): number { return this.v; } }; return b; } export function main(): void { console.log(String(make().get())); }",
             "on a base other than a binding or this",
-        ),
-        (
-            "export function main(): void { const o = { n: 1, *g(): Generator<number> { yield this.n; } }; console.log(String([...o.g()].length)); }",
-            "generator method that uses this in an object literal",
         ),
         (
             "class A { constructor() { const f = (): boolean => new.target === A; console.log(String(f())); } } export function main(): void { new A(); }",

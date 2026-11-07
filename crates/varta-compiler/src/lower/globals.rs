@@ -49,7 +49,7 @@ impl Lower<'_> {
         let narrow = (binding.identity.0 == self.index)
             .then(|| self.refinements.get(&binding.slot).copied())
             .flatten();
-        Ok(match narrow {
+        let value = match narrow {
             Some(narrow) if narrow != ty && ty.is_cell() => {
                 if narrow.is_cell() {
                     Expr {
@@ -65,7 +65,8 @@ impl Lower<'_> {
                 }
             }
             _ => value,
-        })
+        };
+        self.module_flag_read(index, value)
     }
     /// Store `value` (of the variable's declared type) into its slot.
     pub(super) fn global_store(&mut self, binding: &Binding, value: Expr) -> Result<S> {
@@ -78,10 +79,159 @@ impl Lower<'_> {
         let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
         let value = unions::widen(value, Some(ty), self.types)?;
         self.flow_assigned(binding.slot, value.ty)?;
-        Ok(S::InitModuleConstant(
-            index,
-            unions::widen(value, Some(storage), self.types)?,
+        self.module_slot_store(index, storage, value)
+    }
+    /// The read of the module variable in root slot `index` (of type `ty`,
+    /// stored as `storage`), with its initialization check.
+    pub(super) fn module_slot_read(
+        &mut self,
+        index: u32,
+        (storage, ty): (Type, Type),
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        let stored = Expr {
+            span,
+            ty: storage,
+            kind: E::ModuleConstant(index),
+        };
+        let value = if storage == ty {
+            stored
+        } else {
+            Expr {
+                span,
+                ty,
+                kind: E::UnboxUnion(Box::new(stored)),
+            }
+        };
+        self.module_flag_read(index, value)
+    }
+    /// Store `value` into the module variable in root slot `index`, stored
+    /// as `storage`.
+    pub(super) fn module_slot_store(
+        &mut self,
+        index: u32,
+        storage: Type,
+        value: Expr,
+    ) -> Result<S> {
+        let value = unions::widen(value, Some(storage), self.types)?;
+        // V38: a write before the initialization throws after the right side
+        // is evaluated (PutValue on an uninitialized binding); a `var` or a
+        // static field is defined by it.
+        let Some(flag) = self.types.module_flags.get(&index).cloned() else {
+            return Ok(S::InitModuleConstant(index, value));
+        };
+        let span = value.span;
+        let saved = self.hidden(storage);
+        let check = if flag.hoisted {
+            self.mark_initialized(index, span)
+                .ok_or_else(|| CompilerError::Internal("missing module flag".into()))?
+        } else {
+            self.module_flag_check(flag.flag, &flag.name, span)?
+        };
+        Ok(S::Scope(
+            vec![saved],
+            vec![
+                S::Init(saved, value),
+                check,
+                S::InitModuleConstant(index, local(span, saved, storage)),
+            ],
         ))
+    }
+    /// The statement that marks the module binding stored in root slot
+    /// `index` initialized, when code may read it earlier (v38
+    /// `module_evaluation`).
+    pub(super) fn mark_initialized(&self, index: u32, span: swc_common::Span) -> Option<S> {
+        let flag = self.types.module_flags.get(&index)?;
+        Some(S::InitModuleConstant(
+            flag.flag,
+            Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Integer(1),
+            },
+        ))
+    }
+    /// `!flag`.
+    fn module_flag_unset(flag: u32, span: swc_common::Span) -> Expr {
+        Expr {
+            span,
+            ty: Type::Boolean,
+            kind: E::Not(Box::new(Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::ModuleConstant(flag),
+            })),
+        }
+    }
+    /// `if (!flag) throw ReferenceError` for module binding `name`.
+    pub(super) fn module_flag_check(
+        &mut self,
+        flag: u32,
+        name: &str,
+        span: swc_common::Span,
+    ) -> Result<S> {
+        let error = self.reference_error(name, span)?;
+        Ok(S::If(
+            Self::module_flag_unset(flag, span),
+            vec![S::Throw(error)],
+            vec![],
+        ))
+    }
+    /// A read of the module binding in root slot `index`: when code may
+    /// read it before its initialization (v38 `module_evaluation`), the
+    /// flag is tested first and an uninitialized read throws
+    /// `ReferenceError`, as in JavaScript. An uninitialized `var` or static
+    /// field reads `undefined` in JavaScript: a checked read (owner
+    /// decision of 2026-11-07) that yields `undefined` when the declared
+    /// type admits it and otherwise throws `TypeError`.
+    fn module_flag_read(&mut self, index: u32, value: Expr) -> Result<Expr> {
+        let Some(flag) = self.types.module_flags.get(&index).cloned() else {
+            return Ok(value);
+        };
+        let span = value.span;
+        let ty = value.ty;
+        let output = self.hidden(ty);
+        let marker = self.hidden(Type::Number);
+        let body = if flag.hoisted {
+            let early = if mixed_records::admits_undefined(ty, self.types) {
+                let undefined = Expr {
+                    span,
+                    ty: Type::Undefined,
+                    kind: E::Integer(0),
+                };
+                S::Init(output, unions::widen(undefined, Some(ty), self.types)?)
+            } else {
+                let message = format!(
+                    "{} is read before its definition: undefined is not a value of its type {ty}",
+                    flag.name
+                );
+                S::Throw(self.array_error(
+                    varta_common::value::ErrorClass::TypeError,
+                    &message,
+                    span,
+                )?)
+            };
+            vec![S::If(
+                Self::module_flag_unset(flag.flag, span),
+                vec![early],
+                vec![S::Init(output, value)],
+            )]
+        } else {
+            vec![
+                self.module_flag_check(flag.flag, &flag.name, span)?,
+                S::Init(output, value),
+            ]
+        };
+        Ok(Expr {
+            span,
+            ty,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![],
+                body,
+            },
+        })
     }
     /// `x = value` as an expression: stores, then evaluates to the value.
     pub(super) fn global_assignment_value(

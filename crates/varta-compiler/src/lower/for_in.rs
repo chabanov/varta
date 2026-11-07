@@ -68,8 +68,11 @@ impl Lower<'_> {
         }
         let span = statement.span;
         let source_ty = value.ty;
+        // V38 (`declaration_forms`): a class object's own and inherited
+        // static fields (`static_store`).
+        let class_value = matches!(source_ty, Type::ClassValue(_));
         let shape = match source_ty {
-            Type::Dictionary(_) => None,
+            Type::Dictionary(_) | Type::ClassValue(_) => None,
             Type::Record(shape) if self.types.records[shape as usize].class.is_none() => {
                 Some(shape)
             }
@@ -86,11 +89,15 @@ impl Lower<'_> {
         let entry = self.flow_snapshot();
         let target = self.flow_iteration();
         let source = self.hidden(source_ty);
-        let keys = self.enumerate_value(
-            local(span, source, source_ty),
-            object_enumeration::Kind::Keys,
-            span,
-        )?;
+        let keys = if class_value {
+            self.class_value_keys(local(span, source, source_ty), true, span)?
+        } else {
+            self.enumerate_value(
+                local(span, source, source_ty),
+                object_enumeration::Kind::Keys,
+                span,
+            )?
+        };
         let keys_ty = keys.ty;
         let snapshot = self.hidden(keys_ty);
         let index = self.hidden(Type::Float64);
@@ -104,9 +111,23 @@ impl Lower<'_> {
         let key = local(span, current, Type::String);
         // A key the body deleted before its visit is skipped.
         let present = match shape {
+            // Static fields are not configurable: none is deleted.
+            None if class_value => Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Integer(1),
+            },
             None => self.dictionary_has(local(span, source, source_ty), key, false)?,
             Some(shape) => {
-                self.dynamic_record_own(span, local(span, source, source_ty), key, shape)
+                // A key the record type does not declare comes from an
+                // object of a wider layout (a view) and cannot be deleted.
+                self.dynamic_record_own(
+                    span,
+                    local(span, source, source_ty),
+                    key,
+                    shape,
+                    self.types.profile.expression_forms(),
+                )
             }
         };
         let mut visit = self.binding_pattern(

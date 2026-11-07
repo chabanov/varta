@@ -28,6 +28,74 @@
   blockified absolutely positioned inline boxes. The full
   `@import "tailwindcss"` stylesheet, Preflight included, now applies.
   Tailwind acceptance 275 → 287 of 312.
+- V38 K9 B, fifth increment (coordinator decisions under the owner's
+  delegated authority): static fields are stored per class, as JavaScript
+  defines them on class objects. Assigning an inherited static field
+  through a subclass, through `this` in static code or through a class
+  value creates the subclass's own property; the declaring class keeps its
+  value (before: refused). Works across modules and for subclasses of
+  generic classes, which now inherit the generic class's static members
+  (before: silently missing). `Object.keys(C)` and `for…in` of class
+  values list static fields. `x instanceof C` evaluates `x` before testing
+  whether `C` is initialized.
+- V38 K9 B, fourth increment (coordinator decisions under the owner's
+  delegated authority): a module `var` or static field read before its
+  definition reads `undefined` as in JavaScript, a checked read that
+  throws `TypeError` when the declared type does not admit it (before:
+  refused at compile time); a write before the definition defines it. A
+  temporal-dead-zone access throws an instance of the new `ReferenceError`
+  class (an `Error` subclass of typed guest code, with `EvalError`), so
+  `instanceof ReferenceError` holds. Code that reaches a module-level
+  class before the class (with its static elements) is defined throws
+  `ReferenceError`, as in JavaScript (before: it constructed silently).
+  Static fields are read through class
+  values (`v.x`), and generic overload signatures of methods are
+  instantiated per call. The expression lowering keeps a smaller native
+  stack frame per nesting level.
+- V38 K9 C generator closures and layout spreads, continued: `function*`
+  and `async function*` expressions and (async) generator methods of object
+  literals, with or without `this`, are closures that share their captured
+  bindings; parameter defaults and the method receiver are taken at the
+  call. `Object.assign` into a fresh literal is that spread literal;
+  `Object.values`/`entries` of a view list the object's own values with
+  checked reads; layout spreads reach dictionaries of every value type
+  (values checked at the entry type) and literals with accessors (widened
+  objects keep their accessors). A spread of a value that may hold a
+  widened object now copies its extra properties (they were dropped).
+- V38 K9 C layout spreads, continued: a literal may have several spreads
+  of views of other layouts; `Object.keys` and `for...in` of such a view
+  list the object's own keys; a class instance held by a record type is
+  copied by its declared fields; a spread into a dictionary of `unknown`
+  copies every own entry; literals whose methods use `this` and literals
+  with accessors may spread closed objects (optional members included).
+- V38 K9 C layout spreads and receivers: a spread or rest of a value that
+  may hold an object of another layout copies that object's own properties
+  in its own-key order, as CopyDataProperties does (lowering runs in a
+  bounded number of passes and copies such sites by the run-time layout);
+  object-literal methods that use `this` see receivers of other layouts
+  (spread copies, objects that received the method), reading their members
+  by name, with a `TypeError` where a member is missing or of another type
+  than the method's `this` type declares. A spread of an optional source
+  no longer traps a serializer (its absent slots hold `undefined`).
+- V38 K9 C accessor objects by the specification (owner approval
+  2026-11-06, a value layout 18 addition): an object literal with getters
+  and setters keeps one data slot per accessor property at its creation
+  position, so its own keys, `Object.keys`/`values`/`entries`, `for...in`,
+  spreads, rest patterns and `Object.assign` follow OrdinaryOwnPropertyKeys
+  and read each getter when its key is reached. `JSON.stringify` walks such
+  values in the guest as SerializeJSONProperty does: a getter runs once per
+  occurrence, its exception propagates before any text, and a cycle throws
+  V8's circular-structure `TypeError` with its path. `varta.kv.set` stages
+  them after a structured refresh that calls each getter once per object by
+  identity (the hook `structuredClone` will use). Under v38 object spreads
+  create their keys in CopyDataProperties order (the source's own-key order,
+  literal members in place), as rest patterns and `Object.assign` do.
+  Dictionaries, class instances (their declared fields, by the instance's
+  own class) and `unknown` cells holding such objects are walked the same
+  way, and JSON-object reads of `unknown` call the getters. A literal with
+  accessors may spread closed objects (CopyDataProperties: a later
+  definition replaces an earlier one in its first position). Logging such
+  objects waits for the console notation. Earlier profiles are unchanged.
 - K8 T2 S5 (second part), selectors: id and attribute selectors with every
   matcher and the `i`/`s` flags, `:has()` with bounded relative selectors,
   and the location, input and tree pseudo-classes (`:any-link`, `:empty`,
@@ -55,6 +123,23 @@
   their component in the computed values, so the browser bridge applies
   the cascade's result.
   Tailwind acceptance 251 → 261 of 312 candidates.
+- V38 K9 type level, step 4 (coordinator decisions under the owner's
+  delegated authority): index signatures of pattern key types
+  (`Record<`on${string}`, T>`, mapped types and `[key: `on${string}`]: T`)
+  admit only the keys their patterns describe, as in tsc; checked
+  assertions and `JSON.parse(text) as T` to pattern types test the string
+  at run time (`TypeError` on a mismatch); overloads may have type
+  parameters and `this` parameters and resolve per call in declaration
+  order with inference; generic construct signatures (`new <T>(value: T) =>
+  Box<T>`) construct every instantiation the program uses through
+  per-class tables built by a whole-program pass; `Map`/`Set` keyed by a
+  class whose arrays are shared with nullable union arrays hash the
+  instances; callable objects with properties (call signatures with other
+  members, function/object intersections, `Object.assign(fn, …)`,
+  module-level expando assignments) store a function's own properties in a
+  dictionary behind a new property edge of every value18 closure, with
+  `typeof`, JSON, identity and enumeration as in JavaScript.
+  Conformance: 211 passed, 4 known unsupported of 215.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
   2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as
@@ -122,10 +207,30 @@
   waiting importer) and the entry module calls `main` at its end. Object
   literals have getters and setters (accessor properties): reads, writes,
   compound assignments, views, spreads, own keys, entries and
+  `JSON.stringify` go through them; other host reads of such objects are
+  refused. No host ABI change (the accepted value ABI bump was not needed);
+  v37 keeps rejecting every form.
   `JSON.stringify` (through a materializing copy) go through them; other
   host reads of such objects are refused. No host ABI or value layout
   change (the accepted value ABI bump was not needed); v37 keeps rejecting
   every form.
+- V38 K9 B, third increment (owner decisions): the temporal dead zone of
+  module bindings is checked at run time, as in JavaScript. Code that runs
+  during module evaluation and reads or writes a later binding throws
+  `ReferenceError` (`Cannot access 'X' before initialization`); only a read
+  while an initializer itself is evaluated stays a compile error, as in tsc
+  (TS2448), and function values may now reference later bindings. An early
+  static-field or `var` read stays refused (JavaScript reads `undefined`).
+  `JSON.stringify` of class instances with index signatures includes the
+  extra keys in own-key order (previously they were silently dropped), in
+  the linked library and the host serializer alike. Tool entries cannot
+  run module evaluation yet: binary64 profiles have no tool adapter (owner
+  decision pending). Classes are values: `typeof C` holds `C` or a
+  subclass, and `new`, static calls and `name` dispatch over the
+  subclasses; `this`-using static methods inherited across modules run with
+  the calling subclass as `this` (before, silently with the declaring
+  class); generic overload signatures of functions infer their type
+  arguments per call.
 - V38 K9 D2 symbol values (selector `symbol_values`): `Symbol()` values
   with the additive value18 tag `ValueKind::Symbol` (16), `Symbol.for`/
   `Symbol.keyFor`, the well-known symbols as values, `description`,

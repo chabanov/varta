@@ -297,6 +297,33 @@ pub(super) fn declare(
     Ok(())
 }
 
+/// Register a generic function the compiler synthesized in `module` (v38
+/// `type_level`, `__vartaDecl…` names): instantiated by id only, so it binds
+/// no name.
+pub(super) fn declare_synthesized(
+    declaration: &ast::FnDecl,
+    module: usize,
+    source: &Source,
+    types: &mut ir::ValueTypes,
+) -> Result<usize> {
+    let mut stripped = declaration.clone();
+    let params = stripped
+        .function
+        .type_params
+        .take()
+        .ok_or_else(|| invalid("missing type parameters"))?;
+    let id = types.generics.functions.len();
+    types.generics.functions.push(Rc::new(Function {
+        module,
+        kind: "function",
+        name: declaration.ident.sym.to_string(),
+        declaration: stripped,
+        params: *params,
+        source: source.clone(),
+    }));
+    Ok(id)
+}
+
 pub(super) fn explicit_any(declaration: &ast::FnDecl) -> Option<swc_common::Span> {
     use swc_ecma_visit::{Visit, VisitWith};
     struct Any(Option<swc_common::Span>);

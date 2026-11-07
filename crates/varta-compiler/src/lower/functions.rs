@@ -43,6 +43,8 @@ pub(super) fn intern_marked(
         generic,
         construct: false,
         overloads: None,
+        constructors: None,
+        properties: None,
     };
     if let Some(index) = types.functions.iter().position(|ty| ty == &signature) {
         return Ok(Type::Function(index as u32));
@@ -152,7 +154,7 @@ impl Lower<'_> {
         }
         // An overloaded function value (v38 `type_level`).
         if let Some(set) = signature.overloads {
-            return self.overloaded_call(call, callee, set);
+            return self.overloaded_call(call, callee, set, None);
         }
         // A generic function value (v38 `type_level`): its erased signature.
         if let Some(generic) = signature.generic
@@ -251,12 +253,20 @@ impl Lower<'_> {
     }
     pub(super) fn arrow(&mut self, arrow: &ast::ArrowExpr, expected: Option<Type>) -> Result<Expr> {
         required(self.types)?;
+        let expected = type_level::callable_context(expected, self.types)?;
         let original = expected;
         let asynchronous = arrow.is_async && self.types.profile.async_methods();
         if arrow.is_async && !asynchronous && self.types.profile.async_functions() {
             return Err(promises::rejected("async arrow function"));
         }
-        if arrow.is_async && !asynchronous || arrow.is_generator || arrow.type_params.is_some() {
+        // A generator arrow is an object-literal generator method that uses
+        // `this` (v38 `object_methods::bound_method`); `arrow_context`
+        // checks it.
+        let generator = arrow.is_generator && self.types.profile.expression_forms();
+        if arrow.is_async && !asynchronous
+            || arrow.is_generator && !generator
+            || arrow.type_params.is_some()
+        {
             return Err(unsupported("async/generic/generator arrow"));
         }
         let expected = match self.function_context(expected).or(expected) {
@@ -345,9 +355,17 @@ impl Lower<'_> {
         } = context;
         required(self.types)?;
         // Async arrows and function expressions are split into a wrapper and
-        // a scheduled body over the closure's own captures (v35).
-        let asynchronous = arrow.is_async && self.types.profile.async_methods();
-        if arrow.is_async && !asynchronous || arrow.is_generator || arrow.type_params.is_some() {
+        // a scheduled body over the closure's own captures (v35), and so are
+        // generator function expressions and methods (v38, `lexical` false).
+        let generating = arrow.is_generator
+            && self.types.profile.expression_forms()
+            && (!arrow.is_async || self.types.profile.async_generators());
+        let asynchronous =
+            arrow.is_async && !arrow.is_generator && self.types.profile.async_methods();
+        if arrow.is_async && !asynchronous && !generating
+            || arrow.is_generator && !generating
+            || arrow.type_params.is_some()
+        {
             return Err(unsupported("async/generic/generator arrow"));
         }
         let padded = ignored_parameters(
@@ -415,6 +433,10 @@ impl Lower<'_> {
             Some(id) => Some(self.types.promises[id as usize].value),
             None => result,
         };
+        let generator = generating
+            .then(|| generator_closure_type(result, arrow.is_async, self.types))
+            .transpose()
+            .map_err(|e| self.source.locate(e, arrow.span))?;
         let block = matches!(&*arrow.body, ast::ArrowFunctionBody::FunctionBody(_));
         let infer_returns = (infer_block || asynchronous) && result.is_none() && block;
         let index = *self.next_function;
@@ -483,7 +505,7 @@ impl Lower<'_> {
             captures: Default::default(),
             cells: Default::default(),
             guarded: Default::default(),
-            generator: None,
+            generator,
             // An unknown promise type until inference fixes it.
             asynchronous: asynchronous.then_some(promise.unwrap_or(u32::MAX)),
             core: core::State {
@@ -521,13 +543,23 @@ impl Lower<'_> {
         } else {
             None
         };
-        // The async body takes its promise right after the parameters.
+        // The async body takes its promise right after the parameters, an
+        // async generator body its state record (v36).
         let promise_slot = asynchronous.then(|| child.hidden(Type::Void));
+        let async_generator = match generator {
+            Some(id) if arrow.is_async => Some(child.begin_async_generator(id)?),
+            _ => None,
+        };
         let mut prologue = match method_receiver {
             Some((name, ty)) => child.receiver_prologue(&name, ty, arrow.span)?,
             None => Vec::new(),
         };
         prologue.extend(child.initialize_parameters(&plans, receiver.is_some())?);
+        if let Some(id) = generator {
+            // A generator body returns its `TReturn`; calls see the generator.
+            child.result = child.types.generators[id as usize].returned;
+        }
+        let started = prologue.len();
         let body = match &*arrow.body {
             ast::ArrowFunctionBody::FunctionBody(block) => child.block(&block.stmts, false)?,
             ast::ArrowFunctionBody::Expr(expr) if asynchronous => {
@@ -569,7 +601,7 @@ impl Lower<'_> {
                 child.local_types.insert(slot, ty);
                 ty
             }
-            None => child.result,
+            None => generator.map_or(child.result, Type::Generator),
         };
         let ty = intern_full(
             receiver,
@@ -613,6 +645,40 @@ impl Lower<'_> {
                 },
                 std::mem::take(&mut body),
             )?
+        } else if let Some(state) = async_generator {
+            let source = child.source;
+            let tail = body.split_off(started);
+            child.split_async_generator(
+                promises::AsyncSplit {
+                    incoming: physical_params,
+                    shape,
+                    receiver,
+                    self_slot,
+                    captures: captured.iter().map(|binding| binding.slot).collect(),
+                    environment: true,
+                    promise: state.state,
+                    entry: false,
+                    span: arrow.span,
+                    source,
+                },
+                state,
+                std::mem::take(&mut body),
+                tail,
+            )?
+        } else if let Some(generator) = generator {
+            child.split_generator_closure(
+                generators::GeneratorClosure {
+                    incoming: physical_params,
+                    shape,
+                    receiver,
+                    self_slot,
+                    captures: captured.iter().map(|binding| binding.slot).collect(),
+                    generator,
+                    prologue: started,
+                    span: arrow.span,
+                },
+                std::mem::take(&mut body),
+            )?
         } else {
             ir::Function {
                 shape,
@@ -652,6 +718,34 @@ impl Lower<'_> {
                 captures,
             },
         })
+    }
+}
+
+/// The generator type a generator closure returns (v38 `expression_forms`):
+/// its annotation or the context's result, an `AsyncGenerator` exactly when
+/// the closure is `async`.
+fn generator_closure_type(
+    result: Option<Type>,
+    asynchronous: bool,
+    types: &ir::ValueTypes,
+) -> Result<u32> {
+    let expected = if asynchronous {
+        "AsyncGenerator<T, TReturn, TNext>"
+    } else {
+        "Generator<T, TReturn, TNext>"
+    };
+    match result {
+        Some(Type::Generator(id))
+            if types.generators[id as usize].asynchronous.is_some() == asynchronous =>
+        {
+            Ok(id)
+        }
+        Some(other) => Err(type_error(format!(
+            "generator function must return {expected}, not {other}"
+        ))),
+        None => Err(type_error(format!(
+            "generator function requires a {expected} return annotation or context"
+        ))),
     }
 }
 

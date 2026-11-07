@@ -148,6 +148,7 @@ fn statement(statement: &S, visit: &mut dyn FnMut(&Expr)) {
         S::Trap
         | S::Rebind(_)
         | S::RecordRest { .. }
+        | S::RecordOrder { .. }
         | S::BreakLabel(_)
         | S::ContinueLabel(_)
         | S::Break

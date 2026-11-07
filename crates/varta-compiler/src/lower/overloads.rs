@@ -21,6 +21,14 @@ pub(crate) struct Overload {
     pub params: Vec<Type>,
     pub shape: ir::ParameterShape,
     pub result: Type,
+    /// A generic overload signature (v38): `params`, `shape` and `result`
+    /// are its instantiation with every type parameter `unknown`; a call
+    /// instantiates it for the argument types (`generic_calls::
+    /// instantiate_overload`).
+    pub(super) generic: Option<Rc<generics::Function>>,
+    /// The type arguments of the generic class instance that declares a
+    /// generic method overload (empty otherwise).
+    pub(super) outer: generics::Frame,
 }
 
 #[derive(Default)]
@@ -51,14 +59,27 @@ impl Overloads {
 fn signatures(
     declarations: &[Declaration],
     implementation: &Signature,
-    source: &Source,
+    (source, functions, outer): (&Source, bool, &generics::Frame),
     types: &mut ir::ValueTypes,
 ) -> Result<Rc<[Overload]>> {
     let mut overloads = Vec::new();
     for (name, function) in declarations {
-        if function.type_params.is_some() {
-            return Err(source.locate(unsupported("generic overload signature"), name.span));
-        }
+        // V38: a generic overload signature of a module function or a method
+        // is instantiated per call.
+        let generic = function.type_params.as_ref().map(|params| {
+            Rc::new(generics::Function {
+                module: named::current(types),
+                kind: if functions { "function" } else { "method" },
+                name: name.sym.to_string(),
+                declaration: ast::FnDecl {
+                    ident: name.clone(),
+                    declare: false,
+                    function: function.clone(),
+                },
+                params: (**params).clone(),
+                source: source.clone(),
+            })
+        });
         if function.return_type.is_none() {
             return Err(source.locate(
                 type_error(format!(
@@ -78,8 +99,11 @@ fn signatures(
             declare: false,
             function,
         };
-        let signature = signature::check(&declaration, 0, source, types)
-            .map_err(|e| source.locate(e, name.span))?;
+        let signature = match &generic {
+            Some(generic) => generic_calls::unknown_instance(generic, outer, types),
+            None => signature::check(&declaration, 0, source, types),
+        }
+        .map_err(|e| source.locate(e, name.span))?;
         // Parameters compare position by position, a rest parameter by its
         // element type.
         let positions = signature.params.len().max(implementation.params.len()) + 1;
@@ -89,18 +113,24 @@ fn signatures(
                 arguments::context(index, &implementation.params, &implementation.shape, types);
             match (overload, actual) {
                 (Some(overload), Some(actual)) => {
-                    arguments::accepts(actual, overload, types)
+                    actual == Type::Unknown
+                        || arguments::accepts(actual, overload, types)
                         || arguments::accepts(overload, actual, types)
                 }
                 (Some(_), None) => false,
                 _ => true,
             }
         });
-        let compatible = parameters
-            && (implementation.result == Type::Void && signature.result == Type::Void
+        // A generic overload is checked per call, not against the
+        // implementation with `unknown` type arguments.
+        let compatible = generic.is_some()
+            || parameters
+                && (implementation.result == Type::Void && signature.result == Type::Void
                 || arguments::accepts(implementation.result, signature.result, types)
                 || arguments::accepts(signature.result, implementation.result, types)
-                || signature.result == Type::Void);
+                || signature.result == Type::Void
+                // Every type is assignable to `unknown` (v38).
+                || implementation.result == Type::Unknown);
         if !compatible {
             return Err(source.locate(
                 type_error(
@@ -113,6 +143,8 @@ fn signatures(
             params: signature.params,
             shape: signature.shape,
             result: signature.result,
+            generic,
+            outer: outer.clone(),
         });
     }
     Ok(overloads.into())
@@ -166,7 +198,12 @@ pub(super) fn declare_functions(
                 ident.span,
             ));
         };
-        let overloads = signatures(&declarations, implementation, source, types)?;
+        let overloads = signatures(
+            &declarations,
+            implementation,
+            (source, true, &generics::Frame::new()),
+            types,
+        )?;
         types
             .overloads
             .functions
@@ -204,7 +241,13 @@ pub(super) fn declare_methods(
                 declarations[0].0.span,
             ));
         };
-        let overloads = signatures(&declarations, &implementation, source, types)?;
+        let outer = types.classes.get(class).frame.clone();
+        let overloads = signatures(
+            &declarations,
+            &implementation,
+            (source, false, &outer),
+            types,
+        )?;
         types
             .overloads
             .methods
@@ -239,9 +282,16 @@ impl Lower<'_> {
         // in that context; a function argument takes the implementation's.
         let mut values = Vec::new();
         for (index, arg) in args.iter().enumerate() {
+            // A generic overload (v38) gives no context: it is instantiated
+            // from the argument types.
             let contexts: Vec<Option<Type>> = overloads
                 .iter()
-                .map(|o| arguments::context(index, &o.params, &o.shape, self.types))
+                .map(|o| {
+                    o.generic
+                        .is_none()
+                        .then(|| arguments::context(index, &o.params, &o.shape, self.types))
+                        .flatten()
+                })
                 .collect();
             let expected = match contexts.first().copied().flatten() {
                 Some(first) if contexts.iter().all(|c| *c == Some(first)) => Some(first),
@@ -253,12 +303,39 @@ impl Lower<'_> {
                 )
                 .filter(|ty| matches!(ty, Type::Function(_))),
             };
-            values.push(self.expr_expected(&arg.expr, expected)?);
+            // A generic overload infers literal types, as tsc does for a
+            // type parameter constrained to a primitive.
+            values.push(match expected {
+                None if overloads.iter().any(|o| o.generic.is_some()) => {
+                    self.expr_preserving(&arg.expr)?
+                }
+                _ => self.expr_expected(&arg.expr, expected)?,
+            });
         }
         // A literal argument (an enum member lowers to one) has its literal
         // type in the context of a literal parameter type, as in TypeScript.
         let mut selected = None;
         for overload in overloads {
+            // A generic overload (v38) is instantiated for the argument types.
+            let instance;
+            let overload = match &overload.generic {
+                Some(generic) => {
+                    let found: Vec<Type> = values.iter().map(|value| value.ty).collect();
+                    match generic_calls::instantiate_overload(
+                        generic,
+                        &overload.outer,
+                        &found,
+                        self.types,
+                    )? {
+                        Some(instantiated) => {
+                            instance = instantiated;
+                            &instance
+                        }
+                        None => continue,
+                    }
+                }
+                None => overload,
+            };
             if arguments::count(values.len(), &overload.shape).is_err() {
                 continue;
             }
@@ -290,11 +367,11 @@ impl Lower<'_> {
                 for (index, value) in typed {
                     values[index] = value;
                 }
-                selected = Some(overload);
+                selected = Some(overload.result);
                 break;
             }
         }
-        let Some(selected) = selected else {
+        let Some(result) = selected else {
             let found: Vec<String> = values.iter().map(|v| v.ty.to_string()).collect();
             return Err(self.source.locate(
                 type_error(format!(
@@ -304,7 +381,6 @@ impl Lower<'_> {
                 span,
             ));
         };
-        let result = selected.result;
         let args =
             self.bind_arguments(values, &implementation.params, &implementation.shape, span)?;
         Ok((args, result))

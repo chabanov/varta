@@ -161,11 +161,14 @@ fn layout_members(
     let parent = parent_class(class, source, types, next.as_deref_mut())?;
     let (mut fields, mut methods, mut statics) = match parent {
         Some(parent) => {
+            // `extends Base<T>` inherits the statics of the generic class
+            // `Base`, which its instances do not carry.
+            let statics = types.classes.static_class(parent);
             let parent = &types.classes.list[parent as usize];
             (
                 parent.fields.clone(),
                 parent.methods.clone(),
-                parent.statics.clone(),
+                types.classes.list[statics as usize].statics.clone(),
             )
         }
         None => (Vec::new(), BTreeMap::new(), BTreeMap::new()),
@@ -449,7 +452,15 @@ fn layout_members(
         forms::check_concrete(id, source, types)?;
         forms::check_accessor_pairs(id, source, types)?;
         index_signatures::check_members(id, source, types)?;
-        let overloads = types.classes.list[id as usize].forms.overloads.clone();
+        // A generic class instance has no statics: its template declares
+        // the static overloads (`generic_classes::layout_template`).
+        let overloads: Vec<_> = types.classes.list[id as usize]
+            .forms
+            .overloads
+            .iter()
+            .filter(|overload| !(instance && overload.is_static))
+            .cloned()
+            .collect();
         overloads::declare_methods(id, &overloads, source, types)?;
     }
     implements::check(id, class, source, types)

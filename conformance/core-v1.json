@@ -1848,6 +1848,57 @@
       }
     },
     {
+      "id": "generator-closures",
+      "feature": "generators",
+      "path": "cases/generator-closures.ts",
+      "sha256": "834e6b402c9844781c37da0526831c77555c961b013c5f9b47019d20806b5cea",
+      "stdout": [
+        "varta log: 1,11,21",
+        "varta log: 2,12,22",
+        "varta log: not started",
+        "varta log: {\"value\":\"a\",\"done\":false}",
+        "varta log: started;",
+        "varta log: {\"done\":true}",
+        "varta log: started;resumed;",
+        "varta log: {\"value\":0,\"done\":false}",
+        "varta log: {\"value\":5,\"done\":false}",
+        "varta log: {\"value\":\"total 12\",\"done\":true}",
+        "varta log: {\"done\":true}",
+        "varta log: 4,5,6",
+        "varta log: 10,11",
+        "varta log: [{\"value\":\"x!\",\"done\":false},{\"value\":\"y?\",\"done\":false},{\"value\":2,\"done\":true},{\"done\":true}]",
+        "varta log: ?",
+        "varta log: created",
+        "varta log: TypeError at next",
+        "varta log: {\"value\":1,\"done\":false}",
+        "varta log: {\"done\":true}",
+        "varta log: closed",
+        "varta log: 1",
+        "varta log: [1,7]",
+        "varta log: [0,1,4,9]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "async-generator-closures",
+      "feature": "async-generators",
+      "path": "cases/async-generator-closures.ts",
+      "sha256": "e1bdf9857d96483bc0d0e9eaf49d18a26d1f6b106bf3510e53027926286cd525",
+      "stdout": [
+        "varta log: 11,12,12,13",
+        "varta log: {\"value\":13,\"done\":false}",
+        "varta log: {\"value\":14,\"done\":false}",
+        "varta log: {\"value\":\"end 3\",\"done\":true}",
+        "varta log: #0 #1 #2",
+        "varta log: 1,10 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "async-generator-iteration",
       "feature": "async-generators",
       "path": "cases/async-generator-iteration.ts",
@@ -3798,6 +3849,29 @@
       }
     },
     {
+      "id": "accessor-layout-spreads",
+      "feature": "object-literal-accessors",
+      "path": "cases/accessor-layout-spreads.ts",
+      "sha256": "991c06ec14b9de252773a2b794bcdb64e60ebf724dfc28423598082e024a6c7b",
+      "stdout": [
+        "varta log: twice,b,a,c,label",
+        "varta log: {\"twice\":4,\"b\":1,\"a\":2,\"c\":\"x\",\"label\":\"wide\"}",
+        "varta log: 4 2",
+        "varta log: twice,a,b,label {\"twice\":10,\"a\":5,\"b\":6,\"label\":\"plain\"}",
+        "varta log: 3",
+        "varta log: 13",
+        "varta log: {\"b\":1,\"a\":2,\"c\":\"x\",\"total\":13}",
+        "varta log: b",
+        "varta log: a",
+        "varta log: c",
+        "varta log: total",
+        "varta log: Cannot set property twice of #<Object> which has only a getter"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "computed-property-keys",
       "feature": "computed-property-keys",
       "path": "cases/computed-property-keys.ts",
@@ -4227,6 +4301,111 @@
       }
     },
     {
+      "id": "ts-callable-objects",
+      "feature": "ts-signatures",
+      "path": "cases/ts-callable-objects.ts",
+      "sha256": "62474969d52d32969313114c3304f29c2150944c6bbc3bb5f929d49a33647455",
+      "stdout": [
+        "varta log: 5 none function",
+        "varta log: count,label true 5",
+        "varta log: Hi, Ada",
+        "varta log: count {\"n\":1} [null]",
+        "varta log: 2 ms calls,unit",
+        "varta log: 6px 2 suffix,scale",
+        "varta log: 8px 10px true",
+        "varta log: true true calls,unit,extra",
+        "varta log: suffix",
+        "varta log: scale"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-pattern-checks",
+      "feature": "ts-template-literal-types",
+      "path": "cases/ts-pattern-checks.ts",
+      "sha256": "0ce370e0688288de35f39e3c94eb2801c8a261b54f87e5e401057c691b3a8f89",
+      "stdout": [
+        "varta log: onClick on onon",
+        "varta log: 12px 1e3px  px 0x1fpx -.5px",
+        "varta log: id-42 HELLO WORLD Click:3",
+        "varta log: id-0x1F id-0 id--5 id-0b101",
+        "varta log: Click:1 Ab:3 É: 2 1:1",
+        "varta log: auto #fff #",
+        "varta log: onKey 1px,2.5px -",
+        "varta log: onA  id-7"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-pattern-keys",
+      "feature": "ts-mapped-types",
+      "path": "cases/ts-pattern-keys.ts",
+      "sha256": "5d18ffc4522e4770e74db53b2fdb35dd6e5600dc77d51f2bbcd908b03a96e8aa",
+      "stdout": [
+        "varta log: 1 onClick,onFocus,onBlur 8 true",
+        "varta log: onA=5&a=1",
+        "varta log: 1 none {\"data-x\":\"1\",\"data-y\":\"2\"}",
+        "varta log: main Main 3",
+        "varta log: aria-live",
+        "varta log: saved doc"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-generic-overloads",
+      "feature": "ts-signatures",
+      "path": "cases/ts-generic-overloads.ts",
+      "sha256": "126962cdee1241473130e89f4ccb4583d53e5bde8a206272662e94c5f4799ba4",
+      "stdout": [
+        "varta log: [a] 42 true",
+        "varta log: 3 #2 x",
+        "varta log: > hits=2 @ada",
+        "varta log: 3 4px -1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-generic-constructors",
+      "feature": "ts-signatures",
+      "path": "cases/ts-generic-constructors.ts",
+      "sha256": "a62f0fcaa7fbabde01bc62fdee85dc66b418cdfb1620f1061e43cadca29d9f4a",
+      "stdout": [
+        "varta log: Box(3) Box(ada) true 6",
+        "varta log: Box(3) Box(ada) true 6",
+        "varta log: one 1",
+        "varta log: 2 3",
+        "varta log: 3 x true false function"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-shared-keys",
+      "feature": "ts-class-subtyping",
+      "path": "cases/ts-shared-keys.ts",
+      "sha256": "fa373e3ee52e4a9f416cc08cbac60c6645c97cebf44aa507054f01782378a05b",
+      "stdout": [
+        "varta log: 3",
+        "varta log: 2 3 false",
+        "varta log: 2 true",
+        "varta log: 1 3",
+        "varta log: 1 2",
+        "varta log: 1 2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "enum-members",
       "feature": "enums",
       "path": "cases/enum-members.ts",
@@ -4420,7 +4599,7 @@
       "baseline": {
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
-        "reason": "Decorators run code when the class is defined and receive the class as a value; pending the module-initialization design."
+        "reason": "Standard decorators are pending: they need this in field initializers, method values and rest parameters of tuple type first."
       }
     },
     {
@@ -4479,6 +4658,130 @@
         "varta log: 17 7 1",
         "varta log: true",
         "varta log: 100 1 5"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-index-json",
+      "feature": "class-index-signatures",
+      "path": "cases/class-index-json.ts",
+      "sha256": "efe04a57f8e7bd26003d15ab8d261a4f39038e01731924b38ee8a8147ff0f1f9",
+      "stdout": [
+        "varta log: {\"2\":3,\"10\":2,\"count\":1,\"size\":2,\"z\":1,\"a\":4}",
+        "varta log: [{\"count\":0,\"size\":2,\"bonus\":5,\"top\":9},{\"inner\":{\"2\":3,\"10\":2,\"count\":1,\"size\":2,\"z\":1,\"a\":4}}]",
+        "varta log: {\"top\":9,\"count\":0}",
+        "varta log: {\"0\":\"first\",\"title\":\"notes\",\"body\":\"text\"}",
+        "varta log: {\"count\":0,\"size\":2}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-values",
+      "feature": "static-class-members",
+      "path": "cases/class-values.ts",
+      "sha256": "2d5851254cb0f73922c19cb8c12a4478ea5a2678cc2722414d38a7d1d6324a7e",
+      "stdout": [
+        "varta log: Square square 1 | Circle shape 2",
+        "varta log: Circle true true",
+        "varta log: 16 function",
+        "varta log: 12 shape"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-value-static-fields",
+      "feature": "static-class-members",
+      "path": "cases/class-value-static-fields.ts",
+      "sha256": "ed08b8b5d406cb60e9a47b909ee991ba2e97a54c4b7c5cc1b01c8deb1adeef87",
+      "stdout": [
+        "varta log: Base 1 shared | Derived 2 shared"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "static-own-properties",
+      "feature": "static-class-members",
+      "path": "cases/static-own-properties.ts",
+      "sha256": "93a3f7e188e2ce5a25258e9595afe3788dfc54e45cdbe4b595f61fe4b6654ba1",
+      "stdout": [
+        "varta log: 1 2 1",
+        "varta log: 1 2 2",
+        "varta log: counter! counter!! counter!!",
+        "varta log: label,count | label,count"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "generic-overloads",
+      "feature": "overloads",
+      "path": "cases/generic-overloads.ts",
+      "sha256": "c344c1265447d418ac8d2d22927a58763c3b5d1d34d3c2ea3fdeb5fa48a79e17",
+      "stdout": [
+        "varta log: 3 h x",
+        "varta log: 2ONE true",
+        "varta log: a n2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "generic-method-overloads",
+      "feature": "overloads",
+      "path": "cases/generic-method-overloads.ts",
+      "sha256": "7f821f31547f03ac314a8c7e377bbfda59b6ecae651cda1edcc7b66f3e29d409",
+      "stdout": [
+        "varta log: 7X ss"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "module-tdz",
+      "feature": "temporal-dead-zone",
+      "path": "cases/module-tdz.ts",
+      "sha256": "c509b48d5f94e143541d243d4e274f1a2eb46022b90683d61f848adc8a25b614",
+      "stdout": [
+        "varta log: ReferenceError: Cannot access 'LIMITS' before initialization | 2",
+        "varta log: hi there",
+        "varta log: Cannot access 'STEP' before initialization | 2 | 2",
+        "varta log: Cannot access 'total' before initialization | reset 0",
+        "varta log: 120"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "reference-error-class",
+      "feature": "temporal-dead-zone",
+      "path": "cases/reference-error-class.ts",
+      "sha256": "2be4d90da7a78d8e32e67696676989cfb2e94b70f0b5331e9b5ad5ea80dafe46",
+      "stdout": [
+        "varta log: ReferenceError true 3 undefined 4"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-tdz",
+      "feature": "temporal-dead-zone",
+      "path": "cases/class-tdz.ts",
+      "sha256": "6a27eed12a79af6c731a678a64870b5d57e83bde45f064852416011f842ac240",
+      "stdout": [
+        "varta log: Cannot access 'Gadget' before initialization | gadget gadget"
       ],
       "baseline": {
         "status": "supported"

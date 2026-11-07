@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 122 feature rows and 209 cases:
-205 pass, 4 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 122 feature rows and 224 cases:
+220 pass, 4 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -425,6 +425,18 @@ is Node.js v24.20.0's; the two intentional deviations (a lying predicate's
 `TypeError`, the copy of a `B[]` viewed as `A[]`) are pinned by runtime tests,
 not inventory cases.
 
+The K9 A step-4 review (2026-11-06) adds six cases on existing rows:
+`ts-callable-objects.ts` (functions with own properties from callable
+object types, intersections, `Object.assign` and expando assignments),
+`ts-pattern-checks.ts` (checked assertions and `JSON.parse(text) as T` to
+pattern template types), `ts-pattern-keys.ts` (index signatures of pattern
+key types from `Record`, mapped types and interfaces), `ts-generic-overloads.ts`
+(overloads with type parameters and `this` parameters), `ts-generic-constructors.ts`
+(generic construct signatures and constructor types) and `ts-shared-keys.ts`
+(`Map`/`Set` keyed by a class whose arrays are shared with nullable union
+arrays). Their output is Node.js v24.20.0's; the pattern assertion's
+`TypeError` on a mismatch is pinned by a runtime test.
+
 The K9 D standard-library review (2026-11-06, selector `standard_library`)
 adds five feature rows with seven passing cases and four cases on existing
 rows: `array-copying-methods` (CORE-02) with `array-sort-comparator` (V8's
@@ -524,3 +536,18 @@ The `class-index-signatures` row (typescript_handbook; CORE-02) adds
 `class-index-signature`: undeclared members of instances with a string index
 signature, by name and computed key, also through a subclass; it matches
 Node.js v24.20.0.
+The runtime temporal dead zone of module bindings (owner decision of
+2026-11-06) adds `module-tdz` under `temporal-dead-zone`: module code reads
+and writes later bindings before their initialization and catches
+`ReferenceError`; `class-index-json` serializes instances with index
+signatures, nested and with a replacer list, in own-key order. Both match
+Node.js v24.20.0.
+Class values add `class-values` (`typeof C` parameters and results, `new`,
+static calls, `name`, `===` and `typeof` of class objects, dispatched over
+subclasses) under `static-class-members`, and generic overload signatures
+add `generic-overloads` (per-candidate inference with constraints) under
+`overloads`; both match Node.js v24.20.0.
+Static fields per class (2026-11-07) add `static-own-properties` under
+`static-class-members`: writes of inherited static fields through
+subclasses and class values create the subclass's own property, listed by
+`Object.keys` and `for...in`; it matches Node.js v24.20.0.

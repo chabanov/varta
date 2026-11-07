@@ -17,6 +17,18 @@ const MAX_ANALYSIS_DEPTH: usize = 64;
 fn invalid(message: impl Into<String>) -> CompilerError {
     CompilerError::Invalid(message.into())
 }
+/// Whether a v38 module may access a binding in its temporal dead zone (a
+/// closure's early capture or a module binding reached early), which
+/// throws the `ReferenceError` of the errors prelude
+/// (`modules::engine::ERRORS`).
+pub(crate) fn reference_errors(
+    module: &ast::Module,
+    profile: varta_common::language::LanguageProfile,
+) -> bool {
+    profile.declaration_forms()
+        && (tdz::module_has_early_captures(module)
+            || module_constants::has_early_bindings(module, profile))
+}
 fn type_error(message: impl Into<String>) -> CompilerError {
     CompilerError::Type(message.into())
 }
@@ -407,7 +419,9 @@ mod bitwise;
 mod builtin_methods;
 mod byte_values;
 mod callback_inference;
+mod class_bindings;
 mod class_holes;
+mod class_values;
 pub(crate) mod classes;
 mod closure_narrowing;
 mod collection_hashing;
@@ -457,6 +471,7 @@ mod iterator_objects;
 pub(crate) mod json;
 mod kv;
 mod labels;
+pub(crate) mod layout_spreads;
 mod link;
 mod literal_erasure;
 pub(crate) mod literals;
@@ -475,7 +490,7 @@ mod number_parse;
 mod number_predicates;
 mod number_radix;
 mod numeric_constants;
-mod object_accessors;
+pub(crate) mod object_accessors;
 mod object_assign;
 mod object_entries;
 mod object_enumeration;
@@ -514,6 +529,7 @@ mod signature;
 mod spread;
 mod spread_arguments;
 mod standard;
+pub(crate) mod static_store;
 mod stmt;
 mod string_enumeration;
 mod string_iteration;

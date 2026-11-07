@@ -17,6 +17,21 @@ pub(in crate::lower) fn covariant_array(
     types: &ir::ValueTypes,
 ) -> Expr {
     let value = overloads::overloaded_value(value, expected, types);
+    // A callable object viewed with fewer properties, or its call signature
+    // (step 4): the same function.
+    let value = match expected {
+        Some(wanted) if callables::converts(value.ty, wanted, types) => Expr {
+            span: value.span,
+            ty: wanted,
+            kind: E::Reinterpret(Box::new(value)),
+        },
+        _ => value,
+    };
+    // A value of one generic construct type used as another (step 4).
+    let value = match expected {
+        Some(wanted) if wanted != value.ty => generic_constructors::convert(value, wanted, types),
+        _ => value,
+    };
     // A function literal lowered against a generic call signature's erased
     // type (`const id: <T>(x: T) => T = (x) => x`) takes that marked type.
     if let (Some(Type::Function(wanted)), Type::Function(given)) = (expected, value.ty)

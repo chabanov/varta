@@ -51,7 +51,9 @@ impl Emitter<'_> {
                 ir::Intrinsic::CodeUnit
                 | ir::Intrinsic::CharCodeAt
                 | ir::Intrinsic::DictionaryFind
-                | ir::Intrinsic::Collection(ir::CollectionProbe::Find, _),
+                | ir::Intrinsic::Collection(ir::CollectionProbe::Find, _)
+                | ir::Intrinsic::FunctionProperties
+                | ir::Intrinsic::FunctionSignature,
                 args,
             ) => args.iter().all(|a| self.quiet(a)),
             // A checked element read throws on its only allocating path.

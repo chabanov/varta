@@ -92,6 +92,46 @@ const CASES: &[(&str, &str, &str)] = &[
         include_str!("declaration_form_cases/module_evaluation.expected"),
     ),
     (
+        "class_values",
+        include_str!("declaration_form_cases/class_values.ts"),
+        include_str!("declaration_form_cases/class_values.expected"),
+    ),
+    (
+        "static_receivers",
+        include_str!("declaration_form_cases/static_receivers.ts"),
+        include_str!("declaration_form_cases/static_receivers.expected"),
+    ),
+    (
+        "generic_overloads",
+        include_str!("declaration_form_cases/generic_overloads.ts"),
+        include_str!("declaration_form_cases/generic_overloads.expected"),
+    ),
+    (
+        "index_json",
+        include_str!("declaration_form_cases/index_json.ts"),
+        include_str!("declaration_form_cases/index_json.expected"),
+    ),
+    (
+        "module_tdz",
+        include_str!("declaration_form_cases/module_tdz.ts"),
+        include_str!("declaration_form_cases/module_tdz.expected"),
+    ),
+    (
+        "class_tdz",
+        include_str!("declaration_form_cases/class_tdz.ts"),
+        include_str!("declaration_form_cases/class_tdz.expected"),
+    ),
+    (
+        "early_reads",
+        include_str!("declaration_form_cases/early_reads.ts"),
+        include_str!("declaration_form_cases/early_reads.expected"),
+    ),
+    (
+        "static_store",
+        include_str!("declaration_form_cases/static_store.ts"),
+        include_str!("declaration_form_cases/static_store.expected"),
+    ),
+    (
         "static_super",
         include_str!("declaration_form_cases/static_super.ts"),
         include_str!("declaration_form_cases/static_super.expected"),
@@ -206,11 +246,13 @@ fn enum_assignability_matches_tsc() {
     );
 }
 
-/// Class index signatures: undeclared members are a hidden dictionary;
-/// members that do not fit the index type are TS2411.
+/// Class index signatures: undeclared members are a hidden dictionary,
+/// serialized as own properties in own-key order; members that do not fit
+/// the index type are TS2411.
 #[test]
 fn class_index_signatures_match_node() {
     matches_node("index_signatures");
+    matches_node("index_json");
     refused(
         V38,
         "class C { [key: string]: number; m(): number { return 1; } } export function main(): void { console.log('x'); }",
@@ -237,6 +279,202 @@ fn enum_and_namespace_objects_match_node() {
 #[test]
 fn module_evaluation_and_static_blocks_match_node() {
     matches_node("module_evaluation");
+}
+
+/// A module binding read or written before its initialization by code
+/// that runs during module evaluation throws `ReferenceError` at run time;
+/// only a read while an initializer is evaluated, which tsc reports too, is
+/// refused (TS2448). A `var` or static field read early reads `undefined`
+/// as in JavaScript, a checked read: a declared type that does not admit it
+/// throws `TypeError` there (owner decision of 2026-11-07).
+#[test]
+fn module_temporal_dead_zone_matches_node() {
+    matches_node("module_tdz");
+    matches_node("early_reads");
+    matches_node("class_tdz");
+    for (source, diagnostic) in [
+        (
+            "const a = b; const b = 1; export function main(): void { console.log(String(a)); }",
+            "binding used before initialization: b (TS2448)",
+        ),
+        (
+            "const a = (() => b)(); const b = 1; export function main(): void { console.log(String(a)); }",
+            "binding used before initialization: b (TS2448)",
+        ),
+        (
+            "export function main(): void { console.log(String(x)); const x = 1; }",
+            "binding used before initialization: x (TS2448)",
+        ),
+        (
+            "const w = new Widget(); class Widget {} export function main(): void { console.log(String(w instanceof Widget)); }",
+            "class Widget used before its declaration (TS2449)",
+        ),
+    ] {
+        refused(V38, source, diagnostic);
+    }
+    // Uncaught, the error ends the program as in Node.
+    let bytes = compile_in(
+        V38,
+        "function f(): number { return M; } const r = f(); const M = 1; export function main(): void { console.log(String(r)); }",
+    );
+    let error = VartaRuntime::new()
+        .run_wasm_bytes(&bytes, &[])
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(
+        error.contains("ReferenceError")
+            && error.contains("Cannot access 'M' before initialization"),
+        "{error}"
+    );
+}
+
+/// Classes as values (`typeof C`): `new`, static calls, `name` and `===`
+/// dispatch over the closed set of subclasses; `this` in a static method
+/// is the class it is called through, also through a class value.
+#[test]
+fn class_values_match_node() {
+    matches_node("class_values");
+    matches_node("static_receivers");
+    for (source, diagnostic) in [
+        (
+            "class A { private static n = 1; } export function main(): void { const k = A; console.log(String(k.n)); }",
+            "is private",
+        ),
+        (
+            "class A {} export function main(): void { const ks: (typeof A)[] = [A]; console.log(String(ks.length)); }",
+            "array element type",
+        ),
+        (
+            "class A {} export function main(): void { const k: typeof A | null = A; console.log(String(k === null)); }",
+            "class value in a union type",
+        ),
+        (
+            "class A { constructor(public n: number) {} } class B extends A { constructor() { super(1); } } function make(k: typeof A): A { return new k(2); } export function main(): void { console.log(String(make(A).n)); }",
+            "the constructor of class B does not accept the arguments of the constructor of class A",
+        ),
+        (
+            "abstract class A { abstract f(): number; } function make(k: typeof A): A { return new k(); } export function main(): void { console.log('x'); }",
+            "cannot create an instance of the abstract class A (TS2511)",
+        ),
+        (
+            "class A {} export function main(): void { const k = A; console.log(String(k === 1)); }",
+            "comparison of a class value with number (TS2367)",
+        ),
+    ] {
+        refused(V38, source, diagnostic);
+    }
+    refused(
+        V37,
+        "class A {} export function main(): void { const k = A; console.log(typeof k); }",
+        "unknown identifier: A",
+    );
+}
+
+/// Static fields per class (`static_store`): a write through a subclass
+/// creates its own property, in the declaring module and across modules,
+/// through class values, `this` in static code, compound, logical and
+/// update assignments; `Object.keys` and `for…in` list them. Node 24 (on
+/// tsc 5's ES2022 emit) prints the same lines.
+#[test]
+fn static_store_matches_node() {
+    matches_node("static_store");
+    let lib = "export class A {
+           static x: number = 1;
+           static tag: string = 'a';
+           static bump(): number { this.x = this.x + 10; return this.x; }
+         }
+         export class B extends A {}
+         export function readB(): number { return B.x; }";
+    let entry = "import { A, B, readB } from './lib.ts';
+         class D extends B {
+           static own(): string { return this.tag; }
+         }
+         export function main(): void {
+           console.log(String(D.x) + ' ' + D.own());
+           D.x = 5;
+           D.tag += 'd';
+           console.log(String(A.x) + ' ' + String(B.x) + ' ' + String(D.x) + ' ' + D.tag + ' ' + A.tag);
+           console.log(String(D.bump()) + ' ' + String(B.bump()) + ' ' + String(readB()));
+           A.x = 100;
+           console.log(String(A.x) + ' ' + String(B.x) + ' ' + String(D.x) + ' ' + Object.keys(D).join(','));
+         }";
+    let bytes = compile_modules(entry, &[("lib.ts", lib)]).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    assert_eq!(
+        lines(&bytes),
+        ["1 a", "1 1 5 ad a", "15 11 11", "100 11 15 x,tag"]
+    );
+    // A field typed by its initializer has the store too.
+    let inferred = compile_in(
+        V38,
+        "class A { static n = make(); } function make(): number { return 1; } class B extends A {}
+         export function main(): void { const k: typeof A = B; k.n = 5; console.log(String(A.n) + ' ' + String(k.n)); }",
+    );
+    assert_eq!(lines(&inferred), ["1 5"]);
+    for (source, diagnostic) in [
+        (
+            "class A { static n: number = 1; } class B extends A {} export function main(): void { console.log(Object.values(B).length); }",
+            "Object.values of a class object is typed any[]",
+        ),
+        (
+            "class A { static readonly n: number = 1; } class B extends A {} export function main(): void { const k: typeof A = B; k.n++; }",
+            "cannot assign to n because it is a read-only static field (TS2540)",
+        ),
+    ] {
+        refused(V38, source, diagnostic);
+    }
+}
+
+/// A `this`-using static method inherited by a subclass declared in
+/// another module runs with that subclass as `this` (its receiver
+/// version); before, it silently ran with the declaring class. Node 24
+/// prints the same line.
+#[test]
+fn static_methods_inherited_across_modules_match_node() {
+    let model = "function prefix(): string { return 'table:'; }
+         export class Model {
+           static table(): string { return 'models'; }
+           static describe(): string { return prefix() + this.table() + ' ' + this.name; }
+           static count = 0;
+           static bump(): number { this.count++; return this.count; }
+           static create(): Model { return new this(); }
+           kind(): string { return 'model'; }
+         }";
+    let entry = "import { Model } from './model.ts';
+         class User extends Model {
+           static table(): string { return 'users'; }
+           kind(): string { return 'user'; }
+         }
+         export function main(): void {
+           console.log(User.describe() + ' ' + User.create().kind() + ' ' + Model.describe() + ' ' + String(Model.bump()));
+         }";
+    let bytes = compile_modules(entry, &[("model.ts", model)]).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    assert_eq!(
+        lines(&bytes),
+        ["table:users User user table:models Model 1"]
+    );
+    // `this.count++` through User creates User's own static property
+    // (`static_store`); Model's stays apart.
+    let writes = "import { Model } from './model.ts';
+         class User extends Model {}
+         export function main(): void {
+           console.log(String(User.bump()) + ' ' + String(User.bump()) + ' ' + String(Model.bump())
+             + ' ' + String(Model.count) + ' ' + String(User.count));
+         }";
+    let bytes = compile_modules(writes, &[("model.ts", model)]).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    assert_eq!(lines(&bytes), ["1 2 1 1 2"]);
+}
+
+/// Generic overload signatures of functions, methods and static methods
+/// (also in generic class instances) infer their type arguments per
+/// candidate (constraints included) and check the result against the
+/// instantiated signature.
+#[test]
+fn generic_overloads_match_node() {
+    matches_node("generic_overloads");
 }
 
 #[test]
@@ -477,11 +715,11 @@ fn unsupported_declaration_forms_are_refused_by_name() {
         ),
         (
             "function dec(value: unknown, context: unknown): void {} @dec class C {} export function main(): void { console.log('x'); }",
-            "decorator (a decorator runs code when its class is defined",
+            "decorator (standard decorators are not implemented yet",
         ),
         (
             "function dec(value: unknown, context: unknown): void {} class C { @dec m(): void {} } export function main(): void { console.log('x'); }",
-            "decorator (a decorator runs code when its class is defined",
+            "decorator (standard decorators are not implemented yet",
         ),
         (
             "class C { private static secret = 1; } export function main(): void { console.log(String(C.secret)); }",
@@ -492,16 +730,16 @@ fn unsupported_declaration_forms_are_refused_by_name() {
             "cannot assign to limit because it is a read-only static field (TS2540)",
         ),
         (
-            "class A { static n = 1; } class B extends A {} export function main(): void { B.n = 2; console.log(String(A.n)); }",
-            "assignment to the inherited static field n through a subclass",
+            "class A { static readonly n: number = 1; } class B extends A {} export function main(): void { B.n = 2; console.log(String(A.n)); }",
+            "cannot assign to n because it is a read-only static field (TS2540)",
         ),
         (
-            "function limit(): number[] { return LIMITS; } const first = limit(); const LIMITS: number[] = [3]; export function main(): void { console.log(String(first.length)); }",
-            "binding used before initialization: LIMITS is read by code this initializer runs",
+            "class A { private static n: number = 1; } class B extends A {} export function main(): void { console.log(String(B.n)); }",
+            "static field n is private and only accessible within class A (TS2341)",
         ),
         (
-            "class C { static make(): C { return new C(); } static x = C.make(); constructor() { console.log(String(C.later)); } static later = 2; } export function main(): void { console.log('x'); }",
-            "binding used before initialization: later is read by code this initializer runs",
+            "class A { static n: number = 1; } class B extends A {} export function main(): void { B.n = 'x'; console.log(String(A.n)); }",
+            "TS2322",
         ),
         (
             "export function main(): void { const k = 2; const C = class { v = k; }; console.log(String(new C().v)); }",

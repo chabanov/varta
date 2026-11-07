@@ -144,8 +144,8 @@ fn literal_values(
                     .i(I::F64Const(f64::from_bits(*bits).into()))
                     .i(I::F64Eq);
             }
-            // Refused before emission (`literals::contains_pattern`); a
-            // pattern never matches here.
+            // A target with a pattern never takes the direct decoder
+            // (`lower::json`, `literals::contains_pattern`).
             LiteralValue::Pattern(_) => continue,
             LiteralValue::String(bytes) => {
                 let name: Vec<u16> = bytes

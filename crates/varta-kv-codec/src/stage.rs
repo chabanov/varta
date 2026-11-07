@@ -53,6 +53,16 @@ fn unsupported(kind: &str) -> StageError {
 
 /// The layout every v38 module uses.
 const VERSION: u32 = HASHED_DICTIONARY_VALUE_VERSION;
+/// The reserved fields of an object literal with accessors (v38
+/// `object_accessors` in the compiler): its getter and setter functions are
+/// not properties. The compiler writes each accessor property's value into
+/// its data slot before staging, so the object is staged as its data
+/// properties.
+const ACCESSOR_GETTER: &str = "#get ";
+const ACCESSOR_SETTER: &str = "#set ";
+fn accessor_field(name: &str) -> bool {
+    name.starts_with(ACCESSOR_GETTER) || name.starts_with(ACCESSOR_SETTER)
+}
 /// What a tagged `Uint8Array` (v38 `byte_values`) is to the stager.
 const BYTES_INSIDE: &str = "a Uint8Array held by unknown or nested in another value";
 
@@ -328,6 +338,9 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
             let (name, _) = fields[*slot as usize]
                 .as_ref()
                 .ok_or_else(|| fatal("missing field slot"))?;
+            if accessor_field(name) {
+                continue;
+            }
             if name.starts_with(PRIVATE_KEY_PREFIX) {
                 return Err(unsupported("an object with private state"));
             }

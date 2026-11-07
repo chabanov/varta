@@ -114,7 +114,7 @@ fn intern_shape(
     if types.profile.class_generics()
         && let Some(field) = fields.iter().find(|f| {
             f.name.starts_with(classes::PRIVATE_PREFIX)
-                && !(accessors && object_accessors::accessor_field(&f.name).is_some())
+                && !(accessors && object_accessors::hidden_field(&f.name))
                 && !(types.profile.symbol_values()
                     && crate::modules::symbol_keys::is_symbol_key(&f.name))
         })

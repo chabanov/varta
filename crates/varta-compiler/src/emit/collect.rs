@@ -455,7 +455,10 @@ impl<'a> Collected<'a> {
                         self.helpers
                             .insert(strings::Helper::Units(args.len() as u8));
                     }
-                    ir::Intrinsic::Identity => {}
+                    ir::Intrinsic::Identity
+                    | ir::Intrinsic::FunctionProperties
+                    | ir::Intrinsic::SetFunctionProperties
+                    | ir::Intrinsic::FunctionSignature => {}
                     ir::Intrinsic::CharAt => self.char_at(expr.span, source),
                     ir::Intrinsic::CharCodeAt => {
                         self.helpers.insert(strings::Helper::CharCodeAt);

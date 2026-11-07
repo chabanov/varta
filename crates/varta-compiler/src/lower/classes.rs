@@ -176,6 +176,17 @@ pub(crate) struct Classes {
     ready: bool,
     /// Instance member bodies to lower: (function index, class, member).
     pending_members: VecDeque<generic_classes::PendingMember>,
+    /// V38 (`module_evaluation`): the class whose static element (a module
+    /// variable of `desugar::statics`) is being lowered, inside its body.
+    pub(super) static_owner: Option<u32>,
+    /// The module variables of static elements, by class (`class_bindings`).
+    pub(super) static_elements: BTreeMap<String, u32>,
+    /// The classes by the module constant of their binding
+    /// (`desugar::class_binding`).
+    pub(super) class_bindings: BTreeMap<String, u32>,
+    /// The initialization flag slots of class bindings that code may reach
+    /// early, by class (`class_bindings`).
+    pub(super) class_flags: BTreeMap<u32, u32>,
 }
 /// The type name under which the merged interface of class `class` is
 /// declared (v38 `web_bytes`): no identifier can spell it, and diagnostics
@@ -218,6 +229,15 @@ impl Classes {
     }
     pub(super) fn get(&self, id: u32) -> &Class {
         &self.list[id as usize]
+    }
+    /// The class that holds the static members of class `id`: the generic
+    /// class of an instance (instances have no statics), else `id`.
+    pub(super) fn static_class(&self, id: u32) -> u32 {
+        self.list[id as usize].template.unwrap_or(id)
+    }
+    /// The number of classes (ids `0..count`).
+    pub(super) fn count(&self) -> u32 {
+        self.list.len() as u32
     }
     /// Whether some class declares a method of this name. Native intrinsic
     /// member calls of the same name are then no longer provably user-code free.
@@ -279,6 +299,22 @@ impl Classes {
             .map(|c| c.shape)
             .collect()
     }
+    /// Every instantiable class (not a generic template).
+    pub(crate) fn instantiable(&self) -> Vec<u32> {
+        (0..self.list.len() as u32)
+            .filter(|id| !self.list[*id as usize].is_template())
+            .collect()
+    }
+    /// The instantiable classes that inherit from `ancestor` (not itself).
+    pub(crate) fn descendants(&self, ancestor: u32) -> Vec<u32> {
+        (0..self.list.len() as u32)
+            .filter(|id| {
+                *id != ancestor
+                    && !self.list[*id as usize].is_template()
+                    && self.descends(*id, ancestor)
+            })
+            .collect()
+    }
     /// Record shapes of `ancestor` and all of its descendants.
     pub(crate) fn family_shapes(&self, ancestor: u32) -> Vec<u32> {
         (0..self.list.len() as u32)
@@ -312,7 +348,12 @@ impl Classes {
 
 /// `upcast` is exact or an ancestor class of `actual`.
 pub(super) fn upcast(types: &ir::ValueTypes, actual: Type, expected: Type) -> bool {
-    matches!((actual, expected), (Type::Class(a), Type::Class(e)) if types.classes.descends(a, e))
+    match (actual, expected) {
+        (Type::Class(a), Type::Class(e)) => types.classes.descends(a, e),
+        // A class object of a subclass is a `typeof` its ancestor (v38).
+        (Type::ClassValue(a), Type::ClassValue(e)) => class_values::assignable(types, a, e),
+        _ => false,
+    }
 }
 
 /// Retype a class value (or a union of them) whose class members widen to
@@ -703,6 +744,70 @@ impl Lower<'_> {
     }
 }
 
+/// A static field a class declares (`desugar::statics_key`).
+#[derive(Clone)]
+pub(super) struct StaticDeclaration {
+    pub name: String,
+    /// An auto-accessor: not enumerable, and the declaring class's storage
+    /// for every subclass.
+    pub accessor: bool,
+    pub readonly: bool,
+    pub access: Access,
+}
+
+/// The static fields `class` declares, in definition order, from its
+/// `desugar::statics_key` marker.
+pub(super) fn static_declarations(types: &ir::ValueTypes, class: u32) -> Vec<StaticDeclaration> {
+    let key = crate::desugar::statics_key();
+    let info = types.classes.get(class);
+    let list = info
+        .declaration
+        .body
+        .iter()
+        .find_map(|member| match member {
+            ast::ClassMember::Method(method)
+                if method.is_static
+                    && matches!(&method.key, ast::PropName::Ident(id) if id.sym == key.as_str()) =>
+            {
+                match method.function.body.as_ref()?.stmts.first()? {
+                    ast::Stmt::Return(ast::ReturnStmt { arg: Some(arg), .. }) => match &**arg {
+                        ast::Expr::Array(list) => Some(list),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        });
+    let Some(list) = list else {
+        return Vec::new();
+    };
+    list.elems
+        .iter()
+        .flatten()
+        .filter_map(|element| match &*element.expr {
+            ast::Expr::Lit(ast::Lit::Str(text)) => {
+                let entry = text.value.as_str()?;
+                let (flags, name) = entry.split_once(crate::desugar::STATIC_SEPARATOR)?;
+                let access = if flags.contains(crate::desugar::STATIC_PRIVATE) {
+                    Access::Private
+                } else if flags.contains(crate::desugar::STATIC_PROTECTED) {
+                    Access::Protected
+                } else {
+                    Access::Public
+                };
+                Some(StaticDeclaration {
+                    name: name.to_owned(),
+                    accessor: flags.contains(crate::desugar::STATIC_ACCESSOR),
+                    readonly: flags.contains(crate::desugar::STATIC_READONLY),
+                    access,
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// The constructor parameters of `class` as patterns, from its own or its
 /// nearest ancestor's constructor (v38 `type_level`: `typeof C` before the
 /// class layout exists).
@@ -760,6 +865,7 @@ pub(super) use generic_classes::{UNALLOCATED, instantiate_class, member_body, ne
 pub(super) use generic_methods::{
     generic_dispatch_bodies, generic_method_body, next_generic_method,
 };
+pub(super) use index_signatures::INDEX_FIELD;
 pub(super) use layout::layout_module;
 pub(super) use private_names::{
     PREFIX as PRIVATE_PREFIX, hide_prelude_state, is_private_name, reaches_private,

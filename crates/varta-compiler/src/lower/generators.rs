@@ -57,6 +57,21 @@ fn rejected(what: &str) -> CompilerError {
     }
 }
 
+/// A lowered synchronous generator closure to split (v38
+/// `expression_forms`), see `Lower::split_generator_closure`.
+pub(super) struct GeneratorClosure {
+    /// The closure's physical parameters: receiver, parameters, self value.
+    pub incoming: Vec<Type>,
+    pub shape: ir::ParameterShape,
+    pub receiver: Option<Type>,
+    pub self_slot: Option<u32>,
+    pub captures: Vec<u32>,
+    pub generator: u32,
+    /// The number of leading prologue statements that run at the call.
+    pub prologue: usize,
+    pub span: swc_common::Span,
+}
+
 /// Generator objects have no value tag: they stay in locals, parameters,
 /// results, closure cells and frames, never inside a value ABI aggregate.
 pub(super) fn opaque(container: &str) -> CompilerError {
@@ -223,7 +238,11 @@ fn intern(yielded: Type, returned: Type, next: Type, types: &mut ir::ValueTypes)
 
 /// Whether `ty` accepts the value `undefined` (`void` counts for `TReturn`).
 pub(super) fn accepts_undefined(ty: Type, types: &ir::ValueTypes) -> bool {
-    ty == Type::Void || unions::members(ty, types).contains(&Type::Undefined)
+    // V38 (`expression_forms`): `unknown` holds `undefined` too, as in
+    // `Generator<T, void, unknown>`.
+    ty == Type::Void
+        || unions::members(ty, types).contains(&Type::Undefined)
+        || ty == Type::Unknown && types.profile.expression_forms()
 }
 
 /// Field slots of the IteratorResult record: names are sorted, so `done` then `value`.
@@ -318,6 +337,141 @@ impl Lower<'_> {
                 ty: signature.result,
                 kind: E::Call(index, args),
             }))],
+        })
+    }
+    /// Split a lowered synchronous generator closure (v38
+    /// `expression_forms`: a `function*` expression or a generator method
+    /// of an object literal) into its wrapper, which keeps the closure's
+    /// index, shape, receiver, self value and environment, and its body: an
+    /// environment generator function over the same captures that takes the
+    /// wrapper's physical parameters. The wrapper creates the generator
+    /// object; when the body starts with a prologue (parameter defaults and
+    /// patterns, an object-literal method's receiver), the wrapper runs it
+    /// to an internal first suspension, so it runs, and throws, at the call
+    /// as FunctionDeclarationInstantiation does. A generator suspended there
+    /// behaves as one suspended at its start: no try statement is entered,
+    /// and the first `next` argument is discarded.
+    pub(super) fn split_generator_closure(
+        &mut self,
+        closure: GeneratorClosure,
+        mut statements: Vec<S>,
+    ) -> Result<ir::Function> {
+        let GeneratorClosure {
+            incoming,
+            shape,
+            receiver,
+            self_slot,
+            captures,
+            generator,
+            prologue,
+            span,
+        } = closure;
+        let info = self.generator_type(generator);
+        let generator_ty = Type::Generator(generator);
+        let object = self.hidden(generator_ty);
+        if prologue > 0 {
+            let start = Expr {
+                span,
+                ty: info.next,
+                kind: E::Suspend {
+                    value: Box::new(Expr {
+                        span,
+                        ty: info.yielded,
+                        kind: E::Zero,
+                    }),
+                    state: 0,
+                    observe: None,
+                },
+            };
+            statements.insert(prologue, S::Expr(start));
+        }
+        let index = *self.next_function;
+        if index >= self.types.function_limit() {
+            return Err(invalid(
+                "too many functions including generator closure bodies",
+            ));
+        }
+        *self.next_function += 1;
+        let locals: Vec<Type> = (0..self.next)
+            .map(|slot| self.local_types.get(&slot).copied().unwrap_or(Type::Number))
+            .collect();
+        self.generated.insert(
+            index,
+            ir::Function {
+                shape: ir::ParameterShape::fixed(incoming.len()),
+                self_slot: None,
+                receiver: None,
+                cells: std::mem::take(&mut self.cells),
+                captures: captures.clone(),
+                environment: true,
+                generator: Some(generator),
+                source: self.source.clone(),
+                span,
+                params: incoming.clone(),
+                result: info.returned,
+                locals: locals.clone(),
+                body: statements,
+            },
+        );
+        let args = incoming
+            .iter()
+            .enumerate()
+            .map(|(slot, ty)| local(span, slot as u32, *ty))
+            .collect();
+        let mut wrapper = vec![S::Init(
+            object,
+            Expr {
+                span,
+                ty: generator_ty,
+                kind: E::Call(index, args),
+            },
+        )];
+        if prologue > 0 {
+            let input = Expr {
+                span,
+                ty: info.next,
+                kind: E::Zero,
+            };
+            wrapper.push(S::Expr(Expr {
+                span,
+                ty: Type::Number,
+                kind: E::GeneratorStep {
+                    generator: Box::new(local(span, object, generator_ty)),
+                    completion: Completion::Normal,
+                    value: Box::new(input),
+                },
+            }));
+        }
+        wrapper.push(S::Return(Some(local(span, object, generator_ty))));
+        // The wrapper needs its parameters, the generator object and the
+        // captured cells it validates; every other slot is an unused scalar.
+        let used = captures.iter().copied().fold(object, u32::max) as usize + 1;
+        let wrapper_locals = locals[..used]
+            .iter()
+            .enumerate()
+            .map(|(slot, ty)| {
+                let slot = slot as u32;
+                if (slot as usize) < incoming.len() || slot == object || captures.contains(&slot) {
+                    *ty
+                } else {
+                    Type::Number
+                }
+            })
+            .collect();
+        Ok(ir::Function {
+            shape,
+            self_slot,
+            receiver,
+            cells: captures.iter().copied().collect(),
+            captures,
+            environment: true,
+            generator: None,
+            source: self.source.clone(),
+            span,
+            params: incoming,
+            result: generator_ty,
+            locals: wrapper_locals,
+            body: wrapper,
         })
     }
     fn generator_type(&self, id: u32) -> GeneratorType {

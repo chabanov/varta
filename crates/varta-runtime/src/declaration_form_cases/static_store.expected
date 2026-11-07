@@ -1,0 +1,15 @@
+1 1 x,label,box,maybe,hidden,count|label|
+1 2 2
+5 2 5 x,label,box,maybe,hidden,count|label,x|x
+5 12 15
+5 12 101 101
+a ab m m
+a ab m m! x,label,box,maybe,hidden,count|label,x|x,label
+1 2 2
+alpha set n
+1 2 1 3
+1 2 3 7
+30 30
+x,label,box,maybe,count,hidden | x,label | 0,1,b
+3 6 4 1 6 14
+3997 1

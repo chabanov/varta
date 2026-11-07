@@ -23,6 +23,7 @@ impl Emitter<'_> {
             && !self.quiet_mode
             && let E::Call(index, args) = &expr.kind
             && !self.frame_functions.contains_key(index)
+            && !self.environment_functions.contains(index)
             && args.iter().all(|arg| self.quiet(arg))
         {
             // Quiet arguments push nothing; the callee roots parameters.
@@ -333,6 +334,46 @@ impl Emitter<'_> {
                     }
                     // The low word of every managed handle is its payload address.
                     ir::Intrinsic::Identity => self.code.extend([I::I32WrapI64, I::F64ConvertI32U]),
+                    ir::Intrinsic::FunctionProperties => self.code.extend([
+                        I::I32WrapI64,
+                        I::I64Load(wasm_encoder::MemArg {
+                            offset: varta_common::function::PROPERTIES_OFFSET,
+                            ..strings::ROOT
+                        }),
+                    ]),
+                    ir::Intrinsic::SetFunctionProperties => {
+                        let slot = wasm_encoder::MemArg {
+                            offset: varta_common::function::PROPERTIES_OFFSET,
+                            ..strings::ROOT
+                        };
+                        self.code.extend([
+                            I::LocalSet(self.string_temporary),
+                            I::I32WrapI64,
+                            I::LocalSet(self.temporary),
+                        ]);
+                        self.slot_barrier(self.temporary, slot);
+                        self.code.extend([
+                            I::LocalGet(self.temporary),
+                            I::LocalGet(self.string_temporary),
+                            I::I64Store(slot),
+                        ]);
+                    }
+                    ir::Intrinsic::FunctionSignature => {
+                        let Some(Type::Function(signature)) = args.first().map(|arg| arg.ty) else {
+                            return Err(CompilerError::Internal(
+                                "missing checked function signature".into(),
+                            ));
+                        };
+                        self.code.extend([
+                            I::I32WrapI64,
+                            I::I32Load(wasm_encoder::MemArg {
+                                offset: varta_common::function::SIGNATURE_OFFSET,
+                                ..strings::WORD
+                            }),
+                            I::I32Const(signature as i32),
+                            I::I32Eq,
+                        ]);
+                    }
                 }
             }
             E::StringRepeat {
@@ -631,6 +672,11 @@ impl Emitter<'_> {
                     I::I32Const(self.constant_root(*index)),
                     I::I64Load(strings::ROOT),
                 ]);
+                // A module binding's initialization flag (v38
+                // `module_evaluation`) is a Boolean in its root slot.
+                if expr.ty == Type::Boolean {
+                    self.code.push(I::I32WrapI64);
+                }
             }
             E::String(s) => {
                 let packed = ((s.len() as u64) << strings::LENGTH_SHIFT) | self.strings[s] as u64;
@@ -708,6 +754,7 @@ impl Emitter<'_> {
                 for arg in args {
                     self.expr(arg)?;
                 }
+                self.forward_environment(*index)?;
                 self.code
                     .push(I::Call(self.functions_begin + *index as u32));
                 self.check_exception()?;

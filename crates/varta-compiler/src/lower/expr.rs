@@ -168,8 +168,12 @@ impl Lower<'_> {
                 self.class_constructor_value(id, context)
             }
             ast::Expr::New(new) if self.constructs_value(&new.callee) => self.construct_value(new),
+            // V38 (`declaration_forms`): class objects.
+            _ if let Some(value) = self.class_value_expression(expression) => value,
             _ => self.expr_inner(expression),
         };
+        // V38: a class reached outside its body before its initialization.
+        let result = result.and_then(|value| self.class_binding_guard(expression, value));
         if let Ok(value) = &result {
             self.path_effects(expression);
             self.observe_class_hole(expression.span(), value.ty);
@@ -188,6 +192,7 @@ impl Lower<'_> {
                 }
             })
             .and_then(|value| self.void_function(value, expected))
+            .and_then(|value| self.class_value_conversion(value, expected, expression))
             .and_then(|value| unions::widen(value, expected, self.types))
             .map_err(|e| self.source.locate(e, expression.span()))
     }
@@ -238,227 +243,9 @@ impl Lower<'_> {
                 };
                 (Type::String, E::String(bytes))
             }
-            ast::Expr::Ident(name) => {
-                if self.outer.contains_key(name.sym.as_ref()) {
-                    self.resolve_binding(name.sym.as_ref())?;
-                }
-                if self.types.profile.has_undefined()
-                    && name.sym == "undefined"
-                    && !self.functions.contains_key("undefined")
-                    && self.binding("undefined").is_err()
-                {
-                    return Ok(Expr {
-                        span: expression.span(),
-                        ty: Type::Undefined,
-                        kind: E::Integer(0),
-                    });
-                }
-                if self.types.profile.binary64()
-                    && !self.functions.contains_key(name.sym.as_ref())
-                    && self.binding(name.sym.as_ref()).is_err()
-                {
-                    let value = match name.sym.as_ref() {
-                        "NaN" => Some(f64::NAN),
-                        "Infinity" => Some(f64::INFINITY),
-                        _ => None,
-                    };
-                    if let Some(value) = value {
-                        return Ok(Expr {
-                            span: expression.span(),
-                            ty: Type::Float64,
-                            kind: E::Float64(value),
-                        });
-                    }
-                }
-                if self.binding(name.sym.as_ref()).is_err()
-                    && let Some(signature) = self.functions.get(name.sym.as_ref()).cloned()
-                {
-                    return self.function_reference(&signature, expression.span());
-                }
-                if let Some(global) = self.global_object(name.sym.as_ref(), expression.span())? {
-                    return Ok(global);
-                }
-                if self.generic_name(name.sym.as_ref()).is_some() {
-                    return Err(unsupported(
-                        "generic function as a value (call it so its type arguments are known)",
-                    ));
-                }
-                let binding = self.resolve_binding(name.sym.as_ref())?;
-                if binding.global.is_some() {
-                    return self.global_read(&binding, expression.span());
-                }
-                if !binding.initialized
-                    && binding.tdz.is_some()
-                    && binding.identity.0 != self.index
-                    && self.types.profile.language_core()
-                {
-                    return self.tdz_ident(name.sym.as_ref(), &binding, expression.span());
-                }
-                if !binding.initialized {
-                    return Err(invalid(format!(
-                        "binding used before initialization: {}",
-                        name.sym
-                    )));
-                }
-                self.require_assigned(name.sym.as_ref(), &binding)?;
-                let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
-                // Narrowed to `never` (v37): no value is read.
-                if self.refinements.get(&binding.slot) == Some(&Type::Never) {
-                    return Ok(Expr {
-                        span: expression.span(),
-                        ty: Type::Never,
-                        kind: E::Zero,
-                    });
-                }
-                if let Some(narrow) = self.refinements.get(&binding.slot).copied()
-                    // An `object` fact (v35) is read as the `unknown` cell; only
-                    // `object_value` consumers use it.
-                    && !matches!(narrow, Type::Object(_))
-                {
-                    let local = Expr {
-                        span: expression.span(),
-                        ty,
-                        kind: E::Local(binding.slot),
-                    };
-                    // `Array.isArray` on an `unknown` cell (v38).
-                    if ty.is_cell()
-                        && self.types.profile.structural_subtyping()
-                        && narrow == Self::unknown_array_type(self.types)?
-                    {
-                        return self.unknown_array(local);
-                    }
-                    // A type predicate's narrowing is tested at run time (v38).
-                    if self.predicate_checked(binding.identity, narrow) {
-                        return self.predicate_read(local, narrow);
-                    }
-                    // A literal guard may refine a non-union local in place.
-                    let retag =
-                        narrow.is_cell() || self.types.profile.literal_types() && !ty.is_cell();
-                    return Ok(if retag {
-                        Expr {
-                            ty: narrow,
-                            ..local
-                        }
-                    } else {
-                        Expr {
-                            span: expression.span(),
-                            ty: narrow,
-                            kind: E::UnboxUnion(Box::new(local)),
-                        }
-                    });
-                }
-                (ty, E::Local(binding.slot))
-            }
+            ast::Expr::Ident(name) => return self.expr_identifier(expression, name),
             ast::Expr::Paren(paren) => return self.expr(&paren.expr),
-            ast::Expr::Unary(unary) => {
-                if unary.op == ast::UnaryOp::Delete {
-                    return self.array_delete(&unary.arg, unary.span);
-                }
-                if let Some(value) = self.global_typeof(unary) {
-                    return Ok(value);
-                }
-                if let Some(value) = self.method_typeof(unary)? {
-                    return Ok(value);
-                }
-                let value = self.expr(&unary.arg)?;
-                if self.types.profile.bigint_values()
-                    && matches!(
-                        unary.op,
-                        ast::UnaryOp::Minus | ast::UnaryOp::Plus | ast::UnaryOp::Tilde
-                    )
-                {
-                    return self.primitive_unary(unary.op, value, expression.span());
-                }
-                if value.ty == Type::BigInt
-                    && matches!(
-                        unary.op,
-                        ast::UnaryOp::Minus | ast::UnaryOp::Plus | ast::UnaryOp::Tilde
-                    )
-                {
-                    return self.bigint_unary(unary.op, value, expression.span());
-                }
-                match unary.op {
-                    ast::UnaryOp::TypeOf if value.ty.is_cell() => {
-                        return Ok(Expr {
-                            span: expression.span(),
-                            ty: Type::String,
-                            kind: E::Host(
-                                self.types.profile.host_operation(Host::UnionTypeOf),
-                                vec![value],
-                            ),
-                        });
-                    }
-                    ast::UnaryOp::Bang if self.types.profile.primitive_builtins() => {
-                        let value = self.truth(value)?;
-                        (Type::Boolean, E::Not(Box::new(value)))
-                    }
-                    ast::UnaryOp::Bang
-                        if self.types.profile.unions()
-                            && matches!(
-                                value.ty,
-                                Type::Function(_)
-                                    | Type::Error
-                                    | Type::NativeError(_)
-                                    | Type::String
-                                    | Type::Union(_)
-                                    | Type::ReferenceUnion(_)
-                            ) =>
-                    {
-                        let value = self.truth(value)?;
-                        (Type::Boolean, E::Not(Box::new(value)))
-                    }
-                    ast::UnaryOp::Void if self.types.profile.has_undefined() => {
-                        (Type::Undefined, E::Undefined(Box::new(value)))
-                    }
-                    ast::UnaryOp::TypeOf if self.types.profile.has_undefined() => {
-                        let name = match value.ty {
-                            Type::Function(_) => "function",
-                            Type::Undefined | Type::Void => "undefined",
-                            Type::Error
-                            | Type::NativeError(_)
-                            | Type::Null
-                            | Type::Record(_)
-                            | Type::Dictionary(_)
-                            | Type::Class(_)
-                            | Type::Array(_) => "object",
-                            Type::Promise(_) if self.types.profile.promise_values() => "object",
-                            Type::Number | Type::Float64 => "number",
-                            Type::BigInt => "bigint",
-                            Type::Symbol => "symbol",
-                            Type::Boolean => "boolean",
-                            Type::String => "string",
-                            _ => return Err(unsupported("typeof an opaque result value")),
-                        };
-                        return Ok(Expr {
-                            span: expression.span(),
-                            ty: Type::String,
-                            kind: E::Sequence(
-                                Box::new(value),
-                                Box::new(Expr {
-                                    span: expression.span(),
-                                    ty: Type::String,
-                                    kind: E::String(self.types.profile.string_bytes(name)),
-                                }),
-                            ),
-                        });
-                    }
-                    ast::UnaryOp::Minus if matches!(value.ty, Type::Number | Type::Float64) => {
-                        (value.ty, E::Negative(Box::new(value)))
-                    }
-                    ast::UnaryOp::Plus if value.ty == Type::Float64 => return Ok(value),
-                    ast::UnaryOp::Tilde => {
-                        return self.number_bitwise_not(value, expression.span());
-                    }
-                    ast::UnaryOp::Bang
-                        if matches!(value.ty, Type::Number | Type::Float64 | Type::Boolean)
-                            || self.types.profile.has_undefined()
-                                && matches!(value.ty, Type::Null | Type::Undefined) =>
-                    {
-                        (Type::Boolean, E::Not(Box::new(value)))
-                    }
-                    _ => return Err(unsupported("unary operator")),
-                }
-            }
+            ast::Expr::Unary(unary) => return self.expr_unary(expression, unary),
             ast::Expr::New(new)
                 if self.types.profile.bigint()
                     && matches!(&*new.callee,ast::Expr::Ident(id) if id.sym=="BigInt" && self.binding("BigInt").is_err() && !self.outer.contains_key("BigInt") && !self.functions.contains_key("BigInt")) =>
@@ -494,296 +281,7 @@ impl Lower<'_> {
                     "super property read; only super.method(...) calls",
                 ));
             }
-            ast::Expr::Bin(binary) => {
-                // `#x in value` (v37 `class_generics`): a class brand test.
-                if binary.op == ast::BinaryOp::In
-                    && self.types.profile.class_generics()
-                    && let ast::Expr::PrivateName(name) = &*binary.left
-                {
-                    return self.private_in(name, &binary.right, expression.span());
-                }
-                // `"key" in` an `unknown` cell (v38 `byte_values`).
-                if let Some(test) = self.cell_in(binary)? {
-                    return Ok(test);
-                }
-                if binary.op == ast::BinaryOp::NullishCoalescing {
-                    self.optional_index(&binary.left);
-                }
-                // V38 keeps the literal type of a `??`/`||` operand, as
-                // TypeScript does for `mode ?? "json"`.
-                let left = if self.types.profile.structural_subtyping()
-                    && matches!(
-                        binary.op,
-                        ast::BinaryOp::NullishCoalescing | ast::BinaryOp::LogicalOr
-                    ) {
-                    self.expr_preserving(&binary.left)?
-                } else {
-                    self.expr(&binary.left)?
-                };
-                if self.types.profile.primitive_builtins()
-                    && matches!(
-                        binary.op,
-                        ast::BinaryOp::LogicalAnd
-                            | ast::BinaryOp::LogicalOr
-                            | ast::BinaryOp::NullishCoalescing
-                    )
-                {
-                    let saved = self.flow_snapshot();
-                    let context = self.fallback_context(binary, left.ty);
-                    let right = (|| {
-                        if self.types.profile.truth_guards() {
-                            match binary.op {
-                                ast::BinaryOp::LogicalAnd => self.guard(&binary.left, true)?,
-                                ast::BinaryOp::LogicalOr => self.guard(&binary.left, false)?,
-                                _ => self.nullish_guard(&binary.left)?,
-                            }
-                        }
-                        match context {
-                            Some(context) => self.expr_expected(&binary.right, Some(context)),
-                            // A literal fallback of a literal-typed value
-                            // (v38) keeps its literal type, so `mode ?? "json"`
-                            // stays the literal union.
-                            None if self.types.profile.structural_subtyping()
-                                && matches!(
-                                    stmt::unparen(&binary.right),
-                                    ast::Expr::Lit(ast::Lit::Str(_) | ast::Lit::Num(_))
-                                ) =>
-                            {
-                                let literal = unions::members(left.ty, self.types)
-                                    .into_iter()
-                                    .find(|ty| matches!(ty, Type::Literal(..)));
-                                let plain = self.expr(&binary.right)?;
-                                match literal {
-                                    Some(member) => {
-                                        match literals::conform(plain, Some(member), self.types) {
-                                            Ok(value) => Ok(value),
-                                            Err(_) => self.expr(&binary.right),
-                                        }
-                                    }
-                                    None => Ok(plain),
-                                }
-                            }
-                            None => self.expr(&binary.right),
-                        }
-                    })();
-                    self.flow_restore(&saved);
-                    return self.guest_logical(binary.op, left, right?, expression.span());
-                }
-                let right = if binary.op == ast::BinaryOp::In {
-                    // `key in value` for an `object` narrowed from unknown (v35).
-                    self.object_value(&binary.right)?
-                } else {
-                    self.expr(&binary.right)?
-                };
-                if (left.ty == Type::Unknown || right.ty == Type::Unknown)
-                    && !matches!(
-                        binary.op,
-                        ast::BinaryOp::EqEq
-                            | ast::BinaryOp::EqEqEq
-                            | ast::BinaryOp::NotEq
-                            | ast::BinaryOp::NotEqEq
-                    )
-                {
-                    return Err(self.source.locate(
-                        type_error(
-                            "operator on an unknown value; narrow it with typeof, instanceof or a checked `as` first",
-                        ),
-                        expression.span(),
-                    ));
-                }
-                if binary.op == ast::BinaryOp::In && matches!(right.ty, Type::Dictionary(_)) {
-                    // `key in d`: own entries plus inherited Object.prototype names.
-                    let span = expression.span();
-                    let (key, dictionary) = (self.hidden(left.ty), self.hidden(right.ty));
-                    let output = self.hidden(Type::Boolean);
-                    let marker = self.hidden(Type::Number);
-                    let local = |slot, ty| Expr {
-                        span,
-                        ty,
-                        kind: E::Local(slot),
-                    };
-                    let (key_ty, dictionary_ty) = (left.ty, right.ty);
-                    let test = self.dictionary_has(
-                        local(dictionary, dictionary_ty),
-                        local(key, key_ty),
-                        true,
-                    )?;
-                    return Ok(Expr {
-                        span,
-                        ty: Type::Boolean,
-                        kind: E::ValueBlock {
-                            output,
-                            marker,
-                            roots: vec![key, dictionary],
-                            body: vec![
-                                S::Init(key, left),
-                                S::Init(dictionary, right),
-                                S::Init(output, test),
-                            ],
-                        },
-                    });
-                }
-                if self.types.profile.bigint_values()
-                    && matches!(
-                        binary.op,
-                        ast::BinaryOp::EqEq
-                            | ast::BinaryOp::EqEqEq
-                            | ast::BinaryOp::NotEq
-                            | ast::BinaryOp::NotEqEq
-                            | ast::BinaryOp::Lt
-                            | ast::BinaryOp::LtEq
-                            | ast::BinaryOp::Gt
-                            | ast::BinaryOp::GtEq
-                    )
-                    && [left.ty, right.ty].into_iter().all(|ty| {
-                        unions::members(ty, self.types)
-                            .into_iter()
-                            .all(|member| unions::primitive(member) || member == Type::BigInt)
-                    })
-                {
-                    return self.primitive_comparison(binary.op, left, right, expression.span());
-                }
-                if self.types.profile.bigint_values()
-                    && matches!(
-                        binary.op,
-                        ast::BinaryOp::Add
-                            | ast::BinaryOp::Sub
-                            | ast::BinaryOp::Mul
-                            | ast::BinaryOp::Div
-                            | ast::BinaryOp::Mod
-                            | ast::BinaryOp::Exp
-                            | ast::BinaryOp::BitAnd
-                            | ast::BinaryOp::BitOr
-                            | ast::BinaryOp::BitXor
-                            | ast::BinaryOp::LShift
-                            | ast::BinaryOp::RShift
-                            | ast::BinaryOp::ZeroFillRShift
-                    )
-                {
-                    return self.primitive_arithmetic(binary.op, left, right, expression.span());
-                }
-                if (left.ty == Type::BigInt || right.ty == Type::BigInt)
-                    && !left.ty.is_union()
-                    && !right.ty.is_union()
-                {
-                    return self.bigint_binary(binary.op, left, right, expression.span());
-                }
-                if binary.op == ast::BinaryOp::Exp {
-                    return self.number_power(left, right, expression.span());
-                }
-                if ir::is_number_bitwise(binary.op) {
-                    return self.number_bitwise(binary.op, left, right, expression.span());
-                }
-                if left.ty.is_error() && right.ty.is_error() && left.ty != right.ty {
-                    return self.union_binary(binary.op, left, right, expression.span());
-                }
-                if binary.op == ast::BinaryOp::In
-                    && self.shared_records(right.ty)
-                    && let ast::Expr::Lit(ast::Lit::Str(text)) = stmt::unparen(&binary.left)
-                    && let Some(name) = text.value.as_str()
-                {
-                    let name = name.to_owned();
-                    return self.shared_in(&name, right, expression.span());
-                }
-                // `"key" in object` as a value (v38): the own-field presence
-                // of a record (through its view accessors), an instance member.
-                if binary.op == ast::BinaryOp::In
-                    && self.types.profile.structural_subtyping()
-                    && matches!(right.ty, Type::Record(_) | Type::Class(_))
-                    && let ast::Expr::Lit(ast::Lit::Str(text)) = stmt::unparen(&binary.left)
-                    && let Some(name) = text.value.as_str()
-                {
-                    let name = name.to_owned();
-                    return self.object_in(&name, right, expression.span());
-                }
-                if left.ty.is_cell() || right.ty.is_cell() {
-                    return self.union_binary(binary.op, left, right, expression.span());
-                }
-                let (left, right) = classes::common_operands(left, right, self.types);
-                let (left, right) =
-                    subtyping::identity_operands(binary.op, left, right, self.types);
-                let (left, right) = tagged_templates::operands(left, right, self.types);
-                let (left, right) = if self.types.profile.has_undefined() {
-                    match super::undefined::binary(
-                        binary.op,
-                        left,
-                        right,
-                        expression.span(),
-                        self.types.profile.language_core(),
-                    ) {
-                        super::undefined::Binary::Folded(value) => return Ok(value),
-                        super::undefined::Binary::Unchanged(left, right) => (left, right),
-                    }
-                } else {
-                    (left, right)
-                };
-                if left.ty != right.ty {
-                    return Err(self.source.locate(
-                        type_error(format!(
-                            "binary operand type mismatch: expected {}, found {}",
-                            left.ty, right.ty
-                        )),
-                        right.span,
-                    ));
-                }
-                let result = match binary.op {
-                    ast::BinaryOp::Add
-                        if matches!(left.ty, Type::Number | Type::Float64 | Type::String) =>
-                    {
-                        left.ty
-                    }
-                    ast::BinaryOp::Sub
-                    | ast::BinaryOp::Mul
-                    | ast::BinaryOp::Div
-                    | ast::BinaryOp::Mod
-                        if matches!(left.ty, Type::Number | Type::Float64) =>
-                    {
-                        left.ty
-                    }
-                    ast::BinaryOp::Lt
-                    | ast::BinaryOp::LtEq
-                    | ast::BinaryOp::Gt
-                    | ast::BinaryOp::GtEq
-                        if matches!(left.ty, Type::Number | Type::Float64 | Type::String) =>
-                    {
-                        Type::Boolean
-                    }
-                    ast::BinaryOp::EqEq
-                    | ast::BinaryOp::EqEqEq
-                    | ast::BinaryOp::NotEq
-                    | ast::BinaryOp::NotEqEq
-                        if matches!(
-                            left.ty,
-                            Type::Number
-                                | Type::Float64
-                                | Type::Boolean
-                                | Type::String
-                                | Type::Null
-                                | Type::Function(_)
-                                | Type::Error
-                                | Type::NativeError(_)
-                                | Type::Record(_)
-                                | Type::Dictionary(_)
-                                | Type::Class(_)
-                                | Type::Promise(_)
-                                | Type::Symbol
-                                | Type::Array(_)
-                        ) =>
-                    {
-                        Type::Boolean
-                    }
-                    ast::BinaryOp::LogicalAnd | ast::BinaryOp::LogicalOr
-                        if matches!(left.ty, Type::Number | Type::Float64 | Type::Boolean) =>
-                    {
-                        left.ty
-                    }
-                    _ => return Err(unsupported("binary operator")),
-                };
-                (
-                    result,
-                    E::Binary(binary.op, Box::new(left), Box::new(right)),
-                )
-            }
+            ast::Expr::Bin(binary) => return self.expr_binary(expression, binary),
             ast::Expr::Cond(branch) if self.types.profile.unions() => {
                 return self.conditional(branch, None, None);
             }
@@ -803,6 +301,544 @@ impl Lower<'_> {
                 ));
             }
             _ => return Err(unsupported("expression")),
+        };
+        Ok(Expr {
+            span: expression.span(),
+            ty,
+            kind,
+        })
+    }
+    /// One arm of [`Self::expr_inner`], in its own function so the
+    /// recursive expression lowering keeps a small native stack frame.
+    #[inline(never)]
+    fn expr_identifier(&mut self, expression: &ast::Expr, name: &ast::Ident) -> Result<Expr> {
+        let (ty, kind) = {
+            if self.outer.contains_key(name.sym.as_ref()) {
+                self.resolve_binding(name.sym.as_ref())?;
+            }
+            if self.types.profile.has_undefined()
+                && name.sym == "undefined"
+                && !self.functions.contains_key("undefined")
+                && self.binding("undefined").is_err()
+            {
+                return Ok(Expr {
+                    span: expression.span(),
+                    ty: Type::Undefined,
+                    kind: E::Integer(0),
+                });
+            }
+            if self.types.profile.binary64()
+                && !self.functions.contains_key(name.sym.as_ref())
+                && self.binding(name.sym.as_ref()).is_err()
+            {
+                let value = match name.sym.as_ref() {
+                    "NaN" => Some(f64::NAN),
+                    "Infinity" => Some(f64::INFINITY),
+                    _ => None,
+                };
+                if let Some(value) = value {
+                    return Ok(Expr {
+                        span: expression.span(),
+                        ty: Type::Float64,
+                        kind: E::Float64(value),
+                    });
+                }
+            }
+            if self.binding(name.sym.as_ref()).is_err()
+                && let Some(signature) = self.functions.get(name.sym.as_ref()).cloned()
+            {
+                return self.named_function_value(name.sym.as_ref(), &signature, expression.span());
+            }
+            if let Some(global) = self.global_object(name.sym.as_ref(), expression.span())? {
+                return Ok(global);
+            }
+            if self.generic_name(name.sym.as_ref()).is_some() {
+                return Err(unsupported(
+                    "generic function as a value (call it so its type arguments are known)",
+                ));
+            }
+            let binding = self.resolve_binding(name.sym.as_ref())?;
+            if binding.global.is_some() {
+                return self.global_read(&binding, expression.span());
+            }
+            if !binding.initialized
+                && binding.tdz.is_some()
+                && binding.identity.0 != self.index
+                && self.types.profile.language_core()
+            {
+                return self.tdz_ident(name.sym.as_ref(), &binding, expression.span());
+            }
+            if !binding.initialized {
+                return Err(invalid(format!(
+                    "binding used before initialization: {} (TS2448)",
+                    name.sym
+                )));
+            }
+            self.require_assigned(name.sym.as_ref(), &binding)?;
+            let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
+            // Narrowed to `never` (v37): no value is read.
+            if self.refinements.get(&binding.slot) == Some(&Type::Never) {
+                return Ok(Expr {
+                    span: expression.span(),
+                    ty: Type::Never,
+                    kind: E::Zero,
+                });
+            }
+            if let Some(narrow) = self.refinements.get(&binding.slot).copied()
+                    // An `object` fact (v35) is read as the `unknown` cell; only
+                    // `object_value` consumers use it.
+                    && !matches!(narrow, Type::Object(_))
+            {
+                let local = Expr {
+                    span: expression.span(),
+                    ty,
+                    kind: E::Local(binding.slot),
+                };
+                // `Array.isArray` on an `unknown` cell (v38).
+                if ty.is_cell()
+                    && self.types.profile.structural_subtyping()
+                    && narrow == Self::unknown_array_type(self.types)?
+                {
+                    return self.unknown_array(local);
+                }
+                // A type predicate's narrowing is tested at run time (v38).
+                if self.predicate_checked(binding.identity, narrow) {
+                    return self.predicate_read(local, narrow);
+                }
+                // A literal guard may refine a non-union local in place.
+                let retag = narrow.is_cell() || self.types.profile.literal_types() && !ty.is_cell();
+                return Ok(if retag {
+                    Expr {
+                        ty: narrow,
+                        ..local
+                    }
+                } else {
+                    Expr {
+                        span: expression.span(),
+                        ty: narrow,
+                        kind: E::UnboxUnion(Box::new(local)),
+                    }
+                });
+            }
+            (ty, E::Local(binding.slot))
+        };
+        Ok(Expr {
+            span: expression.span(),
+            ty,
+            kind,
+        })
+    }
+    /// One arm of [`Self::expr_inner`], in its own function so the
+    /// recursive expression lowering keeps a small native stack frame.
+    #[inline(never)]
+    fn expr_unary(&mut self, expression: &ast::Expr, unary: &ast::UnaryExpr) -> Result<Expr> {
+        let (ty, kind) = {
+            if unary.op == ast::UnaryOp::Delete {
+                return self.array_delete(&unary.arg, unary.span);
+            }
+            if let Some(value) = self.global_typeof(unary) {
+                return Ok(value);
+            }
+            if let Some(value) = self.method_typeof(unary)? {
+                return Ok(value);
+            }
+            let value = self.expr(&unary.arg)?;
+            if self.types.profile.bigint_values()
+                && matches!(
+                    unary.op,
+                    ast::UnaryOp::Minus | ast::UnaryOp::Plus | ast::UnaryOp::Tilde
+                )
+            {
+                return self.primitive_unary(unary.op, value, expression.span());
+            }
+            if value.ty == Type::BigInt
+                && matches!(
+                    unary.op,
+                    ast::UnaryOp::Minus | ast::UnaryOp::Plus | ast::UnaryOp::Tilde
+                )
+            {
+                return self.bigint_unary(unary.op, value, expression.span());
+            }
+            match unary.op {
+                ast::UnaryOp::TypeOf if value.ty.is_cell() => {
+                    return Ok(Expr {
+                        span: expression.span(),
+                        ty: Type::String,
+                        kind: E::Host(
+                            self.types.profile.host_operation(Host::UnionTypeOf),
+                            vec![value],
+                        ),
+                    });
+                }
+                ast::UnaryOp::Bang if self.types.profile.primitive_builtins() => {
+                    let value = self.truth(value)?;
+                    (Type::Boolean, E::Not(Box::new(value)))
+                }
+                ast::UnaryOp::Bang
+                    if self.types.profile.unions()
+                        && matches!(
+                            value.ty,
+                            Type::Function(_)
+                                | Type::Error
+                                | Type::NativeError(_)
+                                | Type::String
+                                | Type::Union(_)
+                                | Type::ReferenceUnion(_)
+                        ) =>
+                {
+                    let value = self.truth(value)?;
+                    (Type::Boolean, E::Not(Box::new(value)))
+                }
+                ast::UnaryOp::Void if self.types.profile.has_undefined() => {
+                    (Type::Undefined, E::Undefined(Box::new(value)))
+                }
+                ast::UnaryOp::TypeOf if self.types.profile.has_undefined() => {
+                    let name = match value.ty {
+                        Type::Function(_) | Type::ClassValue(_) => "function",
+                        Type::Undefined | Type::Void => "undefined",
+                        Type::Error
+                        | Type::NativeError(_)
+                        | Type::Null
+                        | Type::Record(_)
+                        | Type::Dictionary(_)
+                        | Type::Class(_)
+                        | Type::Array(_) => "object",
+                        Type::Promise(_) if self.types.profile.promise_values() => "object",
+                        Type::Number | Type::Float64 => "number",
+                        Type::BigInt => "bigint",
+                        Type::Symbol => "symbol",
+                        Type::Boolean => "boolean",
+                        Type::String => "string",
+                        _ => return Err(unsupported("typeof an opaque result value")),
+                    };
+                    return Ok(Expr {
+                        span: expression.span(),
+                        ty: Type::String,
+                        kind: E::Sequence(
+                            Box::new(value),
+                            Box::new(Expr {
+                                span: expression.span(),
+                                ty: Type::String,
+                                kind: E::String(self.types.profile.string_bytes(name)),
+                            }),
+                        ),
+                    });
+                }
+                ast::UnaryOp::Minus if matches!(value.ty, Type::Number | Type::Float64) => {
+                    (value.ty, E::Negative(Box::new(value)))
+                }
+                ast::UnaryOp::Plus if value.ty == Type::Float64 => return Ok(value),
+                ast::UnaryOp::Tilde => {
+                    return self.number_bitwise_not(value, expression.span());
+                }
+                ast::UnaryOp::Bang
+                    if matches!(value.ty, Type::Number | Type::Float64 | Type::Boolean)
+                        || self.types.profile.has_undefined()
+                            && matches!(value.ty, Type::Null | Type::Undefined) =>
+                {
+                    (Type::Boolean, E::Not(Box::new(value)))
+                }
+                _ => return Err(unsupported("unary operator")),
+            }
+        };
+        Ok(Expr {
+            span: expression.span(),
+            ty,
+            kind,
+        })
+    }
+    /// One arm of [`Self::expr_inner`], in its own function so the
+    /// recursive expression lowering keeps a small native stack frame.
+    #[inline(never)]
+    fn expr_binary(&mut self, expression: &ast::Expr, binary: &ast::BinExpr) -> Result<Expr> {
+        let (ty, kind) = {
+            // `#x in value` (v37 `class_generics`): a class brand test.
+            if binary.op == ast::BinaryOp::In
+                && self.types.profile.class_generics()
+                && let ast::Expr::PrivateName(name) = &*binary.left
+            {
+                return self.private_in(name, &binary.right, expression.span());
+            }
+            // `"key" in` an `unknown` cell (v38 `byte_values`).
+            if let Some(test) = self.cell_in(binary)? {
+                return Ok(test);
+            }
+            if binary.op == ast::BinaryOp::NullishCoalescing {
+                self.optional_index(&binary.left);
+            }
+            // V38 keeps the literal type of a `??`/`||` operand, as
+            // TypeScript does for `mode ?? "json"`.
+            let left = if self.types.profile.structural_subtyping()
+                && matches!(
+                    binary.op,
+                    ast::BinaryOp::NullishCoalescing | ast::BinaryOp::LogicalOr
+                ) {
+                self.expr_preserving(&binary.left)?
+            } else {
+                self.expr(&binary.left)?
+            };
+            if self.types.profile.primitive_builtins()
+                && matches!(
+                    binary.op,
+                    ast::BinaryOp::LogicalAnd
+                        | ast::BinaryOp::LogicalOr
+                        | ast::BinaryOp::NullishCoalescing
+                )
+            {
+                let saved = self.flow_snapshot();
+                let context = self.fallback_context(binary, left.ty);
+                let right = (|| {
+                    if self.types.profile.truth_guards() {
+                        match binary.op {
+                            ast::BinaryOp::LogicalAnd => self.guard(&binary.left, true)?,
+                            ast::BinaryOp::LogicalOr => self.guard(&binary.left, false)?,
+                            _ => self.nullish_guard(&binary.left)?,
+                        }
+                    }
+                    match context {
+                        Some(context) => self.expr_expected(&binary.right, Some(context)),
+                        // A literal fallback of a literal-typed value
+                        // (v38) keeps its literal type, so `mode ?? "json"`
+                        // stays the literal union.
+                        None if self.types.profile.structural_subtyping()
+                            && matches!(
+                                stmt::unparen(&binary.right),
+                                ast::Expr::Lit(ast::Lit::Str(_) | ast::Lit::Num(_))
+                            ) =>
+                        {
+                            let literal = unions::members(left.ty, self.types)
+                                .into_iter()
+                                .find(|ty| matches!(ty, Type::Literal(..)));
+                            let plain = self.expr(&binary.right)?;
+                            match literal {
+                                Some(member) => {
+                                    match literals::conform(plain, Some(member), self.types) {
+                                        Ok(value) => Ok(value),
+                                        Err(_) => self.expr(&binary.right),
+                                    }
+                                }
+                                None => Ok(plain),
+                            }
+                        }
+                        None => self.expr(&binary.right),
+                    }
+                })();
+                self.flow_restore(&saved);
+                return self.guest_logical(binary.op, left, right?, expression.span());
+            }
+            let right = if binary.op == ast::BinaryOp::In {
+                // `key in value` for an `object` narrowed from unknown (v35).
+                self.object_value(&binary.right)?
+            } else {
+                self.expr(&binary.right)?
+            };
+            if (left.ty == Type::Unknown || right.ty == Type::Unknown)
+                && !matches!(
+                    binary.op,
+                    ast::BinaryOp::EqEq
+                        | ast::BinaryOp::EqEqEq
+                        | ast::BinaryOp::NotEq
+                        | ast::BinaryOp::NotEqEq
+                )
+            {
+                return Err(self.source.locate(
+                        type_error(
+                            "operator on an unknown value; narrow it with typeof, instanceof or a checked `as` first",
+                        ),
+                        expression.span(),
+                    ));
+            }
+            if binary.op == ast::BinaryOp::In && matches!(right.ty, Type::Dictionary(_)) {
+                // `key in d`: own entries plus inherited Object.prototype names.
+                let span = expression.span();
+                let (key, dictionary) = (self.hidden(left.ty), self.hidden(right.ty));
+                let output = self.hidden(Type::Boolean);
+                let marker = self.hidden(Type::Number);
+                let local = |slot, ty| Expr {
+                    span,
+                    ty,
+                    kind: E::Local(slot),
+                };
+                let (key_ty, dictionary_ty) = (left.ty, right.ty);
+                let test = self.dictionary_has(
+                    local(dictionary, dictionary_ty),
+                    local(key, key_ty),
+                    true,
+                )?;
+                return Ok(Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::ValueBlock {
+                        output,
+                        marker,
+                        roots: vec![key, dictionary],
+                        body: vec![
+                            S::Init(key, left),
+                            S::Init(dictionary, right),
+                            S::Init(output, test),
+                        ],
+                    },
+                });
+            }
+            if self.types.profile.bigint_values()
+                && matches!(
+                    binary.op,
+                    ast::BinaryOp::EqEq
+                        | ast::BinaryOp::EqEqEq
+                        | ast::BinaryOp::NotEq
+                        | ast::BinaryOp::NotEqEq
+                        | ast::BinaryOp::Lt
+                        | ast::BinaryOp::LtEq
+                        | ast::BinaryOp::Gt
+                        | ast::BinaryOp::GtEq
+                )
+                && [left.ty, right.ty].into_iter().all(|ty| {
+                    unions::members(ty, self.types)
+                        .into_iter()
+                        .all(|member| unions::primitive(member) || member == Type::BigInt)
+                })
+            {
+                return self.primitive_comparison(binary.op, left, right, expression.span());
+            }
+            if self.types.profile.bigint_values()
+                && matches!(
+                    binary.op,
+                    ast::BinaryOp::Add
+                        | ast::BinaryOp::Sub
+                        | ast::BinaryOp::Mul
+                        | ast::BinaryOp::Div
+                        | ast::BinaryOp::Mod
+                        | ast::BinaryOp::Exp
+                        | ast::BinaryOp::BitAnd
+                        | ast::BinaryOp::BitOr
+                        | ast::BinaryOp::BitXor
+                        | ast::BinaryOp::LShift
+                        | ast::BinaryOp::RShift
+                        | ast::BinaryOp::ZeroFillRShift
+                )
+            {
+                return self.primitive_arithmetic(binary.op, left, right, expression.span());
+            }
+            if (left.ty == Type::BigInt || right.ty == Type::BigInt)
+                && !left.ty.is_union()
+                && !right.ty.is_union()
+            {
+                return self.bigint_binary(binary.op, left, right, expression.span());
+            }
+            if binary.op == ast::BinaryOp::Exp {
+                return self.number_power(left, right, expression.span());
+            }
+            if ir::is_number_bitwise(binary.op) {
+                return self.number_bitwise(binary.op, left, right, expression.span());
+            }
+            if left.ty.is_error() && right.ty.is_error() && left.ty != right.ty {
+                return self.union_binary(binary.op, left, right, expression.span());
+            }
+            if binary.op == ast::BinaryOp::In
+                && self.shared_records(right.ty)
+                && let ast::Expr::Lit(ast::Lit::Str(text)) = stmt::unparen(&binary.left)
+                && let Some(name) = text.value.as_str()
+            {
+                let name = name.to_owned();
+                return self.shared_in(&name, right, expression.span());
+            }
+            // `"key" in object` as a value (v38): the own-field presence
+            // of a record (through its view accessors), an instance member.
+            if binary.op == ast::BinaryOp::In
+                && self.types.profile.structural_subtyping()
+                && matches!(right.ty, Type::Record(_) | Type::Class(_))
+                && let ast::Expr::Lit(ast::Lit::Str(text)) = stmt::unparen(&binary.left)
+                && let Some(name) = text.value.as_str()
+            {
+                let name = name.to_owned();
+                return self.object_in(&name, right, expression.span());
+            }
+            if left.ty.is_cell() || right.ty.is_cell() {
+                return self.union_binary(binary.op, left, right, expression.span());
+            }
+            let (left, right) = classes::common_operands(left, right, self.types);
+            let (left, right) = subtyping::identity_operands(binary.op, left, right, self.types);
+            let (left, right) = tagged_templates::operands(left, right, self.types);
+            let (left, right) = if self.types.profile.has_undefined() {
+                match super::undefined::binary(
+                    binary.op,
+                    left,
+                    right,
+                    expression.span(),
+                    self.types.profile.language_core(),
+                ) {
+                    super::undefined::Binary::Folded(value) => return Ok(value),
+                    super::undefined::Binary::Unchanged(left, right) => (left, right),
+                }
+            } else {
+                (left, right)
+            };
+            if left.ty != right.ty {
+                return Err(self.source.locate(
+                    type_error(format!(
+                        "binary operand type mismatch: expected {}, found {}",
+                        left.ty, right.ty
+                    )),
+                    right.span,
+                ));
+            }
+            let result = match binary.op {
+                ast::BinaryOp::Add
+                    if matches!(left.ty, Type::Number | Type::Float64 | Type::String) =>
+                {
+                    left.ty
+                }
+                ast::BinaryOp::Sub
+                | ast::BinaryOp::Mul
+                | ast::BinaryOp::Div
+                | ast::BinaryOp::Mod
+                    if matches!(left.ty, Type::Number | Type::Float64) =>
+                {
+                    left.ty
+                }
+                ast::BinaryOp::Lt
+                | ast::BinaryOp::LtEq
+                | ast::BinaryOp::Gt
+                | ast::BinaryOp::GtEq
+                    if matches!(left.ty, Type::Number | Type::Float64 | Type::String) =>
+                {
+                    Type::Boolean
+                }
+                ast::BinaryOp::EqEq
+                | ast::BinaryOp::EqEqEq
+                | ast::BinaryOp::NotEq
+                | ast::BinaryOp::NotEqEq
+                    if matches!(
+                        left.ty,
+                        Type::Number
+                            | Type::Float64
+                            | Type::Boolean
+                            | Type::String
+                            | Type::Null
+                            | Type::Function(_)
+                            | Type::Error
+                            | Type::NativeError(_)
+                            | Type::Record(_)
+                            | Type::Dictionary(_)
+                            | Type::Class(_)
+                            | Type::Promise(_)
+                            | Type::Symbol
+                            | Type::Array(_)
+                    ) =>
+                {
+                    Type::Boolean
+                }
+                ast::BinaryOp::LogicalAnd | ast::BinaryOp::LogicalOr
+                    if matches!(left.ty, Type::Number | Type::Float64 | Type::Boolean) =>
+                {
+                    left.ty
+                }
+                _ => return Err(unsupported("binary operator")),
+            };
+            (
+                result,
+                E::Binary(binary.op, Box::new(left), Box::new(right)),
+            )
         };
         Ok(Expr {
             span: expression.span(),
@@ -878,6 +914,11 @@ impl Lower<'_> {
                     return self.class_static_call(call, member, class, expected);
                 }
                 if let ast::Expr::Member(member) = stmt::unparen(callee)
+                    && let Some(class) = self.class_value_path(&member.obj)
+                {
+                    return self.class_value_static_call(call, member, class);
+                }
+                if let ast::Expr::Member(member) = stmt::unparen(callee)
                     && self
                         .peek_type(&member.obj, 0)
                         .is_some_and(|ty| self.shared_classes(ty))
@@ -933,7 +974,7 @@ impl Lower<'_> {
         {
             return Ok(value);
         }
-        if call.type_args.is_some() {
+        if call.type_args.is_some() && !self.generic_value_callee(call) {
             return Err(unsupported("generic call"));
         }
         let ast::Callee::Expr(callee) = &call.callee else {
@@ -1280,8 +1321,6 @@ impl Lower<'_> {
                     .locate(collections::opaque("JSON.stringify"), value.span));
             }
             let value = self.physical_array(value)?;
-            // V38 (`object_accessors`): accessors are read by their getters.
-            let value = self.json_materialized(value)?;
             if value.ty.profile_kind(self.types.profile).is_none()
                 || value.ty == Type::BigInt && !self.types.profile.bigint_values()
             {
@@ -1334,20 +1373,30 @@ impl Lower<'_> {
             } else {
                 Type::String
             };
-            let status = self
-                .types
-                .profile
-                .bigint_values()
-                .then(|| self.hidden(Type::Number));
-            let result = Expr {
-                span: call.span,
-                ty,
-                kind: E::Json(Box::new(value), status),
+            // V38 (`object_accessors`): a value that may hold an object
+            // with accessors is serialized by a guest walk.
+            let (value, serialized) = match self.json_serialized(value.clone(), ty)? {
+                Some(text) => (value, Some(text)),
+                None => (value, None),
             };
-            let result = if let Some(status) = status {
-                self.bigint_checked_result(result, status)?
+            let result = if let Some(text) = serialized {
+                text
             } else {
-                result
+                let status = self
+                    .types
+                    .profile
+                    .bigint_values()
+                    .then(|| self.hidden(Type::Number));
+                let result = Expr {
+                    span: call.span,
+                    ty,
+                    kind: E::Json(Box::new(value), status),
+                };
+                if let Some(status) = status {
+                    self.bigint_checked_result(result, status)?
+                } else {
+                    result
+                }
             };
             // V38 types the result `string`, as TypeScript does; a value
             // without a JSON form (`undefined`, a function) throws instead.

@@ -35,7 +35,10 @@ pub(super) fn keys(ty: Type, types: &mut ir::ValueTypes) -> Result<Type> {
             let names = names(ty, types)?;
             string_keys(names, types)
         }
-        Type::Dictionary(_) => union_of(vec![Type::String, types.number()], types),
+        Type::Dictionary(_) => match index_keys::keys_of(ty, types)? {
+            Some(keys) => Ok(keys),
+            None => union_of(vec![Type::String, types.number()], types),
+        },
         Type::Unknown => Ok(Type::Never),
         Type::Class(class) => {
             let names = class_members(class, types)?
@@ -483,6 +486,14 @@ pub(super) fn intersect(a: Type, b: Type, types: &mut ir::ValueTypes) -> Result<
                 && types.records[y as usize].class.is_none() =>
         {
             merge_records(x, y, types)
+        }
+        // A function type and an object type: a callable object (step 4).
+        (Type::Function(_), Type::Record(record)) | (Type::Record(record), Type::Function(_))
+            if types.records[record as usize].class.is_none() =>
+        {
+            let call = if matches!(a, Type::Function(_)) { a } else { b };
+            let fields = types.records[record as usize].fields.clone();
+            callables::with_properties(call, fields, types)
         }
         // `F & G` of function types is the overloaded type `F`, then `G`.
         (Type::Function(_), Type::Function(_)) => {

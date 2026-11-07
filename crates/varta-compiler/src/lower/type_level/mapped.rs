@@ -137,15 +137,19 @@ fn map_keys(
 ) -> Result<Type> {
     let mut fields: Vec<RecordField> = Vec::new();
     let mut dictionary: Option<Type> = None;
+    // Pattern keys (`` `on${string}` ``): an index signature of the
+    // pattern key type, `K` bound to the pattern.
+    let (patterns, keys) = if mapped.name_type.is_none() {
+        index_keys::split_patterns(keys, types)?
+    } else {
+        (None, keys)
+    };
+    if let Some(set) = patterns {
+        let pattern = Type::Literal(LiteralBase::String, set);
+        dictionary = Some(bound(key, pattern, value, types)?);
+    }
     for key_type in split(keys, types) {
         let (name, literal) = match key_type {
-            // A pattern key (`` `on${string}` ``) is a string index
-            // signature: its keys are not checked against the pattern.
-            Type::Literal(LiteralBase::String, id)
-                if types.literals.has_pattern(id) && mapped.name_type.is_none() =>
-            {
-                (String::new(), false)
-            }
             Type::Literal(LiteralBase::String, _) => (
                 literals::string_members(key_type, types)
                     .and_then(|names| names.into_iter().next())
@@ -226,6 +230,11 @@ fn map_keys(
         }
     }
     if let Some(value) = dictionary {
+        if let Some(set) = patterns
+            && !split(keys, types).contains(&Type::String)
+        {
+            return mixed_records::intern_keyed(value, fields, false, Some(set), types);
+        }
         if !fields.is_empty() {
             return Err(unsupported(
                 "mapped type over string and literal keys together (a mixed index record)",

@@ -190,6 +190,11 @@ impl Inference {
             ast::TsType::TsFnOrConstructorType(ast::TsFnOrConstructorType::TsConstructorType(
                 constructor,
             )) => {
+                // A class object (v38) through its constructor type.
+                let actual = match actual {
+                    Type::ClassValue(class) => type_level::class_constructor(class, types)?,
+                    other => other,
+                };
                 let Type::Function(id) = actual else {
                     return Ok(());
                 };
@@ -654,4 +659,119 @@ impl Lower<'_> {
             generics::constraint_hint(parameter, bound, t)
         })
     }
+}
+
+/// The signature of the generic overload declaration `function` with every
+/// type parameter bound by `frame`, or `unknown` where `frame` binds none.
+fn overload_signature(
+    function: &generics::Function,
+    mut frame: Frame,
+    types: &mut ir::ValueTypes,
+) -> Result<Signature> {
+    for parameter in &function.params.params {
+        frame
+            .entry(parameter.name.sym.to_string())
+            .or_insert(Type::Unknown);
+    }
+    overload_instance(function, frame, types)
+}
+
+/// The signature of a generic overload declaration under `frame`.
+fn overload_instance(
+    function: &generics::Function,
+    frame: Frame,
+    types: &mut ir::ValueTypes,
+) -> Result<Signature> {
+    let mut declaration = function.declaration.clone();
+    // The frame binds the type parameters.
+    declaration.function.type_params = None;
+    declaration
+        .function
+        .body
+        .get_or_insert_with(|| ast::FunctionBody {
+            span: function.declaration.function.span,
+            stmts: Vec::new(),
+        });
+    in_definition(function.module, &frame, types, |t| {
+        signature::check(&declaration, 0, &function.source, t)
+    })
+}
+
+/// A generic overload signature (v38) with `unknown` type arguments: its
+/// arity and the contextual types its declaration fixes.
+pub(super) fn unknown_instance(
+    function: &generics::Function,
+    outer: &Frame,
+    types: &mut ir::ValueTypes,
+) -> Result<Signature> {
+    overload_signature(function, outer.clone(), types)
+}
+
+/// A generic overload signature instantiated for a call (v38): its type
+/// parameters inferred from the argument types, as TypeScript infers them
+/// for each candidate signature, unbound ones `unknown`. `None` when the
+/// arguments bind no consistent instantiation, so the candidate does not
+/// match.
+/// `outer` binds the type parameters of an enclosing generic class
+/// instance (a method overload).
+pub(super) fn instantiate_overload(
+    function: &generics::Function,
+    outer: &Frame,
+    arguments: &[Type],
+    types: &mut ir::ValueTypes,
+) -> Result<Option<overloads::Overload>> {
+    let mut inference = Inference {
+        module: function.module,
+        owner: format!("{} {}", function.kind, function.name),
+        names: function
+            .params
+            .params
+            .iter()
+            .map(|p| p.name.sym.to_string())
+            .collect(),
+        bound: Frame::new(),
+    };
+    let params = &function.declaration.function.params;
+    for (index, ty) in arguments.iter().enumerate() {
+        if let Some(pattern) = parameter_annotation(params, index)
+            && inference.unify(pattern, *ty, types, 0).is_err()
+        {
+            return Ok(None);
+        }
+    }
+    // The inferred arguments must satisfy their constraints (an
+    // unbound parameter takes its default); otherwise the candidate does
+    // not match.
+    let args: Vec<Option<Type>> = function
+        .params
+        .params
+        .iter()
+        .map(|p| inference.bound.get(p.name.sym.as_ref()).copied())
+        .collect();
+    let frame = in_definition(function.module, outer, types, |t| {
+        generics::bind(
+            &function.params,
+            &args,
+            &inference.owner,
+            generics::Missing::Inference,
+            &function.source,
+            t,
+        )
+    });
+    let Ok(frame) = frame else {
+        return Ok(None);
+    };
+    let mut frame = frame;
+    for (name, ty) in outer {
+        frame.entry(name.clone()).or_insert(*ty);
+    }
+    Ok(overload_instance(function, frame, types)
+        .ok()
+        .map(|signature| overloads::Overload {
+            params: signature.params,
+            shape: signature.shape,
+            result: signature.result,
+            generic: None,
+            outer: Frame::new(),
+        }))
 }
