@@ -78,7 +78,7 @@ impl Lower<'_> {
                 match values.iter().next()? {
                     LiteralValue::String(bytes) => self.key_text(bytes),
                     LiteralValue::Number(bits) => Some(number_key(f64::from_bits(*bits))),
-                    LiteralValue::Boolean(_) => None,
+                    LiteralValue::Boolean(_) | LiteralValue::Pattern(_) => None,
                 }
             }
             _ => None,

@@ -4187,7 +4187,9 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   `nested` (bound `MAX_TYPE_DEPTH`); recursive generic aliases go through
   `enter_recursive`/`push_instantiation`/`pop_instantiation` in
   `named::instantiate`, never by relaxing `NamedTypes::resolving` for the
-  same instantiation.
+  same instantiation. The same instantiation inside itself (and `this` in a
+  generic declaration, `named::instantiate_resolved`) resolves to its
+  recursive reservation, keyed by (declaration, type arguments).
 - `type_level::extends` is the one TypeScript assignability relation for
   conditional types, constraints (`generics::satisfies`), predicates,
   `satisfies` and `Exclude`/`Extract`. It decides types only; a value
@@ -4228,18 +4230,38 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
   a declaration whose annotation queries a local resolves its annotation in
   `variables`, not `predeclare`. Named declarations being resolved never
   read the snapshot (`named::resolving_declaration`).
-- Class subtyping in containers (`type_level::containers`): a `B[]` to
-  `A[]` conversion is a shallow `ArraySlice` copy (an array literal is
-  retyped); a union-of-classes array to an ancestor array builds a new
-  array of unboxed elements (`class_union_array`, in `expr_lowered` before
-  `widen`). Never alias an array under a wider element type.
+- Class subtyping in containers (`type_level::containers`): a class or
+  class-union array converted to a wider class array is a `Reinterpret`
+  of the same array, recorded by `covariance::note`; never copy it.
+  `covariance::resolve` (after `subtyping::resolve`, before literal
+  erasure) joins the recorded pairs into components, sets the element
+  representation of every array type of a component (`Stored::Instances`
+  for union arrays beside class arrays, `Stored::Cells` for class arrays
+  beside a union admitting `null`/`undefined`; it rewrites
+  `ValueTypes::arrays` last) and rewrites every element access of those
+  types: reads (`Index`, `MaybeIndex`, `ArrayAt`, `ArrayPop`) box or unbox
+  and are tested when the read's element type does not admit every value
+  stored through the component; writes (`SetIndex`, array literals,
+  `ArrayPush` items, `ArrayFill`, `ArraySearch` needles) convert to the
+  stored representation. A new IR form that reads or writes array elements
+  must be handled there (the walkers are exhaustive).
+- Pattern template literal types are `LiteralValue::Pattern` members of
+  string literal sets (`type_level::patterns`, pieces interned in
+  `LiteralTypes::patterns`). Every membership test of a literal value in a
+  set goes through `type_level::value_in` (subset, `fits`, `refine`), never
+  `BTreeSet::contains` alone; `exhausted_by` never counts a pattern as
+  covered. A reader that needs a finite text (`string_units`,
+  `string_members`, `constants`) gets `None`/skips the pattern and must
+  refuse it by name or fall back to a string index signature; checked
+  assertions and JSON targets refuse patterns (`has_pattern`,
+  `contains_pattern`).
 - Predicate narrowing of a class instance to a subclass reads through
   `checked_downcast` (descriptor test, `TypeError`), of `unknown` to an
   object type through `assert_value`; `this is T` predicates are recorded per
   (declaring class, method) by `member_signature`.
 - Tests: `varta-runtime` `type_level_tests` with the Node 24 logs of
   `type_level_cases` (each also rejected by v37), the deviation test
-  `checked_predicates_and_copied_array_views_deviate_from_node`, the compiler's
+  `checked_predicates_and_shared_array_reads_deviate_from_node`, the compiler's
   `composed_class_names_follow_the_checker_types` scanner test, and the
   nine `typescript_handbook` conformance rows.
 

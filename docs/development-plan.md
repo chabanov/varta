@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with the K9 C expression and function forms (integrated with K9 A steps 1–2 and K9 B), K9 B declarations and classes, the K8 CSS engine's font-relative units, the first K9 D standard library stream, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, gated on the K9 C integration commit 1414396 whose sources equal merged `main` except the gate records: **4379 Rust tests passed, 0 failures, 25 ignored; 185 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-213007-y3wpjbwk/report.json` in that worktree. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **194 passed, 5 known unsupported out of 199** after the K9 A, B, C, D and D3 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures and full RegExp (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **197 passed, 5 known unsupported out of 202** after the K9 A (steps 1–3), B, C, D and D3 cases, module evaluation, enum and namespace objects, enum assignability and class index signatures and full RegExp (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -7912,6 +7912,28 @@ type parameters or rest parameters, generic construct signatures,
 `unique symbol` (track D's Symbol values). Evidence: five more Node-pinned
 `type_level_cases`, the deviation test, a second language-guide example and
 conformance 155 → 160 passing of 160 → 165 cases.
+
+**K9 A step 3 (2026-11-06).** Owner decision: a class array viewed as an
+ancestor array (`B[]` and `(B | C)[]` as `A[]`) is one shared array, as in
+JavaScript, and a read through a narrower name of an element it does not
+admit throws `TypeError` (replacing step 2's copy). `type_level::covariance`
+joins the converted array types into components with one element
+representation (instances, or union cells when a union admits `null` or
+`undefined`) and tests the narrower reads; both representations are existing
+canonical array layouts, so no value ABI change was needed. Pattern template
+literal types and `Uppercase<string>` (and the other intrinsic types over
+`string` and over patterns) are checked as in tsc: pattern members of string
+literal sets, matched by literals, template expressions and other patterns,
+never by `string`. Admitted: `infer` in intersection patterns, `this` in
+generic declarations together with generic declarations that refer to the
+same instantiation of themselves, `asserts this [is T]` methods, and
+overloads with rest parameters. Still refused: callable objects with
+properties, overloads with `this` or type parameters, generic construct
+signatures (each needs a design decision, recorded in the report), and
+`unique symbol` (track D's Symbol values are not in main yet). Evidence:
+three new Node-pinned `type_level_cases` (each rejected by v37), the shared
+array deviation test, the pattern rejection test and conformance 190 → 193
+passing of 195 → 198 cases (on top of K9 C).
 
 **Release readiness** additionally needs, after K9 and K8 merge: the release
 profile frozen (v38 becomes a released profile; later admissions go to a new
