@@ -115,6 +115,9 @@ pub(crate) struct TupleType {
     /// A rest element `[A, ...B[]]` (v38 `type_level`): positions after
     /// `elements` hold values of this type.
     pub rest: Option<Type>,
+    /// Required elements after the rest element (`[...A[], B]`, v38
+    /// `type_level`): the last `trailing.len()` positions.
+    pub trailing: Vec<Type>,
     /// `readonly [..]`: writes through the tuple are rejected.
     pub readonly: bool,
     /// The physical dense array type.
@@ -352,6 +355,9 @@ pub(crate) struct ValueTypes {
     /// ([`varta_common::value::ValueKind::Bytes`]) wherever a tag is written
     /// ([`tag_of`]). Set only after erasure.
     pub bytes: Option<u32>,
+    /// V38 (`declaration_forms`): overload signatures of functions and
+    /// methods, by implementation.
+    pub overloads: crate::lower::overloads::Overloads,
     /// K9 type-level state (v38 `type_level`); see `lower::type_level`.
     pub type_level: crate::lower::type_level::TypeLevel,
 }
@@ -615,6 +621,10 @@ pub(crate) struct FunctionType {
     /// constructor value, physically the closure that constructs, invoked
     /// only by `new`.
     pub construct: bool,
+    /// An overloaded function type (v38 `type_level`): an index into the
+    /// overload sets of `lower::type_level`; the physical signature merges
+    /// every overload's parameter and result types.
+    pub overloads: Option<u32>,
 }
 impl FunctionType {
     pub(crate) fn physical_params(&self) -> Vec<Type> {

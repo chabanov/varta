@@ -92,9 +92,12 @@ impl Lower<'_> {
     fn statement(&mut self, statement: &ast::Stmt) -> Result<S> {
         // A later statement is what the end of the function follows.
         self.core.uncovered = None;
+        // `typeof local` (v38 `type_level`) sees the bindings in scope here.
+        let outer_locals = self.enter_local_types(statement);
         let result = self
             .statement_inner(statement)
             .map_err(|e| self.source.locate(e, statement.span()));
+        self.leave_local_types(outer_locals);
         if self.types.profile.refinement_writes()
             && let Ok(statement) = &result
             && !completion::normal(std::slice::from_ref(statement))
@@ -447,6 +450,12 @@ impl Lower<'_> {
         }
         if let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) = &assign.left {
             let base = self.write_member_base(member)?;
+            let base = self.class_index(member, base)?;
+            // V38 (`declaration_forms`): a class setter.
+            let base = match self.accessor_assignment(member, base, &assign.right, assign.span)? {
+                Ok(value) => return Ok(S::Expr(value)),
+                Err(base) => base,
+            };
             if matches!(base.ty, Type::Dictionary(_)) {
                 return Ok(S::Expr(self.dictionary_write(
                     member,

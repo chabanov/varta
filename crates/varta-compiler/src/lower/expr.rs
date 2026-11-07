@@ -166,6 +166,7 @@ impl Lower<'_> {
                 }
             })
             .and_then(|value| self.void_function(value, expected))
+            .map(|value| self.class_union_array(value, expected))
             .and_then(|value| unions::widen(value, expected, self.types))
             .map_err(|e| self.source.locate(e, expression.span()))
     }
@@ -1331,6 +1332,10 @@ impl Lower<'_> {
                     "function {name} expects {} arguments",
                     signature.params.len()
                 )));
+            }
+            // V38 (`declaration_forms`): a call of an overloaded function.
+            if let Some(overloads) = self.types.overloads.function(signature.index) {
+                return self.overloaded_function_call(call, &signature, &overloads);
             }
             let values = self.call_arguments(&call.args, &signature.params, &signature.shape)?;
             let mut args = Vec::new();

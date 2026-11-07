@@ -26,7 +26,13 @@ impl Lower<'_> {
         // declarators. Names remain in TDZ until their own value is ready.
         patterns::names(&patterns).map_err(|(e, span)| self.source.locate(e, span))?;
         for variable in &declaration.decls {
-            let ty = self.binding_annotation(&variable.name)?;
+            // An annotation that queries a local's type (v38 `typeof x`)
+            // resolves when its declaration is reached, after `x`'s.
+            let ty = if type_level::queries_type(&variable.name, self.types) {
+                None
+            } else {
+                self.binding_annotation(&variable.name)?
+            };
             let mutable = declaration.kind == ast::VarDeclKind::Let;
             if let ast::Pat::Ident(id) = &variable.name {
                 self.declare(id.id.sym.as_ref(), ty, false, mutable)
@@ -80,7 +86,10 @@ impl Lower<'_> {
                 continue;
             };
             let name = binding.id.sym.as_ref();
-            let old = self.binding(name)?;
+            let mut old = self.binding(name)?;
+            if old.ty.is_none() && type_level::queries_type(&variable.name, self.types) {
+                old.ty = self.binding_annotation(&variable.name)?;
+            }
             let (init, readonly) = match variable.init.as_deref() {
                 Some(init) => {
                     let (init, readonly) = self.const_assertion(init);

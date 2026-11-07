@@ -5824,6 +5824,67 @@ Hand-written `{ next() }` iterators, `Symbol()` values and destructuring of
 generators are not supported, and a hole in a `number[]` throws `TypeError`
 when it is spread, as in `for...of`.
 
+#### Enums, namespaces and class declarations (opt-in v38)
+
+Numeric, string and `const` enums, namespaces and their declaration merging,
+abstract classes, overloads, setters, auto-accessors, static fields and class
+expressions compile to checked declarations. An enum type is the union of its
+member values and `E[n]` maps a numeric value back to its member name; a
+namespace's members become module declarations; an overloaded call checks the
+implementation's result against the selected signature:
+
+```ts
+enum Level { Low = 1, Mid, High }
+const enum Unit { Px = 'px', Em = 'em' }
+
+namespace Theme {
+  export const base = 4;
+  export function space(step: Level): string { return String(base * step) + Unit.Px; }
+}
+
+abstract class Widget {
+  static created = 0;
+  constructor(protected label: string) { Widget.created++; }
+  abstract render(): string;
+  get title(): string { return this.label; }
+  set title(value: string) { this.label = value.trim(); }
+}
+
+class Button extends Widget {
+  accessor pressed = false;
+  render(): string { return '[' + this.title + (this.pressed ? '*' : '') + ']'; }
+}
+
+function size(level: Level): string;
+function size(name: string): string;
+function size(value: Level | string): string {
+  return typeof value === 'string' ? value : Theme.space(value);
+}
+
+export function main(): void {
+  const ok = new Button('ok');
+  ok.title = '  Save ';
+  ok.pressed = true;
+  console.log(ok.render() + ' ' + size(Level.High) + ' ' + size('auto')); // [Save*] 12px auto
+  console.log(Level[2] + ' ' + String(Widget.created)); // Mid 1
+}
+```
+
+`E[k]` with a key that is not a constant is typed `string | undefined` (the
+name of the member with that value, if any). Static fields follow the module
+constant initializer rules, `this` in a static method is the class it is
+called through, and a class expression is admitted as the initializer of its
+own `const`, like a class declared inside a function (neither may capture the
+function's locals).
+Modules evaluate as in JavaScript: initializers may call functions, and static
+fields and `static { … }` blocks run where their class is defined; reading a
+binding before its declaration, which JavaScript reports as a
+`ReferenceError`, is a compile error. Enums and namespaces are also objects:
+`Object.keys(Color)` lists `"0"`, `"1"`, …, then the member names, and a
+namespace passes as a value of type `typeof NS`. A class with an index
+signature `[key: string]: T` keeps undeclared members of its instances as own
+properties. Decorators are not supported yet.
+
 #### Type-level TypeScript (opt-in v38)
 
 Conditional, mapped and template literal types, every utility type, type
@@ -5872,11 +5933,33 @@ export function main(): void {
 }
 ```
 
-Refused by name: `unique symbol`, pattern template types such as
-`` `on${string}` `` outside a conditional `extends` clause, intersections of
-function types or of a primitive with an object type, overloaded call
-signatures, mapped types and `keyof` over class instance types, and `typeof`
-of a function-local binding.
+Branded primitives, overloaded and generic call signatures, `this` in
+interfaces, `typeof` of locals and class subtyping in containers work too:
+
+```ts
+type UserId = string & { readonly __brand: 'UserId' };
+type Parse = { (text: string): number; (value: number): string };
+type Identity = <T>(value: T) => T;
+class Shape { area(): number { return 0; } }
+class Square extends Shape { side = 2; area(): number { return this.side ** 2; } }
+
+export function main(): void {
+  const id = 'u1' as UserId;
+  const parse = ((v: string | number) => (typeof v === 'string' ? v.length : String(v))) as Parse;
+  const same: Identity = (value) => value;
+  const squares: Square[] = [new Square()];
+  const shapes: Shape[] = squares;          // a copy: Varta never aliases a wider view
+  const point = { x: 1, y: 2 };
+  const next: typeof point = { x: 3, y: 4 };
+  console.log(`${id} ${parse('abc') + 1} ${same(5)} ${shapes[0].area()} ${next.x}`);
+}
+```
+
+Two behaviours deviate from Node on purpose: a type predicate that lies
+throws `TypeError` where its narrowed value is read, and a `Square[]` used
+as `Shape[]` is copied, so pushing through one name is not seen through the
+other. Still refused by name: `unique symbol`, callable objects that also
+have properties, and overloads with type parameters or rest parameters.
 
 #### Standard library (opt-in v38)
 

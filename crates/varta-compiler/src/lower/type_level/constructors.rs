@@ -23,45 +23,37 @@ pub(super) fn callable(literal: &ast::TsTypeLit) -> bool {
 
 /// `{ (x: number): number }` and `{ new (x: number): C }`.
 pub(super) fn type_literal(literal: &ast::TsTypeLit, types: &mut ir::ValueTypes) -> Result<Type> {
-    let [member] = &literal.members[..] else {
-        let signatures = literal
-            .members
-            .iter()
-            .filter(|member| {
-                matches!(
-                    member,
-                    ast::TsTypeElement::TsCallSignatureDecl(_)
-                        | ast::TsTypeElement::TsConstructSignatureDecl(_)
-                )
-            })
-            .count();
-        return Err(unsupported(if signatures > 1 {
-            "overloaded call or construct signatures (an overloaded function value has no single static signature)"
-        } else {
-            "object type with a call or construct signature and other members (a callable object has no closed layout)"
-        }));
-    };
-    match member {
-        ast::TsTypeElement::TsCallSignatureDecl(call) => {
-            if call.type_params.is_some() {
+    let mut signatures = Vec::new();
+    for member in &literal.members {
+        signatures.push(match member {
+            ast::TsTypeElement::TsCallSignatureDecl(call) if call.type_params.is_some() => {
+                generic_signature(
+                    call.span,
+                    &call.params,
+                    call.type_ann.as_deref(),
+                    call.type_params.as_deref(),
+                    types,
+                )?
+            }
+            ast::TsTypeElement::TsCallSignatureDecl(call) => {
+                signature(&call.params, call.type_ann.as_deref(), false, types)?
+            }
+            ast::TsTypeElement::TsConstructSignatureDecl(construct) => {
+                if construct.type_params.is_some() {
+                    return Err(unsupported("generic construct signature"));
+                }
+                signature(&construct.params, construct.type_ann.as_deref(), true, types)?
+            }
+            _ => {
                 return Err(unsupported(
-                    "generic call signature (a generic function value has no single function type)",
+                    "object type with a call or construct signature and other members (a callable object has no closed layout)",
                 ));
             }
-            signature(&call.params, call.type_ann.as_deref(), false, types)
-        }
-        ast::TsTypeElement::TsConstructSignatureDecl(construct) => {
-            if construct.type_params.is_some() {
-                return Err(unsupported("generic construct signature"));
-            }
-            signature(
-                &construct.params,
-                construct.type_ann.as_deref(),
-                true,
-                types,
-            )
-        }
-        _ => Err(invalid("missing signature member")),
+        });
+    }
+    match signatures.as_slice() {
+        [one] => Ok(*one),
+        _ => overloads::overloaded(signatures, types),
     }
 }
 
@@ -118,6 +110,33 @@ fn signature(
     } else {
         Ok(call)
     }
+}
+
+/// A generic call signature `<T>(params) => R`: the erased function type of
+/// v38 generic method signatures (`lower::erased_methods`), whose calls
+/// instantiate the type parameters (explicit, inferred from whole-parameter
+/// arguments, defaults, then `unknown`) and check the result.
+pub(super) fn generic_signature(
+    span: swc_common::Span,
+    params: &[ast::TsFnParam],
+    result: Option<&ast::TsTypeAnn>,
+    type_params: Option<&ast::TsTypeParamDecl>,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    let method = ast::TsMethodSignature {
+        span,
+        key: Box::new(ast::Expr::Ident(ast::Ident::new(
+            "call".into(),
+            span,
+            Default::default(),
+        ))),
+        computed: false,
+        optional: false,
+        params: params.to_vec(),
+        type_ann: result.cloned().map(Box::new),
+        type_params: type_params.cloned().map(Box::new),
+    };
+    erased_methods::signature("call", &method, types)
 }
 
 /// The function type identical to `ty` but for its `construct` mark.

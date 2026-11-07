@@ -41,13 +41,16 @@ struct Flattened {
     required: usize,
     optional_seen: bool,
     rest: Option<Type>,
+    trailing: Vec<Type>,
 }
 impl Flattened {
     fn push(&mut self, ty: Type, optional: bool, types: &mut ir::ValueTypes) -> Result<()> {
         if self.rest.is_some() {
-            return Err(unsupported(
-                "tuple element after a rest element (a middle or leading rest position has no static index for later elements)",
-            ));
+            if optional {
+                return Err(invalid("an optional element cannot follow a rest element"));
+            }
+            self.trailing.push(ty);
+            return Ok(());
         }
         if optional {
             self.optional_seen = true;
@@ -64,7 +67,7 @@ impl Flattened {
         Ok(())
     }
     fn rest(&mut self, element: Type) -> Result<()> {
-        if self.rest.replace(element).is_some() {
+        if self.rest.replace(element).is_some() || !self.trailing.is_empty() {
             return Err(unsupported("tuple type with two rest elements"));
         }
         Ok(())
@@ -90,6 +93,9 @@ fn build(declared: Vec<Element>, readonly: bool, types: &mut ir::ValueTypes) -> 
                 if let Some(element) = tuple.rest {
                     flat.rest(element)?;
                 }
+                for element in tuple.trailing {
+                    flat.push(element, false, types)?;
+                }
             }
             Element::Spread(Type::Array(id)) => flat.rest(types.arrays[id as usize])?,
             Element::Spread(Type::Never) => return Ok(Type::Never),
@@ -101,7 +107,13 @@ fn build(declared: Vec<Element>, readonly: bool, types: &mut ir::ValueTypes) -> 
             }
         }
     }
-    tuples::intern_rest(flat.elements, flat.required, flat.rest, readonly, types)
+    tuples::intern_tuple(
+        flat.elements,
+        flat.required,
+        (flat.rest, flat.trailing),
+        readonly,
+        types,
+    )
 }
 
 /// `ty | undefined`.

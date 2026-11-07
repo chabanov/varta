@@ -42,6 +42,7 @@ pub(super) fn intern_marked(
         result,
         generic,
         construct: false,
+        overloads: None,
     };
     if let Some(index) = types.functions.iter().position(|ty| ty == &signature) {
         return Ok(Type::Function(index as u32));
@@ -112,6 +113,11 @@ impl Lower<'_> {
         if signature.index == self.entry {
             return Err(unsupported("main as a function value"));
         }
+        // V38 (`declaration_forms`): an overloaded function has no single
+        // function type.
+        if self.types.overloads.has_function(signature.index) {
+            return Err(unsupported("overloaded function used as a value"));
+        }
         let ty = intern_full(
             signature.receiver,
             signature.params.clone(),
@@ -143,6 +149,16 @@ impl Lower<'_> {
             return Err(type_error(
                 "a value of a constructor type is not callable; construct it with new",
             ));
+        }
+        // An overloaded function value (v38 `type_level`).
+        if let Some(set) = signature.overloads {
+            return self.overloaded_call(call, callee, set);
+        }
+        // A generic function value (v38 `type_level`): its erased signature.
+        if let Some(generic) = signature.generic
+            && self.types.profile.type_level()
+        {
+            return self.erased_call(call, callee, generic);
         }
         if !signature.shape.extended() && call.args.len() != signature.params.len() {
             return Err(invalid("callback argument count mismatch"));

@@ -16,9 +16,11 @@ use std::collections::BTreeSet;
 
 mod conditional;
 mod constructors;
+mod containers;
 mod literal_inference;
 mod mapped;
 mod objects;
+mod overloads;
 mod predicates;
 mod queries;
 mod relation;
@@ -27,6 +29,7 @@ mod template_types;
 mod tuple_types;
 mod utilities;
 
+pub(super) use containers::covariant_array;
 pub(super) use relation::extends;
 
 /// Nesting bound of type-level evaluation (conditional branches, mapped
@@ -56,6 +59,14 @@ pub(crate) struct TypeLevel {
     /// Bindings (declaring function, slot) of a `const` declared by a
     /// literal: their literal type widens in a mutable location.
     widening: BTreeSet<(usize, u32)>,
+    /// The visible local bindings' types while a statement that names one
+    /// in a `typeof` query is lowered (by name; inner scopes shadow).
+    locals: Option<BTreeMap<String, Type>>,
+    /// Methods with a `this is T` predicate, by (declaring class, name).
+    this_predicates: BTreeMap<(u32, String), Type>,
+    /// Overload sets of overloaded function types: each overload's function
+    /// type, in declaration order.
+    overloads: Vec<Vec<Type>>,
     /// Current evaluation depth.
     depth: usize,
 }
@@ -110,6 +121,19 @@ pub(super) fn evaluate(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<O
         ast::TsType::TsFnOrConstructorType(ast::TsFnOrConstructorType::TsConstructorType(
             constructor,
         )) => constructors::constructor_type(constructor, types)?,
+        // `<T>(value: T) => T`: the erased signature of a generic function
+        // value, instantiated at each call.
+        ast::TsType::TsFnOrConstructorType(ast::TsFnOrConstructorType::TsFnType(function))
+            if function.type_params.is_some() =>
+        {
+            constructors::generic_signature(
+                function.span,
+                &function.params,
+                Some(&function.type_ann),
+                function.type_params.as_deref(),
+                types,
+            )?
+        }
         ast::TsType::TsTypeLit(literal) if constructors::callable(literal) => {
             constructors::type_literal(literal, types)?
         }
@@ -145,6 +169,30 @@ pub(super) fn literal_text(value: &literals::LiteralValue) -> Option<String> {
         literals::LiteralValue::Boolean(flag) => Some(flag.to_string()),
         literals::LiteralValue::String(_) => None,
     }
+}
+
+/// Whether a binding pattern's annotation contains a `typeof` query (its
+/// type is resolved when the declaration is lowered, v38).
+pub(super) fn queries_type(pattern: &ast::Pat, types: &ir::ValueTypes) -> bool {
+    use swc_ecma_visit::{Visit, VisitWith};
+    struct Query(bool);
+    impl Visit for Query {
+        fn visit_ts_type_query(&mut self, _: &ast::TsTypeQuery) {
+            self.0 = true;
+        }
+    }
+    let ast::Pat::Ident(binding) = pattern else {
+        return false;
+    };
+    let Some(annotation) = &binding.type_ann else {
+        return false;
+    };
+    if !types.profile.type_level() {
+        return false;
+    }
+    let mut query = Query(false);
+    annotation.visit_with(&mut query);
+    query.0
 }
 
 /// Run one nested evaluation step under the depth bound.
@@ -237,10 +285,21 @@ fn split(ty: Type, types: &mut ir::ValueTypes) -> Vec<Type> {
 /// `this` in a class member signature: the class (polymorphic `this` is
 /// specialized to the receiver's class at each call).
 fn this_type(types: &mut ir::ValueTypes) -> Result<Type> {
-    match types.type_level.this_class {
-        Some(class) => Ok(Type::Class(class)),
-        None => Err(unsupported(
-            "this type outside a class member signature (an object type's this would be a recursive shape)",
+    if let Some(class) = types.type_level.this_class {
+        return Ok(Type::Class(class));
+    }
+    // In an interface or object type alias, `this` is the declared type
+    // itself (a recursive reference resolved through its reservation).
+    match types.type_level.resolving.last() {
+        Some((_, name, arguments)) if arguments.is_empty() => {
+            let name = name.clone();
+            named::resolve(&name, types)
+        }
+        Some((_, name, _)) => Err(unsupported(&format!(
+            "this type in the generic declaration {name} (each instantiation would refer to itself)"
+        ))),
+        None => Err(type_error(
+            "a this type is only available in a class, interface or object type member",
         )),
     }
 }
@@ -256,7 +315,9 @@ pub(super) fn member_signature(
         return lower(types);
     }
     let outer = types.type_level.this_class.replace(class);
-    let result = lower(types);
+    let result = lower(types).and_then(|signature| {
+        predicates::note_method((class, name), function, types).map(|()| signature)
+    });
     types.type_level.this_class = outer;
     if let Some(annotation) = &function.return_type
         && matches!(&*annotation.type_ann, ast::TsType::TsThisType(_))

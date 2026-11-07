@@ -6,8 +6,52 @@
 //! TypeScript emits it.
 use super::*;
 
+/// A parameter property with a default value (v38 `declaration_forms`):
+/// its binding, the default and the field initializer that gives the field
+/// its type when it has no annotation (a literal default only, so evaluating
+/// it for the field and again for the parameter cannot be observed).
+fn defaulted(
+    prop: &ast::TsParamProp,
+    profile: varta_common::language::LanguageProfile,
+    source: &Source,
+) -> Result<(ast::BindingIdent, Box<ast::Expr>, Option<Box<ast::Expr>>)> {
+    let refused = || {
+        source.locate(
+            unsupported("constructor parameter property with a default value or pattern"),
+            prop.span,
+        )
+    };
+    let ast::TsParamPropParam::Assign(assign) = &prop.param else {
+        return Err(refused());
+    };
+    let ast::Pat::Ident(binding) = &*assign.left else {
+        return Err(refused());
+    };
+    if !profile.declaration_forms() {
+        return Err(refused());
+    }
+    let literal = matches!(
+        &*assign.right,
+        ast::Expr::Lit(ast::Lit::Num(_) | ast::Lit::Str(_) | ast::Lit::Bool(_))
+    );
+    if binding.type_ann.is_none() && !literal {
+        return Err(source.locate(
+            type_error(
+                "a parameter property with a non-literal default value needs a type annotation",
+            ),
+            prop.span,
+        ));
+    }
+    let initializer = (binding.type_ann.is_none()).then(|| assign.right.clone());
+    Ok((binding.clone(), assign.right.clone(), initializer))
+}
+
 /// The class with its constructor parameter properties rewritten.
-pub(super) fn rewrite(mut class: Box<ast::Class>, source: &Source) -> Result<Box<ast::Class>> {
+pub(super) fn rewrite(
+    mut class: Box<ast::Class>,
+    source: &Source,
+    profile: varta_common::language::LanguageProfile,
+) -> Result<Box<ast::Class>> {
     let mut fields = Vec::new();
     for member in &mut class.body {
         let ast::ClassMember::Constructor(constructor) = member else {
@@ -18,12 +62,14 @@ pub(super) fn rewrite(mut class: Box<ast::Class>, source: &Source) -> Result<Box
             let ast::ParamOrTsParamProp::TsParamProp(prop) = param else {
                 continue;
             };
-            let ast::TsParamPropParam::Ident(binding) = &prop.param else {
-                return Err(source.locate(
-                    unsupported("constructor parameter property with a default value or pattern"),
-                    prop.span,
-                ));
+            let (binding, default, initializer) = match &prop.param {
+                ast::TsParamPropParam::Ident(binding) => (binding.clone(), None, None),
+                ast::TsParamPropParam::Assign(_) => {
+                    let (binding, default, initializer) = defaulted(prop, profile, source)?;
+                    (binding, Some(default), initializer)
+                }
             };
+            let binding = &binding;
             if prop.is_override || !prop.decorators.is_empty() {
                 return Err(source.locate(
                     unsupported("override or decorated constructor parameter property"),
@@ -35,7 +81,7 @@ pub(super) fn rewrite(mut class: Box<ast::Class>, source: &Source) -> Result<Box
             fields.push(ast::ClassMember::ClassProp(ast::ClassProp {
                 span,
                 key: ast::PropName::Ident(ast::IdentName::new(name.sym.clone(), name.span)),
-                value: None,
+                value: initializer,
                 type_ann: binding.type_ann.clone(),
                 is_static: false,
                 decorators: Vec::new(),
@@ -68,10 +114,18 @@ pub(super) fn rewrite(mut class: Box<ast::Class>, source: &Source) -> Result<Box
                     })),
                 })),
             }));
+            let pat = match default {
+                Some(right) => ast::Pat::Assign(ast::AssignPat {
+                    span,
+                    left: Box::new(ast::Pat::Ident(binding.clone())),
+                    right,
+                }),
+                None => ast::Pat::Ident(binding.clone()),
+            };
             *param = ast::ParamOrTsParamProp::Param(ast::Param {
                 span,
                 decorators: Vec::new(),
-                pat: ast::Pat::Ident(binding.clone()),
+                pat,
             });
         }
         if assignments.is_empty() {

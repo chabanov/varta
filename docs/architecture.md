@@ -11847,22 +11847,272 @@ refused with an `unsupported …` diagnostic that names it (list below).
   `` `text-${size}` `` with `const size = "sm"` is enumerated without an
   annotation.
 
-Refused, each by name: `unique symbol` (no Symbol values in this profile),
-`import("…")` types, pattern template literal types outside an `extends`
-clause (`` `on${string}` ``), intrinsic string types over non-literal types,
-mapped types over class instance types and over `number`/symbol key sets,
-`keyof` of classes, arrays, tuples, primitives and `never`, intersections of
-function types (an overloaded value), of a primitive with an object type
-(branded primitives) and of object types whose shared property has no common
-type, overloaded call or construct signatures and callable objects with
-properties, generic call/construct signatures and constructor types, `typeof`
-of a function-local binding, of a generic function or class, and of an
-initializer whose type would need lowering, `infer` inside a union pattern
-or inside a declared generic type's arguments, `infer` over tuples with
-optional elements, tuple elements after a rest element, `this` types outside
-class member signatures, predicate narrowing of a non-union class instance to
-a subclass or of `unknown` to an object type (the binding keeps its type),
-and `this is T` method predicates (no narrowing).
+- **Step 2 admissions (2026-11-06, owner decisions).**
+  - *Branded primitives*: `string & { __brand: "Id" }` (any primitive or
+    literal set intersected with an object type) is the primitive; the object
+    type is a phantom brand with no run-time property.
+  - *`typeof` of local bindings*: a query in a function body sees the
+    bindings in scope at its statement (declared or inferred types; inner
+    scopes shadow module values); an annotated declaration whose annotation
+    queries a local resolves when the declaration is reached. A module-level
+    declaration never sees a function's locals.
+  - *Overloads*: an object type or interface with several call (or several
+    construct) signatures, and an intersection of function types, is an
+    overloaded function type: the function type whose parameters and result
+    are the unions of the overloads' (`FunctionType::overloads`). A call
+    selects the first overload whose parameters accept the arguments' static
+    types, checks the arguments against it and reads the result as that
+    overload's result through a run-time member test. A value converts to the
+    overloaded type when its own signature is the merged one (typically
+    `fn as Overloaded`).
+  - *Generic call signatures* (`<T>(x: T) => T`, `{ <T>(xs: T[]): T[] }`):
+    the erased signature of generic method signatures; a call instantiates
+    the type parameters from explicit arguments, from whole-parameter (`x: T`)
+    and element (`xs: T[]`) arguments, then defaults, then `unknown`, and
+    checks the result back to the instantiated type. A function literal
+    lowered against the erased type takes it.
+  - *`this` in object types*: in an interface or object type alias, `this` is
+    the declared type itself (through the recursive-type reservation); a
+    generic declaration's `this` stays refused.
+  - *`keyof` and mapped types over every closed type*: a class instance's
+    public fields, getters and methods (methods as function types without a
+    receiver; `C["m"]` is that type, and `Partial<C>`/`Pick<C, K>`/mapped
+    types map them); an array's and tuple's `number`, positions and
+    `Array.prototype` string keys; a primitive's prototype string keys
+    (`number` for strings). Symbol-keyed members have no key type here.
+  - *Pattern template literal types* (`` `on${string}` ``) and intrinsic
+    string types over `string` are `string` outside an `extends` clause (a
+    lenient deviation: TypeScript would also check each literal assigned to
+    them against the pattern).
+  - *`infer`* inside a declared generic type's arguments (`Box<infer U>`: the
+    declaration body with its parameters as inference positions), in a union
+    pattern with one inferring member (`infer U | undefined`) and over
+    optional tuple elements (`[unknown, (infer S)?]` binds the declared type).
+  - *Elements after a rest element* (`[...string[], number]`,
+    `TupleType::trailing`): literal positions are typed from the end, a read
+    at a literal index past the leading elements has the union of the rest
+    and trailing types.
+  - *Narrowing*: a predicate narrows a class instance to a subclass (the read
+    tests the descriptor) and `unknown` to an object type (the read is the
+    checked assertion of `x as T`); `this is T` method predicates narrow the
+    receiver of `x.isT()`.
+  - *Class subtyping in containers*: a subclass instance is accepted wherever
+    an ancestor is expected in arrays (`push`, literals, element writes),
+    tuples, records, `Map`/`Set` values and unions. An array of a class
+    converts to an array of an ancestor class (`B[]` to `A[]`) by a shallow
+    copy (an array literal is retyped), and an array of a union of classes
+    to an array of their common ancestor by a new array of the unboxed
+    elements.
+- **Intentional deviations from Node.** (1) A type predicate that lies
+  (narrows to a member the value does not hold) throws `TypeError` at the
+  narrowed read (`value does not have the type its type predicate
+  asserted`), consistent with the checked `as` assertions; Node continues
+  with the mistyped value. (2) A `B[]` converted to `A[]` is a copy: a write
+  through one name is not seen through the other, where Node aliases one
+  array (a shared alias could store an `A` into the `B[]`).
+
+Still refused, each by name: `unique symbol` (no Symbol values in this
+profile), `import("…")` types, callable objects with properties (a call
+signature together with other members: no closed layout holds a function
+value and fields), overloads with a `this` parameter, type parameters or a
+rest parameter, generic construct signatures and constructor types,
+intersections of object types whose shared property has no common type,
+mapped types over `number` or symbol key sets, `keyof never`, `this` in a
+generic declaration, `typeof` of a generic function or class and of a
+module initializer whose type would need lowering, `infer` inside an
+intersection pattern or a union with several inferring members, and an
+`asserts this` method.
+
+#### Declarations and classes (`declaration_forms`)
+
+Additions to v38 (2026-11-06, K9 track B) under the selector
+`LanguageProfile::declaration_forms()`: TypeScript's declaration forms and
+the remaining class member forms. No host import, value layout, frame
+catalog, scheduler or ABI changes: every form lowers to the checked subset
+before or during type checking, so the native runtime and every
+JavaScript host run it unchanged. V1–v37 keep rejecting every form below
+with their old diagnostics (`top-level declaration`, `abstract class`,
+`function body is required`, `class setter`, `static class field`,
+`function or class in a module constant initializer`, `class auto-accessor`;
+`@` stays a syntax error). Generated declarations are named
+`__vartaDecl$…`; program identifiers may not start with `__vartaDecl`. A
+class declared under a generated name shows its own declared name at run
+time (`new.target.name`, an Error subclass's `name`).
+
+- **Enums.** `enum` and `const enum`, numeric (auto-increment from 0 or
+  from the previous numeric member), string and heterogeneous. Member
+  initializers are TypeScript's constant enum expressions, evaluated by
+  the compiler with ECMAScript number semantics: numeric and string
+  literals, no-substitution templates, references to earlier members (bare
+  or qualified) and to members of other enums, parentheses, unary `+ - ~`,
+  binary `+ - * / % ** << >> >>> & | ^`, string concatenation and the
+  `length` of a string literal. The enum type is the union of its member
+  literal types; `E.X` (and `E['X']`) is the member's literal, and the
+  member type `E.X` its literal type, so enum members narrow and
+  discriminate unions like literals. Assignability follows tsc 5: the
+  numeric part of an enum type accepts any `number` value but a numeric
+  literal only if it is a member value (it stays a literal type for
+  narrowing and exhaustive `switch`; an out-of-domain value read from a
+  `number` falls to `default`), and the string part is nominal: only the
+  enum's members (`E.X`, `'x' as E`) are assignable, never a bare string
+  literal (`lower::literals::LiteralKind`). An unannotated `let`/`var`, parameter
+  default or mutable class field initialized with a member gets the enum
+  type, as TypeScript widens it. The reverse mapping `E[k]` of a non-const
+  enum with numeric members is the member name for a constant key, and
+  otherwise a call of a generated function typed
+  `(value: number) => string | undefined` that returns the name of the last
+  member with that value or `undefined`. TypeScript types it `string`; this
+  is the intended deviation (owner decision, 2026-11-06): it equals tsc
+  under `noUncheckedIndexedAccess` and keeps a missing key honest. Refused
+  by name: a
+  computed member whose initializer is not a constant expression, a
+  non-finite member value, merged enum declarations, a string member
+  followed by an uninitialized one (TS1061), a dynamic key of a const enum
+  (TS2476), `declare enum`, and a const enum used as a value (TS2475).
+  A non-const enum used as a value (`Object.keys(E)`, `f(E)`, `typeof E`,
+  `keyof typeof E`) is its enum object: a generated module constant with
+  JavaScript's own keys and order (array-index reverse keys ascending, then
+  member names and other reverse keys in creation order), unread ones
+  pruned; a string-keyed `E[k]` reads it. An enum with a non-integer member
+  value has no object.
+- **Namespaces.** `namespace N { … }`, nested and dotted (`namespace
+  A.B.C`), exported or not. Every member is hoisted to a module declaration
+  under a generated name and every reference to it, unqualified inside the
+  namespace or qualified (`N.x`, `N.Inner.f()`, the type `N.T`,
+  `implements N.I`, `typeof N.x`), becomes that name; a local binding that
+  shadows a member is never rewritten. Members are functions (with
+  overloads), classes, `const`/`let` variables (module constants and
+  variables with their initializer rules), interfaces, type aliases, enums
+  and namespaces. Declaration merging follows TypeScript: namespaces merge
+  with namespaces (exported members are visible unqualified in every
+  declaration; unexported ones only in their own), and with a function,
+  class or enum of the same name (`f.helper`, `C.create()`, `E.parse()`);
+  interfaces merge with interfaces. An exported namespace or enum is used
+  from other modules through its generated declarations, also under an
+  import alias and through re-exports (`export { E } from`, `export *`,
+  `export { E }` of an import); generated names carry a hash of their
+  module path (`__vartaDecl$m<hash>$…`), so two modules' declarations never
+  collide. A namespace without a value of its own used as a value (or in
+  `typeof`) is its namespace object, a generated module constant after its
+  last declaration whose properties are its exported functions, constants,
+  enum objects and nested namespace objects in declaration order, typed
+  member by member; a namespace with a class or `let` member, or a constant
+  without an annotation or literal initializer, has none (`namespace object
+  … used as a value`). Refused by name: statements in a namespace body, ambient
+  namespaces and modules, an
+  unexported member reached qualified (`namespace N has no exported member
+  …`), a type-only import of a namespace, and import aliases
+  (`import x = N.y`).
+- **Abstract classes.** `abstract class` with abstract methods, getters
+  and fields. An abstract class cannot be constructed (TS2511), a concrete
+  descendant must implement every inherited abstract member (TS2515),
+  `super.m()` of an abstract method is refused (TS2513), and abstract
+  members appear only in abstract classes (TS1244). An abstract method's
+  slot dispatches to the overriding implementations like any overridden
+  method (its own body throws and is unreachable); an abstract field is a
+  declared slot that the concrete descendant defines, which the abstract
+  class's constructor may not read.
+- **Overloads.** Function, method, static method and constructor overload
+  signatures (`function f(x: string): string;` before the implementation).
+  A call resolves to the first signature in declaration order whose arity
+  admits the arguments and whose parameters accept them (a literal
+  argument, including an enum member, has its literal type); no match is
+  TS2769. The implementation signature is hidden: the arguments are bound
+  to it, and its result is checked against the selected signature's result
+  type, free for an upcast and otherwise tested like `x as T` (a
+  `TypeError` if the implementation returns a value its overload does not
+  admit). Signatures need return annotations and must be compatible with the
+  implementation (TS2394); they precede it directly with the same export
+  state (TS2391, TS2383). Generic overloads and an overloaded function used
+  as a value are refused by name.
+- **Setters and accessors.** `set x(v)` with or without a `get x()`: an
+  assignment `o.x = v` evaluates `o`, then `v`, calls the setter and yields
+  `v`; `o.x op= v` and `o.x++` read through the getter first. Accessors are
+  inherited and overridden like methods; a class that declares only one
+  half of an inherited get/set pair is refused (JavaScript would drop the
+  other half), as are logical assignments through accessors and compound
+  updates of setter-only accessors. `accessor x = v` (an ECMAScript
+  auto-accessor) is a private storage field with a get/set pair; `static
+  accessor x` is a static field.
+- **Static fields and static blocks.** `static x: T = v` of a class (at
+  module level or in a namespace) is the module variable `__vartaDecl$C$x`
+  declared right after the class, and `static { … }` is a module variable
+  initialized by calling the block as an arrow, so both run in the module
+  initializer sequence at the class's position, as ECMAScript evaluates
+  them at class definition ([module evaluation](#module-evaluation-module_evaluation)).
+  `C.x`, and `this.x` in static code, read and write the field; a subclass
+  reads an inherited static field through the same variable, and writing
+  it through the subclass (which creates an own property of the subclass in
+  JavaScript) is refused. `private`, `protected` (TS2341) and `readonly`
+  (TS2540) are checked. Another module writes an exported class's static
+  field through a setter function the declaring module exports
+  (`C.x = v`, `op=`, `++`/`--`); a field without an annotation or literal
+  initializer has none.
+- **Static methods, `this` and `super`.** In static methods, static field
+  initializers and static blocks `this` is the class. A static method that
+  uses `this` or `super` is copied into each module-level subclass that
+  inherits it and is named through that subclass (or that is exported),
+  with `this` naming the subclass, so `Derived.create()` calls
+  `Derived.kind()` as in JavaScript. `super.m()` in static code calls the
+  parent's `m` with the calling class as `this` (a copy of `m` in the
+  calling class when `m` uses `this`), and `super.x` reads the parent's
+  static field. A `this`-using static method inherited from a class of
+  another module, and `super.m()` of such a method from a static field
+  initializer or block, are refused by name.
+- **Class expressions and local classes.** `const X = class [N] { … }` at
+  module level or in a function body, and a class declaration in a function
+  body, is a module class declaration (named `X`, or the class's own name
+  `N`); a class in a function may not reference the function's local
+  bindings (`class expression that captures the local binding …`, `local
+  class that captures …`), and class expressions in any other position are
+  refused.
+- **Other class forms.** `override` on methods and accessors, `declare`
+  field redeclarations, `implements` of several interfaces, and
+  constructor parameter properties with default values (a non-literal
+  default needs a type annotation).
+- **Class index signatures.** `[key: string]: T` gives a class's instances
+  own properties beyond their declared members: they live in a hidden
+  dictionary field the constructor creates empty (inherited by
+  subclasses), and a read, write, compound assignment or update of a member
+  the class does not declare, by name or by a computed string key, is a
+  dictionary operation on it (a missing key reads `undefined`). Every
+  declared field must be of the index's value type and methods and
+  accessors are refused unless it is `unknown` (TS2411). Static, readonly
+  and non-string index signatures are refused by name, and `JSON.stringify`
+  of such an instance is refused (JavaScript would list the extra
+  properties after the fields).
+- **Not admitted yet.** Standard decorators (they need classes as values
+  and the decorator context objects) and generic overload signatures are
+  refused by name (`decorator`, `generic overload signature`). Legacy
+  `experimentalDecorators` are not planned.
+
+#### Module evaluation (`module_evaluation`)
+
+V38 (2026-11-06, K9 B, owner decision) evaluates modules as ECMAScript
+does: each instance evaluates its module graph once, in dependency order and
+in source order within a module, before `main`; an HTTP v2 request's fresh
+Store is its own instance, so module code runs again for each request (as
+the call-free initializers already did). Tool entries keep refusing stored
+module values (`module constants with tool/HTTP entry points`). A module
+initializer may call functions and construct objects (`const registry =
+load()`, `static instance = new C()`, static blocks); only a top-level
+`await` stays refused. A primitive `const` whose initializer runs code is
+stored like a module variable that no code may assign. Initializers that
+run code are never pruned as unread (`program_limits`).
+
+JavaScript throws `ReferenceError` when code reads a binding before its
+initialization. Varta refuses such a read at compile time whenever an
+effectful initializer can reach it: the reachable code is the initializer
+plus, transitively, every module function, function-valued binding and
+class it names (a class with its constructor, instance fields and instance
+methods; a static method through `C.m`), and no binding of the module
+declared at or after the initializer may be read by it (`binding used
+before initialization: X is read by code this initializer runs`). The
+analysis over-approximates calls (a program that only names a later
+binding on a path it never takes is refused too); other modules cannot
+reach this module's bindings early, since imports are acyclic and
+initialized first. A module variable whose type is `undefined` or `null`
+alone is refused (it has no boxed form).
 
 #### Bytes held by unknown (`byte_values`)
 
