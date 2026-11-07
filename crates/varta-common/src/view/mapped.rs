@@ -1,9 +1,10 @@
 //! Properties the subset maps onto physical longhands when a stylesheet is
-//! parsed: the flow-relative box properties of CSS Logical 1 (§4.1, §4.2,
-//! §4.3) in the subset's one writing mode (`horizontal-tb`, `ltr`: the
-//! inline start is the left side, the block start the top), and the
+//! parsed: the flow-relative box, border and corner properties of CSS
+//! Logical 1 (§4.1–§4.6) in the subset's one writing mode (`horizontal-tb`,
+//! `ltr`: the inline start is the left side, the block start the top), the
 //! shorthands `inset` (Positioned Layout 3 §3.1) and `flex` (Flexbox 1
-//! §7.1). A mapped declaration declares each of its longhands at its own
+//! §7.1), and the legacy name alias `-webkit-user-select` of `user-select`
+//! (Cascade 5 §legacy name aliases, as Chrome implements it). A mapped declaration declares each of its longhands at its own
 //! place in the cascade, as a shorthand does (Cascade 5 §1.2), so a later
 //! or more specific `padding-left` and `padding-inline` win over each other
 //! by the usual order (Logical 1 §4: they share computed values).
@@ -41,6 +42,35 @@ pub enum Mapped {
     InsetBlockStart,
     InsetBlockEnd,
     Flex,
+    BorderInline,
+    BorderBlock,
+    BorderInlineStart,
+    BorderInlineEnd,
+    BorderBlockStart,
+    BorderBlockEnd,
+    BorderInlineWidth,
+    BorderInlineStyle,
+    BorderInlineColor,
+    BorderBlockWidth,
+    BorderBlockStyle,
+    BorderBlockColor,
+    BorderInlineStartWidth,
+    BorderInlineStartStyle,
+    BorderInlineStartColor,
+    BorderInlineEndWidth,
+    BorderInlineEndStyle,
+    BorderInlineEndColor,
+    BorderBlockStartWidth,
+    BorderBlockStartStyle,
+    BorderBlockStartColor,
+    BorderBlockEndWidth,
+    BorderBlockEndStyle,
+    BorderBlockEndColor,
+    BorderStartStartRadius,
+    BorderStartEndRadius,
+    BorderEndStartRadius,
+    BorderEndEndRadius,
+    WebkitUserSelect,
 }
 
 /// One longhand of a mapped declaration whose value has `var()`: the mapped
@@ -62,12 +92,15 @@ enum Spread {
     Box,
     /// `flex`: `none | [<'flex-grow'> <'flex-shrink'>? || <'flex-basis'>]`.
     Flex,
+    /// The whole value for every longhand (a side's `border` shorthand, a
+    /// corner's radii, a legacy alias).
+    Whole,
 }
 
 use CssProperty as P;
 
 impl Mapped {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 49] = [
         Self::PaddingInline,
         Self::PaddingBlock,
         Self::PaddingInlineStart,
@@ -88,6 +121,35 @@ impl Mapped {
         Self::InsetBlockStart,
         Self::InsetBlockEnd,
         Self::Flex,
+        Self::BorderInline,
+        Self::BorderBlock,
+        Self::BorderInlineStart,
+        Self::BorderInlineEnd,
+        Self::BorderBlockStart,
+        Self::BorderBlockEnd,
+        Self::BorderInlineWidth,
+        Self::BorderInlineStyle,
+        Self::BorderInlineColor,
+        Self::BorderBlockWidth,
+        Self::BorderBlockStyle,
+        Self::BorderBlockColor,
+        Self::BorderInlineStartWidth,
+        Self::BorderInlineStartStyle,
+        Self::BorderInlineStartColor,
+        Self::BorderInlineEndWidth,
+        Self::BorderInlineEndStyle,
+        Self::BorderInlineEndColor,
+        Self::BorderBlockStartWidth,
+        Self::BorderBlockStartStyle,
+        Self::BorderBlockStartColor,
+        Self::BorderBlockEndWidth,
+        Self::BorderBlockEndStyle,
+        Self::BorderBlockEndColor,
+        Self::BorderStartStartRadius,
+        Self::BorderStartEndRadius,
+        Self::BorderEndStartRadius,
+        Self::BorderEndEndRadius,
+        Self::WebkitUserSelect,
     ];
 
     /// The property name.
@@ -140,6 +202,134 @@ impl Mapped {
             Self::InsetBlockStart => ("inset-block-start", Spread::One, &[P::Top]),
             Self::InsetBlockEnd => ("inset-block-end", Spread::One, &[P::Bottom]),
             Self::Flex => ("flex", Spread::Flex, FLEX),
+            // Logical 1 §4.4: the flow-relative borders, as the physical
+            // side shorthands and longhands.
+            Self::BorderInline => (
+                "border-inline",
+                Spread::Whole,
+                &[P::BorderLeft, P::BorderRight],
+            ),
+            Self::BorderBlock => (
+                "border-block",
+                Spread::Whole,
+                &[P::BorderTop, P::BorderBottom],
+            ),
+            Self::BorderInlineStart => ("border-inline-start", Spread::Whole, &[P::BorderLeft]),
+            Self::BorderInlineEnd => ("border-inline-end", Spread::Whole, &[P::BorderRight]),
+            Self::BorderBlockStart => ("border-block-start", Spread::Whole, &[P::BorderTop]),
+            Self::BorderBlockEnd => ("border-block-end", Spread::Whole, &[P::BorderBottom]),
+            Self::BorderInlineWidth => (
+                "border-inline-width",
+                Spread::Pair,
+                &[P::BorderLeftWidth, P::BorderRightWidth],
+            ),
+            Self::BorderInlineStyle => (
+                "border-inline-style",
+                Spread::Pair,
+                &[P::BorderLeftStyle, P::BorderRightStyle],
+            ),
+            Self::BorderInlineColor => (
+                "border-inline-color",
+                Spread::Pair,
+                &[P::BorderLeftColor, P::BorderRightColor],
+            ),
+            Self::BorderBlockWidth => (
+                "border-block-width",
+                Spread::Pair,
+                &[P::BorderTopWidth, P::BorderBottomWidth],
+            ),
+            Self::BorderBlockStyle => (
+                "border-block-style",
+                Spread::Pair,
+                &[P::BorderTopStyle, P::BorderBottomStyle],
+            ),
+            Self::BorderBlockColor => (
+                "border-block-color",
+                Spread::Pair,
+                &[P::BorderTopColor, P::BorderBottomColor],
+            ),
+            Self::BorderInlineStartWidth => (
+                "border-inline-start-width",
+                Spread::One,
+                &[P::BorderLeftWidth],
+            ),
+            Self::BorderInlineStartStyle => (
+                "border-inline-start-style",
+                Spread::One,
+                &[P::BorderLeftStyle],
+            ),
+            Self::BorderInlineStartColor => (
+                "border-inline-start-color",
+                Spread::One,
+                &[P::BorderLeftColor],
+            ),
+            Self::BorderInlineEndWidth => (
+                "border-inline-end-width",
+                Spread::One,
+                &[P::BorderRightWidth],
+            ),
+            Self::BorderInlineEndStyle => (
+                "border-inline-end-style",
+                Spread::One,
+                &[P::BorderRightStyle],
+            ),
+            Self::BorderInlineEndColor => (
+                "border-inline-end-color",
+                Spread::One,
+                &[P::BorderRightColor],
+            ),
+            Self::BorderBlockStartWidth => (
+                "border-block-start-width",
+                Spread::One,
+                &[P::BorderTopWidth],
+            ),
+            Self::BorderBlockStartStyle => (
+                "border-block-start-style",
+                Spread::One,
+                &[P::BorderTopStyle],
+            ),
+            Self::BorderBlockStartColor => (
+                "border-block-start-color",
+                Spread::One,
+                &[P::BorderTopColor],
+            ),
+            Self::BorderBlockEndWidth => (
+                "border-block-end-width",
+                Spread::One,
+                &[P::BorderBottomWidth],
+            ),
+            Self::BorderBlockEndStyle => (
+                "border-block-end-style",
+                Spread::One,
+                &[P::BorderBottomStyle],
+            ),
+            Self::BorderBlockEndColor => (
+                "border-block-end-color",
+                Spread::One,
+                &[P::BorderBottomColor],
+            ),
+            // Logical 1 §4.6: the flow-relative corners.
+            Self::BorderStartStartRadius => (
+                "border-start-start-radius",
+                Spread::Whole,
+                &[P::BorderTopLeftRadius],
+            ),
+            Self::BorderStartEndRadius => (
+                "border-start-end-radius",
+                Spread::Whole,
+                &[P::BorderTopRightRadius],
+            ),
+            Self::BorderEndStartRadius => (
+                "border-end-start-radius",
+                Spread::Whole,
+                &[P::BorderBottomLeftRadius],
+            ),
+            Self::BorderEndEndRadius => (
+                "border-end-end-radius",
+                Spread::Whole,
+                &[P::BorderBottomRightRadius],
+            ),
+            Self::WebkitUserSelect => ("-webkit-user-select", Spread::Whole, &[P::UserSelect]),
         }
     }
 
@@ -151,6 +341,9 @@ impl Mapped {
     pub fn components(self, value: &str) -> Option<Vec<String>> {
         let parts = split(value)?;
         let (_, spread, targets) = self.row();
+        if spread == Spread::Whole {
+            return (!parts.is_empty()).then(|| vec![parts.join(" "); targets.len()]);
+        }
         if let [single] = parts.as_slice()
             && super::css::CSS_WIDE_KEYWORDS
                 .iter()
@@ -235,7 +428,7 @@ fn flex(parts: &[String]) -> Option<Vec<String>> {
 
 /// The top-level components of a value: whitespace-separated, functions
 /// and blocks whole. `None` for unbalanced parentheses.
-pub(crate) fn split(value: &str) -> Option<Vec<String>> {
+pub fn split(value: &str) -> Option<Vec<String>> {
     let mut parts = Vec::new();
     let mut depth = 0usize;
     let mut start: Option<usize> = None;
@@ -298,6 +491,40 @@ mod tests {
         );
         assert_eq!(parts(Mapped::Inset, "inherit"), texts(&["inherit"; 4]));
         assert_eq!(parts(Mapped::Inset, "min(1px, 2px"), None);
+    }
+
+    /// Logical 1 §4.4 and §4.6, and the legacy alias of `user-select`.
+    #[test]
+    fn logical_borders_and_corners_map_onto_the_physical_sides() {
+        assert_eq!(
+            Mapped::BorderInline.targets(),
+            &[P::BorderLeft, P::BorderRight]
+        );
+        assert_eq!(
+            parts(Mapped::BorderBlock, "1px  solid red"),
+            texts(&["1px solid red", "1px solid red"])
+        );
+        assert_eq!(
+            parts(Mapped::BorderInlineWidth, "1px 2px"),
+            texts(&["1px", "2px"])
+        );
+        assert_eq!(
+            Mapped::BorderBlockEndColor.targets(),
+            &[P::BorderBottomColor]
+        );
+        assert_eq!(
+            parts(Mapped::BorderEndStartRadius, "4px 8px"),
+            texts(&["4px 8px"])
+        );
+        assert_eq!(
+            Mapped::BorderEndStartRadius.targets(),
+            &[P::BorderBottomLeftRadius]
+        );
+        assert_eq!(
+            Mapped::parse("-WEBKIT-USER-SELECT"),
+            Some(Mapped::WebkitUserSelect)
+        );
+        assert_eq!(parts(Mapped::BorderInline, ""), None);
     }
 
     /// Flexbox 1 §7.1.1 and the shorthand's grammar.

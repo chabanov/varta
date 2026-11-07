@@ -341,6 +341,14 @@ fn paint_only(property: CssProperty) -> bool {
             | CssProperty::Color
             | CssProperty::Opacity
             | CssProperty::BorderRadius
+            | CssProperty::BorderTopLeftRadius
+            | CssProperty::BorderTopRightRadius
+            | CssProperty::BorderBottomRightRadius
+            | CssProperty::BorderBottomLeftRadius
+            // Visibility, pointer and selection behaviour change no box.
+            | CssProperty::Visibility
+            | CssProperty::PointerEvents
+            | CssProperty::UserSelect
             | CssProperty::Outline
             | CssProperty::OutlineWidth
             | CssProperty::OutlineStyle
@@ -460,23 +468,65 @@ fn border_shorthand(
     Some((width, solid))
 }
 
+/// One side's width or style of a border declaration: `(width, solid)`.
+/// `border-width` and `border-style` take their `side` component by the box
+/// rule (top, right, bottom, left); `none` and `hidden` draw no border
+/// (CSS Backgrounds 3 §3.2).
 pub(crate) fn border_component(
     property: CssProperty,
     value: &str,
+    side: u8,
     units: Units,
     valid: impl FnOnce(CssProperty, &str) -> bool,
 ) -> Option<(f32, bool)> {
+    use CssProperty as P;
+    let style = |value: &str| match value {
+        "solid" => Some((3.0, true)),
+        "none" | "hidden" => Some((3.0, false)),
+        _ => None,
+    };
     match property {
-        CssProperty::BorderWidth => {
-            let number = units.pixels(value, false)?;
-            Some((number, false))
+        P::BorderWidth => Some((units.pixels(&box_component(value, side)?, false)?, false)),
+        P::BorderTopWidth | P::BorderRightWidth | P::BorderBottomWidth | P::BorderLeftWidth => {
+            Some((units.pixels(value, false)?, false))
         }
-        CssProperty::BorderStyle => match value {
-            "solid" => Some((3.0, true)),
-            "none" => Some((3.0, false)),
-            _ => None,
-        },
+        P::BorderStyle => style(&box_component(value, side)?),
+        P::BorderTopStyle | P::BorderRightStyle | P::BorderBottomStyle | P::BorderLeftStyle => {
+            style(value)
+        }
         _ => border_shorthand(value, units, valid),
+    }
+}
+
+/// Side `side` (top, right, bottom, left) of a one- to four-value box
+/// shorthand (CSS Box 4 §2).
+pub(crate) fn box_component(value: &str, side: u8) -> Option<String> {
+    let parts = varta_common::view::mapped::split(value)?;
+    let at = match parts.len() {
+        1 => 0,
+        2 => usize::from(side % 2),
+        3 => [0, 1, 2, 1][usize::from(side)],
+        _ => usize::from(side),
+    };
+    parts.get(at).cloned()
+}
+
+/// A declaration of the cascade as `(property, value)`: a mapped longhand
+/// with `var()` takes its component of the substituted value (`None` when
+/// invalid at computed-value time); custom properties have none.
+pub(crate) fn declared_value(
+    variables: &style::Variables<'_>,
+    declared: &varta_style::Declared<'_>,
+) -> Option<(CssProperty, Option<String>)> {
+    match declared.name {
+        Name::Property(property) => Some((*property, Some(declared.value.to_owned()))),
+        Name::Mapped(property, part) => Some((
+            *property,
+            variables
+                .substitute(declared.value)
+                .and_then(|value| part.source.component(&value, part.index)),
+        )),
+        Name::Custom(_) => None,
     }
 }
 
@@ -493,14 +543,14 @@ pub(crate) fn border_widths(
     let variables = style::Variables::new(tree, id, env);
     let mut widths = [3.0; 4];
     let mut solid = [false; 4];
-    let mut apply = |property: CssProperty, raw: &str, only: Option<(u8, bool)>| {
-        let value = variables.property(property, raw);
+    let mut apply = |property: CssProperty, raw: Option<&str>, only: Option<(u8, bool)>| {
+        let value = raw.and_then(|raw| variables.property(property, raw));
         for (side, is_style) in border_components(property) {
             if only.is_some_and(|only| only != (side, is_style)) {
                 continue;
             }
             let (width, present) = match &value {
-                Some(value) => border_component(property, value, units, |p, v| {
+                Some(value) => border_component(property, value, side, units, |p, v| {
                     tree.render_reads.validate(env, p, v)
                 })
                 .ok_or(LayoutError::Unsupported(id))?,
@@ -517,16 +567,16 @@ pub(crate) fn border_widths(
     // Cascade 5 §6.1: rule declarations, inline values, important rules.
     let cascade = tree.cascade_refs(id, env);
     for declared in &cascade.normal {
-        if let Name::Property(property) = declared.name {
-            apply(*property, declared.value, None)?;
+        if let Some((property, value)) = declared_value(&variables, declared) {
+            apply(property, value.as_deref(), None)?;
         }
     }
     for (&(side, is_style), (property, raw)) in &element.border_inline {
-        apply(*property, raw, Some((side, is_style)))?;
+        apply(*property, Some(raw), Some((side, is_style)))?;
     }
     for declared in &cascade.important {
-        if let Name::Property(property) = declared.name {
-            apply(*property, declared.value, None)?;
+        if let Some((property, value)) = declared_value(&variables, declared) {
+            apply(property, value.as_deref(), None)?;
         }
     }
     for i in 0..4 {
@@ -614,6 +664,7 @@ fn layout_properties(
                     CssProperty::PaddingLeft,
                 ],
                 CssProperty::Gap => &[CssProperty::RowGap, CssProperty::ColumnGap],
+                CssProperty::Overflow => &[CssProperty::OverflowX, CssProperty::OverflowY],
                 _ => std::slice::from_ref(&property),
             };
             for side in affected {
@@ -641,15 +692,20 @@ fn layout_properties(
             for (side, value) in sides.into_iter().zip(values) {
                 result.insert(side, value.to_owned());
             }
-        } else if property == CssProperty::Gap {
+        } else if matches!(property, CssProperty::Gap | CssProperty::Overflow) {
             let values: Vec<_> = value.split_ascii_whitespace().collect();
-            let (row, column) = match values.as_slice() {
+            let (first, second) = match values.as_slice() {
                 [one] => (*one, *one),
-                [row, column] => (*row, *column),
+                [first, second] => (*first, *second),
                 _ => return Err(LayoutError::Unsupported(id)),
             };
-            result.insert(CssProperty::RowGap, row.to_owned());
-            result.insert(CssProperty::ColumnGap, column.to_owned());
+            let (a, b) = if property == CssProperty::Gap {
+                (CssProperty::RowGap, CssProperty::ColumnGap)
+            } else {
+                (CssProperty::OverflowX, CssProperty::OverflowY)
+            };
+            result.insert(a, first.to_owned());
+            result.insert(b, second.to_owned());
         } else {
             result.insert(property, value);
         }
@@ -664,7 +720,7 @@ fn layout_properties(
                 let values = edges(&value).ok_or(LayoutError::Unsupported(id))?;
                 values[*index].to_owned()
             }
-            CssProperty::Gap => {
+            CssProperty::Gap | CssProperty::Overflow => {
                 let values: Vec<_> = value.split_ascii_whitespace().collect();
                 let value = match values.as_slice() {
                     [one] => *one,
@@ -942,6 +998,52 @@ pub(crate) struct ResolvedText {
     pub specified_size: f32,
     /// The nearest declared (or user-agent) family list and its element.
     pub family: Option<(u32, String)>,
+}
+
+/// The used `text-transform` of the text a node renders (inherited, CSS
+/// Text 3 §2.1).
+pub(crate) fn text_transform(
+    tree: &Tree,
+    env: &Environment,
+    id: u32,
+) -> Result<crate::text::transform::TextTransform, LayoutError> {
+    // The user-agent sheet gives form controls `text-transform: none`, so
+    // they and their labels do not inherit an ancestor's transform.
+    let mut at = Some(id);
+    let mut value = None;
+    while let Some(node) = at {
+        if let Some(element) = tree.element(node) {
+            match tree.computed_property(node, env, CssProperty::TextTransform) {
+                Some(own) if own != style::INHERIT => {
+                    value = Some(own);
+                    break;
+                }
+                None if style::ControlKind::of(element).is_some()
+                    || matches!(
+                        element.tag,
+                        Tag::Button | Tag::Input | Tag::Textarea | Tag::Select
+                    ) =>
+                {
+                    break;
+                }
+                _ => {}
+            }
+        }
+        at = tree.nodes.get(&node).and_then(|node| node.parent);
+    }
+    let transform =
+        crate::text::transform::TextTransform::parse(value.as_deref().unwrap_or("none"))
+            .ok_or(LayoutError::Unsupported(id))?;
+    // A text field's or select's own text keeps its source offsets for
+    // editing and selection; transforming it is not modelled.
+    if !transform.is_none()
+        && tree
+            .element(id)
+            .is_some_and(|element| element.text_field() || element.tag == Tag::Select)
+    {
+        return Err(LayoutError::Unsupported(id));
+    }
+    Ok(transform)
 }
 
 pub(crate) fn text_style(
@@ -1239,6 +1341,7 @@ fn build_one(
                     | CssProperty::WhiteSpace
                     | CssProperty::OverflowWrap
                     | CssProperty::TextAlign
+                    | CssProperty::TextTransform
             ) && !paint_only(*property)
         }) {
             return Err(LayoutError::Unsupported(id));
@@ -1250,6 +1353,9 @@ fn build_one(
     } else {
         if let Some(kind) = control {
             controls::control_box(tree, env, (id, kind), &mut style)?;
+        }
+        if element.text_field() || element.tag == Tag::Select {
+            text_transform(tree, env, id)?;
         }
         if let Some(ua) = style::ua_defaults(element.tag).filter(|ua| ua.block) {
             ua_box(tree, env, (id, ua), base_size, &mut style)?;
@@ -1265,6 +1371,30 @@ fn build_one(
             bottom: length(widths[2]),
             left: length(widths[3]),
         };
+        // CSS Overflow 3 §3.1, each axis: `auto` scrolls when the content
+        // overflows (a classic gutter is added then), `scroll` always
+        // reserves its gutter (`scroll_gutters`), `clip` clips without a
+        // scroll container.
+        if [
+            CssProperty::Overflow,
+            CssProperty::OverflowX,
+            CssProperty::OverflowY,
+        ]
+        .iter()
+        .any(|property| computed.contains_key(property))
+        {
+            let axes = style::overflow(&computed).ok_or(LayoutError::Unsupported(id))?;
+            let taffy = |axis: style::Overflow| match axis {
+                style::Overflow::Visible => Overflow::Visible,
+                style::Overflow::Clip => Overflow::Clip,
+                style::Overflow::Hidden => Overflow::Hidden,
+                style::Overflow::Scroll | style::Overflow::Auto => Overflow::Scroll,
+            };
+            style.overflow = taffy::geometry::Point {
+                x: taffy(axes[0]),
+                y: taffy(axes[1]),
+            };
+        }
         for (property, value) in computed {
             match property {
                 // An image is a leaf whatever its display; an inline one
@@ -1276,7 +1406,9 @@ fn build_one(
                     }
                 }
                 // A replaced box is not a scroll container or a clip.
-                CssProperty::Overflow if element.tag == Tag::Img && value != "visible" => {
+                CssProperty::Overflow | CssProperty::OverflowX | CssProperty::OverflowY
+                    if element.tag == Tag::Img && value != "visible" =>
+                {
                     return Err(LayoutError::Unsupported(id));
                 }
                 // An image's own placement and sizing (`replaced`, the
@@ -1311,7 +1443,21 @@ fn build_one(
                 | CssProperty::BorderLeft
                 | CssProperty::BorderWidth
                 | CssProperty::BorderStyle
-                | CssProperty::BorderColor => {}
+                | CssProperty::BorderColor
+                | CssProperty::BorderTopWidth
+                | CssProperty::BorderRightWidth
+                | CssProperty::BorderBottomWidth
+                | CssProperty::BorderLeftWidth
+                | CssProperty::BorderTopStyle
+                | CssProperty::BorderRightStyle
+                | CssProperty::BorderBottomStyle
+                | CssProperty::BorderLeftStyle
+                | CssProperty::BorderTopColor
+                | CssProperty::BorderRightColor
+                | CssProperty::BorderBottomColor
+                | CssProperty::BorderLeftColor => {}
+                // The used overflow of both axes is set below.
+                CssProperty::Overflow | CssProperty::OverflowX | CssProperty::OverflowY => {}
                 CssProperty::FieldSizing
                     if element.tag == Tag::Textarea
                         && matches!(value.as_str(), "fixed" | "content") => {}
@@ -1322,7 +1468,8 @@ fn build_one(
                 | CssProperty::FontWeight
                 | CssProperty::FontStyle
                 | CssProperty::WhiteSpace
-                | CssProperty::LetterSpacing => {}
+                | CssProperty::LetterSpacing
+                | CssProperty::TextTransform => {}
                 CssProperty::OverflowWrap | CssProperty::TextAlign => {}
                 // `clip` is the initial value; an admitted ellipsis root is a
                 // rich formatting root (see `inline::ellipsis`).
@@ -1469,18 +1616,6 @@ fn build_one(
                         _ => return Err(LayoutError::Unsupported(id)),
                     }
                 }
-                CssProperty::Overflow => {
-                    let overflow = match value.as_str() {
-                        "visible" => Overflow::Visible,
-                        "hidden" => Overflow::Hidden,
-                        "auto" => Overflow::Scroll,
-                        _ => return Err(LayoutError::Unsupported(id)),
-                    };
-                    style.overflow = taffy::geometry::Point {
-                        x: overflow,
-                        y: overflow,
-                    };
-                }
                 CssProperty::Top => {
                     style.inset.top = units.margin(&value).ok_or(LayoutError::Unsupported(id))?
                 }
@@ -1545,6 +1680,14 @@ fn build_one(
                         style.flex_basis = units
                             .length(&value, false)
                             .ok_or(LayoutError::Unsupported(id))?
+                    }
+                }
+                // CSS Box Sizing 3 §4.1: which box `width` and `height` size.
+                CssProperty::BoxSizing => {
+                    style.box_sizing = match value.as_str() {
+                        "content-box" => BoxSizing::ContentBox,
+                        "border-box" => BoxSizing::BorderBox,
+                        _ => return Err(LayoutError::Unsupported(id)),
                     }
                 }
                 _ => return Err(LayoutError::Unsupported(id)),
@@ -1978,6 +2121,12 @@ fn geometry_and_text_inner(
             if text.is_empty() {
                 return Err(LayoutError::Unsupported(parent));
             }
+            let transform = text_transform(tree, &layout_env, parent)?;
+            let text = if transform.is_none() {
+                text
+            } else {
+                transform.apply(&text)
+            };
             let (measured, shaped) = measurer
                 .shape_styled(&text, None, &families, options)
                 .map_err(LayoutError::text(parent))?;
@@ -2124,6 +2273,16 @@ fn boxes_inner(
         Vec::new()
     };
     let mut gutters: BTreeMap<u32, (bool, bool)> = BTreeMap::new();
+    // `overflow: scroll` reserves its axis's classic gutter whether or not
+    // the content overflows (CSS Overflow 3 §3.1).
+    let always: BTreeMap<u32, (bool, bool)> = scrollers
+        .iter()
+        .filter_map(|&(id, _)| {
+            let axes = style::overflow(&tree.computed_read(id, env))?;
+            let scroll = |axis: style::Overflow| axis == style::Overflow::Scroll;
+            Some((id, (scroll(axes[1]), scroll(axes[0]))))
+        })
+        .collect();
     for pass in 0..=MAX_GUTTER_PASSES {
         engine
             .compute_layout_with_measure(
@@ -2226,9 +2385,10 @@ fn boxes_inner(
                 .layout(node)
                 .map_err(|e| LayoutError::Engine(e.to_string()))?;
             let (vertical, horizontal) = gutters.get(&id).copied().unwrap_or_default();
+            let (always_vertical, always_horizontal) = always.get(&id).copied().unwrap_or_default();
             let wanted = (
-                vertical || layout.scroll_height() > 0.0,
-                horizontal || layout.scroll_width() > 0.0,
+                vertical || always_vertical || layout.scroll_height() > 0.0,
+                horizontal || always_horizontal || layout.scroll_width() > 0.0,
             );
             if wanted == (vertical, horizontal) {
                 continue;
@@ -2500,6 +2660,26 @@ fn boxes_inner(
                     scroll = Some(metrics);
                 }
                 child_clip = intersect(clip, scrollport);
+            } else if style.overflow.x == Overflow::Clip || style.overflow.y == Overflow::Clip {
+                // `clip` without a scroll container clips its axis at the
+                // overflow clip edge, the padding box (CSS Overflow 3 §3.1,
+                // `overflow-clip-margin: 0`); the other axis stays open.
+                let padding = BoxRect {
+                    x: rect.x + layout.border.left,
+                    y: rect.y + layout.border.top,
+                    width: (rect.width - layout.border.left - layout.border.right).max(0.0),
+                    height: (rect.height - layout.border.top - layout.border.bottom).max(0.0),
+                };
+                let mut edge = clip;
+                if style.overflow.x == Overflow::Clip {
+                    edge.x = padding.x;
+                    edge.width = padding.width;
+                }
+                if style.overflow.y == Overflow::Clip {
+                    edge.y = padding.y;
+                    edge.height = padding.height;
+                }
+                child_clip = intersect(clip, edge);
             } else {
                 child_clip = clip;
             }

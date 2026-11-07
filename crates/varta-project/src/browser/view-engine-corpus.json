@@ -3614,6 +3614,273 @@
     "t"
    ],
    "style": []
+  },
+  {
+   "name": "s4-border-side-longhands",
+   "sheet": ".a { border-bottom-style: solid; border-bottom-width: 2px; border-bottom-color: #c00; border-top-width: thin; border-top-style: solid }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-border-width-box",
+   "sheet": ".a { border-style: solid none; border-width: 1px 2px 3px; border-color: #111 #222 #333 #444 }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-border-shorthand-over-longhand",
+   "sheet": ".a { border-top-width: 5px } .a { border: thick hidden #0a0 }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-border-longhand-over-shorthand",
+   "sheet": ".a { border-top: 1px solid red } .a { border-top-color: blue; border-top-width: medium }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-border-tailwind-b",
+   "sheet": ".border-b { border-bottom-style: var(--tw-border-style); border-bottom-width: 1px } @property --tw-border-style { syntax: \"*\"; inherits: false; initial-value: solid; }",
+   "classes": [
+    "border-b"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-border-logical",
+   "sheet": ".a { border-inline: 2px solid #00c; border-block-start-width: 3px; border-block-start-style: solid; border-inline-end-color: #0c0 }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-border-logical-var",
+   "sheet": ":root { --w: 1px 4px } .a { border-inline-width: var(--w); border-inline-style: solid }",
+   "classes": [
+    "",
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-border-negative-width",
+   "sheet": ".a { border-left-width: -1px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-border-dashed",
+   "sheet": ".a { border-left-style: dashed }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-border-inline-longhand",
+   "sheet": ".a { color: #000 }",
+   "classes": [
+    "a"
+   ],
+   "style": [
+    [
+     "border-left-width",
+     "4px"
+    ],
+    [
+     "border-left-style",
+     "solid"
+    ],
+    [
+     "border-left-color",
+     "#00f"
+    ]
+   ]
+  },
+  {
+   "name": "s4-radius-corners",
+   "sheet": ".a { border-radius: 4px; border-top-left-radius: 8px 2px; border-bottom-right-radius: 50% }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-radius-logical",
+   "sheet": ".a { border-start-start-radius: 6px; border-end-end-radius: 3px 5px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-radius-shorthand-wins",
+   "sheet": ".a { border-top-right-radius: 9px } .a { border-radius: 1px 2px 3px 4px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-radius-negative",
+   "sheet": ".a { border-top-left-radius: -1px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-overflow-x-auto",
+   "sheet": ".a { overflow-x: auto }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-overflow-y-clip",
+   "sheet": ".a { overflow-y: clip; overflow-x: visible }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-overflow-pair",
+   "sheet": ".a { overflow: hidden scroll }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-overflow-shorthand-wins",
+   "sheet": ".a { overflow-x: clip } .a { overflow: auto }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-overflow-longhand-wins",
+   "sheet": ".a { overflow: hidden } .a { overflow-y: visible }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-overflow-invalid",
+   "sheet": ".a { overflow-x: overlay }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-visibility",
+   "sheet": ".a { visibility: hidden } .b { visibility: visible }",
+   "classes": [
+    "a",
+    "b"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-visibility-collapse-inherit",
+   "sheet": ".a { visibility: collapse }",
+   "classes": [
+    "a",
+    ""
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-visibility-tailwind",
+   "sheet": ":is(:where(.group):focus-within .group-focus-within\\:visible) { visibility: visible } .invisible { visibility: hidden }",
+   "classes": [
+    "group",
+    "invisible group-focus-within:visible"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-text-transform",
+   "sheet": ".a { text-transform: uppercase full-width } .b { text-transform: none }",
+   "classes": [
+    "a",
+    "b"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-text-transform-invalid",
+   "sheet": ".a { text-transform: uppercase lowercase }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-text-transform-inherit",
+   "sheet": ".a { text-transform: capitalize }",
+   "classes": [
+    "a",
+    ""
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-pointer-events",
+   "sheet": ".disabled\\:pointer-events-none:disabled { pointer-events: none } .p { pointer-events: none }",
+   "classes": [
+    "p"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-user-select",
+   "sheet": ".select-none { -webkit-user-select: none; user-select: none }",
+   "classes": [
+    "select-none"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-user-select-alias",
+   "sheet": ".a { -webkit-user-select: all }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-box-sizing",
+   "sheet": ".a { box-sizing: border-box; width: 10px; padding: 2px }",
+   "classes": [
+    "a"
+   ],
+   "style": []
+  },
+  {
+   "name": "s4-box-sizing-invalid",
+   "sheet": ".a { box-sizing: padding-box }",
+   "classes": [
+    "a"
+   ],
+   "style": []
   }
  ]
 }

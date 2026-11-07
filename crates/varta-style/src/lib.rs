@@ -27,6 +27,7 @@ pub mod fonts;
 pub mod index;
 pub mod selectors;
 pub mod session;
+mod shorthands;
 pub mod variables;
 
 use prelude::*;
@@ -183,83 +184,6 @@ fn wide(value: &str) -> Option<Wide> {
     })
 }
 
-/// The box shorthands whose longhands are registered properties too, and
-/// the longhands in component order (the box rule, or row then column).
-const SHORTHANDS: [(CssProperty, &[CssProperty]); 3] = [
-    (
-        CssProperty::Margin,
-        &[
-            CssProperty::MarginTop,
-            CssProperty::MarginRight,
-            CssProperty::MarginBottom,
-            CssProperty::MarginLeft,
-        ],
-    ),
-    (
-        CssProperty::Padding,
-        &[
-            CssProperty::PaddingTop,
-            CssProperty::PaddingRight,
-            CssProperty::PaddingBottom,
-            CssProperty::PaddingLeft,
-        ],
-    ),
-    (
-        CssProperty::Gap,
-        &[CssProperty::RowGap, CssProperty::ColumnGap],
-    ),
-];
-
-/// Cascade 5 §1.2: a shorthand sets each of its longhands at its own place
-/// in the cascade. Where a shorthand's declaration wins over a longhand's,
-/// the longhand's computed value is the shorthand's component, so a host
-/// that applies the shorthand and then the longhands (the browser bridge)
-/// gets the cascade's result; an invalid winning shorthand leaves the
-/// longhand unset.
-fn shorthands_over_longhands(
-    out: &mut BTreeMap<CssProperty, Computed>,
-    ranks: &BTreeMap<CssProperty, usize>,
-    wanted: &impl Fn(CssProperty) -> bool,
-) {
-    for (shorthand, longhands) in SHORTHANDS {
-        let Some(rank) = ranks.get(&shorthand).filter(|_| wanted(shorthand)) else {
-            continue;
-        };
-        let components = out.get(&shorthand).map(|computed| match computed {
-            Computed::Value(value) => {
-                let parts: Vec<&str> = value.split_ascii_whitespace().collect();
-                let pick = |index: usize| {
-                    let at = match (longhands.len(), parts.len()) {
-                        (_, 1) => 0,
-                        (2, _) => index.min(1),
-                        (_, 2) => index % 2,
-                        (_, 3) => [0, 1, 2, 1][index],
-                        _ => index,
-                    };
-                    parts
-                        .get(at)
-                        .map(|part| Computed::Value((*part).to_owned()))
-                };
-                (0..longhands.len()).map(pick).collect::<Vec<_>>()
-            }
-            keyword => vec![Some(keyword.clone()); longhands.len()],
-        });
-        for (index, longhand) in longhands.iter().enumerate() {
-            if ranks.get(longhand).is_none_or(|own| own > rank) {
-                continue;
-            }
-            match components.as_ref().and_then(|parts| parts[index].clone()) {
-                Some(component) => {
-                    out.insert(*longhand, component);
-                }
-                None => {
-                    out.remove(longhand);
-                }
-            }
-        }
-    }
-}
-
 /// Whether `property` inherits (its definition's "Inherited" line).
 #[must_use]
 pub fn inherited(property: CssProperty) -> bool {
@@ -281,6 +205,10 @@ pub fn inherited(property: CssProperty) -> bool {
             // CSS Text 3 §8.2.
             | P::LetterSpacing
             | P::ImageRendering
+            // CSS Display 3 §4.1, Text 3 §2.1, UI 4 §5.1.
+            | P::Visibility
+            | P::TextTransform
+            | P::PointerEvents
     )
 }
 
@@ -691,7 +619,7 @@ impl Styles {
                 out.insert(property, computed);
             }
         }
-        shorthands_over_longhands(&mut out, &ranks, &wanted);
+        shorthands::resolve(&mut out, &ranks, &wanted);
         out
     }
 

@@ -15627,9 +15627,9 @@ oracle, not the definition.
   properties (`border-radius`, `transform`, `object-position`, grid tracks),
   and values of the specifications that native layout lacks
   (`display: inline-block` and the other inner/outer display types,
-  `position: sticky`, intrinsic sizes, `overflow: scroll | clip`,
+  `position: sticky`, intrinsic sizes,
   `white-space: pre-line | break-spaces`, `text-align: justify`, border
-  styles other than `solid`).
+  styles other than `none`, `hidden` and `solid`).
 - **Layout and text properties (S4).** Mapped properties are expanded
   when a stylesheet is parsed (`view::mapped`): the flow-relative box
   properties of CSS Logical 1 §4 (`padding-`, `margin-` and `inset-`
@@ -15656,6 +15656,52 @@ oracle, not the definition.
   `translate`, then `scale`, then `transform` list (Transforms 2 §6.1)
   around the `transform-origin`; letter spacing is added after every
   typographic character unit by the shaper.
+- **Borders, corners, overflow and visibility (S4 remainder).** The
+  per-side longhands `border-{top,right,bottom,left}-{width,style,color}`
+  and `border-{top-left,top-right,bottom-right,bottom-left}-radius`
+  (Backgrounds 3 §3.1–§3.3, §5.1: one or two radii, horizontal then
+  vertical) are registered properties; `border-width`, `border-style` and
+  `border-color` take one to four values by the box rule, `border` and the
+  side shorthands `[<line-width>] || <line-style> || <color>` in any order,
+  `<line-width>` keywords `thin`, `medium`, `thick` lowering to Chrome's
+  1px, 3px and 5px, and the styles `none`, `hidden` (no border) and `solid`
+  (other styles are unrenderable). The flow-relative border and corner
+  properties of Logical 1 §4.4 and §4.6 (`border-inline`, `border-block`,
+  their `-start`/`-end` sides and `-width`/`-style`/`-color` longhands,
+  `border-start-start-radius` and the other three corners) are mapped
+  properties. `overflow-x` and `overflow-y` (Overflow 3 §3.1: `visible`,
+  `hidden`, `clip`, `scroll`, `auto`) are registered and `overflow` takes
+  one or two values; the used values follow §3.1 (when one axis is a scroll
+  container, `visible` on the other becomes `auto` and `clip` `hidden`).
+  Natively `clip` clips its axis at the padding box without a scroll
+  container, `scroll` reserves a classic gutter whether or not the content
+  overflows (an overlay bar takes no space either way), and a curved clip
+  of one axis only (`clip` beside `visible` with `border-radius`) is
+  refused. Native scroll offsets remain vertical: a horizontal scroll
+  container clips its overflow without scrolling it (unchanged from
+  `overflow: auto` before). `visibility` (Display 3 §4.1, inherited;
+  `collapse` is `hidden` outside tables, CSS 2 §11.2) makes a box paint
+  nothing of its own (background, border, outline, glyphs, scrollbars),
+  take no pointer, focus or accessibility node, and name nothing; its
+  visible descendants paint, hit and are exposed. `pointer-events: auto |
+  none` (UI 4 §5.1 with SVG 2 §16.6's HTML values, inherited) lets hits
+  pass through. `text-transform` (Text 3 §2.1, inherited: `capitalize`,
+  `uppercase`, `lowercase`, `full-width`, `full-size-kana`) is applied to
+  the text a box renders after white-space collapsing, case transforms with
+  the Unicode default full mappings (SpecialCasing, the final sigma, the
+  titlecase of `capitalize` at UAX #29 word starts with the preceding text
+  of the inline formatting context as context), then the inverse `<wide>`
+  and `<narrow>` decompositions, then Appendix G's kana; form controls get
+  the user-agent `text-transform: none`, and a transform of a text field's
+  or select's own text is refused natively (its editing offsets are not
+  mapped). `user-select` (UI 4 §6.1) and its legacy alias
+  `-webkit-user-select` are admitted; the native renderer has no document
+  text selection, so they change nothing there. Chrome 156 implements
+  neither `full-width`, `full-size-kana` nor `user-select: contain`: the
+  browser host, which applies computed values to the DOM, renders those
+  values as Chrome does (ignored), a recorded deviation of Chrome.
+  `box-sizing: content-box | border-box` (Box Sizing 3 §4.1) chooses the
+  box `width` and `height` size natively as in CSS.
 - **Selectors (S5, first part; Selectors 4).** Selector lists of complex
   selectors (`stylesheet::selector`): type and universal selectors (the view
   tags), classes, the descendant, child, next-sibling and
@@ -15683,8 +15729,7 @@ oracle, not the definition.
   change order. Refused: pseudo-elements, attribute and id selectors,
   `:has()`, `:nth-child(… of S)` and the form-validity pseudo-classes.
 - **Not yet admitted:** `@keyframes`, `@container`, nesting, the rest of
-  S4 (per-side border longhands, `overflow-x`/`-y`, `visibility`,
-  `text-transform`, `rotate`, and the display types and sizes native
+  S4 (`rotate`, line clamping, and the display types and sizes native
   layout lacks: `inline-block`, `inline-flex`, `fit-content`, `sticky`),
   the rest of S5 (above), and the paint stages S6–S8.
 

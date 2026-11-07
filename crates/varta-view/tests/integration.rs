@@ -8,6 +8,7 @@ mod cascade_work;
 mod checkables;
 mod clipboard;
 mod css_engine;
+mod css_s4;
 mod dialog;
 mod expansion_work;
 mod fallback;

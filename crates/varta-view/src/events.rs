@@ -1053,6 +1053,7 @@ impl View {
             .element(node)
             .is_some_and(|element| element.focusable() && !element.disabled())
             && self.tree.displayed(node, &self.environment)
+            && crate::style::visible(&self.tree, &self.environment, node)
             && !self.tree.inert(node);
         if focusable {
             for record in focus_records(&mut self.tree, Some(node)) {
@@ -1610,6 +1611,7 @@ impl View {
             .into_iter()
             .filter(|id| {
                 !self.tree.inert(*id)
+                    && crate::style::visible(&self.tree, &self.environment, *id)
                     && self.tree.element(*id).is_some_and(|e| {
                         e.focusable()
                             && !e.disabled()

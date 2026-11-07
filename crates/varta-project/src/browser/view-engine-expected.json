@@ -745,6 +745,178 @@
       0
     ]
   },
+  "s4-border-dashed": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s4-border-inline-longhand": {
+    "computed": {
+      "border-left-color": "#00f",
+      "border-left-style": "solid",
+      "border-left-width": "4px",
+      "color": "#000"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-border-logical": {
+    "computed": {
+      "border-left": "2px solid #00c",
+      "border-right": "2px solid #00c",
+      "border-right-color": "#0c0",
+      "border-top-style": "solid",
+      "border-top-width": "3px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-border-logical-var": {
+    "computed": {
+      "border-left-style": "solid",
+      "border-left-width": "1px",
+      "border-right-style": "solid",
+      "border-right-width": "4px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-border-longhand-over-shorthand": {
+    "computed": {
+      "border-top": "1px solid rgba(255, 0, 0, 1)",
+      "border-top-color": "rgba(0, 0, 255, 1)",
+      "border-top-width": "3px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-border-negative-width": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s4-border-shorthand-over-longhand": {
+    "computed": {
+      "border": "5px hidden #0a0",
+      "border-top-width": "5px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-border-side-longhands": {
+    "computed": {
+      "border-bottom-color": "#c00",
+      "border-bottom-style": "solid",
+      "border-bottom-width": "2px",
+      "border-top-style": "solid",
+      "border-top-width": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-border-tailwind-b": {
+    "computed": {
+      "border-bottom-style": "solid",
+      "border-bottom-width": "1px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-border-width-box": {
+    "computed": {
+      "border-color": "#111 #222 #333 #444",
+      "border-style": "solid none",
+      "border-width": "1px 2px 3px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-box-sizing": {
+    "computed": {
+      "box-sizing": "border-box",
+      "padding": "2px",
+      "width": "10px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-box-sizing-invalid": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
   "s4-flex-auto-none": {
     "computed": {
       "flex-basis": "auto",
@@ -966,6 +1138,148 @@
       5
     ]
   },
+  "s4-overflow-invalid": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s4-overflow-longhand-wins": {
+    "computed": {
+      "overflow": "hidden",
+      "overflow-y": "visible"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-overflow-pair": {
+    "computed": {
+      "overflow": "hidden scroll"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-overflow-shorthand-wins": {
+    "computed": {
+      "overflow": "auto",
+      "overflow-x": "auto"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-overflow-x-auto": {
+    "computed": {
+      "overflow-x": "auto"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-overflow-y-clip": {
+    "computed": {
+      "overflow-x": "visible",
+      "overflow-y": "clip"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-pointer-events": {
+    "computed": {
+      "pointer-events": "none"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-radius-corners": {
+    "computed": {
+      "border-bottom-right-radius": "50%",
+      "border-radius": "4px",
+      "border-top-left-radius": "8px 2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-radius-logical": {
+    "computed": {
+      "border-bottom-right-radius": "3px 5px",
+      "border-top-left-radius": "6px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-radius-negative": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
+  "s4-radius-shorthand-wins": {
+    "computed": {
+      "border-radius": "1px 2px 3px 4px",
+      "border-top-right-radius": "2px"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
   "s4-scale-percent": {
     "computed": {
       "scale": "0.95 0.95"
@@ -988,11 +1302,122 @@
       5
     ]
   },
+  "s4-text-transform": {
+    "computed": {
+      "text-transform": "none"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-text-transform-inherit": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-text-transform-invalid": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      5
+    ]
+  },
   "s4-translate": {
     "computed": {
       "translate": "4px 50%"
     },
     "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-user-select": {
+    "computed": {
+      "user-select": "none"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-user-select-alias": {
+    "computed": {
+      "user-select": "all"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-visibility": {
+    "computed": {
+      "visibility": "visible"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-visibility-collapse-inherit": {
+    "computed": {},
+    "statuses": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "s4-visibility-tailwind": {
+    "computed": {
+      "visibility": "hidden"
+    },
+    "statuses": [
+      0,
+      0,
+      0,
       0,
       0,
       0,
@@ -1506,7 +1931,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-114": {
@@ -1821,7 +2248,9 @@
     ]
   },
   "tailwind-app-135": {
-    "computed": {},
+    "computed": {
+      "visibility": "hidden"
+    },
     "statuses": [
       0,
       0,
@@ -1829,7 +2258,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-136": {
@@ -2530,7 +2961,9 @@
     ]
   },
   "tailwind-app-177": {
-    "computed": {},
+    "computed": {
+      "overflow-x": "auto"
+    },
     "statuses": [
       0,
       0,
@@ -2538,11 +2971,15 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-178": {
-    "computed": {},
+    "computed": {
+      "overflow-y": "auto"
+    },
     "statuses": [
       0,
       0,
@@ -2550,7 +2987,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-179": {
@@ -2656,7 +3095,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-185": {
@@ -3321,7 +3762,9 @@
     ]
   },
   "tailwind-app-223": {
-    "computed": {},
+    "computed": {
+      "user-select": "none"
+    },
     "statuses": [
       0,
       0,
@@ -3329,7 +3772,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-224": {
@@ -4746,7 +5191,9 @@
     ]
   },
   "tailwind-app-304": {
-    "computed": {},
+    "computed": {
+      "text-transform": "uppercase"
+    },
     "statuses": [
       0,
       0,
@@ -4754,7 +5201,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-305": {
@@ -4980,7 +5429,10 @@
     ]
   },
   "tailwind-app-38": {
-    "computed": {},
+    "computed": {
+      "border-bottom-style": "solid",
+      "border-bottom-width": "1px"
+    },
     "statuses": [
       0,
       0,
@@ -4988,7 +5440,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-39": {
@@ -5436,7 +5890,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-69": {
@@ -5502,7 +5958,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-73": {

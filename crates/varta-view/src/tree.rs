@@ -151,6 +151,9 @@ pub(crate) fn geometry_sides(property: CssProperty) -> Option<&'static [CssPrope
         P::PaddingLeft => &[P::PaddingLeft],
         P::RowGap => &[P::RowGap],
         P::ColumnGap => &[P::ColumnGap],
+        P::Overflow => &[P::OverflowX, P::OverflowY],
+        P::OverflowX => &[P::OverflowX],
+        P::OverflowY => &[P::OverflowY],
         _ => return None,
     })
 }
@@ -165,6 +168,14 @@ pub(crate) fn border_components(property: CssProperty) -> Vec<(u8, bool)> {
         P::BorderLeft => (&[3], true, true),
         P::BorderWidth => (&[0, 1, 2, 3], true, false),
         P::BorderStyle => (&[0, 1, 2, 3], false, true),
+        P::BorderTopWidth => (&[0], true, false),
+        P::BorderRightWidth => (&[1], true, false),
+        P::BorderBottomWidth => (&[2], true, false),
+        P::BorderLeftWidth => (&[3], true, false),
+        P::BorderTopStyle => (&[0], false, true),
+        P::BorderRightStyle => (&[1], false, true),
+        P::BorderBottomStyle => (&[2], false, true),
+        P::BorderLeftStyle => (&[3], false, true),
         _ => return Vec::new(),
     };
     sides
@@ -178,10 +189,10 @@ pub(crate) fn border_color_sides(property: CssProperty) -> &'static [u8] {
     use CssProperty as P;
     match property {
         P::Border | P::BorderColor => &[0, 1, 2, 3],
-        P::BorderTop => &[0],
-        P::BorderRight => &[1],
-        P::BorderBottom => &[2],
-        P::BorderLeft => &[3],
+        P::BorderTop | P::BorderTopColor => &[0],
+        P::BorderRight | P::BorderRightColor => &[1],
+        P::BorderBottom | P::BorderBottomColor => &[2],
+        P::BorderLeft | P::BorderLeftColor => &[3],
         _ => &[],
     }
 }
@@ -516,6 +527,7 @@ impl Tree {
             if self
                 .element(id)
                 .is_some_and(|element| element.focusable() && !element.disabled())
+                && crate::style::visible(self, environment, id)
             {
                 candidates.push(id);
             }
@@ -552,6 +564,7 @@ impl Tree {
             .and_then(|modal| modal.restore);
         let restorable = restore.filter(|id| {
             self.displayed(*id, environment)
+                && crate::style::visible(self, environment, *id)
                 && !self.inert(*id)
                 && self
                     .element(*id)
@@ -1562,6 +1575,7 @@ impl Apply<'_, '_, '_> {
                 let element = self.element(node)?;
                 if !element.disabled()
                     && self.tree.displayed(node, &self.context.environment)
+                    && crate::style::visible(self.tree, &self.context.environment, node)
                     && !self.tree.inert(node)
                 {
                     let records = focus_records(self.tree, Some(node));
@@ -1684,11 +1698,14 @@ impl Apply<'_, '_, '_> {
                     }
                     return Ok(());
                 }
-                let scrolls = self
-                    .tree
-                    .computed(node, &self.context.environment)
-                    .get(&CssProperty::Overflow)
-                    .is_some_and(|overflow| overflow == "auto");
+                let scrolls =
+                    crate::style::overflow(&self.tree.computed(node, &self.context.environment))
+                        .is_some_and(|axes| {
+                            matches!(
+                                axes[1],
+                                crate::style::Overflow::Auto | crate::style::Overflow::Scroll
+                            )
+                        });
                 if scrolls {
                     self.element(node)?;
                     self.tree.scroll_to(node, argument);

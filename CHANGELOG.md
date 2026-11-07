@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- K8 T2 S4 remainder (first part), borders, corners, overflow and text:
+  per-side `border-*-width`/`-style`/`-color` and per-corner radius
+  longhands (registry codes 85–100), `<line-width>` keywords and one to four
+  `border-width`/`-style`/`-color` values, `border-style: hidden`, the
+  flow-relative border and corner properties of Logical 1 as mapped
+  properties, `overflow-x`/`overflow-y` (codes 101–102) with `clip` and
+  `scroll` and the Overflow 3 axis rule, `visibility` (103), `text-transform`
+  (104, case, `full-width` and `full-size-kana` natively), `pointer-events`
+  (105), `user-select` (106, with `-webkit-user-select`) and `box-sizing`
+  (107). Natively:
+  borders and corners per side, elliptical radii, one-axis `clip`, classic
+  gutters for `scroll`, invisible boxes skipped for paint, hits, focus and
+  accessibility, hits passing through `pointer-events: none`, and
+  transformed text. Shorthands that win over registered longhands (`border`,
+  the side shorthands, `border-width`/`-style`/`-color`, `border-radius`,
+  `outline`, `overflow`) now give the longhand their component in the
+  computed values, so the browser bridge applies the cascade's result.
+  Tailwind acceptance 251 → 261 of 312 candidates.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
   2, `varta_common::regexp`) run by the linked `regexp_exec` intrinsic as

@@ -75,6 +75,13 @@ const METRIC_FACES: &[Face] = &[
     ),
 ];
 
+/// The text-transform fixture (`scripts/generate-style-case-font.py`).
+const CASE_FACES: &[Face] = &[Face(
+    "Varta Case",
+    "crates/varta-style/tests/fixtures/case.ttf",
+    "400",
+)];
+
 const SCENES: &[Scene] = &[
     Scene {
         name: "escaped-classes",
@@ -485,6 +492,125 @@ const SCENES: &[Scene] = &[
                 Node("g", &[Node("inner", &[])]),
                 Node("a", &[Node("q", &[])]),
                 Node("p", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "border-sides",
+        sheet: ".r { display: flex; flex-wrap: wrap; align-items: flex-start } .r > div { width: 30px; height: 20px; margin: 4px; background-color: #eee } .a { border-bottom: 3px solid #c00; border-top-width: thin; border-top-style: solid; border-top-color: #00c } .b { border-style: solid none; border-width: 1px 2px 3px; border-color: #111 #2a2 #33c #c4c } .c { border-inline: 2px solid #00c; border-block-start: 4px solid #0a0; border-inline-end-color: #c60 } .d { border: thick solid #888; border-left-style: hidden; border-right-width: medium } .e { border-width: 2px; border-style: solid; border-color: #000; border-bottom-color: #f00 } .f { border-top-width: 6px } .f { border: 1px solid #0aa } .g { --tw-border-style: solid; border-inline-style: var(--tw-border-style); border-inline-width: 3px } .h { border-block: 2px solid #963; border-block-end-width: 5px; border-inline-start: 1px solid #369 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
+                Node("e", &[]),
+                Node("f", &[]),
+                Node("g", &[]),
+                Node("h", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "corner-radii",
+        sheet: ".r { display: flex; flex-wrap: wrap; align-items: flex-start } .r > div { width: 48px; height: 32px; margin: 4px; background-color: #36c } .a { border-top-left-radius: 12px } .b { border-radius: 4px; border-bottom-right-radius: 16px 6px } .c { border-start-end-radius: 50%; border-end-start-radius: 10px } .d { border-top-right-radius: 9px } .d { border-radius: 2px 6px } .e { border: 3px solid #c00; border-top-left-radius: 20px 10px; background-color: #fc0 } .f { border-radius: 8px; border-start-start-radius: 0; overflow: hidden } .f > div { width: 60px; height: 40px; background-color: #0a0 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
+                Node("e", &[]),
+                Node("f", &[Node("", &[])]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "overflow-axes",
+        sheet: ".r { display: flex; flex-wrap: wrap; align-items: flex-start } .r > div { width: 60px; height: 30px; margin: 8px 30px 30px 8px; padding: 2px; border: 2px solid #888; background-color: #ddd } .w { width: 100px; height: 50px; background-color: #c00 } .a { overflow-x: clip } .b { overflow-y: clip } .c { overflow: hidden visible } .d { overflow: clip } .e { overflow-x: clip; overflow-y: clip } .f { overflow: auto } .g { overflow-y: scroll }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[Node("w", &[])]),
+                Node("b", &[Node("w", &[])]),
+                Node("c", &[Node("w", &[])]),
+                Node("d", &[Node("w", &[])]),
+                Node("e", &[Node("w", &[])]),
+                Node("f", &[Node("w", &[])]),
+                Node("g", &[Node("w", &[])]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "visibility",
+        sheet: ".r { display: flex; flex-wrap: wrap; align-items: flex-start } .r > div { width: 40px; height: 30px; margin: 4px; padding: 3px; border: 2px solid #000; background-color: #c00 } .r div div { width: 16px; height: 10px; background-color: #00c } .a { visibility: hidden } .b { visibility: hidden } .b > .v { visibility: visible } .c { visibility: collapse } .d { visibility: hidden } .d > div { visibility: inherit } .e > div { visibility: hidden } .f { visibility: hidden; outline: 2px solid #0a0 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[Node("", &[])]),
+                Node("b", &[Node("v", &[])]),
+                Node("c", &[Node("", &[])]),
+                Node("d", &[Node("", &[])]),
+                Node("e", &[Node("", &[])]),
+                Node("f", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: &[],
+        texts: &[],
+    },
+    Scene {
+        name: "text-transform",
+        sheet: ".r { display: flex; flex-direction: column; align-items: flex-start; font-family: \"Varta Case\"; font-size: 20px; line-height: 30px; color: transparent } .u { text-transform: uppercase; background-color: #fcc } .l { text-transform: lowercase; background-color: #cfc } .c { text-transform: capitalize; background-color: #ccf } .p { text-transform: uppercase } .n { text-transform: none; background-color: #fcf } .i { background-color: #ccc }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("u", &[]),
+                Node("l", &[]),
+                Node("c", &[]),
+                Node("p", &[Node("n", &[]), Node("i", &[])]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+        fonts: CASE_FACES,
+        texts: &[
+            ("u", "ab-ß"),
+            ("l", "AB"),
+            ("c", "ab ba-ab"),
+            ("n", "ab"),
+            ("i", "ab"),
+        ],
+    },
+    Scene {
+        name: "box-sizing",
+        sheet: ".r { display: flex; flex-wrap: wrap; align-items: flex-start } .r > div { width: 40px; height: 20px; padding: 4px; border: 2px solid #000; margin: 4px; background-color: #c60 } .b { box-sizing: border-box } .c { box-sizing: content-box } .d { box-sizing: border-box; width: 50%; padding: 10px }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
             ],
         )],
         reduced_motion: false,
