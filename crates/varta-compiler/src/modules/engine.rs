@@ -599,6 +599,7 @@ pub(crate) const PATTERNS: Prelude = Prelude {
     extended: None,
     loads: &[TEMPLATE_TYPE],
     lifted: None,
+    required: None,
 };
 /// The recoverable denial of v37 timer starts (`permissionDenied`, a
 /// `NotAllowedError` `DOMException`); it imports the abort prelude.
@@ -907,7 +908,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 23] = [
+pub(crate) const PRELUDES: [&Prelude; 24] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
