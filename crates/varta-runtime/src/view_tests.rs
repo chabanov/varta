@@ -222,6 +222,43 @@ fn a_tsx_app_runs_headless_with_scripted_inputs() {
     assert_eq!(a11y["role"], "main");
 }
 
+#[test]
+fn tsx_data_attributes_round_trip_through_guest_batches_and_reactive_updates() {
+    let bytes = compile_tsx(
+        r#"
+import { TextSignal, effect } from './signals.ts';
+export function main(): void {
+  View.setEffect(effect);
+  const state = new TextSignal('closed');
+  let panel = 0;
+  View.stylesheet(1, '[data-state=closed] { color: #222 } [data-state=open] { color: #111 }');
+  View.mount(<main>
+    <p id="panel" ref={(node: number) => { panel = node; }}
+      data-note="початок😀" data-state={state.get()}>Panel</p>
+    <button id="open" onClick={() => state.set('open')}>Open</button>
+    <button id="remove" onClick={() => View.removeData(panel, 'data-note')}>Remove</button>
+  </main>);
+}
+"#,
+        &[("signals.ts", SIGNALS)],
+    );
+    let initial = run_view(&bytes, &[], None, &script(r#"{"inputs":[]}"#)).unwrap();
+    let panel = by_id(&initial.snapshot["tree"], "panel").unwrap();
+    assert_eq!(panel["data"]["data-note"], "початок😀");
+    assert_eq!(panel["data"]["data-state"], "closed");
+    assert_eq!(panel["style"]["color"], "#222");
+
+    let inputs = r##"{"inputs":[
+        {"input":"click","target":"#open"},
+        {"input":"click","target":"#remove"}
+    ]}"##;
+    let updated = run_view(&bytes, &[], None, &script(inputs)).unwrap();
+    let panel = by_id(&updated.snapshot["tree"], "panel").unwrap();
+    assert_eq!(panel["data"]["data-state"], "open");
+    assert_eq!(panel["style"]["color"], "#111");
+    assert!(panel["data"].get("data-note").is_none());
+}
+
 /// A scripted session's budget report is deterministic too: N runs give the
 /// same output, tree, commits, turns and idle maintenance with their fuel
 /// (only wall-clock times differ), on virtual time with arrival-ordered
