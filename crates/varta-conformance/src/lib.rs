@@ -53,12 +53,19 @@ pub fn run_suite(
     let i = &suite.inventory;
     let mut counts = Counts::default();
     let mut cases = Vec::new();
-    for (case, source) in i.cases.iter().zip(&suite.sources) {
+    for ((case, source), modules) in i
+        .cases
+        .iter()
+        .zip(&suite.sources)
+        .zip(&suite.module_sources)
+    {
         let observation = process::invoke(
             executable,
             model::Request {
                 profile: i.profile,
                 source: source.clone(),
+                source_path: Some(case.path.clone()),
+                modules: modules.clone(),
                 grants: case.grants.clone(),
                 host_inputs: case.host_inputs.clone(),
             },
@@ -71,6 +78,7 @@ pub fn run_suite(
             feature: case.feature.clone(),
             path: case.path.clone(),
             source_sha256: case.sha256.clone(),
+            modules: case.modules.clone(),
             status,
             baseline_reason: case.baseline.reason.clone(),
             observation,

@@ -18962,3 +18962,36 @@ fn network_recording_and_replay_refuse_net_get_and_net_fetch_modules() {
         }
     }
 }
+
+#[test]
+fn v38_inference_and_union_views_run_in_source_free_artifacts() {
+    let source = "import {values,pick} from './values.ts';function read(v:{n:number}):number{v.n++;return v.n;} export function main():void{const it=values();const v=pick(true);console.log(it.next().value,read(v),v.n);}";
+    let project = RegressionProject::new(source, serde_json::json!({}));
+    fs::write(project.0.join("src/values.ts"),"export function* values(){yield 4;} export function pick(flag:boolean):{kind:'a';n:number}|{n:number;kind:'b'}{return flag?{kind:'a',n:1}:{n:2,kind:'b'};}").unwrap();
+    project.language_profile("checked-f64-utf16-v38");
+    let logs = |o: &std::process::Output| {
+        String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter(|l| l.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), ["varta log: 4 2 2"]);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    let mut commands = vec![Command::new(project.0.join("dist/app"))];
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), ["varta log: 4 2 2"]);
+    }
+}

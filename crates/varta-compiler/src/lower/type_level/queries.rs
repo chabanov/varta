@@ -611,3 +611,89 @@ impl Lower<'_> {
         }
     }
 }
+
+/// Widened expression types used by generator signature inference. Actual
+/// operand admissibility and effects are checked by ordinary body lowering.
+pub(in crate::lower) fn infer_expression(
+    e: &ast::Expr,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    Ok(match stmt::unparen(e) {
+        ast::Expr::Bin(b) => {
+            let left = infer_expression(&b.left, types)?;
+            let right = infer_expression(&b.right, types)?;
+            use ast::BinaryOp::*;
+            match b.op {
+                EqEq | NotEq | EqEqEq | NotEqEq | Lt | LtEq | Gt | GtEq | In | InstanceOf => {
+                    Type::Boolean
+                }
+                LogicalAnd | LogicalOr | NullishCoalescing => {
+                    unions::intern(vec![left, right], types)?
+                }
+                Add if left.erased() == Type::String || right.erased() == Type::String => {
+                    Type::String
+                }
+                _ if left == Type::BigInt && right == Type::BigInt => Type::BigInt,
+                _ => types.number(),
+            }
+        }
+        ast::Expr::Cond(c) => {
+            let yes = infer_expression(&c.cons, types)?;
+            let no = infer_expression(&c.alt, types)?;
+            unions::intern(vec![yes, no], types)?
+        }
+        ast::Expr::Unary(u) => match u.op {
+            ast::UnaryOp::Bang | ast::UnaryOp::Delete => Type::Boolean,
+            ast::UnaryOp::TypeOf => Type::String,
+            ast::UnaryOp::Void => Type::Undefined,
+            _ => {
+                let operand = infer_expression(&u.arg, types)?;
+                if operand == Type::BigInt && u.op != ast::UnaryOp::Plus {
+                    Type::BigInt
+                } else {
+                    types.number()
+                }
+            }
+        },
+        ast::Expr::Yield(y) if y.delegate => {
+            let operand = y
+                .arg
+                .as_deref()
+                .ok_or_else(|| type_error("yield* requires an operand"))?;
+            match infer_expression(operand, types)? {
+                Type::Generator(id) => types.generators[id as usize].returned,
+                _ => {
+                    return Err(type_error(
+                        "generator inference requires a generator type for yield*",
+                    ));
+                }
+            }
+        }
+        ast::Expr::Member(m) => {
+            let owner = infer_expression(&m.obj, types)?;
+            match (owner, &m.prop) {
+                (Type::Array(_) | Type::String, ast::MemberProp::Ident(name))
+                    if name.sym == "length" =>
+                {
+                    types.number()
+                }
+                (Type::String, ast::MemberProp::Computed(_)) => Type::String,
+                (Type::Record(id), ast::MemberProp::Ident(name)) => types.records[id as usize]
+                    .fields
+                    .iter()
+                    .find(|f| f.name == name.sym.as_ref())
+                    .map(|f| f.ty)
+                    .ok_or_else(|| {
+                        type_error("generator inference cannot resolve record member")
+                    })?,
+                (Type::Array(id), ast::MemberProp::Computed(_)) => types.arrays[id as usize],
+                _ => {
+                    return Err(type_error(
+                        "generator inference cannot resolve member; annotate its return type",
+                    ));
+                }
+            }
+        }
+        _ => infer(e, Fresh::Widened, types)?,
+    })
+}

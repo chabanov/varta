@@ -94,7 +94,7 @@ pub(super) fn check(
             result_span,
         ));
     }
-    if generator && function.return_type.is_none() {
+    if generator && function.return_type.is_none() && !types.profile.expression_forms() {
         return Err(source.locate(
             type_error(
                 "generator function requires a Generator<T, TReturn, TNext> return annotation",
@@ -102,8 +102,27 @@ pub(super) fn check(
             result_span,
         ));
     }
+    let inferred = if generator
+        && !async_generator
+        && function.return_type.is_none()
+        && types.profile.expression_forms()
+    {
+        Some(
+            generator_inference::infer(
+                body,
+                plans
+                    .iter()
+                    .filter_map(|p| p.name.clone().map(|name| (name, p.incoming))),
+                types,
+            )
+            .map_err(|e| source.locate(e, result_span))?,
+        )
+    } else {
+        None
+    };
     let result = annotation(function.return_type.as_deref(), types)
         .map_err(|e| source.locate(e, result_span))?
+        .or(inferred)
         .unwrap_or_else(|| {
             if contains_value_return(&body.stmts) {
                 types.number()

@@ -583,8 +583,16 @@ impl<'a> Check<'a> {
             return true;
         }
         match expected {
-            Type::Record(target) if matches!(actual, Type::Record(_) | Type::Class(_)) => {
-                self.object(actual, target).is_ok()
+            Type::Record(target) => {
+                let mark = self.edges.len();
+                let all = unions::members(actual, types).into_iter().all(|member| {
+                    matches!(member, Type::Record(_) | Type::Class(_))
+                        && self.object(member, target).is_ok()
+                });
+                if !all {
+                    self.edges.truncate(mark);
+                }
+                all
             }
             Type::Function(target) => match actual {
                 Type::Function(source) => self.function(source, target).is_ok(),
@@ -882,11 +890,22 @@ pub(super) fn coerce(value: Expr, expected: Option<Type>, types: &ir::ValueTypes
     }
     let object = |ty: Type| matches!(ty, Type::Record(_) | Type::Class(_));
     match expected {
-        Type::Record(target) if object(value.ty) => {
+        Type::Record(_) => {
             let mut check = Check::new(types);
-            if check.object(value.ty, target).is_ok() {
+            if check.convertible(value.ty, expected) {
                 check.commit();
-                return Ok(viewed(value, expected));
+                return Ok(if value.ty.is_union() {
+                    // Every member is an object accepted by this view. The
+                    // tagged union holds the original managed handle; unbox
+                    // once without copying or changing its physical layout.
+                    Expr {
+                        span: value.span,
+                        ty: expected,
+                        kind: E::UnboxUnion(Box::new(value)),
+                    }
+                } else {
+                    viewed(value, expected)
+                });
             }
             Ok(value)
         }

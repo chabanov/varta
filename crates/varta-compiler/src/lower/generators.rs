@@ -212,7 +212,12 @@ pub(super) fn result_record(
     )
 }
 
-fn intern(yielded: Type, returned: Type, next: Type, types: &mut ir::ValueTypes) -> Result<Type> {
+pub(super) fn intern(
+    yielded: Type,
+    returned: Type,
+    next: Type,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
     if let Some(id) = types.generators.iter().position(|g| {
         (g.yielded, g.returned, g.next) == (yielded, returned, next)
             && g.asynchronous.is_none()

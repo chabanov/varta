@@ -551,3 +551,25 @@ fn kind_name(ty: &ast::TsType) -> &'static str {
         _ => "this type",
     }
 }
+
+// Scoped local types for pre-body signature inference, restored by the caller.
+impl TypeLevel {
+    pub(super) fn inference_locals(
+        &mut self,
+        values: BTreeMap<String, Type>,
+    ) -> Option<BTreeMap<String, Type>> {
+        self.locals.replace(values)
+    }
+    pub(super) fn inference_bindings(&self) -> Option<BTreeMap<String, Type>> {
+        self.locals.clone()
+    }
+    pub(super) fn restore_inference_locals(&mut self, outer: Option<BTreeMap<String, Type>>) {
+        self.locals = outer;
+    }
+    pub(super) fn inference_binding(&mut self, name: String, ty: Type) {
+        self.locals
+            .get_or_insert_with(Default::default)
+            .insert(name, ty);
+    }
+}
+pub(super) use queries::infer_expression;

@@ -588,3 +588,61 @@ fn public_runner_rejects_unbounded_and_fractional_timeouts_before_launch() {
         assert!(error.to_string().contains("timeout"));
     }
 }
+
+#[test]
+fn companion_module_snapshots_are_pinned_and_reported() {
+    let source = "import {n} from './dependency.ts'; export function main():void{console.log(n);}";
+    let mut f = Fixture::new(source);
+    let dependency = "export const n:number=2;";
+    fs::write(f.root.join("cases/dependency.ts"), dependency).unwrap();
+    f.value["profile"] = json!("checked-f64-utf16-v38");
+    f.value["cases"][0]["modules"] =
+        json!([{"path":"cases/dependency.ts","sha256":digest(dependency.as_bytes())}]);
+    f.save();
+    let (output, report) = f.run(&[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        report["cases"][0]["modules"],
+        f.value["cases"][0]["modules"]
+    );
+    fs::write(
+        f.root.join("cases/dependency.ts"),
+        "export const n:number=3;",
+    )
+    .unwrap();
+    let output = f.command().output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("digest mismatch"));
+}
+
+#[test]
+fn companion_modules_cannot_escape_or_alias_the_entry() {
+    for path in [
+        "../outside.ts",
+        "cases/../outside.ts",
+        "/outside.ts",
+        "cases/input.ts",
+    ] {
+        let mut f = Fixture::new(SOURCE);
+        f.value["cases"][0]["modules"] = json!([{"path":path,"sha256":digest(SOURCE.as_bytes())}]);
+        f.save();
+        assert!(!f.command().output().unwrap().status.success(), "{path}");
+    }
+    let source = "import {n} from '../outside.ts'; export function main():void{console.log(n);}";
+    let mut f = Fixture::new(source);
+    fs::write(f.root.join("cases/unused.ts"), "export const n:number=2;").unwrap();
+    f.value["profile"] = json!("checked-f64-utf16-v38");
+    f.value["cases"][0]["modules"] =
+        json!([{"path":"cases/unused.ts","sha256":digest(b"export const n:number=2;")}]);
+    f.unsupported("module_error");
+    let (output, report) = f.run(&[]);
+    assert!(output.status.success());
+    assert_eq!(
+        report["cases"][0]["observation"]["kind"],
+        "compile_rejected"
+    );
+}

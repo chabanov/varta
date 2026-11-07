@@ -16,11 +16,14 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The merged inventory has 131 feature rows and 240 cases:
-236 have a supported baseline, 4 are known unsupported, and 7 feature rows have no case.
-The combined recovery batch matched this baseline on 2026-11-07: 236 passed,
-4 known unsupported, no regressions or infrastructure failures ([verification](../docs/verification.md#current-verification-evidence--2026-11-07)).
-These counts are bounded inventory results, not a percentage of ECMAScript or total kernel work.
+executable cases. The current inventory has 131 feature rows and 243 cases:
+241 have a supported baseline, 2 are known unsupported, and 4 feature rows have no
+case. Generator inference and union-to-record views promote two reviewed gaps;
+module initialization, re-exports and default exports now have executable module
+snapshots. The completed package matched this baseline on 2026-11-07 with no
+regressions or infrastructure failures. Evidence is linked from
+[verification](../docs/verification.md#current-verification-evidence--2026-11-07).
+They do not express a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
 Each source file is read as an immutable UTF-8 snapshot and checked against its
@@ -50,7 +53,12 @@ protocol or internal compiler failure is an infrastructure failure, never a pass
 
 Other bounds: 1 MiB inventory, 256 cases/features, 1 MiB per source, 16 MiB total
 source snapshots, 1024 corpus directory entries and 16 KiB/128 lines of expected
-output per case. Sources cannot import files through this executor. These bounds
+output per case. A case may list up to 32 companion `modules`, each with `path`
+and `sha256`. Entry and companion sources together are bounded to 1 MiB. Every
+source is digest-pinned, path-checked and read before workers start; symlinks,
+duplicate paths and unlisted sources fail loading. Relative imports resolve only
+within that case's in-memory snapshot, with no ambient filesystem/network access.
+The report lists companion paths/digests beside the entry source digest. These bounds
 belong to the development runner and do not change production execution budgets.
 
 | Report status | Meaning |

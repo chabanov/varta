@@ -1864,12 +1864,12 @@
       "path": "cases/regexp-unicode-sets.ts",
       "sha256": "a62af3ad0c073a627d8e3e4e767d02280b28b41fca5331d0cd364817a276fd75",
       "stdout": [
-        "varta log: h\u00e9llo,w\u00f6rld,\u043c\u0438\u0440",
-        "varta log: \u03b1\u03b2\u03b3",
+        "varta log: héllo,wörld,мир",
+        "varta log: αβγ",
         "varta log: h,ll,w,rld",
-        "varta log: \u03b1,\u03b2",
+        "varta log: α,β",
         "varta log: abc,d,x",
-        "varta log: \ud83d\udc4d\ud83c\udffd,\ud83c\uddfa\ud83c\udde6,\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67",
+        "varta log: 👍🏽,🇺🇦,👨‍👩‍👧",
         "varta log: _,1"
       ],
       "baseline": {
@@ -1899,9 +1899,7 @@
         "varta log: 1"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "type_error",
-        "reason": "Generator return types are not inferred: v33 through v38 require an explicit Generator<T, TReturn, TNext> return annotation."
+        "status": "supported"
       }
     },
     {
@@ -2823,7 +2821,7 @@
         "varta log: a-b-c",
         "varta log: 3 ac",
         "varta log: 0.30000000000000004|0|1e+21|null|undefined|true|100000000000000000000",
-        "varta log: crab \ud83e\udd80 `tick` ${literal}",
+        "varta log: crab 🦀 `tick` ${literal}",
         "varta log: [7]",
         "varta log: 2"
       ],
@@ -3241,7 +3239,7 @@
       "path": "cases/text-encoder-roundtrip.ts",
       "sha256": "b819d75709cadc93cc96430ea7de456e368fe59ffd77c0c8f19c75c9bbb0835c",
       "stdout": [
-        "varta log: 3 195 h\u00e9"
+        "varta log: 3 195 hé"
       ],
       "baseline": {
         "status": "supported"
@@ -3267,7 +3265,7 @@
       "sha256": "9fa8bfff65ece04d4610c820c39f5cb2b5ad952e057e0ab66e16822374879a76",
       "stdout": [
         "varta log: 6 13 text/plain",
-        "varta log: \u20acuro and AB",
+        "varta log: €uro and AB",
         "varta log: 5 117 114 111 32 97 2 0",
         "varta log: 13 3 36,130,172 226",
         "varta log: 201 true false application/json",
@@ -3430,14 +3428,12 @@
       "id": "union-record-argument",
       "feature": "structural-subtyping",
       "path": "cases/union-record-argument.ts",
-      "sha256": "794a7e86edfd131ee3d1f8856000c2b35d59d11d94622bfddd7de3de1243b10c",
+      "sha256": "0dc86479400d4a1eb66952f87955d58d5111dd4e54298599598fe5bcf504ece5",
       "stdout": [
         "varta log: 1 2"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "type_error",
-        "reason": "A union of record shapes does not convert to one record type: v38 views a single record or class instance as a narrower record, but rejects an A | B argument for { n: number } (argument type mismatch)."
+        "status": "supported"
       }
     },
     {
@@ -3657,9 +3653,9 @@
       "path": "cases/date-local-time.ts",
       "sha256": "a7504b0029fb9902add0171a5d78646ecb256b12ea6f1e58ad7e0c03b4f206f4",
       "stdout": [
-        "varta log: Sun Mar 31 2024 04:30:00 GMT+0300 (\u0437\u0430 \u0441\u0445\u0456\u0434\u043d\u043e\u0454\u0432\u0440\u043e\u043f\u0435\u0439\u0441\u044c\u043a\u0438\u043c \u043b\u0456\u0442\u043d\u0456\u043c \u0447\u0430\u0441\u043e\u043c)",
+        "varta log: Sun Mar 31 2024 04:30:00 GMT+0300 (за східноєвропейським літнім часом)",
         "varta log: 1729989000000 -180",
-        "varta log: 14 14:00:00 GMT+0200 (\u0437\u0430 \u0441\u0445\u0456\u0434\u043d\u043e\u0454\u0432\u0440\u043e\u043f\u0435\u0439\u0441\u044c\u043a\u0438\u043c \u0441\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0438\u043c \u0447\u0430\u0441\u043e\u043c)",
+        "varta log: 14 14:00:00 GMT+0200 (за східноєвропейським стандартним часом)",
         "varta log: 14 -180",
         "varta log: -10800000",
         "varta log: Thu Jan 01 1970"
@@ -4412,7 +4408,7 @@
         "varta log: 12px 1e3px  px 0x1fpx -.5px",
         "varta log: id-42 HELLO WORLD Click:3",
         "varta log: id-0x1F id-0 id--5 id-0b101",
-        "varta log: Click:1 Ab:3 \u00c9: 2 1:1",
+        "varta log: Click:1 Ab:3 É: 2 1:1",
         "varta log: auto #fff #",
         "varta log: onKey 1px,2.5px -",
         "varta log: onA  id-7"
@@ -5031,7 +5027,7 @@
         "varta log: g",
         "varta log:   default: 1",
         "varta log:   default: 2",
-        "varta log: \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2510\n\u2502 (index) \u2502 0 \u2502 1 \u2502\n\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2524\n\u2502 0       \u2502 1 \u2502 2 \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2518",
+        "varta log: ┌─────────┬───┬───┐\n│ (index) │ 0 │ 1 │\n├─────────┼───┼───┤\n│ 0       │ 1 │ 2 │\n└─────────┴───┴───┘",
         "varta warn: Assertion failed: no",
         "varta log: { a: [Object] }",
         "varta error: Trace"
@@ -5063,6 +5059,71 @@
         "varta log: 7 true",
         "varta log: true false",
         "varta log: FinalizationRegistry.prototype.register: target and holdings must not be same"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "module-initialization",
+      "feature": "module-initialization",
+      "path": "cases/module-initialization.ts",
+      "sha256": "c078ce5d163dac31ca5b1699cfbe2a3992db9c16128238edc83e105b77fac443",
+      "modules": [
+        {
+          "path": "cases/module-initialization/dependency.ts",
+          "sha256": "8eb16e6532b0bf3d9bae883948f7a41f4f5aa615c04db42a9d07fa280551e543"
+        }
+      ],
+      "stdout": [
+        "varta log: dependency",
+        "varta log: entry",
+        "varta log: 8"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "module-reexports",
+      "feature": "module-reexports",
+      "path": "cases/module-reexports.ts",
+      "sha256": "01e27cf2fbef7c753264566fdc4091a0ba8b565e79f2a411cec3cbe76e4ac509",
+      "modules": [
+        {
+          "path": "cases/module-reexports/barrel.ts",
+          "sha256": "593eac81ac63516821805b364014cae45d69dca2023f695ae4b2d40d74a74615"
+        },
+        {
+          "path": "cases/module-reexports/origin.ts",
+          "sha256": "bee46a9b296cb9d86b3d94909874a4482b8c22a6f10c387d4297e2d8dd9874d3"
+        }
+      ],
+      "stdout": [
+        "varta log: 1 1",
+        "varta log: 2 2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "default-exports",
+      "feature": "default-exports",
+      "path": "cases/default-exports.ts",
+      "sha256": "de084daeff9f6f672d7d93564fdea803bce08cfee61b7d170bd9b1b926c4d836",
+      "modules": [
+        {
+          "path": "cases/default-exports/barrel.ts",
+          "sha256": "02464dccca51832ef4d215f321a0f68986e78d571e79b23bc0fcf165c9c5f09d"
+        },
+        {
+          "path": "cases/default-exports/origin.ts",
+          "sha256": "2ddc7db1cbadcb020768c199596487fbe3d3384c69d5fb7479a55114664fea6d"
+        }
+      ],
+      "stdout": [
+        "varta log: 6"
       ],
       "baseline": {
         "status": "supported"

@@ -394,7 +394,25 @@ impl Lower<'_> {
         } else {
             expected_result
         };
-        let result = annotated.or(expected_result);
+        let mut result = annotated.or(expected_result);
+        if generating
+            && !arrow.is_async
+            && result.is_none()
+            && let ast::ArrowFunctionBody::FunctionBody(body) = &*arrow.body
+        {
+            let mut bindings: BTreeMap<String, Type> = self
+                .outer
+                .iter()
+                .chain(self.scopes.iter().flat_map(|s| s.iter()))
+                .filter_map(|(name, binding)| binding.ty.map(|ty| (name.clone(), ty)))
+                .collect();
+            bindings.extend(
+                plans
+                    .iter()
+                    .filter_map(|p| p.name.clone().map(|name| (name, p.incoming))),
+            );
+            result = Some(generator_inference::infer(body, bindings, self.types)?);
+        }
         if annotated
             .is_some_and(|result| expected_result.is_some_and(|expected| expected != result))
         {

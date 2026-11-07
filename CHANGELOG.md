@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- V38 infers synchronous generator signatures for checked yield/return types,
+  and converts compatible record/class unions to shared record views without
+  copying. Earlier profiles retain their annotation/admission rules.
+- The compatibility runner admits bounded digest-pinned companion modules;
+  new cases cover initialization order, live re-exports and default forwarding.
+
 - Integration fixes: weak-table heap flags no longer overlap object integrity
   flags; sealed/frozen accessor caches retain their property semantics. JSON
   getter traversal omits Symbol values, and callable `Object.assign` preserves

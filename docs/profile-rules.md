@@ -2123,6 +2123,13 @@ Contract: [architecture.md](architecture.md#runtime-admission-resumable_frames).
 
 Contract: [architecture.md](architecture.md#synchronous-generators-generators).
 
+- V38 (`expression_forms`) may infer synchronous generator signatures through
+  `lower::generator_inference` before checking callers. Keep the locals snapshot
+  scoped and restore it on failure; exclude nested functions/classes and bound
+  recursive type evaluation. A consumed yield result and unresolved expressions
+  require annotations, never implicit `any`. Earlier profiles and async generator
+  annotation requirements remain unchanged. Cover return/yield unions, closures,
+  delegation, empty bodies, rejection, collection and source-free artifacts.
 - Source admission lives in `lower::generators` (annotations, `yield`, protocol
   methods, `for...of`) and is gated on `profile.generators()` only: the
   signature check, generic declarations, `Generator`/`IteratorResult`
@@ -3742,6 +3749,10 @@ Contract: [architecture.md](architecture.md#structural-subtyping-structural_subt
   instance value to a record type must use `widen`, never retype by hand.
   Retype with `subtyping::viewed` (in place for locals, `Reinterpret`
   otherwise): a record literal's own type fixes its layout.
+- A union source may enter one record view only if every member is a record or
+  class accepted by that view. Check all members transactionally, then unbox the
+  original tagged handle once. Never copy/retype a union cell as an i32 handle.
+  Cover identity/mutation, layout differences, variance and nullable/bad members.
 - Views are resolved after every body (`subtyping::resolve`, before literal
   erasure and suspension preparation): every IR form that reads a record
   slot by its static shape (`Field`, `SetField`, `HasOwn`, function-field

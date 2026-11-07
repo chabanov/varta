@@ -6080,6 +6080,22 @@ need no event loop and no new host import; every resumption is a guest call.
   rejected with construct-specific diagnostics. Calling a generator function
   binds its arguments into a new frame and returns the generator object without
   running the body.
+- **V38 signature inference** (`expression_forms`, 2026-11-07). A synchronous
+  generator declaration, or a generator expression without an annotated or
+  contextual result, can infer its result before callers are checked. The
+  pre-body pass joins the widened types of its yield operands and returns,
+  includes `undefined` for a possible fallthrough, and excludes nested function
+  and class bodies. It uses declared parameter/local types, initializer types,
+  checked module-function results, arithmetic/conditionals, record/array reads,
+  array/string/generator `for...of` elements and generator `yield*` types. Normal
+  body lowering still validates all operands and effects. No value return means
+  `TReturn = void`; no yielded value uses `undefined` as the frame's yielded
+  storage type. `TNext = undefined`: consuming the result of an ordinary `yield`
+  requires an explicit annotation rather than implicit `any`. Expressions whose
+  type this pass cannot determine and async generators retain the annotation
+  requirement. Recursive inference is bounded by the type-evaluation depth limit.
+  V33–v37 keep requiring their explicit annotations; there is no ABI/layout or
+  scheduler change.
 - **`yield`.** `yield e` checks `e` against `T`; bare `yield` yields
   `undefined`, which `T` must accept. The expression has type `TNext`. `return e`
   completes with `TReturn`; a `TReturn` other than `void` or `undefined` needs a
@@ -10259,6 +10275,16 @@ through the wider element type would not fit the narrower array; copy with
 member it is assignable to, and is rejected when it has a key that only
 members it is not assignable to declare (an `in` test of that key could
 otherwise narrow to a member that cannot view it).
+
+**Union source to one record (2026-11-07).** A closed union of record shapes
+and/or class instances converts to a record view only when every member is
+assignable to that view. The checker commits all layout edges together after
+success; a failing member commits none. Lowering evaluates the source once,
+unboxes its tagged object handle and uses the existing view accessors. Identity,
+mutation, own-key order and serialization retain the original object. Nullable,
+missing-required-field and incompatible-field members are rejected. This also
+applies at return, assignment and callback-variance boundaries through the shared
+assignability/widening rules; mutable arrays still require equal element types.
 
 **Callable signatures.** A callee (a class method, a function value, or a
 function literal) with parameters `S` and result `R` is callable through a
@@ -16718,10 +16744,11 @@ the same bits) and the cascade, custom-property substitution and computed
 values in `varta-style`. The native renderer and the compiler's static
 checks link it directly; the official browser host runs the same code as
 `view-engine.wasm` (below). It follows the published specifications; an
-admitted construct behaves as its specification says, and anything outside
-the subset is a violation with a typed diagnostic (the subset fails closed
-rather than ignoring what it does not admit). Chrome is the verification
-oracle, not the definition.
+admitted construct behaves as its specification says. Invalid selectors and
+unknown properties follow the specification's error recovery described below;
+valid constructs that the specifications define but the view has not implemented,
+and forbidden resource/effect constructs, produce typed diagnostics. Chrome is
+the verification oracle, not the definition.
 
 - **Tokens (CSS Syntax 3).** Stylesheets and values are tokenized by §4:
   input preprocessing (§3.3: CR, CR LF and FF are newlines, NUL is U+FFFD),

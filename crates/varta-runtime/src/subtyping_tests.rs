@@ -869,3 +869,73 @@ fn boolean_truth_guards_do_not_exclude_members_with_general_boolean_fields() {
         assert!(error.contains("not declared"), "{error}\n{source}");
     }
 }
+
+#[test]
+fn union_record_views_preserve_identity_mutation_and_layouts() {
+    run(
+        include_str!("subtyping_cases/union_record_views.ts"),
+        &[
+            "1 2 3",
+            "true 11 12 13",
+            "14 15 16",
+            "undefined x",
+            r#"{"kind":"a","n":11,"extra":"x"}"#,
+        ],
+    );
+}
+
+#[test]
+fn union_record_views_reject_incompatible_and_nullable_members() {
+    for source in [
+        "function read(v:{n:number}):number{return v.n;} function bad(v:{n:number}|{n:string}):number{return read(v);} export function main():void{}",
+        "function read(v:{n:number}):number{return v.n;} function bad(v:{n:number}|null):number{return read(v);} export function main():void{}",
+        "function read(v:{n:number}):number{return v.n;} function bad(v:{n:number}|{n?:number}):number{return read(v);} export function main():void{}",
+    ] {
+        assert!(rejected(source, V38).contains("mismatch"));
+    }
+    let old = include_str!("subtyping_cases/union_record_views.ts");
+    assert!(!rejected(old, V37).is_empty());
+}
+
+#[test]
+fn inferred_generators_match_node_and_keep_profile_boundaries() {
+    run(
+        include_str!("inference_cases/generators.ts"),
+        &[
+            "0 1 done true",
+            "text 2",
+            "5 7",
+            "undefined true",
+            "2 1 end",
+            "0 5 true",
+        ],
+    );
+    let old = "function* values(){yield 1;} export function main():void{}";
+    assert!(rejected(old, V37).contains("return annotation"));
+    for source in [
+        "function* bad(){const x:number=yield 1;yield x;} export function main():void{}",
+        "function* bad(){yield missing;} export function main():void{}",
+        "function* bad(){yield 1;} export function main():void{const x:Generator<string>=bad();}",
+    ] {
+        assert!(!rejected(source, V38).is_empty());
+    }
+}
+
+#[test]
+fn inferred_generators_and_union_views_survive_collection_stress() {
+    use crate::codegen_v2_tests::run_test_budgets;
+    use crate::collector_stress_tests::stressed;
+    // Test-only fuel allowance: instrumentation collects continuously; the
+    // normal executions above retain the production budget.
+    const STRESS_BUDGETS: u64 = 400;
+    for source in [
+        include_str!("inference_cases/generators.ts"),
+        include_str!("subtyping_cases/union_record_views.ts"),
+    ] {
+        let normal = run_test_budgets(&compile(source, V38), STRESS_BUDGETS);
+        for units in [2, 64] {
+            let actual = run_test_budgets(&stressed(source, units), STRESS_BUDGETS);
+            assert_eq!((&actual.lines, &actual.error), (&normal.lines, &None));
+        }
+    }
+}

@@ -1,7 +1,6 @@
 // A union of two record interfaces passed where a record type with their
-// shared field is expected. TypeScript accepts it and Node prints `1 2`; v38
-// views a single record or class instance as a narrower record, but does not
-// convert a union of record shapes to one record type.
+// shared field is expected. TypeScript accepts it and Node prints `1 2`.
+// V38 checks every source member and preserves the original object handle.
 interface A {
   type: 'a';
   n: number;

@@ -13,7 +13,7 @@ versioned language profiles; it is not general JavaScript, Node or npm
 compatibility yet. See the [status summary](docs/development-plan.md#status) and
 the [research thesis](docs/development-plan.md#research-thesis).
 
-Current development checkpoint (2026-11-06, `main`): v38 remains
+Current development checkpoint (2026-11-07, local `main`, `0ad37b9d`): v38 remains
 unreleased and in stabilization. The application runtime, official metered
 browser host, OPFS KV storage, native/browser network replay and packaged
 `varta-shell` are integrated. The pinned uarp-sdk runs natively against the
@@ -34,10 +34,15 @@ reload and Linux/sustained-load acceptance remain open. See the
 [current status](docs/development-plan.md#status) and
 [server stages](docs/development-plan.md#k7-merged-values-approved-2026-11-06).
 
-The latest full gate passes on merged `main` of 2026-11-07: 4447 Rust tests,
-25 ignored, 186 browser Node tests and the reviewed v38 conformance baseline.
-These are local macOS implementation checks, with browser Node tests;
-real-browser and other-target acceptance retain their separate scope.
+The v38 compiler/compatibility follow-up implements synchronous generator
+signature inference, compatible union-to-record views and digest-pinned module
+cases for initialization, live re-exports and default forwarding. Consolidated
+verification passes **4584 Rust tests and 189 browser Node tests**, with 26 Rust
+tests ignored. The compatibility baseline matches: **241 passed, 2 known
+unsupported out of 243 cases**, with 4 feature rows still without cases.
+One full attempt was followed by a test-fixture relocation, its targeted check
+and the unfinished suites; no full restart was run. These are local macOS arm64
+checks. All fourteen branch tips from the preceding recovery are integrated.
 See [current verification evidence](docs/verification.md#current-verification-evidence--2026-11-07).
 
 Real-window/native system-input acceptance, sustained live-service sessions,
@@ -45,7 +50,9 @@ complete browser/platform matrices and release/security/performance acceptance
 remain open. The optional wgpu/Vello UI backend has direct mixed-border color
 fields; direct GPU opacity groups and typed guest graphics/3D-library ports remain
 [planned work](docs/development-plan.md#gpu-and-game-graphics-future-direction).
-There is no guest GPU API or unmodified Three.js compatibility. The
+There is no guest GPU API or unmodified Three.js compatibility. The next compiler
+package covers class/function prerequisites; see the
+[next steps](docs/development-plan.md#next-implementation-package). The
 [CORE ledger](docs/development-plan.md#core-completion-ledger) records remaining
 scope without treating test counts as a completion percentage.
 

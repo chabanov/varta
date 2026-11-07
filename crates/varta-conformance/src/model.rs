@@ -37,6 +37,8 @@ pub struct Case {
     pub feature: String,
     pub path: String,
     pub sha256: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modules: Vec<CaseModule>,
     pub stdout: Vec<String>,
     /// Reviewed boolean capability grants the case runs with (also the host
     /// ceiling); only [`CASE_GRANTS`] are admitted, and an omitted list runs
@@ -48,6 +50,20 @@ pub struct Case {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_inputs: Option<varta_common::host_inputs::HostInputs>,
     pub baseline: Baseline,
+}
+/// A digest-pinned companion source; all imports stay inside the case snapshot.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CaseModule {
+    pub path: String,
+    pub sha256: String,
+}
+pub(crate) const MAX_CASE_MODULES: usize = 32;
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SourceModule {
+    pub path: String,
+    pub source: String,
 }
 /// Capabilities a case may be granted: the v36 `time.timer` grant only arms
 /// timers on the runtime event loop, has no OS effect beyond waiting and is
@@ -81,6 +97,10 @@ pub enum CompileCode {
 pub(crate) struct Request {
     pub profile: LanguageProfile,
     pub source: String,
+    #[serde(default)]
+    pub source_path: Option<String>,
+    #[serde(default)]
+    pub modules: Vec<SourceModule>,
     #[serde(default)]
     pub grants: Vec<String>,
     #[serde(default)]
@@ -144,6 +164,8 @@ pub struct CaseReport {
     pub feature: String,
     pub path: String,
     pub source_sha256: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub modules: Vec<CaseModule>,
     pub status: CaseStatus,
     pub baseline_reason: Option<String>,
     pub observation: Observation,

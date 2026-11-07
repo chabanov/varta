@@ -460,6 +460,7 @@ mod for_of;
 mod function_expressions;
 mod function_fields;
 mod functions;
+mod generator_inference;
 mod generators;
 mod generic_calls;
 pub(crate) mod generics;

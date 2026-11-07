@@ -1,6 +1,7 @@
 # Varta functional overview
 
-Checkpoint: 2026-11-07, recovered integration batch verified at `5c23aec4`.
+Checkpoint: 2026-11-07, verified compiler/compatibility package in the working
+tree, based on local `main` at `0ad37b9d`; changes are not yet committed.
 
 Varta compiles strictly typed TypeScript ahead of time into portable WebAssembly.
 Native applications execute in Wasmtime through a capability-checked host;
@@ -11,6 +12,9 @@ WebView; browser UI uses the View protocol's DOM applier.
 The current stage is **v38 stabilization, unreleased**. This document collects
 the implemented surface and its remaining boundaries. It describes the combined
 v38 surface; earlier profiles retain their own admission rules and behavior.
+The verified working-tree follow-up adds synchronous generator signature inference,
+union-to-record views and three module compatibility cases. The current source
+snapshot is recorded in the verification evidence.
 An API name below means its checked implementation, not its entire JavaScript,
 TypeScript, Web, Node or Deno counterpart.
 
@@ -27,17 +31,17 @@ defaults maintained in this overview.
 | Area | Implemented surface | Remaining boundary |
 | --- | --- | --- |
 | Compiler | Shared TS parsing, resolved typed IR, Wasm emission and validation for check/dev/build; explicit profile negotiation and source-aware diagnostics | Deliberate checked subset; unsupported syntax/types produce diagnostics |
-| Types and programs | Interfaces/aliases, unions and narrowing, optional fields, checked `unknown`/assertions, classes/inheritance/generics/private fields, functions/closures, supported control flow, modules and re-exports; v38 iteration protocol: `[Symbol.iterator]()` iterable classes, generator methods, array literal spreads, `Array.from` of iterables and synchronous `yield*` ([contract](architecture.md#iteration-protocol-iteration_protocol)); v38 K9 type level: conditional types with `infer`, mapped and template literal types, every utility type, `keyof`/`T[K]`/`typeof` queries, record intersections, call/construct signatures and constructor types, variadic/optional/rest tuples, type predicates, assertion functions, `satisfies`, polymorphic `this`, `never` exhaustiveness, tsc's literal inference, checked pattern template types and class arrays shared under ancestor element types ([contract](architecture.md#type-level-type_level)); v38 declarations and classes: enums with reverse mapping, namespaces and declaration merging, abstract classes, function/method/constructor overloads, setters and auto-accessors, static fields and `this` in static methods, class expressions and local classes ([contract](architecture.md#declarations-and-classes-declaration_forms)); v38 expression forms: `await` in every operand, object-literal methods with `this`, constant computed keys, tagged templates, destructuring of iterables, hand-written iterators, `using`, structural thenables, object-literal getters and setters ([contract](architecture.md#expression-forms-expression_forms)) | General dynamic properties/prototypes/descriptors, wider receiver behavior and remaining type/module semantics |
-| Values and built-ins | Number/BigInt/UTF-16 strings, objects, sparse/resizable arrays, hashed dictionaries, tuples, Map/Set, JSON, admitted Math/String/Array operations, RegExp (v38 K9 D3: the full ES2025 pattern language with backreferences, lookaround, modifiers, property escapes, `d` and `v`, matched by a backtracking matcher bounded by fuel; patterns built at run time compiled in the guest, `RegExp.escape`, match results as arrays, lazy `matchAll`, symbol protocols and custom matchers, [contract](architecture.md#full-regexp-full_regexp)); v38 standard library (K9 D): V8-order `sort`/`toSorted`, the ES2023 copying methods, `splice`/`flat`/`flatMap`, iterator helpers, Set methods, `Object.groupBy`/`Map.groupBy`/`Object.fromEntries`, `JSON.stringify` property lists and indentation, `AggregateError` and the complete `Date` in the UTC zone ([contract](architecture.md#standard-library-standard_library)); v38 console notation (K9 D1): multi-argument `console.log`/`info`/`debug` printed exactly as Node 24 prints them, class names, Errors, Map/Set/Date ([contract](architecture.md#console-notation-node_console)), standard error and the rest of Node's console (`error`, `warn`, `trace`, `assert`, `group`, `count`, `time`, `dir`, `table`; [contract](architecture.md#console-methods-console_methods)); v38 `Symbol` values with their own value tag ([contract](architecture.md#symbol-values-symbol_values)), object integrity levels ([contract](architecture.md#integrity-levels-integrity_levels)), local-time `Date` and linked locale data ([contract](architecture.md#local-time-local_time)); v38 `WeakMap`/`WeakSet`/`WeakRef`/`FinalizationRegistry` over ephemeron tables in the collector ([contract](architecture.md#weak-references-weak_references)) | String-key enumeration of symbol-keyed records, Proxy/Reflect, `structuredClone`, object coercion, wrappers, the remaining Intl API surface, and full conversion inventory; static blocks, effectful static initializers and decorators (code at class definition), enum/namespace objects as values, class index signatures |
+| Types and programs | Interfaces/aliases, unions and narrowing, compatible union-to-record views, optional fields, checked `unknown`/assertions, classes/inheritance/generics/private fields, functions/closures, v38 synchronous generator signature inference, supported control flow, modules and re-exports; v38 iteration protocol: `[Symbol.iterator]()` iterable classes, generator methods, array literal spreads, `Array.from` of iterables and synchronous `yield*` ([contract](architecture.md#iteration-protocol-iteration_protocol)); v38 K9 type level: conditional types with `infer`, mapped and template literal types, every utility type, `keyof`/`T[K]`/`typeof` queries, record intersections, call/construct signatures and constructor types, variadic/optional/rest tuples, type predicates, assertion functions, `satisfies`, polymorphic `this`, `never` exhaustiveness, tsc's literal inference, checked pattern template types and class arrays shared under ancestor element types ([contract](architecture.md#type-level-type_level)); v38 declarations and classes: enums with reverse mapping, namespaces and declaration merging, abstract classes, function/method/constructor overloads, setters and auto-accessors, static fields and `this` in static methods, class expressions and local classes, class values with static dispatch, enum/namespace objects, class index signatures, static blocks, effectful module initializers and temporal-dead-zone checks ([contract](architecture.md#declarations-and-classes-declaration_forms)); v38 expression forms: `await` in every operand, object-literal methods with `this`, constant computed keys, tagged templates, destructuring of iterables, hand-written iterators, `using`, structural thenables, object-literal getters and setters ([contract](architecture.md#expression-forms-expression_forms)) | General dynamic properties/prototypes/descriptors, wider receiver behavior and remaining type/module semantics |
+| Values and built-ins | Number/BigInt/UTF-16 strings, objects, sparse/resizable arrays, hashed dictionaries, tuples, Map/Set, JSON, admitted Math/String/Array operations, RegExp (v38 K9 D3: the full ES2025 pattern language with backreferences, lookaround, modifiers, property escapes, `d` and `v`, matched by a backtracking matcher bounded by fuel; patterns built at run time compiled in the guest, `RegExp.escape`, match results as arrays, lazy `matchAll`, symbol protocols and custom matchers, [contract](architecture.md#full-regexp-full_regexp)); v38 standard library (K9 D): V8-order `sort`/`toSorted`, the ES2023 copying methods, `splice`/`flat`/`flatMap`, iterator helpers, Set methods, `Object.groupBy`/`Map.groupBy`/`Object.fromEntries`, `JSON.stringify` property lists and indentation, `AggregateError` and the complete `Date` in the UTC zone ([contract](architecture.md#standard-library-standard_library)); v38 console notation (K9 D1): multi-argument `console.log`/`info`/`debug` printed exactly as Node 24 prints them, class names, Errors, Map/Set/Date ([contract](architecture.md#console-notation-node_console)), standard error and the rest of Node's console (`error`, `warn`, `trace`, `assert`, `group`, `count`, `time`, `dir`, `table`; [contract](architecture.md#console-methods-console_methods)); v38 `Symbol` values with their own value tag ([contract](architecture.md#symbol-values-symbol_values)), object integrity levels ([contract](architecture.md#integrity-levels-integrity_levels)), local-time `Date` and linked locale data ([contract](architecture.md#local-time-local_time)); v38 `WeakMap`/`WeakSet`/`WeakRef`/`FinalizationRegistry` over ephemeron tables in the collector ([contract](architecture.md#weak-references-weak_references)) | String-key enumeration of symbol-keyed records, Proxy/Reflect, `structuredClone`, object coercion, wrappers, the remaining Intl API surface, and full conversion inventory; standard decorators, tagged class values in unions/arrays/records/`unknown`, and remaining static-property ordering cases |
 | Async language | Promise chains/combinators, async/await (v38: in every operand position), sync/async generators, for-await, timers, microtasks and abort support; v38 structural thenables of statically known types, `await using` and top-level `await` in module initializers | Thenables through unions or `unknown` and wider async iterable forms |
 | Runtime | Bounded executions, isolated HTTP request instances and long-lived application instances with event turns, host tasks, permission answers and captured state | Broader sustained cancellation/shutdown, retained-resource and target evidence |
 | Collection | Exact roots/tracing across values, closures and suspension, incremental collection and idle maintenance; large-heap bitmap clearing before the root snapshot | Sustained leak/retained-root checks, collector tuning and peak-memory/RSS measurements |
 | Authority | Deny-by-default grants, exact operation/resource checks, package request intersected with a host ceiling, permission broker and validated artifact/ABI boundaries | Broader policy/permission UX, independent review and complete alternate-host acceptance |
 | System access | Text file reads/printing under virtual roots, environment access, clock/timers, logging and guest exit | General filesystem writes, arbitrary subprocess spawning and a broader standard system API |
 | Client networking | Capability-gated async HTTP(S) fetch, headers, streamed response reads, cancellation/timeout and admitted Web request/response values | Complete Web compatibility and all cross-host network behavior |
-| Server networking | Sync/async HTTP v2 handlers, JSON and streamed Web Response bodies, Web Request ingress with streamed request bodies, HTTP/1.1 keep-alive, async Wasmtime with pooled instances and admission, TLS 1.3 with HTTP/2, fuzz/flood tests and local benchmarks | Per-stream HTTP/2 write idle, h2c, HTTP/3, certificate reload, Linux and sustained-load acceptance |
+| Server networking | Sync/async HTTP v2 handlers, JSON and streamed Web Response bodies, Web Request ingress with streamed request bodies, HTTP/1.1 keep-alive, async Wasmtime with pooled instances and admission, TLS 1.3 with HTTP/2, connection and per-stream write-idle bounds, fuzz/flood tests and local benchmarks | h2c, HTTP/3, certificate reload, Linux and sustained-load acceptance |
 | Persistent data | Native Deno-KV-compatible files; browser OPFS backend with the shared Rust value codec; typed reads, lists and atomic updates | Async storage completion, watch/queues and complete Deno KV compatibility |
-| UI | TSX, checked tree/style/event batches, native layout/paint/input and official browser view sessions | Complete native L0/HTML/CSS/IME/accessibility and cross-renderer acceptance |
+| UI | TSX with reactive `data-*` attributes, shared Rust stylesheet/cascade engine and CSS error recovery, checked tree/style/event batches, native layout/paint/input and official browser view sessions | Complete native L0/HTML/CSS/IME/accessibility and cross-renderer acceptance |
 | GPU UI | Optional wgpu/Vello backend, shared bounded display scenes, CPU recovery and direct mixed-border color fields | Direct GPU opacity groups, other devices and full presentation/performance acceptance |
 | Distribution | Portable Wasm/manifest, source-free native launcher, packaged native shell and browser bundles with checked resources | Complete OS/CPU packaging matrix, artifact authenticity and release acceptance |
 | Tool contracts | Explicit publication, offline catalog/schema inspection and checked JSON invocation of primitive tool signatures | Shared transactional application/tool state, identities, general Application Contracts, MCP and LLM integration |
@@ -243,7 +247,7 @@ integration remain future work.
 
 | Target | Evidence at this checkpoint | Remaining acceptance |
 | --- | --- | --- |
-| macOS arm64 | Main local full gate; native shell, font, renderer and scoped Metal/browser observations | Complete real-window/system-input, sustained memory/latency and release acceptance |
+| macOS arm64 | Consolidated local verification (one full attempt plus scoped corrections and completion); native shell, font, renderer and scoped Metal/browser observations | Complete real-window/system-input, sustained memory/latency and release acceptance |
 | Linux native | Implementation/CI paths and earlier probes | Current full target run, desktop integration and target-specific acceptance |
 | Windows | Architecture/implementation paths | Real target builds, packaging and platform acceptance |
 | Raspberry Pi 5 | Earlier aarch64 launcher cross-build/run probe | Actual Pi hardware, kernel/page-size, UI/GPU/input and package metadata acceptance |
@@ -265,26 +269,33 @@ the current tree. It included:
 
 These are separately recorded scoped checkpoints. SDK-own-test execution needs
 the M7 harness; sustained live-service sessions, complete native windows and
-cross-target parity remain open. The newest full gate does not rerun every
+cross-target parity remain open. The current consolidated verification does not rerun every
 pilot/browser/hardware observation.
 
 ## Verification and completion boundary
 
-The recovered batch passes consolidated verification: **4577 Rust tests,
-189 browser Node tests, 0 unresolved failures; 26 Rust tests ignored**. One full
-attempt was followed by scoped corrections to three stale test expectations and
-completion of the unfinished suites; production code stayed unchanged after the
-full attempt. The original failed reports are preserved. See
-[current verification evidence](verification.md#current-verification-evidence--2026-11-07).
+The current compiler/compatibility package passes consolidated verification:
+**4584 Rust tests, 189 browser Node tests, 0 unresolved failures; 26 Rust tests
+ignored**. One full attempt was followed by relocation of a new fixture out of
+the frozen historical corpus and completion of unfinished suites. Production
+code and fixture contents stayed unchanged; the original failed report is retained.
+See [current verification evidence](verification.md#current-verification-evidence--2026-11-07).
 
 The recovery batch combines the K9 A type-level steps, B declarations and
 classes, C expressions and accessors, D1 console and standard-library additions,
 D2 symbols and integrity levels, D3 RegExp follow-ups, D4 local time and locale
 data, and D5 weak references and collections. Its combined conformance baseline
-matches: 236 passed and 4 known unsupported cases out of 240; 7 of 131 feature
-rows still have no executable cases. The bounded compatibility inventory is not
+is superseded by the compiler follow-up: 241 passed and 2 known unsupported cases
+out of 243; 4 of 131 feature rows still have no executable cases. The bounded compatibility inventory is not
 Test262, full language compatibility or a global completion percentage; see
 [the inventory](../conformance/README.md).
+
+The next recommended compiler package covers `this` in instance-field
+initializers, method values with explicit receiver semantics, and tuple-rest
+inference. These are prerequisites; standard decorators and property descriptors
+remain separate unimplemented cases. See the concrete
+[next steps](development-plan.md#next-implementation-package). Async generator
+inference and consumed-yield inference are outside the completed package's bounds.
 
 Remaining delivery work is grouped into four broad acceptance boundaries:
 

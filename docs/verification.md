@@ -8,7 +8,26 @@ any previous check whose scope includes those inputs.
 
 ## Current verification evidence — 2026-11-07
 
-- **Recovered integration batch, verified at `5c23aec4`:** all fourteen original
+- **Compiler/compatibility follow-up, completed 2026-11-07:** synchronous
+  generator inference, union-to-record views and pinned companion modules pass
+  consolidated verification: **4584 Rust tests passed, 0 unresolved failures,
+  26 ignored; 189 browser Node tests passed**. The checked-v38 baseline matches:
+  **241 passed, 2 known unsupported out of 243**, 131 feature rows, 4 without cases.
+- **Follow-up method:** one `verify.py full` attempt
+  (`target/verification/20261107-070740-h3mnj9mx/report.json`) passed all build,
+  generated-module and strict workspace Clippy stages. Its workspace tests found
+  one failure: a new fixture had been added to the frozen historical corpus.
+  The fixture was moved to its own directory and its include paths updated;
+  production code and fixture contents stayed unchanged. The historical hashes
+  then passed unchanged, followed by the unfinished runtime API, style/view,
+  documentation, browser and conformance suites. Both runs retained unchanged
+  inputs while executing. The original failed report is preserved; this is a
+  consolidated result, not an uninterrupted green full run. See the durable
+  [follow-up record](evidence/2026-11-07-inference-verification.json) and local
+  `target/inference-package-20261107/final-report.json`. The working-tree source
+  snapshot is recorded against base `0ad37b9d`; documentation-only edits afterward
+  do not change the verified engine code.
+- **Preceding recovered integration batch, verified at `5c23aec4`:** all fourteen original
   unmerged branch tips are included. Consolidated local results: **4577 Rust
   tests passed, 0 unresolved failures, 26 ignored; 189 browser Node tests passed**.
   Checked-v38 conformance matches its baseline: **236 passed, 4 known unsupported
@@ -22,7 +41,8 @@ any previous check whose scope includes those inputs.
   expectations: the permitted shared-format dependency of `varta-intl`, and
   refusal of now-supported v38 WeakMap construction. Both were corrected and
   their affected tests and Clippy checks passed. No full restart was run.
-- **Evidence scope:** production code has not changed since `bf8e2db5`; only
+- **Preceding recovery evidence scope:** for that recovery record, production
+  code stayed unchanged after `bf8e2db5`; only
   three test files changed after that full attempt. Inputs stayed unchanged
   during both the full attempt and the continuation. Counts deduplicate repeated
   tests by suite and name and use the final result. The original failed reports

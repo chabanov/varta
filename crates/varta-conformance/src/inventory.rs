@@ -16,6 +16,7 @@ const MAX_FEATURES: usize = 256;
 pub struct LoadedSuite {
     pub(crate) inventory: Inventory,
     pub(crate) sources: Vec<String>,
+    pub(crate) module_sources: Vec<Vec<SourceModule>>,
     pub(crate) digest: String,
 }
 impl LoadedSuite {
@@ -31,32 +32,33 @@ impl LoadedSuite {
         check_case_files(&root, &inventory)?;
         let mut sources = Vec::new();
         let mut total = 0usize;
+        let mut module_sources = Vec::new();
         for case in &inventory.cases {
-            let mut file = root.clone();
-            for part in Path::new(&case.path).components() {
-                if !matches!(part, Component::Normal(_)) {
-                    return Err(invalid("source path is not relative"));
-                }
-                file.push(part);
-                if std::fs::symlink_metadata(&file)?.file_type().is_symlink() {
-                    return Err(invalid("source symlinks are not admitted"));
-                }
+            let mut companions = Vec::new();
+            let source = snapshot(&root, &case.path, &case.sha256)?;
+            let mut case_bytes = source.len();
+            for module in &case.modules {
+                let source = snapshot(&root, &module.path, &module.sha256)?;
+                case_bytes += source.len();
+                companions.push(SourceModule {
+                    path: module.path.clone(),
+                    source,
+                });
             }
-            let source = read(&file, MAX_SOURCE_BYTES)?;
-            total = total
-                .checked_add(source.len())
-                .ok_or_else(|| invalid("source byte total overflow"))?;
+            if case_bytes > MAX_SOURCE_BYTES {
+                return Err(invalid("case source graph exceeds 1 MiB"));
+            }
+            total += case_bytes;
             if total > MAX_TOTAL_SOURCE_BYTES {
                 return Err(invalid("suite sources exceed 16 MiB"));
             }
-            if sha256(&source) != case.sha256 {
-                return Err(invalid(&format!("source digest mismatch for {}", case.id)));
-            }
-            sources.push(String::from_utf8(source).map_err(|_| invalid("source is not UTF-8"))?);
+            sources.push(source);
+            module_sources.push(companions);
         }
         Ok(Self {
             inventory,
             sources,
+            module_sources,
             digest: sha256(&bytes),
         })
     }
@@ -80,6 +82,23 @@ fn read(path: &Path, max: usize) -> Result<Vec<u8>, Error> {
         return Err(invalid("inventory/source exceeds byte limit"));
     }
     Ok(bytes)
+}
+fn snapshot(root: &Path, path: &str, digest: &str) -> Result<String, Error> {
+    let mut file = root.to_path_buf();
+    for part in Path::new(path).components() {
+        if !matches!(part, Component::Normal(_)) {
+            return Err(invalid("source path is not relative"));
+        }
+        file.push(part);
+        if std::fs::symlink_metadata(&file)?.file_type().is_symlink() {
+            return Err(invalid("source symlinks are not admitted"));
+        }
+    }
+    let bytes = read(&file, MAX_SOURCE_BYTES)?;
+    if sha256(&bytes) != digest {
+        return Err(invalid("source digest mismatch"));
+    }
+    String::from_utf8(bytes).map_err(|_| invalid("source is not UTF-8"))
 }
 fn identifier(id: &str) -> bool {
     !id.is_empty()
@@ -141,37 +160,42 @@ fn validate(i: &Inventory) -> Result<(), Error> {
         if !identifier(&c.id) || !ids.insert(&c.id) || !features.contains(&c.feature) {
             return Err(invalid("invalid/duplicate case or unknown feature"));
         }
-        if !c.path.starts_with("cases/")
-            || c.path.len() > 240
-            || !c.path.ends_with(".ts")
-            || !c
-                .path
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_/ .".contains(&b))
-            || !paths.insert(&c.path)
-        {
-            return Err(invalid("invalid or duplicate source path"));
+        if c.modules.len() > MAX_CASE_MODULES {
+            return Err(invalid("too many companion modules"));
         }
-        if c.path
-            .split('/')
-            .any(|p| p.is_empty() || p == "." || p == "..")
-            || !Path::new(&c.path)
-                .components()
-                .all(|p| matches!(p, Component::Normal(_)))
+        for (path, digest) in std::iter::once((&c.path, &c.sha256))
+            .chain(c.modules.iter().map(|m| (&m.path, &m.sha256)))
         {
-            return Err(invalid(
-                "source path must contain only normal relative components",
-            ));
-        }
-        if c.sha256.len() != 64
-            || !c
-                .sha256
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err(invalid(
-                "source SHA-256 must be 64 lowercase hexadecimal digits",
-            ));
+            if !path.starts_with("cases/")
+                || path.len() > 240
+                || !path.ends_with(".ts")
+                || !path
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_/ .".contains(&b))
+                || !paths.insert(path)
+            {
+                return Err(invalid("invalid or duplicate source path"));
+            }
+            if path
+                .split('/')
+                .any(|p| p.is_empty() || p == "." || p == "..")
+                || !Path::new(&path)
+                    .components()
+                    .all(|p| matches!(p, Component::Normal(_)))
+            {
+                return Err(invalid(
+                    "source path must contain only normal relative components",
+                ));
+            }
+            if digest.len() != 64
+                || !digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return Err(invalid(
+                    "source SHA-256 must be 64 lowercase hexadecimal digits",
+                ));
+            }
         }
         if c.stdout.len() > 128 || c.stdout.iter().map(String::len).sum::<usize>() > 16 * 1024 {
             return Err(invalid("expected output exceeds inventory bounds"));
@@ -211,7 +235,13 @@ fn validate(i: &Inventory) -> Result<(), Error> {
 // Every .ts source in the corpus must remain represented; removing a failing
 // manifest row alone cannot silently remove its case from the baseline.
 fn check_case_files(root: &Path, inventory: &Inventory) -> Result<(), Error> {
-    let declared: BTreeSet<_> = inventory.cases.iter().map(|c| c.path.as_str()).collect();
+    let declared: BTreeSet<_> = inventory
+        .cases
+        .iter()
+        .flat_map(|c| {
+            std::iter::once(c.path.as_str()).chain(c.modules.iter().map(|m| m.path.as_str()))
+        })
+        .collect();
     let mut pending = vec![root.join("cases")];
     let mut entries = 0;
     while let Some(directory) = pending.pop() {

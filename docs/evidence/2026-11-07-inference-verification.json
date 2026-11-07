@@ -1,0 +1,63 @@
+{
+  "mode": "one-full-attempt-with-test-only-correction-and-unfinished-suites",
+  "fullInvocationCount": 1,
+  "baseHead": "0ad37b9d5d1dfd6289565451a29432ff6c79d414",
+  "verifiedSourceSnapshot": {
+    "head": "0ad37b9d5d1dfd6289565451a29432ff6c79d414",
+    "sourceSha256": "909ad0bd529aaf1e42a6a85cf28a87a7a55cf1618cb5ba460eb04d5c92025ea2"
+  },
+  "fullAttempt": {
+    "path": "target/verification/20261107-070740-h3mnj9mx/report.json",
+    "passed": false,
+    "sourceUnchanged": true
+  },
+  "continuation": {
+    "path": "target/inference-package-20261107/continuation-report.json",
+    "passed": true,
+    "sourceUnchanged": true
+  },
+  "correction": "Moved the new generator fixture out of the frozen pre-v38 corpus; updated its include paths. Historical hashes unchanged; fixture contents unchanged.",
+  "postAttemptChanges": [
+    "crates/varta-runtime/src/generator_cases/inference.ts",
+    "crates/varta-runtime/src/inference_cases/generators.ts",
+    "crates/varta-runtime/src/subtyping_tests.rs"
+  ],
+  "productionCodeUnchangedSinceFullAttempt": true,
+  "rust": {
+    "passed": 4584,
+    "ignored": 26,
+    "failed": 0,
+    "deduplication": "latest result by suite and test name"
+  },
+  "browserNode": {
+    "passed": 189,
+    "failed": 0
+  },
+  "conformance": {
+    "counts": {
+      "total": 243,
+      "passed": 241,
+      "knownUnsupported": 2,
+      "unexpectedSupport": 0,
+      "regressions": 0,
+      "infrastructureFailures": 0
+    },
+    "baselineMatches": true,
+    "featureRows": 131,
+    "untestedFeatures": 4
+  },
+  "scopedChecks": [
+    "generator legacy compiler tests (9 passed)",
+    "new runtime behavior and collection stress (4 passed)",
+    "companion-module runner suite (28 passed)",
+    "source-free CLI/artifact regression (1 passed)",
+    "new fixture output matched Node"
+  ],
+  "passed": true,
+  "limitations": [
+    "Local macOS arm64 evidence only",
+    "Original full report retains the frozen-corpus fixture failure; not an uninterrupted green full run",
+    "Async generators and consumed ordinary yield results retain annotation requirements",
+    "2 known unsupported conformance cases and 4 feature rows without cases"
+  ]
+}
