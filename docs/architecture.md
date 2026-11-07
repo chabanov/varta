@@ -11898,18 +11898,41 @@ refused with an `unsupported …` diagnostic that names it (list below).
     receiver of `x.isT()`.
   - *Class subtyping in containers*: a subclass instance is accepted wherever
     an ancestor is expected in arrays (`push`, literals, element writes),
-    tuples, records, `Map`/`Set` values and unions. An array of a class
-    converts to an array of an ancestor class (`B[]` to `A[]`) by a shallow
-    copy (an array literal is retyped), and an array of a union of classes
-    to an array of their common ancestor by a new array of the unboxed
-    elements.
+    tuples, records, `Map`/`Set` values and unions.
+- **Shared class arrays (step 3, owner decision of 2026-11-06).** An array
+  whose elements are class instances, or a union of classes with `null` or
+  `undefined`, converts to an array type whose element type admits every
+  one of them (`B[]` and `(B | C)[]` to `A[]`, `(B | null)[]` to `(A |
+  null)[]`) without a copy, as in JavaScript: both names hold one array, so
+  every write through one is seen through the other. The compiler joins the
+  array types that such conversions connect into components
+  (`type_level::covariance`) and gives every array type of a component one
+  element representation, so no element is converted: instance handles
+  (the arrays of unions of classes hold the instances, boxing on read and
+  unboxing on write) or, when a union of the component admits `null` or
+  `undefined`, union cells (the arrays of one class box on write and unbox
+  on read). Both are existing canonical array layouts (element kind Record
+  or ReferenceUnion), so no value layout, value ABI or host import changes.
+  TypeScript's array covariance is unsound: through the wider name an
+  `A` (or `null`) may be stored that a narrower name does not admit. Every
+  element read (`xs[i]`, `at`, `pop`, iteration, callbacks, destructuring,
+  library methods) through an array type of a component whose element type
+  does not admit every value stored through the component's other types
+  tests the element (the class descriptor against the admitted classes and
+  their subclasses; `null`/`undefined` against the element union) and
+  throws `TypeError` (`array element is not a value of the array's element
+  type`) on a mismatch, consistent with the checked predicate reads.
+  Programs without such conversions keep their code. A collection whose
+  key vector is an array type with a changed representation is refused by
+  name.
 - **Intentional deviations from Node.** (1) A type predicate that lies
   (narrows to a member the value does not hold) throws `TypeError` at the
   narrowed read (`value does not have the type its type predicate
   asserted`), consistent with the checked `as` assertions; Node continues
-  with the mistyped value. (2) A `B[]` converted to `A[]` is a copy: a write
-  through one name is not seen through the other, where Node aliases one
-  array (a shared alias could store an `A` into the `B[]`).
+  with the mistyped value. (2) An element of a shared class array that the
+  read's element type does not admit (an `A` stored through `A[]` and read
+  through `B[]`) throws `TypeError` at the read; Node continues with the
+  mistyped value.
 
 Still refused, each by name: `unique symbol` (no Symbol values in this
 profile), `import("…")` types, callable objects with properties (a call

@@ -260,12 +260,33 @@ fn overloads_generic_signatures_object_this_and_pattern_templates() {
     );
 }
 
+#[test]
+fn class_arrays_viewed_as_ancestor_arrays_are_one_array() {
+    case(
+        include_str!("type_level_cases/shared_arrays.ts"),
+        &[
+            "2 2 BB 2 true",
+            "BCBC BCBC 4",
+            "BBCC BB",
+            "C C 3",
+            "true true 1 true",
+            r#"CBCB CBCBC [{"x":1,"z":3},{"x":1,"y":2},{"x":1,"z":3},{"x":1,"y":2}]"#,
+            "BBCC 2,2,3,3",
+            "4,3,4,- 4 true",
+            "4",
+            "3",
+            "4",
+        ],
+    );
+}
+
 /// Intentional deviations from Node (recorded in the type-level contract):
 /// a lying type predicate throws `TypeError` at the narrowed read, where
-/// Node continues with the mistyped value; and a `B[]` converted to `A[]`
-/// is a copy, so a push through the wider alias is not seen by the other.
+/// Node continues with the mistyped value; and an element of a shared class
+/// array read through a name whose element type does not admit it (an `A`
+/// stored through `A[]` and read through `B[]`) throws `TypeError`.
 #[test]
-fn checked_predicates_and_copied_array_views_deviate_from_node() {
+fn checked_predicates_and_shared_array_reads_deviate_from_node() {
     let lying = r#"class Animal { name: string = "tom"; }
 class Dog extends Animal { tag: string = "dog"; }
 function lies(animal: Animal): animal is Dog { return animal.name.length > 0; }
@@ -281,14 +302,32 @@ export function main(): void {
 }"#;
     // Node prints `undefined`.
     assert_eq!(run(lying), logs(&["TypeError"]));
-    let alias = r#"class A { n: number = 1; }
-class B extends A {}
+    let shared = r#"class A { n: number = 1; }
+class B extends A { tag: string = "b"; }
+class C extends A { }
+function addA(list: A[]): void { list.push(new A()); }
+function report(read: () => string): void {
+  try {
+    console.log(read());
+  } catch (error) {
+    console.log(error instanceof TypeError ? "TypeError" : "other");
+  }
+}
 export function main(): void {
   const bs: B[] = [new B()];
-  const all: A[] = bs;
-  all.push(new A());
-  console.log(`${bs.length} ${all.length}`);
+  addA(bs);
+  report(() => `${bs.length} ${bs[0].tag}`);
+  report(() => String(bs[1].tag));
+  const mixed = [new B(), new C()];
+  addA(mixed);
+  report(() => String(mixed[2] instanceof B));
+  const loose: (A | undefined)[] = mixed;
+  loose.push(undefined);
+  report(() => String(mixed[3] instanceof C));
 }"#;
-    // Node prints `2 2`.
-    assert_eq!(run(alias), logs(&["1 2"]));
+    // Node prints `2 b`, `undefined`, `false`, `false`.
+    assert_eq!(
+        run(shared),
+        logs(&["2 b", "TypeError", "TypeError", "TypeError"])
+    );
 }

@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 mod conditional;
 mod constructors;
 mod containers;
+mod covariance;
 mod literal_inference;
 mod mapped;
 mod objects;
@@ -30,6 +31,7 @@ mod tuple_types;
 mod utilities;
 
 pub(super) use containers::covariant_array;
+pub(super) use covariance::resolve as resolve_covariance;
 pub(super) use relation::extends;
 
 /// Nesting bound of type-level evaluation (conditional branches, mapped
@@ -67,6 +69,9 @@ pub(crate) struct TypeLevel {
     /// Overload sets of overloaded function types: each overload's function
     /// type, in declaration order.
     overloads: Vec<Vec<Type>>,
+    /// Class-instance arrays viewed under a wider element type: (source
+    /// array type, target array type), resolved by `covariance::resolve`.
+    covariance: std::cell::RefCell<BTreeSet<(u32, u32)>>,
     /// Current evaluation depth.
     depth: usize,
 }
