@@ -171,7 +171,10 @@ impl Lower<'_> {
     /// w`), lowered outside `expr_lowered` so the recursive expression
     /// lowering keeps a small native stack frame.
     #[inline(never)]
-    pub(super) fn class_value_expression(&mut self, expression: &ast::Expr) -> Option<Result<Expr>> {
+    pub(super) fn class_value_expression(
+        &mut self,
+        expression: &ast::Expr,
+    ) -> Option<Result<Expr>> {
         if !self.types.profile.declaration_forms() {
             return None;
         }
