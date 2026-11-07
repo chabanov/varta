@@ -20,7 +20,10 @@ impl Surface<'_> {
     /// so they composite through the same clip, group and transform scopes
     /// as recorded fills. An inline capture cannot hold one.
     fn fill_image(&mut self, node: u32, draw: ImageDraw, mask: Option<&ClipMask>) {
-        if self.failure.is_some() || self.groups.last().is_some_and(|scope| scope.hidden) {
+        if self.failure.is_some()
+            || self.suppressed
+            || self.groups.last().is_some_and(|scope| scope.hidden)
+        {
             return;
         }
         if self.capture.is_some() {

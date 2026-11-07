@@ -71,13 +71,13 @@ fn the_stylesheet_grammar_is_checked() {
         ".a { background-color: u\\72l(\"x\") }",
         "@import \"x\";",
         "@\\69mport \"x\";",
-        ".a::before { color: #fff }",
-        "#a { color: #fff }",
+        ".a::frob { color: #fff }",
+        "#1a { color: #fff }",
         "frob { color: #fff }",
         ".a > { color: #fff }",
         ".a:nth-child(x) { color: #fff }",
-        ".a:has(.b) { color: #fff }",
-        "[data-x] { color: #fff }",
+        ".a:has(.b:has(.c)) { color: #fff }",
+        "[data-x=1] { color: #fff }",
         ".a { color: #fff",
         ".a { ; color: #fff }",
         ".a { color: #fff;; }",
@@ -222,8 +222,18 @@ fn violations_carry_utf8_byte_offsets() {
         }
     );
     // A multi-byte character before the violation counts in bytes.
-    let text = ":root { --label: x }\n/* é */ .a > #b {}";
-    assert_eq!(error(text).offset, text.find("#b").unwrap());
+    let text = ":root { --label: x }\n/* é */ .a > #1b {}";
+    assert_eq!(error(text).offset, text.find("#1b").unwrap());
+    assert_eq!(
+        error(".a, .b::after { color: #fff }").violation,
+        Violation::PseudoElement
+    );
+    assert_eq!(
+        parse("::file-selector-button { color: #fff }")
+            .unwrap()
+            .len(),
+        1
+    );
     let text = "/* é */ frob { color: #fff }";
     assert_eq!(error(text).violation, Violation::Selector);
     assert_eq!(error(text).offset, text.find("frob").unwrap());

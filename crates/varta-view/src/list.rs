@@ -209,11 +209,10 @@ fn marker(
 ) -> Result<Marker, LayoutError> {
     let (measurer, size) = font;
     let text_error = |error: crate::TextMeasureError| LayoutError::Text(error.to_string());
-    if inputs
-        .tree
-        .computed_property(id, inputs.env, CssProperty::Overflow)
-        .is_some_and(|value| value != "visible")
-    {
+    if crate::style::overflow(&inputs.tree.computed_read(id, inputs.env)).is_none_or(|axes| {
+        axes.iter()
+            .any(|axis| *axis != crate::style::Overflow::Visible)
+    }) {
         // An item's own clip would cut its outside marker; not modeled.
         return Err(LayoutError::Unsupported(id));
     }

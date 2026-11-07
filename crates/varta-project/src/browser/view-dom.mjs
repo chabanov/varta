@@ -2,7 +2,7 @@ import { registry } from "../../../varta-common/browser/registry.mjs";
 import { createFontNamespace } from './view-fonts.mjs';
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
 import { createViewModel, imageCandidateNames } from "./view-model.mjs";
-import { readMediaInputs, MEDIA_INPUT_QUERIES, ENGINE_INPUTS } from "./view-engine.mjs";
+import { readMediaInputs, MEDIA_INPUT_QUERIES, ENGINE_INPUTS, ENGINE_STATES } from "./view-engine.mjs";
 
 const V = registry.view, W = V.wire, F = V.filters;
 const field = Object.fromEntries(W.eventFields.map((entry) => [entry.name, entry]));
@@ -76,7 +76,7 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
   // inline; guest stylesheets never reach the platform cascade. The engine's
   // inputs are recorded here: the viewport, the media preferences and the
   // pointer and focus states the platform reports.
-  const applied = new WeakMap(), engine = model.engine;
+  const applied = new WeakMap(), engine = model.engine, fieldStates = ENGINE_STATES.badInput | ENGINE_STATES.userValidity;
   if (engine) {
     for (const face of fontFaces) if (engine.face(face.family, face.bytes, face.generics) !== 0) throw new TypeError("invalid packaged font face");
     engine.defaultFamily(fonts.defaultName);
@@ -95,6 +95,10 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
     const focused = shadow.activeElement?.matches?.(":focus-visible") ? idOf(shadow.activeElement) : W.noNode;
     engine.state(focused, deepest(":hover"), deepest(":active"));
     engine.focus(shadow.activeElement ? idOf(shadow.activeElement) : W.noNode);
+    // The fields' states the platform keeps: a number field's bad input and
+    // the user validity of `:user-valid`/`:user-invalid` (HTML §4.10.18.4.1).
+    for (const [id, element] of nodes) if (["input", "textarea", "select"].includes(element.localName))
+      engine.setStates(id, (element.validity.badInput ? ENGINE_STATES.badInput : 0) | (element.matches(":user-valid, :user-invalid") ? ENGINE_STATES.userValidity : 0), fieldStates);
     for (const [id, element] of nodes) {
       if (element.nodeType !== 1) continue;
       const values = engine.computed(id), previous = applied.get(element) ?? new Map();
@@ -108,7 +112,7 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
   }
   let frame;
   const schedule = () => { if (!closed && frame === undefined) frame = window.requestAnimationFrame(() => { frame = undefined; try { restyle(); } catch (error) { onError(error); } }); };
-  const stateEvents = ["pointerover", "pointerout", "pointerdown", "pointerup", "pointercancel", "focusin", "focusout", "keydown", "keyup", "input", "change"];
+  const stateEvents = ["pointerover", "pointerout", "pointerdown", "pointerup", "pointercancel", "focusin", "focusout", "keydown", "keyup", "input", "change", "submit"];
   for (const kind of stateEvents) shadow.addEventListener(kind, schedule, true);
   const queries = MEDIA_INPUT_QUERIES.map((query) => window.matchMedia(query));
   for (const query of queries) query.addEventListener("change", schedule);

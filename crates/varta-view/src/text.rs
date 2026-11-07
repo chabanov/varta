@@ -3,6 +3,7 @@ mod cache;
 pub(crate) mod edges;
 pub(crate) mod fallback;
 pub(crate) mod field_display;
+pub(crate) mod transform;
 pub(crate) mod whitespace;
 use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
 use parley::{

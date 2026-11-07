@@ -14,7 +14,7 @@
 //! against, so both hosts are tied to one record.
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use varta_common::view::{CssProperty, Tag};
+use varta_common::view::{Attribute, CssProperty, Tag};
 use varta_style::fonts::{
     FaceStyle, Family, FontSet, Generic, HostFamily, HostFonts, SizedMetrics, host_metrics,
 };
@@ -96,8 +96,11 @@ trait Driver {
     fn begin(&mut self);
     fn commit(&mut self) -> u32;
     fn abort(&mut self);
-    fn create(&mut self, id: u32) -> u32;
+    fn create(&mut self, id: u32, tag: Tag) -> u32;
     fn insert(&mut self, parent: u32, child: u32) -> u32;
+    fn attribute(&mut self, id: u32, name: &str, value: &str) -> u32;
+    fn value(&mut self, id: u32, value: &str) -> u32;
+    fn flags(&mut self, id: u32, disabled: bool, checked: bool) -> u32;
     fn class(&mut self, id: u32, text: &str) -> u32;
     fn style(&mut self, id: u32, property: u16, text: &str) -> u32;
     fn sheet(&mut self, id: u32, text: &str) -> u32;
@@ -116,11 +119,20 @@ impl Driver for Session {
     fn abort(&mut self) {
         Session::abort(self);
     }
-    fn create(&mut self, id: u32) -> u32 {
-        Session::create(self, id, Some(Tag::Div))
+    fn create(&mut self, id: u32, tag: Tag) -> u32 {
+        Session::create(self, id, Some(tag))
     }
     fn insert(&mut self, parent: u32, child: u32) -> u32 {
         Session::insert(self, parent, child, 0)
+    }
+    fn attribute(&mut self, id: u32, name: &str, value: &str) -> u32 {
+        self.set_attribute(id, name, value)
+    }
+    fn value(&mut self, id: u32, value: &str) -> u32 {
+        self.set_value(id, value)
+    }
+    fn flags(&mut self, id: u32, disabled: bool, checked: bool) -> u32 {
+        self.set_flags(id, disabled, checked)
     }
     fn class(&mut self, id: u32, text: &str) -> u32 {
         self.set_class(id, text)
@@ -254,9 +266,29 @@ impl Driver for Wasm {
             .call(&mut self.store, ())
             .unwrap();
     }
-    fn create(&mut self, id: u32) -> u32 {
+    fn create(&mut self, id: u32, tag: Tag) -> u32 {
         self.func::<(u32, u32), u32>("view_engine_create")
-            .call(&mut self.store, (id, u32::from(Tag::Div.code())))
+            .call(&mut self.store, (id, u32::from(tag.code())))
+            .unwrap()
+    }
+    fn attribute(&mut self, id: u32, name: &str, value: &str) -> u32 {
+        self.input(&format!("{name}{value}"));
+        self.func::<(u32, u32), u32>("view_engine_attribute")
+            .call(&mut self.store, (id, u32::try_from(name.len()).unwrap()))
+            .unwrap()
+    }
+    fn value(&mut self, id: u32, value: &str) -> u32 {
+        self.input(value);
+        self.func::<u32, u32>("view_engine_value")
+            .call(&mut self.store, id)
+            .unwrap()
+    }
+    fn flags(&mut self, id: u32, disabled: bool, checked: bool) -> u32 {
+        self.func::<(u32, u32, u32), u32>("view_engine_flags")
+            .call(
+                &mut self.store,
+                (id, u32::from(disabled), u32::from(checked)),
+            )
             .unwrap()
     }
     fn insert(&mut self, parent: u32, child: u32) -> u32 {
@@ -306,11 +338,18 @@ impl Driver for Wasm {
     }
 }
 
-/// One corpus case.
+/// One corpus case: a chain of elements (each a `div` unless `tags`
+/// names another tag) with their classes, attributes (`[index, name,
+/// value]`), field values (`[index, value]`) and checked inputs
+/// (`[index]`), the stylesheet and the deepest element's inline values.
 struct Case {
     name: String,
     sheet: String,
     classes: Vec<String>,
+    tags: Vec<Tag>,
+    attributes: Vec<(usize, Attribute, String)>,
+    values: Vec<(usize, String)>,
+    checked: Vec<usize>,
     style: Vec<(CssProperty, String)>,
 }
 fn corpus() -> Vec<Case> {
@@ -327,6 +366,48 @@ fn corpus() -> Vec<Case> {
                 .unwrap()
                 .iter()
                 .map(|class| class.as_str().unwrap().into())
+                .collect(),
+            tags: case["classes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    case["tags"]
+                        .get(index)
+                        .and_then(serde_json::Value::as_str)
+                        .map_or(Tag::Div, |name| {
+                            *Tag::ALL.iter().find(|tag| tag.name() == name).unwrap()
+                        })
+                })
+                .collect(),
+            attributes: list(&case["attributes"])
+                .iter()
+                .map(|row| {
+                    let name = row[1].as_str().unwrap();
+                    let attribute = *Attribute::ALL
+                        .iter()
+                        .find(|attribute| attribute.name() == name)
+                        .unwrap();
+                    (
+                        usize::try_from(row[0].as_u64().unwrap()).unwrap(),
+                        attribute,
+                        row[2].as_str().unwrap().into(),
+                    )
+                })
+                .collect(),
+            values: list(&case["values"])
+                .iter()
+                .map(|row| {
+                    (
+                        usize::try_from(row[0].as_u64().unwrap()).unwrap(),
+                        row[1].as_str().unwrap().into(),
+                    )
+                })
+                .collect(),
+            checked: list(&case["checked"])
+                .iter()
+                .map(|index| usize::try_from(index.as_u64().unwrap()).unwrap())
                 .collect(),
             style: case["style"]
                 .as_array()
@@ -345,6 +426,11 @@ fn corpus() -> Vec<Case> {
         })
         .collect()
 }
+/// An optional array of a case.
+fn list(value: &serde_json::Value) -> Vec<serde_json::Value> {
+    value.as_array().cloned().unwrap_or_default()
+}
+
 fn element(index: usize) -> u32 {
     u32::try_from(index).unwrap() + 2
 }
@@ -368,13 +454,33 @@ fn run(driver: &mut impl Driver, case: &Case) -> Verdict {
     };
     for (index, class) in case.classes.iter().enumerate() {
         let id = element(index);
-        refused = call(driver.create(id), &mut statuses)
+        refused = call(driver.create(id, case.tags[index]), &mut statuses)
             || call(driver.insert(parent, id), &mut statuses)
             || call(driver.class(id, class), &mut statuses);
         if refused {
             break;
         }
         parent = id;
+    }
+    // The model mirrors attributes, field values and checked states as it
+    // admits them (the native view keeps its own).
+    for (index, attribute, value) in &case.attributes {
+        if !refused {
+            refused = call(
+                driver.attribute(element(*index), attribute.name(), value),
+                &mut statuses,
+            );
+        }
+    }
+    for (index, value) in &case.values {
+        if !refused {
+            refused = call(driver.value(element(*index), value), &mut statuses);
+        }
+    }
+    for index in &case.checked {
+        if !refused {
+            refused = call(driver.flags(element(*index), false, true), &mut statuses);
+        }
     }
     if !refused {
         refused = call(driver.sheet(1, &case.sheet), &mut statuses);
@@ -448,10 +554,19 @@ fn native(case: &Case) -> (bool, serde_json::Value) {
     for (index, class) in case.classes.iter().enumerate() {
         let id = element(index);
         batch
-            .create_element(id, Tag::Div)
+            .create_element(id, case.tags[index])
             .insert(parent, id, 0)
             .set_class(id, class);
         parent = id;
+    }
+    for (index, attribute, value) in &case.attributes {
+        batch.set_attribute(element(*index), *attribute, value);
+    }
+    for (index, value) in &case.values {
+        batch.set_value(element(*index), value, 0);
+    }
+    for index in &case.checked {
+        batch.set_checked(element(*index), 1, 0);
     }
     batch.stylesheet(1, &case.sheet);
     for (property, value) in &case.style {

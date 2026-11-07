@@ -170,7 +170,7 @@ pub enum Violation {
     )]
     Forbidden,
     #[error(
-        "expected a selector: complex selectors of type, class and the subset's pseudo-class selectors with combinators; id and attribute selectors, pseudo-elements and `:has()` are outside the subset"
+        "expected a selector: complex selectors of type, id, class, attribute and the subset's pseudo-class selectors with combinators, optionally ending in one of the subset's pseudo-elements"
     )]
     Selector,
     #[error("expected `{0}`")]
@@ -179,6 +179,8 @@ pub enum Violation {
         "invalid @media query (media types all/screen/print; features width, height, orientation, prefers-color-scheme, prefers-reduced-motion, prefers-contrast, forced-colors, hover, any-hover, pointer, any-pointer)"
     )]
     Media,
+    #[error("a pseudo-element the renderers do not draw yet (admitted: `::file-selector-button`)")]
+    PseudoElement,
     #[error("invalid declaration: unknown property or value outside the subset grammar")]
     Declaration,
     #[error(
@@ -797,6 +799,30 @@ impl Parser<'_> {
         }
         let selectors = selector::parse_list(&self.tokens[first..last], self.text)
             .or_else(|failure| self.fail_at(first + failure, Violation::Selector))?;
+        if let Some(item) = selectors.iter().position(|selector| {
+            selector
+                .pseudo_element
+                .is_some_and(|element| !element.rendered())
+        }) {
+            // The offending selector's first token: after `item` top-level
+            // commas and the whitespace that follows them.
+            let mut depth = 0usize;
+            let mut commas = 0usize;
+            let mut at = first;
+            while at < last && commas < item {
+                match self.tokens[at].token {
+                    Token::Function(_) | Token::OpenParen | Token::OpenSquare => depth += 1,
+                    Token::CloseParen | Token::CloseSquare => depth = depth.saturating_sub(1),
+                    Token::Comma if depth == 0 => commas += 1,
+                    _ => {}
+                }
+                at += 1;
+            }
+            while at < last && self.tokens[at].token == Token::Whitespace {
+                at += 1;
+            }
+            return self.fail_at(at, Violation::PseudoElement);
+        }
         for parsed in &selectors {
             let work = selector_work(parsed);
             self.charge(work)?;
@@ -812,15 +838,30 @@ fn selector_work(parsed: &Selector) -> usize {
     let weight = super::DRAFT_STYLESHEET_NODE_WORK;
     let mut work = weight.saturating_mul(parsed.compounds.len());
     for compound in &parsed.compounds {
-        for class in &compound.classes {
-            work = work.saturating_add(weight + class.len());
+        for name in compound.classes.iter().chain(&compound.ids) {
+            work = work.saturating_add(weight + name.len());
+        }
+        for attribute in &compound.attributes {
+            let value = attribute
+                .test
+                .as_ref()
+                .map_or(0, |(_, value, _)| value.len());
+            work = work.saturating_add(weight + attribute.name.len() + value);
         }
         for pseudo in &compound.pseudo {
             work = work.saturating_add(weight);
-            if let Pseudo::Is(list) | Pseudo::Where(list) | Pseudo::Not(list) = pseudo {
-                for inner in list {
-                    work = work.saturating_add(selector_work(inner));
+            match pseudo {
+                Pseudo::Is(list) | Pseudo::Where(list) | Pseudo::Not(list) => {
+                    for inner in list {
+                        work = work.saturating_add(selector_work(inner));
+                    }
                 }
+                Pseudo::Has(list) => {
+                    for relative in list {
+                        work = work.saturating_add(selector_work(&relative.selector));
+                    }
+                }
+                _ => {}
             }
         }
     }

@@ -11659,31 +11659,31 @@ export const registry = freeze({
       },
       {
         "code": 39,
-        "grammar": "visible | hidden | auto",
+        "grammar": "[visible | hidden | clip | scroll | auto]{1,2}",
         "name": "overflow",
         "note": null
       },
       {
         "code": 40,
-        "grammar": "none | [<length> || solid || <color>]",
+        "grammar": "<length> || [none | hidden | solid] || <color>",
         "name": "border",
         "note": null
       },
       {
         "code": 41,
-        "grammar": "<length>",
+        "grammar": "<length>{1,4}",
         "name": "border-width",
         "note": null
       },
       {
         "code": 42,
-        "grammar": "none | solid",
+        "grammar": "[none | hidden | solid]{1,4}",
         "name": "border-style",
         "note": null
       },
       {
         "code": 43,
-        "grammar": "<color>",
+        "grammar": "<color>{1,4}",
         "name": "border-color",
         "note": null
       },
@@ -11845,25 +11845,25 @@ export const registry = freeze({
       },
       {
         "code": 70,
-        "grammar": "none | [<length> || solid || <color>]",
+        "grammar": "<length> || [none | hidden | solid] || <color>",
         "name": "border-top",
         "note": null
       },
       {
         "code": 71,
-        "grammar": "none | [<length> || solid || <color>]",
+        "grammar": "<length> || [none | hidden | solid] || <color>",
         "name": "border-right",
         "note": null
       },
       {
         "code": 72,
-        "grammar": "none | [<length> || solid || <color>]",
+        "grammar": "<length> || [none | hidden | solid] || <color>",
         "name": "border-bottom",
         "note": null
       },
       {
         "code": 73,
-        "grammar": "none | [<length> || solid || <color>]",
+        "grammar": "<length> || [none | hidden | solid] || <color>",
         "name": "border-left",
         "note": null
       },
@@ -11932,6 +11932,144 @@ export const registry = freeze({
         "grammar": "normal | <length>",
         "name": "letter-spacing",
         "note": "inherited"
+      },
+      {
+        "code": 85,
+        "grammar": "<length>",
+        "name": "border-top-width",
+        "note": "nonnegative"
+      },
+      {
+        "code": 86,
+        "grammar": "<length>",
+        "name": "border-right-width",
+        "note": "nonnegative"
+      },
+      {
+        "code": 87,
+        "grammar": "<length>",
+        "name": "border-bottom-width",
+        "note": "nonnegative"
+      },
+      {
+        "code": 88,
+        "grammar": "<length>",
+        "name": "border-left-width",
+        "note": "nonnegative"
+      },
+      {
+        "code": 89,
+        "grammar": "none | hidden | solid",
+        "name": "border-top-style",
+        "note": null
+      },
+      {
+        "code": 90,
+        "grammar": "none | hidden | solid",
+        "name": "border-right-style",
+        "note": null
+      },
+      {
+        "code": 91,
+        "grammar": "none | hidden | solid",
+        "name": "border-bottom-style",
+        "note": null
+      },
+      {
+        "code": 92,
+        "grammar": "none | hidden | solid",
+        "name": "border-left-style",
+        "note": null
+      },
+      {
+        "code": 93,
+        "grammar": "<color>",
+        "name": "border-top-color",
+        "note": null
+      },
+      {
+        "code": 94,
+        "grammar": "<color>",
+        "name": "border-right-color",
+        "note": null
+      },
+      {
+        "code": 95,
+        "grammar": "<color>",
+        "name": "border-bottom-color",
+        "note": null
+      },
+      {
+        "code": 96,
+        "grammar": "<color>",
+        "name": "border-left-color",
+        "note": null
+      },
+      {
+        "code": 97,
+        "grammar": "<length-percentage>{1,2}",
+        "name": "border-top-left-radius",
+        "note": "nonnegative; horizontal then vertical radius"
+      },
+      {
+        "code": 98,
+        "grammar": "<length-percentage>{1,2}",
+        "name": "border-top-right-radius",
+        "note": "nonnegative; horizontal then vertical radius"
+      },
+      {
+        "code": 99,
+        "grammar": "<length-percentage>{1,2}",
+        "name": "border-bottom-right-radius",
+        "note": "nonnegative; horizontal then vertical radius"
+      },
+      {
+        "code": 100,
+        "grammar": "<length-percentage>{1,2}",
+        "name": "border-bottom-left-radius",
+        "note": "nonnegative; horizontal then vertical radius"
+      },
+      {
+        "code": 101,
+        "grammar": "visible | hidden | clip | scroll | auto",
+        "name": "overflow-x",
+        "note": null
+      },
+      {
+        "code": 102,
+        "grammar": "visible | hidden | clip | scroll | auto",
+        "name": "overflow-y",
+        "note": null
+      },
+      {
+        "code": 103,
+        "grammar": "visible | hidden | collapse",
+        "name": "visibility",
+        "note": "inherited"
+      },
+      {
+        "code": 104,
+        "grammar": "none | [capitalize | uppercase | lowercase] || full-width || full-size-kana",
+        "name": "text-transform",
+        "note": "inherited"
+      },
+      {
+        "code": 105,
+        "grammar": "auto | none",
+        "name": "pointer-events",
+        "note": "inherited"
+      },
+      {
+        "code": 106,
+        "grammar": "auto | text | none | contain | all",
+        "name": "user-select",
+        "note": null
+      },
+      {
+        "code": 107,
+        "grammar": "content-box | border-box",
+        "name": "box-sizing",
+        "note": null
       }
     ],
     "cssTypes": {
@@ -12508,6 +12646,7 @@ export const registry = freeze({
         ":checked",
         ":root",
         ":host",
+        ":scope",
         ":first-child",
         ":last-child",
         ":only-child",
@@ -12518,9 +12657,35 @@ export const registry = freeze({
         ":nth-last-child()",
         ":nth-of-type()",
         ":nth-last-of-type()",
+        ":empty",
+        ":link",
+        ":any-link",
+        ":visited",
+        ":target",
+        ":target-within",
+        ":read-only",
+        ":read-write",
+        ":placeholder-shown",
+        ":default",
+        ":indeterminate",
+        ":valid",
+        ":invalid",
+        ":user-valid",
+        ":user-invalid",
+        ":in-range",
+        ":out-of-range",
+        ":required",
+        ":optional",
+        ":autofill",
+        ":open",
+        ":modal",
+        ":defined",
+        ":dir()",
+        ":lang()",
         ":is()",
         ":where()",
-        ":not()"
+        ":not()",
+        ":has()"
       ]
     },
     "tags": [

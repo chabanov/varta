@@ -48,9 +48,21 @@ fn containment_keeps_center_and_straight_edges_but_excludes_corner_cutouts() {
 fn zero_radius_is_square_and_invalid_geometry_is_refused() {
     assert!(resolve("0").contains(bounds(), 10.0, 20.0));
     let units = Units::new(&crate::Environment::default()).unwrap();
-    for raw in ["", "-1px", "NaN%", "1px 2px 3px 4px 5px", "1px / 2px"] {
+    for raw in [
+        "",
+        "-1px",
+        "NaN%",
+        "1px 2px 3px 4px 5px",
+        "1px /",
+        "/ 2px",
+        "1px / 2px / 3px",
+    ] {
         assert!(Corners::resolve(raw, bounds(), units).is_none(), "{raw}");
     }
+    // CSS Backgrounds 3 §5.1: horizontal radii, then vertical ones.
+    let elliptical = Corners::resolve("1px 2px / 3px", bounds(), units).unwrap();
+    assert_eq!(elliptical.0[0], [1.0, 3.0]);
+    assert_eq!(elliptical.0[1], [2.0, 3.0]);
     let bad = BoxRect {
         width: f32::INFINITY,
         ..bounds()

@@ -20,7 +20,7 @@ struct Shape {
     radii: [[f64; 2]; 4],
 }
 pub(super) struct Decoration<'a> {
-    raw: &'a str,
+    raw: std::borrow::Cow<'a, str>,
     units: Units,
     size: [f64; 2],
     shapes: BTreeMap<([u32; 2], [bool; 2]), Arc<Shape>>,
@@ -55,24 +55,24 @@ impl Region {
 }
 impl<'a> Decoration<'a> {
     pub fn new(
-        raw: &'a str,
+        raw: impl Into<std::borrow::Cow<'a, str>>,
         pieces: &[BoxRect],
         units: Units,
         node: u32,
     ) -> Result<Option<Self>, PaintError> {
-        Self::build(raw, pieces, units, node, false)
+        Self::build(raw.into(), pieces, units, node, false)
     }
     /// A strip whose slices exist for square radii as well, for border rings.
     pub fn strip(
-        raw: &'a str,
+        raw: impl Into<std::borrow::Cow<'a, str>>,
         pieces: &[BoxRect],
         units: Units,
         node: u32,
     ) -> Result<Self, PaintError> {
-        Self::build(raw, pieces, units, node, true)?.ok_or(PaintError::Unsupported(node))
+        Self::build(raw.into(), pieces, units, node, true)?.ok_or(PaintError::Unsupported(node))
     }
     fn build(
-        raw: &'a str,
+        raw: std::borrow::Cow<'a, str>,
         pieces: &[BoxRect],
         units: Units,
         node: u32,
@@ -97,8 +97,8 @@ impl<'a> Decoration<'a> {
             }
         }
         let size = [width, f64::from(height.unwrap_or(0.0))];
-        let radii =
-            super::corners::resolve_radii(raw, size, units).ok_or(PaintError::Unsupported(node))?;
+        let radii = super::corners::resolve_radii(&raw, size, units)
+            .ok_or(PaintError::Unsupported(node))?;
         if !square && radii.iter().all(|r| r[0] == 0.0 || r[1] == 0.0) {
             return Ok(None);
         }
@@ -132,7 +132,7 @@ impl<'a> Decoration<'a> {
             // fragment's border box; painting still spans the whole strip.
             let size = [f64::from(rect.width), f64::from(rect.height)];
             let radii =
-                super::corners::resolve_slice_radii(self.raw, size, size, self.units, edges)
+                super::corners::resolve_slice_radii(&self.raw, size, size, self.units, edges)
                     .ok_or(PaintError::Unsupported(node))?;
             if !self.square && radii.iter().all(|r| r[0] == 0.0 || r[1] == 0.0) {
                 return Ok(None);
@@ -173,7 +173,7 @@ impl<'a> Decoration<'a> {
                 )
             };
             let radii =
-                super::corners::resolve_slice_radii(self.raw, basis, limit, self.units, edges)
+                super::corners::resolve_slice_radii(&self.raw, basis, limit, self.units, edges)
                     .ok_or(PaintError::Unsupported(node))?;
             let shape = Arc::new(Shape {
                 size: [width, height],

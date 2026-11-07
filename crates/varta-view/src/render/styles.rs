@@ -177,8 +177,15 @@ pub(crate) fn same_sources(a: &Tree, b: &Tree) -> bool {
                             && x.outline_inline == y.outline_inline
                             && x.checked == y.checked
                             && x.disabled() == y.disabled()
+                            // Attribute selectors and the input
+                            // pseudo-classes read these.
+                            && x.attributes == y.attributes
+                            && x.value == y.value
+                            && x.open == y.open
+                            && x.editor.user_validity == y.editor.user_validity
                     }
-                    (None, None) => true,
+                    // `:empty` reads whether text has data.
+                    (None, None) => node.content == other.content,
                     _ => false,
                 }
             })

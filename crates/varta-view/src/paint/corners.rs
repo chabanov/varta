@@ -208,45 +208,59 @@ pub(super) fn resolve_slice_radii(
     // Normalize magnitudes before applying axis factors. Even very large
     // finite percentages/lengths reduce to a bounded contour without an
     // overflowing intermediate or an arbitrary radius-admission ceiling.
-    let mut parsed = [(0.0_f64, [1.0_f64; 2]); CORNERS];
-    let mut count = 0;
+    // CSS Backgrounds 3 §5.1: horizontal radii, then after `/` vertical
+    // ones (the horizontal radii when omitted), each list by the box rule.
     let mut maximum = 0.0_f64;
-    for value in raw.split_ascii_whitespace() {
-        if count == CORNERS {
-            return None;
+    let mut list = |text: &str| -> Option<[(f64, [f64; 2]); CORNERS]> {
+        let mut parsed = [(0.0_f64, [1.0_f64; 2]); CORNERS];
+        let mut count = 0;
+        for value in text.split_ascii_whitespace() {
+            if count == CORNERS {
+                return None;
+            }
+            let (number, factors) = if value == "0" {
+                ("0", [1.0; 2])
+            } else if let Some(number) = value.strip_suffix('%') {
+                (number, [size[0] / 100.0, size[1] / 100.0])
+            } else if let Some(number) = value.strip_suffix("px") {
+                (number, [1.0; 2])
+            } else {
+                (
+                    value.strip_suffix("rem")?,
+                    [f64::from(units.pixels("1rem", false)?); 2],
+                )
+            };
+            let number = number.parse::<f64>().ok()?;
+            if !number.is_finite() || number < 0.0 {
+                return None;
+            }
+            parsed[count] = (number, factors);
+            maximum = maximum.max(number);
+            count += 1;
         }
-        let (number, factors) = if value == "0" {
-            ("0", [1.0; 2])
-        } else if let Some(number) = value.strip_suffix('%') {
-            (number, [size[0] / 100.0, size[1] / 100.0])
-        } else if let Some(number) = value.strip_suffix("px") {
-            (number, [1.0; 2])
-        } else {
-            (
-                value.strip_suffix("rem")?,
-                [f64::from(units.pixels("1rem", false)?); 2],
-            )
-        };
-        let number = number.parse::<f64>().ok()?;
-        if !number.is_finite() || number < 0.0 {
-            return None;
+        Some(match count {
+            1 => [parsed[0]; CORNERS],
+            2 => [parsed[0], parsed[1], parsed[0], parsed[1]],
+            3 => [parsed[0], parsed[1], parsed[2], parsed[1]],
+            4 => parsed,
+            _ => return None,
+        })
+    };
+    let (horizontal, vertical) = match raw.split_once('/') {
+        Some((horizontal, vertical)) => (list(horizontal)?, list(vertical)?),
+        None => {
+            let both = list(raw)?;
+            (both, both)
         }
-        parsed[count] = (number, factors);
-        maximum = maximum.max(number);
-        count += 1;
-    }
-    parsed = match count {
-        1 => [parsed[0]; CORNERS],
-        2 => [parsed[0], parsed[1], parsed[0], parsed[1]],
-        3 => [parsed[0], parsed[1], parsed[2], parsed[1]],
-        4 => parsed,
-        _ => return None,
     };
     if maximum == 0.0 {
         return Some([[0.0; 2]; CORNERS]);
     }
-    let mut values =
-        parsed.map(|(number, factors)| factors.map(|factor| number / maximum * factor));
+    let mut values: [[f64; 2]; CORNERS] = std::array::from_fn(|corner| {
+        let (h, h_factors) = horizontal[corner];
+        let (v, v_factors) = vertical[corner];
+        [h / maximum * h_factors[0], v / maximum * v_factors[1]]
+    });
     for (corner, present) in [
         (TOP_LEFT, left),
         (BOTTOM_LEFT, left),
