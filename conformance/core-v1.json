@@ -972,6 +972,15 @@
       ],
       "origin": "typescript_handbook",
       "reference": "https://www.typescriptlang.org/docs/handbook/decorators.html"
+    },
+    {
+      "id": "class-index-signatures",
+      "title": "Class index signatures",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/2/classes.html#index-signatures"
     }
   ],
   "cases": [
@@ -3615,6 +3624,20 @@
         "varta log: DOWN UP true",
         "varta log: text YES number 0 number 0",
         "varta log: UP true"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-index-signature",
+      "feature": "class-index-signatures",
+      "path": "cases/class-index-signature.ts",
+      "sha256": "95e2e1de8d236b484118b15ffecdaf2544a73ad1fae360c28aa927fc84f97ab2",
+      "stdout": [
+        "varta log: 17 7 1",
+        "varta log: true",
+        "varta log: 100 1 5"
       ],
       "baseline": {
         "status": "supported"

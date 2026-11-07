@@ -4020,6 +4020,10 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   names in `desugar::forward`. Writes to imported static fields go through
   the exported setter (`Rewriter::imported_write`); never make imported
   module variables assignable.
+- Class index signatures (`classes::index_signatures`): the hidden
+  dictionary field `INDEX_FIELD` (a private name no source spells); every
+  member access path calls `Lower::class_index` before choosing record,
+  class or dictionary lowering, and a new member-access path must too.
 - Module evaluation (`module_evaluation`, `lower::module_evaluation`): an
   initializer may run code. Keep the compile-time temporal-dead-zone check
   (`reachable` over-approximates: names reach whole declarations, classes

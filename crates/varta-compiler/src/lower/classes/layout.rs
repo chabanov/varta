@@ -448,6 +448,7 @@ fn layout_members(
     if types.profile.declaration_forms() {
         forms::check_concrete(id, source, types)?;
         forms::check_accessor_pairs(id, source, types)?;
+        index_signatures::check_members(id, source, types)?;
         let overloads = types.classes.list[id as usize].forms.overloads.clone();
         overloads::declare_methods(id, &overloads, source, types)?;
     }

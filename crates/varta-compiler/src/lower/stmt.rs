@@ -447,6 +447,7 @@ impl Lower<'_> {
         }
         if let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) = &assign.left {
             let base = self.write_member_base(member)?;
+            let base = self.class_index(member, base)?;
             // V38 (`declaration_forms`): a class setter.
             let base = match self.accessor_assignment(member, base, &assign.right, assign.span)? {
                 Ok(value) => return Ok(S::Expr(value)),

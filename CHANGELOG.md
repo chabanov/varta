@@ -90,6 +90,10 @@
   in static methods, re-exports of enums, namespaces and classes with static
   fields, static fields of classes in namespaces and writes of imported
   static fields. Conformance: `static-block` passes.
+- V38 class index signatures (K9 B): `[key: string]: T` in a class stores
+  undeclared members of its instances in a hidden dictionary, read and
+  written by name or computed key; members must fit the index type
+  (TS2411).
 - V38 enum assignability as tsc 5 decides it (K9 B): any `number` value is
   assignable to a numeric enum type (a numeric literal only if it is a
   member), and string enum types are nominal; `E[k]` with a dynamic key stays

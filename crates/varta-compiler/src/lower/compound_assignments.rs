@@ -81,6 +81,7 @@ impl Lower<'_> {
             }
             ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) => {
                 let base = self.write_member_base(member)?;
+                let base = self.class_index(member, base)?;
                 // V38 (`declaration_forms`): a class getter/setter pair.
                 let base =
                     match self.accessor_compound(member, base, &assign.right, op, assign.span)? {

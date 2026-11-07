@@ -704,6 +704,7 @@ mod forms;
 mod generic_classes;
 mod generic_methods;
 mod implements;
+mod index_signatures;
 mod layout;
 mod members;
 mod merged_interfaces;

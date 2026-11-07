@@ -47,6 +47,7 @@ impl Lower<'_> {
             }
             ast::Expr::Member(member) => {
                 let base = self.write_member_base(member)?;
+                let base = self.class_index(member, base)?;
                 // V38 (`declaration_forms`): a class getter/setter pair.
                 let base = match self.accessor_update(member, base, update)? {
                     Ok(value) => return Ok(value),

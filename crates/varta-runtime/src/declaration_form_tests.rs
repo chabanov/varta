@@ -77,6 +77,11 @@ const CASES: &[(&str, &str, &str)] = &[
         include_str!("declaration_form_cases/enum_typing.expected"),
     ),
     (
+        "index_signatures",
+        include_str!("declaration_form_cases/index_signatures.ts"),
+        include_str!("declaration_form_cases/index_signatures.expected"),
+    ),
+    (
         "namespace_objects",
         include_str!("declaration_form_cases/namespace_objects.ts"),
         include_str!("declaration_form_cases/namespace_objects.expected"),
@@ -198,6 +203,28 @@ fn enum_assignability_matches_tsc() {
         V38,
         "enum L { Low = 1, High } export function main(): void { let l: L = L.Low; l = 7; console.log(String(l)); }",
         "is not assignable",
+    );
+}
+
+/// Class index signatures: undeclared members are a hidden dictionary;
+/// members that do not fit the index type are TS2411.
+#[test]
+fn class_index_signatures_match_node() {
+    matches_node("index_signatures");
+    refused(
+        V38,
+        "class C { [key: string]: number; m(): number { return 1; } } export function main(): void { console.log('x'); }",
+        "property m of type method or accessor is not assignable to the string index type number (TS2411)",
+    );
+    refused(
+        V38,
+        "class C { [key: string]: number; name = 'x'; } export function main(): void { console.log('x'); }",
+        "(TS2411)",
+    );
+    refused(
+        V38,
+        "class C { [key: number]: string; } export function main(): void { console.log('x'); }",
+        "class index signature with a key other than string",
     );
 }
 
@@ -507,10 +534,6 @@ fn unsupported_declaration_forms_are_refused_by_name() {
         (
             "export function main(): void { const __vartaDecl$x = 1; console.log(String(__vartaDecl$x)); }",
             "identifiers starting with __vartaDecl are reserved",
-        ),
-        (
-            "class C { [key: string]: number; } export function main(): void { console.log('x'); }",
-            "class index signature",
         ),
     ] {
         refused(V38, source, diagnostic);

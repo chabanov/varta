@@ -343,6 +343,9 @@ pub(super) fn rewrite(class: Box<ast::Class>, source: &Source) -> Result<(Box<as
                 property.declare = true;
                 body.push(ast::ClassMember::ClassProp(property));
             }
+            ast::ClassMember::TsIndexSignature(signature) => {
+                body.push(index_signatures::field(&signature, source)?);
+            }
             member => body.push(member),
         }
     }

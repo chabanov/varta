@@ -12011,10 +12011,20 @@ time (`new.target.name`, an Error subclass's `name`).
   field redeclarations, `implements` of several interfaces, and
   constructor parameter properties with default values (a non-literal
   default needs a type annotation).
+- **Class index signatures.** `[key: string]: T` gives a class's instances
+  own properties beyond their declared members: they live in a hidden
+  dictionary field the constructor creates empty (inherited by
+  subclasses), and a read, write, compound assignment or update of a member
+  the class does not declare, by name or by a computed string key, is a
+  dictionary operation on it (a missing key reads `undefined`). Every
+  declared field must be of the index's value type and methods and
+  accessors are refused unless it is `unknown` (TS2411). Static, readonly
+  and non-string index signatures are refused by name, and `JSON.stringify`
+  of such an instance is refused (JavaScript would list the extra
+  properties after the fields).
 - **Not admitted yet.** Standard decorators (they need classes as values
-  and the decorator context objects), class index signatures and generic
-  overload signatures are refused by name (`decorator`, `class index
-  signature`, `generic overload signature`). Legacy
+  and the decorator context objects) and generic overload signatures are
+  refused by name (`decorator`, `generic overload signature`). Legacy
   `experimentalDecorators` are not planned.
 
 #### Module evaluation (`module_evaluation`)

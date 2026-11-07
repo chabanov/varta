@@ -28,6 +28,7 @@ impl Lower<'_> {
                 .ok_or_else(|| invalid("missing assignment binding"))?,
             ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) => {
                 let base = self.write_member_base(member)?;
+                let base = self.class_index(member, base)?;
                 // V38 (`declaration_forms`): a class setter.
                 let base =
                     match self.accessor_assignment(member, base, &assign.right, assign.span)? {
