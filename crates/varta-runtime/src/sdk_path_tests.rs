@@ -742,7 +742,6 @@ fn sdk_path_refused_forms_name_their_diagnostics() {
              }}"
         )
     };
-    let wider = "object spread of a Narrow that may hold a wider Wide (a view)";
     // A record spread copies the object's own properties by its run-time
     // layout (`layout_spreads`), as Node does.
     matches_node(
@@ -755,12 +754,23 @@ fn sdk_path_refused_forms_name_their_diagnostics() {
         &view("const q: Record<string, unknown> = { ...n }; return Object.keys(q).join(',');"),
         "b,a,c",
     );
-    refused(
-        V38,
+    // Into a dictionary of another value type, by the same read: values the
+    // view does not declare are checked against the entry type.
+    matches_node(
         &view(
-            "const q: Record<string, number | string> = { ...n }; return Object.keys(q).join(',');",
+            "const q: Record<string, number | string> = { first: 0, ...n }; return JSON.stringify(q);",
         ),
-        wider,
+        r#"{"first":0,"b":1,"a":2,"c":"x"}"#,
+    );
+    // A value outside the entry type (tsc admits the spread of the view)
+    // throws `TypeError` where it is read (checked reads at TypeScript
+    // unsoundness); Node copies it.
+    assert_eq!(
+        logs(&view(
+            "try { const q: Record<string, number> = { ...n }; return JSON.stringify(q); } \
+             catch (e) { return e instanceof TypeError ? e.message : 'other'; }",
+        )),
+        ["own property value is not of the dictionary's value type"]
     );
     // Error constructors take (message?, options?) and nothing else.
     let constructor = "error constructor arguments other than (message?, options?)";

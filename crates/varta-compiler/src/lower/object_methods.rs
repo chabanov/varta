@@ -304,7 +304,8 @@ impl Lower<'_> {
     /// replaced by the method's hidden receiver binding.
     pub(super) fn bound_method(&self, method: &ast::MethodProp) -> Result<ast::Prop> {
         let function = &method.function;
-        if function.is_generator {
+        // V38 (`expression_forms`): a generator method is a generator closure.
+        if function.is_generator && !self.types.profile.expression_forms() {
             return Err(self.source.locate(
                 unsupported("generator method that uses this in an object literal"),
                 function.span,
@@ -333,7 +334,7 @@ impl Lower<'_> {
             params,
             body: Box::new(ast::ArrowFunctionBody::FunctionBody(body)),
             is_async: function.is_async,
-            is_generator: false,
+            is_generator: function.is_generator,
             type_params: function.type_params.clone(),
             return_type: function.return_type.clone(),
         };

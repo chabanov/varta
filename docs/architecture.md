@@ -7803,7 +7803,8 @@ iteration is not implemented yet)`) and the annotations below.
   (`yield` and `return` await their operands). Optional, default and rest
   parameters are admitted; parameter defaults run during the call, before the
   object is returned, so an exception there throws from the call as in
-  ECMAScript. Async generator function expressions and object methods,
+  ECMAScript. Async generator function expressions and object methods
+  (admitted by v38's [generator closures](#expression-forms-expression_forms)),
   computed member names such as `[Symbol.asyncIterator]`, a `this` parameter
   and an async generator entry point are rejected with construct-specific
   diagnostics.
@@ -10392,12 +10393,16 @@ such members.
   view does not declare cannot be deleted). A class instance the type may
   hold (of a class viewed as it, or a subclass) copies its declared fields
   in declaration order, private names left out. A layout spread into a
-  dictionary of `unknown` reads the object's own entries through its
-  JSON-object read, whose branches cover every record layout the boxed
-  types may hold. Refused by name for now: layout spreads into dictionaries
-  of other value types and into literals with accessors, and
-  `Object.assign` onto an existing object (pending overflow own
-  properties). `Object.values`/`entries` of a view list the actual object's
+  dictionary reads the object's own entries through its JSON-object read,
+  whose branches cover every record layout the boxed types may hold; into a
+  dictionary of another value type, each value is checked against the type
+  of the entry it is stored at (its key's declared type, else the index
+  type), and a value outside it (a property the view does not declare)
+  throws `TypeError: own property value is not of the dictionary's value
+  type` where it is read (checked reads at TypeScript unsoundness; Node
+  copies it). Refused by name for now: layout spreads into literals with
+  accessors, and `Object.assign` onto an existing object (pending overflow
+  own properties). `Object.values`/`entries` of a view list the actual object's
   own values with checked reads (intentional deviation (4) of the type
   level), and `Object.assign` into a fresh object literal is that spread
   literal.
@@ -11763,9 +11768,29 @@ Node 24 is the reference for every output below.
   unsoundness (intentional deviation (3) of the type level). Spreads,
   `Object.assign` and own-key
   enumeration of such objects are admitted, and such a literal may spread
-  closed objects around its methods. Generator methods that use
-  `this` stay refused by
-  name.
+  closed objects around its methods. Generator and async generator methods
+  that use `this` are generator closures (below) whose prologue takes the
+  receiver.
+- **Generator closures.** `function*` and `async function*` expressions and
+  generator and async generator methods of object literals (with or without
+  `this`) are closures, typed by their `Generator`/`AsyncGenerator`
+  annotation or their function context (one of the two is required, as for
+  generator declarations). Each is split into a wrapper, the closure itself
+  (its function value, shape, receiver and self binding), and a body: an
+  environment generator function over the same captured cells, which the
+  wrapper's direct call passes its own environment, so a captured binding
+  stays one cell shared with the enclosing function and every other
+  closure. Calling the wrapper creates the generator object. Its prologue
+  (parameter defaults and patterns, an object-literal method's receiver
+  from the register) runs during the call, before the object is returned,
+  as FunctionDeclarationInstantiation does: a synchronous body with a
+  prologue suspends once at its end inside the call (a generator suspended
+  there behaves as one suspended at its start: no `try` is entered and the
+  first `next` argument is discarded), and an async generator body reaches
+  its usual start point. The body itself starts at the first `next`. A
+  `Generator` or `AsyncGenerator` whose `TNext` is `unknown` accepts the
+  `undefined` that `for...of`, `for await` and spreads send, as in
+  TypeScript.
 - **Object-literal getters and setters.** `get p() {…}` and `set p(v) {…}`
   define accessor properties (owner decision 2026-11-06): reading `o.p`
   calls the getter and assigning it calls the setter, with the object as

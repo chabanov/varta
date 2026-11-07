@@ -2417,7 +2417,16 @@ earlier profiles frozen, and add each stream's rules under its own heading here.
   (`Emitter::environment_param`) and the frame creator stores captured cells as
   shared slots. Do not copy captured values into the body: mutable captures
   must stay one cell. `suspension::admissible` admits environment functions only
-  for v35 scheduled bodies; generator closures and self slots stay rejected.
+  for v35 scheduled bodies and v38 generator closure bodies; self slots stay
+  rejected.
+- V38 generator closures (`Lower::split_generator_closure`, and
+  `split_async_generator` with captures) follow the same rule: the body is an
+  environment generator over the closure's captures, called directly by the
+  wrapper, and `E::Call` of an environment function forwards the caller's
+  environment (`Emitter::forward_environment`). A prologue (parameter
+  initialization, the object-literal receiver register) must run in the call:
+  the synchronous body suspends once after it and the wrapper steps it there.
+  Never read the receiver register from a generator body after a suspension.
 - Keep v34 frozen: async instance methods, async arrows and function
   expressions, async optional/rest parameters and `Promise<T>` inference in
   generic calls are gated on `async_methods()`; v34 keeps its diagnostics.

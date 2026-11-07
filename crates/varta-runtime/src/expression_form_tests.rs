@@ -65,6 +65,8 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("layout_dictionaries"),
     case!("method_spreads"),
     case!("assign_literals"),
+    case!("generator_closures"),
+    case!("async_generator_closures"),
     case!("accessor_optional_spreads"),
     case!("computed_keys"),
     case!("destructuring"),
@@ -319,6 +321,22 @@ fn generators_driven_by_next_return_and_throw_match_node() {
     matches_node("generators");
 }
 
+/// `function*` expressions and generator methods of object literals (with
+/// and without `this`) are generator closures: they share their captured
+/// bindings, take their receiver and parameters at the call and start their
+/// body at the first `next`.
+#[test]
+fn generator_closures_match_node() {
+    matches_node("generator_closures");
+    matches_node("async_generator_closures");
+    assert_eq!(
+        logs(
+            "export function main(): void { const o = { n: 1, *g(): Generator<number> { yield this.n; } }; console.log(String([...o.g()].length)); }"
+        ),
+        ["1"]
+    );
+}
+
 #[test]
 fn expression_language_guide_example_matches_node() {
     matches_node("guide");
@@ -397,10 +415,6 @@ fn unsupported_expression_forms_are_refused_by_name() {
         (
             "interface B { v: number; get: (this: B) => number } function make(): B { const b: B = { v: 1, get(this: B): number { return this.v; } }; return b; } export function main(): void { console.log(String(make().get())); }",
             "on a base other than a binding or this",
-        ),
-        (
-            "export function main(): void { const o = { n: 1, *g(): Generator<number> { yield this.n; } }; console.log(String([...o.g()].length)); }",
-            "generator method that uses this in an object literal",
         ),
         (
             "class A { constructor() { const f = (): boolean => new.target === A; console.log(String(f())); } } export function main(): void { new A(); }",

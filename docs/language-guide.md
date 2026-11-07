@@ -3987,8 +3987,9 @@ Generic generators instantiate per type argument.
 
 A generator object lives in locals, parameters, results and closures; arrays,
 records, unions, `JSON.stringify`, `console.log`, `typeof` and equality reject
-it. `yield*`, `async function*`, generator methods and expressions, spread or
-`Array.from` over a generator and `yield` inside calls such as `String(yield x)`
+it. `yield*`, `async function*`, generator methods and expressions (v38 admits
+them, generator expressions and object-literal generator methods as
+closures), spread or `Array.from` over a generator and `yield` inside calls such as `String(yield x)`
 are rejected with a diagnostic.
 
 ### `checked-f64-utf16-v34`
