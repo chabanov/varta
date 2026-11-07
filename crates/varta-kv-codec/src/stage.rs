@@ -198,6 +198,11 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
             ValueKind::Error => return Err(unsupported("an Error")),
             ValueKind::Function => return Err(unsupported("a function")),
             ValueKind::Promise => return Err(unsupported("a Promise")),
+            // A symbol (v38 `symbol_values`) cannot be cloned into storage.
+            ValueKind::Symbol => {
+                symbol_record(self.data, packed, VERSION, self.module).map_err(abi)?;
+                return Err(unsupported("a Symbol"));
+            }
             // Only a top-level `Uint8Array` stores raw bytes (by its static
             // type, `StageMode::Bytes`); a tagged one is checked and refused.
             ValueKind::Bytes => {

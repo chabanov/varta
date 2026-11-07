@@ -1,0 +1,32 @@
+true
+{"name":"apple"}
+3
+1
+true
+true
+Symbol(red),Symbol(green),Symbol(red)
+string a; symbol green
+symbol red
+string plain
+unknown symbol Symbol(red)
+unknown number
+Symbol(red)
+{"a":1,"c":"x"}
+[1,null,"x"]
+Symbol(red)
+undefined
+{
+  "a": [
+    null,
+    1
+  ]
+}
+3
+red
+false
+2
+true
+{}
+true
+true
+false

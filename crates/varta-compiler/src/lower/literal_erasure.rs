@@ -4,7 +4,8 @@
 //! become identical are merged so signature dispatch and the capture catalog
 //! stay unambiguous. Under v38 (`byte_values`) a `Uint8Array` erases to an
 //! array type of its own (`ValueTypes::bytes`), which emission tags with the
-//! byte-array value tag.
+//! byte-array value tag, and every `symbol` (`symbol_values`) the symbol
+//! prelude's record class (`ValueTypes::symbol`), tagged with the symbol tag.
 use super::*;
 use std::collections::BTreeMap;
 
@@ -12,7 +13,9 @@ use std::collections::BTreeMap;
 pub(super) fn erase_program(program: &mut ir::Program) -> Result<()> {
     let types = &mut program.types;
     let bytes = byte_array(types)?;
+    let symbol = symbol_class(types)?;
     let views = Views {
+        symbol,
         collections: types
             .collections
             .iter()
@@ -102,8 +105,24 @@ fn byte_array(types: &mut ir::ValueTypes) -> Result<Option<u32>> {
     Ok(Some(id))
 }
 
+/// V38 (`symbol_values`): the symbol prelude's record class, which every
+/// `symbol` value erases to, when the program has the `symbol` type at all.
+fn symbol_class(types: &mut ir::ValueTypes) -> Result<Option<u32>> {
+    if !types.profile.symbol_values() || !types.symbols.used {
+        return Ok(None);
+    }
+    let class = types
+        .classes
+        .prelude_class(crate::modules::engine::SYMBOL_CLASS)
+        .ok_or_else(|| CompilerError::Internal("the symbol prelude is not loaded".into()))?;
+    types.symbol = Some(class);
+    Ok(Some(class))
+}
+
 /// The physical storage of the v37 erased types, by type id.
 struct Views {
+    /// V38 (`symbol_values`): the symbol record class.
+    symbol: Option<u32>,
     collections: Vec<Type>,
     tuples: Vec<Type>,
     /// V38 `object` annotations: TypeScript's `object` is its `unknown` cell.
@@ -115,6 +134,7 @@ impl Views {
             Type::Collection(_, id) => self.collections[id as usize],
             Type::Tuple(id) => self.tuples[id as usize],
             Type::Object(_) if self.objects => Type::Unknown,
+            Type::Symbol => self.symbol.map_or(Type::Symbol, Type::Class),
             other => other,
         }
     }
@@ -168,6 +188,7 @@ fn merge_functions(functions: &mut Vec<ir::FunctionType>, views: &Views) -> Vec<
     let eraser = Eraser {
         functions: map,
         views: Views {
+            symbol: views.symbol,
             collections: views.collections.clone(),
             tuples: views.tuples.clone(),
             objects: views.objects,

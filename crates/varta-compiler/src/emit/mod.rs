@@ -64,9 +64,10 @@ struct Emitter<'a> {
     thenable_shapes: Vec<u32>,
     dictionaries: &'a [ir::DictionaryType],
     arrays: &'a [Type],
-    /// V38 (`byte_values`): the `Uint8Array` array type id
-    /// (`ir::ValueTypes::bytes`).
-    bytes: Option<u32>,
+    /// V38 (`byte_values`, `symbol_values`): the `Uint8Array` array type id
+    /// (`ir::ValueTypes::bytes`) and the symbol record class
+    /// (`ir::ValueTypes::symbol`).
+    tags: ir::OwnTags,
     layouts: &'a BTreeMap<records::LayoutKey, u32>,
     schemas: &'a BTreeMap<Type, (u32, u32)>,
     code: Vec<I<'static>>,
@@ -431,7 +432,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             &program.types.records,
             &offsets,
             program.types.value_version(),
-            program.types.bytes,
+            program.types.own_tags(),
         )?;
         let start = placement.push(&bytes).ok_or_else(|| {
             source.locate(
@@ -1110,7 +1111,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             thenable_shapes: program.types.classes.thenable_shapes(),
             dictionaries: &program.types.dictionaries,
             arrays: &program.types.arrays,
-            bytes: program.types.bytes,
+            tags: program.types.own_tags(),
             layouts: &layout_offsets,
             schemas: &schema_offsets,
             code: Vec::new(),
@@ -1539,11 +1540,11 @@ impl Emitter<'_> {
     /// The value tag of an erased type (`ir::tag_of`): the
     /// byte-array tag for the `Uint8Array` array type (v38 `byte_values`).
     fn tag(&self, ty: Type) -> Option<varta_common::value::ValueKind> {
-        ir::tag_of(ty, self.bytes, self.profile)
+        ir::tag_of(ty, self.tags, self.profile)
     }
     /// Whether `ty` is the `Uint8Array` array type (v38 `byte_values`).
     fn is_bytes(&self, ty: Type) -> bool {
-        matches!(ty, Type::Array(id) if self.bytes == Some(id))
+        self.tags.is_bytes(ty)
     }
     /// First managed-heap address of this module (v38: after its static
     /// extension).

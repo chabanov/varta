@@ -398,6 +398,7 @@ impl Lower<'_> {
         {
             let guard = match text.value.as_str()? {
                 "bigint" if self.types.profile.bigint_values() => Guard::Exact(Type::BigInt),
+                "symbol" if self.types.profile.symbol_values() => Guard::Exact(Type::Symbol),
                 "number" => Guard::Exact(Type::Float64),
                 "boolean" => Guard::Exact(Type::Boolean),
                 "string" => Guard::Exact(Type::String),
@@ -431,6 +432,13 @@ impl Lower<'_> {
     }
     /// A member read, narrowed by the current path facts (v37).
     pub(super) fn member_read(&mut self, member: &ast::MemberExpr) -> Result<Expr> {
+        // V38 (`symbol_values`): well-known symbols and
+        // `symbol.description`.
+        if self.types.profile.symbol_values()
+            && let Some(value) = self.symbol_member(member)?
+        {
+            return Ok(value);
+        }
         let value = self.result_field(member)?;
         self.path_read(member, value)
     }

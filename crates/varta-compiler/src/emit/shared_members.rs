@@ -27,7 +27,9 @@ pub(super) fn shared_members(types: &ir::ValueTypes) -> SharedMembers {
     for (id, members) in types.unions.iter().enumerate() {
         let records = members
             .iter()
-            .filter(|ty| matches!(ty, Type::Record(_) | Type::Class(_)))
+            .filter(|ty| {
+                matches!(ty, Type::Record(_) | Type::Class(_)) && !types.own_tags().is_symbol(**ty)
+            })
             .count();
         let arrays = members
             .iter()
@@ -69,6 +71,8 @@ impl Emitter<'_> {
             return Ok(());
         }
         let test: Vec<I<'static>> = match member {
+            // A symbol (v38 `symbol_values`) has a tag of its own.
+            Type::Class(_) if self.tags.is_symbol(member) => return Ok(()),
             Type::Record(_) | Type::Class(_) => {
                 let shapes = self.shared.shapes.get(&member).cloned().ok_or_else(|| {
                     CompilerError::Internal("missing shared member shapes".into())

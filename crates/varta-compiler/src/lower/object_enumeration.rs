@@ -144,6 +144,20 @@ impl Lower<'_> {
             );
         }
         let fields = self.types.records[shape as usize].fields.clone();
+        // V38 (`symbol_values`): a symbol-keyed member is no string key, and
+        // the enumeration compacts by canonical slot; such records are
+        // refused rather than listed with their symbol keys.
+        if fields
+            .iter()
+            .any(|field| crate::modules::symbol_keys::is_symbol_key(&field.name))
+        {
+            return Err(self.source.locate(
+                unsupported(&format!(
+                    "{name} of an object with symbol-keyed members (string-key enumeration that skips them is not implemented)"
+                )),
+                value.span,
+            ));
+        }
         let element = match kind {
             Kind::Keys => Type::String,
             Kind::Values if fields.is_empty() => Type::Undefined,

@@ -135,6 +135,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
                         || types.profile.index_signatures() && matches!(ty, Type::Dictionary(_))
                         || types.profile.classes() && matches!(ty, Type::Class(_))
                         || types.profile.bigint_values() && *ty == Type::BigInt
+                        || types.profile.symbol_values() && *ty == Type::Symbol
                         || types.profile.promise_values() && matches!(ty, Type::Promise(_))
                         || types.profile.function_fields() && matches!(ty, Type::Function(_))
                         || types.profile.collections()
@@ -150,6 +151,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
         matches!(
             ty,
             Type::BigInt
+                | Type::Symbol
                 | Type::Record(_)
                 | Type::Dictionary(_)
                 | Type::Class(_)
@@ -623,6 +625,7 @@ impl Lower<'_> {
             {
                 let ty = match text.value.as_str()? {
                     "bigint" if self.types.profile.bigint_values() => Type::BigInt,
+                    "symbol" if self.types.profile.symbol_values() => Type::Symbol,
                     "number" => Type::Float64,
                     "boolean" => Type::Boolean,
                     "string" => Type::String,
