@@ -20,14 +20,14 @@
   `scroll` and the Overflow 3 axis rule, `visibility` (103), `text-transform`
   (104, case, `full-width` and `full-size-kana` natively), `pointer-events`
   (105), `user-select` (106, with `-webkit-user-select`) and `box-sizing`
-  (107). Natively:
-  borders and corners per side, elliptical radii, one-axis `clip`, classic
-  gutters for `scroll`, invisible boxes skipped for paint, hits, focus and
-  accessibility, hits passing through `pointer-events: none`, and
-  transformed text. Shorthands that win over registered longhands (`border`,
-  the side shorthands, `border-width`/`-style`/`-color`, `border-radius`,
-  `outline`, `overflow`) now give the longhand their component in the
-  computed values, so the browser bridge applies the cascade's result.
+  (107). Natively: borders and corners per side, elliptical radii, one-axis
+  `clip`, classic gutters for `scroll`, invisible boxes skipped for paint,
+  hits, focus and accessibility, hits passing through `pointer-events:
+  none`, and transformed text. Shorthands that win over registered
+  longhands (`border`, the side shorthands, `border-width`/`-style`/
+  `-color`, `border-radius`, `outline`, `overflow`) now give the longhand
+  their component in the computed values, so the browser bridge applies
+  the cascade's result.
   Tailwind acceptance 251 → 261 of 312 candidates.
 - V38 K9 D3 full RegExp (selector `full_regexp`): the whole ECMAScript 2025
   pattern language compiled ahead of time to backtracking programs (format
