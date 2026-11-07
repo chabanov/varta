@@ -327,8 +327,25 @@ fn check_effects(
         .collect();
     let mut calls = vec![BTreeSet::new(); direct.len()];
     let mut exports = BTreeMap::new();
+    // Every function a table holds: an indirect call (only the linked v38
+    // intrinsics make one, through their own appended slots) may reach any
+    // of them, so the call graph counts them all as its targets.
+    let mut table = BTreeSet::new();
     for payload in Parser::new(0).parse_all(bytes) {
         match parsed(payload)? {
+            Payload::ElementSection(reader) => {
+                for element in reader {
+                    if let wasmparser::ElementItems::Functions(functions) = parsed(element)?.items {
+                        for function in functions {
+                            table.insert(parsed(function)? as usize);
+                        }
+                    } else {
+                        return Err(invalid_value(
+                            "element expressions are outside the managed value ABI",
+                        ));
+                    }
+                }
+            }
             Payload::ExportSection(reader) => {
                 for export in reader {
                     let export = parsed(export)?;
@@ -346,10 +363,10 @@ fn check_effects(
                         | Operator::ReturnCall { function_index } => {
                             targets.insert(function_index as usize);
                         }
-                        Operator::CallIndirect { .. }
-                        | Operator::ReturnCallIndirect { .. }
-                        | Operator::CallRef { .. }
-                        | Operator::ReturnCallRef { .. } => {
+                        Operator::CallIndirect { .. } | Operator::ReturnCallIndirect { .. } => {
+                            targets.extend(table.iter().copied());
+                        }
+                        Operator::CallRef { .. } | Operator::ReturnCallRef { .. } => {
                             return Err(if catalog.is_none() {
                                 invalid_value("indirect calls are outside the managed value ABI")
                             } else {

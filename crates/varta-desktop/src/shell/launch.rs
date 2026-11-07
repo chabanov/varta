@@ -136,6 +136,7 @@ impl Launch {
         .map_err(ShellError::Images)?;
         let ceiling = package.policy.map(read_policy).transpose()?;
         let mut run = RunOptions::from_manifests(&artifact.manifest, ceiling.as_ref())?;
+        run.host_inputs = varta_runtime::system_host_inputs();
         let identity = varta_runtime::artifact_identity(&artifact.wasm);
         let consent = Consent::open(ConsentStore::new(package.storage, &identity)?)?;
         run.decisions = Some(consent.decision_file());

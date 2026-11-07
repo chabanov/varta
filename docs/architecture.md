@@ -10570,9 +10570,11 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   `bigint_to_number`, `bigint_compare`, `bigint_compare_number`,
   `bigint_compare_string`), the checked JSON parse `json_parse_v19`
   ([shared decoder](#shared-checked-json-decoder-and-linked-json-wave-3)),
-  checked JSON serialization `json_stringify_owned` and the logged text of a
+  checked JSON serialization `json_stringify_owned`, the logged text of a
   value `value_format_v12`
-  ([linked serialization](#linked-serialization-and-logging-v38)).
+  ([linked serialization](#linked-serialization-and-logging-v38)), and the
+  zone offsets and names of local time `date_zone_offset` and
+  `date_zone_name` ([local time](#local-time-local_time)).
   The BigInt family is `varta_intrinsics::bigint`
   over `varta-bigint` (both `no_std`); the host imports of v28–v37 call the
   same functions with a fuel-derived work budget and the frozen string
@@ -10692,6 +10694,24 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   segment address plus the symbol offset and addend from the `linking`
   symbol table; the old value in the bytes must equal the library address the
   relocation names, or linking fails. No absolute address is assumed.
+- **Indirect calls (K9 D4).** Linked code may call through table 0 (Rust
+  trait objects and `core::fmt`, which the ICU4X formatting of
+  [local time](#local-time-local_time) reaches). Each reached address-taken
+  library function (one whose table index reached code or data holds,
+  including the vtables in its data segments) gets one slot appended after the
+  guest's table slots, in ascending library order, through one more active
+  element segment of table 0; the guest's table grows by exactly those slots
+  (a module whose guest has no table gets one of that size). Linking rewrites
+  every `R_WASM_TABLE_INDEX_SLEB`/`I32` and every `R_WASM_TABLE_INDEX_REL_SLEB`
+  (position-independent code adds it to `__table_base`, which is linked as
+  0) to the appended slot, after checking the old value is the library's own
+  slot. Library `call_indirect` keeps its signature check through the merged
+  type section. Table manipulation (`table.*`, `ref.func`, element drops),
+  `return_call_indirect` and tables other than 0 stay unlinkable. The module
+  keeps one table within `abi::MAX_TABLE_ELEMENTS`, and the runtime's static
+  effect analysis treats an indirect call as a call of every function an
+  element segment places in the table, so the host-free exports and the idle
+  collection export are still proven free of host effects.
 - **Arena and accessors.** The per-call arena of an allocating export starts
   in the region's reserved arena (committed with the region, so a call with
   bounded scratch needs no memory growth, even when the guest heap fills the
@@ -11874,9 +11894,9 @@ prelude loads only for programs that name one of its methods
   meet), `getTimezoneOffset`, `getYear`, `toString`, `toDateString`,
   `toTimeString`, `toUTCString`/`toGMTString`, `toJSON`, `valueOf`, and
   `Date.parse` of the forms `toString`, `toDateString`, `toUTCString` and
-  `toISOString` produce. The time zone is a recorded host input; without a
-  host-granted zone (none is defined yet, an owner decision) it is UTC, so
-  every output equals Node's with `TZ=UTC`. `toString`, `valueOf` and
+  `toISOString` produce. Local time is the host's time zone, a recorded host
+  input ([local time](#local-time-local_time)); with the default inputs it is
+  UTC, so every output equals Node's with `TZ=UTC`. `toString`, `valueOf` and
   `toJSON` are prelude functions the compiler calls for `Date` receivers (a
   class cannot declare them); `JSON.stringify` of a `Date`, `String(date)`
   and the `toLocale*String` forms stay refused.
@@ -11886,6 +11906,96 @@ prelude loads only for programs that name one of its methods
   predicates, descriptor and prototype functions, and `Intl` fail with the
   missing value-model part in the diagnostic. `Symbol()` values are
   admitted by the [symbol stream](#symbol-values-symbol_values).
+
+#### Local time (`local_time`)
+
+K9 D4 (2026-11-06), under the selector `LanguageProfile::local_time()`:
+`Date` local time in the host's time zone, as ECMA-262 §21.4.1.20–26 define
+it, with the zone and the default locale as recorded host inputs. V37 keeps
+its UTC-only `Date`; v38 programs that never use local time import nothing
+new.
+
+- **Recorded host inputs.** `intl_time_zone` and `intl_locale` (`() -> i32`,
+  host ABI 34, UTF-16 text in the result buffer, charged to the host-call
+  budget, no capability) return the instance's IANA zone identifier and
+  BCP 47 locale tag (`varta_common::host_inputs::HostInputs`). The owner
+  decided (K9 D) that local time always uses the host's zone without a grant:
+  the inputs configure, they reveal no effect. The date prelude reads both
+  once per instance, on first use. Embedders pass them in
+  `RunOptions::host_inputs`; without them a run uses UTC and `en-US`, so a
+  library or test run never depends on the machine. `RunReport::host_inputs`
+  records what the instance was given, so a replay supplies the same inputs.
+  A host input must be non-empty ASCII of at most
+  `host_inputs::MAX_INPUT_BYTES` (zones `A–Z a–z 0–9 / _ + -`, locales
+  `A–Z a–z 0–9 -`); anything else fails the run before an instance exists
+  (`RuntimeError::HostInput`). Whether the zone or locale exists is the
+  guest's question: an identifier the bundled tzdata does not know is UTC,
+  a tag without data uses the root locale's names.
+- **Native host.** `varta_runtime::system_host_inputs` reads what Node 24
+  (ICU) reads: the zone from `TZ` (an identifier, `:identifier` or a path
+  under a `zoneinfo/` directory), else the zone `/etc/localtime` links to,
+  else UTC; the locale from the first set of `LC_ALL`, `LC_MESSAGES` and
+  `LANG` (POSIX `uk_UA.UTF-8` becomes `uk-UA`; `C` and `POSIX` are `en-US`),
+  else `en-US`. `varta run`, `varta dev`, packaged applications, the
+  `varta-runtime` launcher and the desktop shell pass these; `varta run` and
+  `varta dev` take `--time-zone` and `--locale` to state them explicitly.
+- **Browser host.** The Worker reads the browser's resolved zone and locale
+  once (`Intl.DateTimeFormat().resolvedOptions()`) and forwards them as text
+  (`registry.effects.localTime`); a value outside the native syntax becomes
+  the native default. No offset or name logic runs in the bridge.
+- **Offsets in guest code.** The linked `date_zone_offset (zone, time,
+  local) -> f64` returns the offset LocalTime(t) adds (`local` 0, the offset
+  in effect at the instant) or UTC(t) subtracts (`local` 1: the offset of the
+  earliest instant whose local time is `t`, and for a local time skipped by a
+  transition the offset before it, §21.4.1.26), in milliseconds.
+  `varta-intl::zone` reads the IANA Time Zone Database as TZif (RFC 8536,
+  versions 2–4) with its POSIX TZ footer (with the RFC 8536 extensions) for
+  instants after the last explicit transition, and uses local time type 0
+  before the first transition (local mean time). Offsets keep their seconds:
+  `getSeconds` of New York in 1800 is 58, and `getTimezoneOffset` is
+  `(t − LocalTime(t)) / msPerMinute` exactly (296.0333… there; V8 truncates
+  to 296). `TimeZoneString` writes the offset's `HourFromTime` and
+  `MinFromTime` (`GMT-0456`), as V8 does. A time value outside the range
+  plus a day uses offset 0 (its result clips to NaN anyway).
+- **Zone names.** The parenthesized name of `toString` and `toTimeString`
+  is implementation-defined (§21.4.4.41.3); Varta writes the name Node 24
+  writes (V8 over ICU `TimeZone::getDisplayName(daylight, LONG, locale)`)
+  through the linked `date_zone_name (zone, locale, time) -> string`
+  (`varta-intl::names`, ICU4X): the CLDR long specific name of the zone's
+  metazone, or the zone's own name for that variant (`British Summer Time`),
+  in the default locale, else the localized GMT format of the zone's current
+  standard offset (or daylight offset, for a daylight name of a zone that
+  observes daylight saving time now). The metazone and the current offsets
+  are those of the reference instant `names::REFERENCE_SECONDS`
+  (2026-07-01), never the clock. The daylight flag is the TZif `isdst` of the
+  instant, read for instants outside 1970-01-01 to 2038-01-19 from V8's
+  *equivalent* instant (the same month and day of a year of 2008–2035 that
+  starts on the same weekday and has the same length; V8
+  `DateCache::EquivalentTime`), so `new Date(1800, 5, 1).toString()` in New
+  York names Eastern *Daylight* Time as Node does.
+- **Parsing.** `Date.parse` and `new Date(text)` read a date-time string
+  without an offset as local time (§21.4.3.2: date-only forms are UTC,
+  date-time forms local); the legacy `toString`/`toDateString` forms without
+  `GMT±hhmm` are local too.
+- **Data versions.** The tzdata is the IANA release `varta_intl::zone::DATA_VERSION`
+  (2026e) in the *rearguard* form ICU compiles, from `jiff-tzdb` 0.1.9;
+  the System V names that IANA 2024b turned into links (`EST5EDT`,
+  `CST6CDT`, `MST7MDT`, `PST8PDT`) read their link targets' data. Zone names
+  come from ICU4X 2.4.0's compiled data (CLDR 49.0). Node 24.20.0 ships
+  tzdata 2026c and CLDR 48.0: offsets agree for every zone it lists up to
+  2026 (Manitoba and Inuvik differ from 2027 under the newer rules), and
+  names agree except where CLDR 49 renamed or newly translated a zone
+  (`Pacific/Honolulu`, `Pacific/Apia`, Greenland outside English, several
+  Ukrainian, Spanish and Japanese names, localized GMT formats in French,
+  Arabic and Portuguese), where ICU4X's data keeps no daylight name of a
+  metazone that no longer observes daylight saving time (Moscow and Türkiye
+  summer time in 2000) and for `Africa/Casablanca` (`varta-intl`'s
+  `names::tests` pins every difference).
+- **Costs.** No budget changes. A program that uses local time links the
+  tzdata (about 225 KB of data in its intrinsic region); one that writes
+  `toString`/`toTimeString` also links the zone names of every CLDR locale
+  (about 2.5 MB). The data lives in the intrinsic region of memory 0 and
+  counts toward the memory budget.
 
 #### Full RegExp (`full_regexp`)
 

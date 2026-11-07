@@ -33,6 +33,8 @@ mod guest;
 #[cfg(target_arch = "wasm32")]
 mod json;
 #[cfg(target_arch = "wasm32")]
+mod local_time;
+#[cfg(target_arch = "wasm32")]
 mod stringify;
 #[cfg(target_arch = "wasm32")]
 mod text;

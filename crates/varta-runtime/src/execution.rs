@@ -183,6 +183,7 @@ impl Execution {
                 rearm: control.as_ref().map(|control| control.control.clone()),
                 profiler: None,
                 view: crate::view::Session::default(),
+                inputs: varta_common::host_inputs::HostInputs::default(),
             },
         );
         store.limiter(|context| &mut context.limits);
