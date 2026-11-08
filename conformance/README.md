@@ -570,3 +570,13 @@ Static fields per class (2026-11-07) add `static-own-properties` under
 `static-class-members`: writes of inherited static fields through
 subclasses and class values create the subclass's own property, listed by
 `Object.keys` and `for...in`; it matches Node.js v24.20.0.
+
+### Protected-session inventory
+
+`session-v40/suite.json` is a separate opt-in contract inventory for server
+capability denial, explicit native-client refusal, inherited checked
+snapshots and preservation of undefined stream rejection values. It does not expand or repin the frozen core or snapshot inventories.
+Run it with `--suite conformance/session-v40/suite.json --require-supported`.
+Actual cookie/origin/CORS and request-isolation behavior is covered by native
+server tests and `scripts/test-browser-session.mjs`, not by stdout inventory
+cases alone.

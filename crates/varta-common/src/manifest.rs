@@ -49,6 +49,9 @@ pub struct Manifest {
     /// manifest never carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http: Option<crate::http::HttpPolicy>,
+    /// V40 trusted browser host only; never embedded in a distribution artifact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_session: Option<crate::session::ClientBinding>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,6 +124,7 @@ impl Manifest {
             budgets: None,
             fs_roots: None,
             http: None,
+            browser_session: None,
         }
     }
 
@@ -154,6 +158,11 @@ impl Manifest {
         if self.http.is_some() {
             return Err(VartaError::InvalidManifest(
                 "http settings belong to a host policy, never to a package".into(),
+            ));
+        }
+        if self.browser_session.is_some() {
+            return Err(VartaError::InvalidManifest(
+                "browserSession belongs to a host policy, never to a package".into(),
             ));
         }
         if self.abi_version < crate::abi::PROGRAM_LIMITS_VERSION {
@@ -215,6 +224,9 @@ impl Manifest {
     /// the package and is rejected there.
     pub fn validate_ceiling(&self) -> Result<()> {
         self.grants()?;
+        if let Some(session) = self.http.as_ref().and_then(|http| http.session.as_ref()) {
+            session.validate()?;
+        }
         if self
             .capabilities
             .iter()
@@ -240,6 +252,22 @@ impl Manifest {
     }
 
     pub fn grants(&self) -> Result<Vec<CapabilityGrant>> {
+        if let Some(binding) = &self.browser_session {
+            if self.abi_version < crate::abi::PROTECTED_SESSION_VERSION {
+                return Err(VartaError::InvalidManifest(
+                    "browserSession requires abiVersion 36".into(),
+                ));
+            }
+            binding.validate()?;
+        }
+        if let Some(session) = self.http.as_ref().and_then(|p| p.session.as_ref()) {
+            if self.abi_version < crate::abi::PROTECTED_SESSION_VERSION {
+                return Err(VartaError::InvalidManifest(
+                    "HTTP session policy requires abiVersion 36".into(),
+                ));
+            }
+            session.validate()?;
+        }
         if self.capabilities.len() > crate::MAX_POLICY_GRANTS {
             return Err(VartaError::InvalidManifest(
                 "too many capability grants".into(),
@@ -276,6 +304,18 @@ impl Manifest {
             roots.validate()?;
         }
         for wire in &self.capabilities {
+            if matches!(
+                wire.id.as_str(),
+                crate::session::CLIENT_CAPABILITY
+                    | crate::session::READ_CAPABILITY
+                    | crate::session::WRITE_CAPABILITY
+                    | crate::session::CLEAR_CAPABILITY
+            ) && self.abi_version < crate::abi::PROTECTED_SESSION_VERSION
+            {
+                return Err(VartaError::InvalidManifest(
+                    "protected sessions require abiVersion 36 or later".into(),
+                ));
+            }
             if let Some(purpose) = &wire.purpose {
                 crate::permission::validate_purpose(&wire.id, purpose)?;
             }

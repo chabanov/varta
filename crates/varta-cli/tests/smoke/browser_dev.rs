@@ -217,3 +217,53 @@ fn browser_dev_cli_ctrl_c_closes_the_server_successfully() {
     assert!(status.success());
     assert!(std::net::TcpStream::connect(server.address).is_err());
 }
+
+#[test]
+fn browser_dev_cli_protected_session_bootstrap_is_host_only_and_profile_gated() {
+    let project = RegressionProject::new(
+        "export function main():void{}",
+        serde_json::json!({"net":{"session":{"urls":["http://127.0.0.1:8787/api/**"],"methods":["GET","POST"]}}}),
+    );
+    project.language_profile("checked-f64-utf16-v40");
+    let binding = serde_json::json!({"apiOrigin":"http://127.0.0.1:8787","clientOrigin":"http://127.0.0.1:8788","allowInsecureLoopback":true});
+    fs::write(project.0.join("host-policy.json"),serde_json::to_vec(&serde_json::json!({"schemaVersion":1,"abiVersion":36,"capabilities":[{"id":"net.session","patterns":["http://127.0.0.1:8787/api/**"],"methods":["GET","POST"]}],"browserSession":binding})).unwrap()).unwrap();
+    let server = Running::start(
+        &project,
+        &["dev", "--target", "browser", "--policy", "host-policy.json"],
+    );
+    let html = server.get("/");
+    let loader_path = html
+        .split_once("data-varta-dev src=\"")
+        .unwrap()
+        .1
+        .split('"')
+        .next()
+        .unwrap();
+    let loader = server.get(loader_path);
+    assert!(loader.contains("\"sessionBinding\""));
+    assert!(loader.contains("\"net.session\""));
+    assert!(loader.contains("http://127.0.0.1:8788"));
+    drop(server);
+    let output = project.command(&["build", "--target", "browser"]);
+    assert!(output.status.success(), "{}", combined(&output));
+    // Distribution output contains the channel implementation, but no host binding.
+    let portable = fs::read_to_string(project.0.join("dist/web/varta-host.js")).unwrap();
+    assert!(!portable.contains("http://127.0.0.1:8788"));
+    let output = project.command(&[
+        "build",
+        "--target",
+        "browser",
+        "--policy",
+        "host-policy.json",
+    ]);
+    assert!(!output.status.success());
+    project.set_capabilities(serde_json::json!({}));
+    project.language_profile("checked-f64-utf16-v39");
+    let output = project.command(&["dev", "--target", "browser", "--policy", "host-policy.json"]);
+    assert!(!output.status.success());
+    assert!(
+        combined(&output).contains("browserSession requires"),
+        "{}",
+        combined(&output)
+    );
+}

@@ -418,7 +418,7 @@ export function main():void{
         // sees an unregistered successor exactly as a v34 runtime sees v35.
         replace(
             &bytes,
-            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v40"}"#,
+            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v41"}"#,
         ),
         // V35 metadata with the v38, v37, v36, v34 or v33 host ABI or without
         // a host ABI section.
@@ -520,7 +520,7 @@ export function main():void{
         // sees an unregistered successor exactly as a v35 runtime sees v36.
         replace(
             &bytes,
-            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v40"}"#,
+            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v41"}"#,
         ),
         // A v36 module relabelled as v35 keeps host ABI 32 and fails at its
         // host ABI section; v35 metadata paired with host ABI 32 from the
@@ -628,7 +628,7 @@ export function main():void{
         // sees an unregistered successor exactly as a v36 runtime sees v37.
         replace(
             &bytes,
-            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v40"}"#,
+            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v41"}"#,
         ),
         // A v37 module relabelled as v36 keeps host ABI 33 and fails at its
         // host ABI section; v36 metadata paired with host ABI 33 from the
@@ -740,7 +740,7 @@ export function main():void{
         // sees an unregistered successor exactly as a v37 runtime sees v38.
         replace(
             &bytes,
-            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v40"}"#,
+            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v41"}"#,
         ),
         // A v38 module relabelled as v37 keeps host ABI 34 and fails at its
         // host ABI section; v37 metadata paired with host ABI 34 from the

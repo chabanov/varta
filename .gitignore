@@ -11,3 +11,5 @@
 # The checked-in browser view style engine (`scripts/build-view-engine.py`).
 !/crates/varta-project/src/browser/view-engine.wasm
 .DS_Store
+# The checked-in protected-session policy module (`scripts/build-session-policy.py`).
+!/crates/varta-project/src/browser/session-policy.wasm

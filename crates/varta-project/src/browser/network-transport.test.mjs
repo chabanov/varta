@@ -162,3 +162,23 @@ test("the inactivity window bounds the head and each body wait, renews with ever
   const closed = deadlineContext.transport(plan({ timeoutMs: window }), async () => response());
   await closed.head; closed.cancel(); assert.equal(timers.size, 0);
 });
+test("protected transport alone includes cookies, injects its marker and never exposes Set-Cookie", async () => {
+  let options;
+  const t=context.transport(plan({session:true,visible:new Set(['set-cookie','content-type'])}),async(_,value)=>{
+    options=value;return response([],{headers:new Headers([['set-cookie','secret=hidden'],['content-type','text/plain']])});
+  });
+  const head=await t.head;
+  assert.equal(head.kind,C.head);assert.equal(options.credentials,'include');assert.equal(options.redirect,'error');
+  assert.deepEqual(JSON.parse(JSON.stringify(options.headers)),[[registry.session.header,registry.session.headerValue]]);
+  assert.deepEqual(JSON.parse(head.text).headers,['content-type','text/plain']);
+  let effects=0;
+  for(const flags of [{session:true},{sessionReserved:true}]) {
+    const refused=context.transport(plan({...flags,headers:[[registry.session.header,'guest']]}),async()=>{effects++;return response();});
+    assert.equal((await refused.head).kind,C.failed);
+  }
+  assert.equal(effects,0);
+  // Earlier profiles retain their ordinary custom-header behavior.
+  const legacy=context.transport(plan({headers:[[registry.session.header,'guest']]}),async(_,value)=>{options=value;return response();});
+  assert.equal((await legacy.head).kind,C.head);assert.equal(options.credentials,'omit');
+  t.cancel();legacy.cancel();
+});

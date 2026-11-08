@@ -439,7 +439,9 @@ mod tests {
         for profile in crate::language::SUPPORTED_PROFILES {
             let expected = if matches!(
                 *profile,
-                LanguageProfile::CheckedF64Utf16V38 | LanguageProfile::CheckedF64Utf16V39
+                LanguageProfile::CheckedF64Utf16V38
+                    | LanguageProfile::CheckedF64Utf16V39
+                    | LanguageProfile::CheckedF64Utf16V40
             ) {
                 WASM
             } else {
@@ -490,7 +492,9 @@ mod tests {
             let limits = profile.data();
             if matches!(
                 profile,
-                LanguageProfile::CheckedF64Utf16V38 | LanguageProfile::CheckedF64Utf16V39
+                LanguageProfile::CheckedF64Utf16V38
+                    | LanguageProfile::CheckedF64Utf16V39
+                    | LanguageProfile::CheckedF64Utf16V40
             ) {
                 assert_eq!(limits, DataLimits::V38);
             } else {

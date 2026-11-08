@@ -130,10 +130,23 @@ pub(super) async fn serve(
             scheme: shared.scheme,
         });
     }
-    if shared.contract.version == http::UTF16_VERSION {
-        pooled(listener, shared).await
+    let service = async {
+        if shared.contract.version == http::UTF16_VERSION {
+            pooled(listener, shared.clone()).await
+        } else {
+            sequential(listener, shared.clone()).await
+        }
+    };
+    if let Some(vault) = &shared.sessions {
+        tokio::select! {
+            result = service => result,
+            result = vault.expire_sessions() => {
+                shared.stop.shutdown();
+                result.map_err(|message| HttpError::Message(message.into()).into())
+            }
+        }
     } else {
-        sequential(listener, shared).await
+        service.await
     }
 }
 

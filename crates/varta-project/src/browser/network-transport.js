@@ -30,12 +30,13 @@ function browserTransport(plan, fetcher = fetch) {
     const headers = [];
     for (const [name, value] of plan.headers) {
       const lower = name.toLowerCase();
-      if (browserHeaders.has(lower) || lower.startsWith("sec-") || lower.startsWith("proxy-")) { cancel(); return failed(`browser transport cannot set header ${name}`); }
+      if ((plan.session || plan.sessionReserved) && lower === registry.session.header || browserHeaders.has(lower) || lower.startsWith("sec-") || lower.startsWith("proxy-")) { cancel(); return failed(`browser transport cannot set header ${name}`); }
       if (!hostHeaders.has(lower)) headers.push([name, value]);
     }
+    if (plan.session) headers.push([registry.session.header, registry.session.headerValue]);
     try {
       const response = await within(fetcher(plan.url, { method: plan.method, headers, body: plan.body,
-        credentials: "omit", redirect: "manual", mode: "cors", cache: "no-store", referrerPolicy: "no-referrer", signal: controller.signal }));
+        credentials: plan.session ? "include" : "omit", redirect: plan.session ? "error" : "manual", mode: "cors", cache: "no-store", referrerPolicy: "no-referrer", signal: controller.signal }));
       if (response.type === "opaqueredirect" || response.status === 0) { cancel(); return failed("browser transport cannot inspect a manual redirect"); }
       // Fetch decodes every content coding; the native host asks for the
       // identity coding. A decoded body shows neither its coding nor the

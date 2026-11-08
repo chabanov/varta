@@ -173,9 +173,39 @@ fn envelope(
     request: Envelope,
 ) -> Result<Vec<u8>, RuntimeError> {
     let (mut head, body) = match request {
-        Envelope::Text(bytes) => return Ok(bytes),
+        Envelope::Text(bytes) => {
+            let Some(vault) = &shared.sessions else {
+                return Ok(bytes);
+            };
+            let mut request: varta_common::http::HttpRequest = serde_json::from_slice(&bytes)
+                .map_err(|_| HttpError::Message("request envelope".into()))?;
+            let context = execution.store.data_mut();
+            context.http_session = Some(
+                crate::session::RequestSession::new(
+                    vault.clone(),
+                    &mut request.headers,
+                    &request.method,
+                    context.cancellation.clone(),
+                )
+                .map_err(|e| HttpError::Message(e.into()))?,
+            );
+            return serde_json::to_vec(&request)
+                .map_err(|_| HttpError::Message("request envelope".into()).into());
+        }
         Envelope::Web { head, body } => (head, body),
     };
+    if let Some(vault) = &shared.sessions {
+        let context = execution.store.data_mut();
+        context.http_session = Some(
+            crate::session::RequestSession::new(
+                vault.clone(),
+                &mut head.headers,
+                &head.method,
+                context.cancellation.clone(),
+            )
+            .map_err(|e| HttpError::Message(e.into()))?,
+        );
+    }
     if let (Some(body), Some(transport)) = (body, shared.limits.transport) {
         let context = execution.store.data_mut();
         let deadline = context
@@ -407,10 +437,13 @@ fn copied(
 }
 
 /// The response envelope's schema, within the request deadline.
-fn parse_response(execution: &Execution, bytes: &[u8]) -> Result<HttpResponse, RuntimeError> {
-    let response = serde_json::from_slice::<HttpResponse>(bytes)
+fn parse_response(execution: &mut Execution, bytes: &[u8]) -> Result<HttpResponse, RuntimeError> {
+    let mut response = serde_json::from_slice::<HttpResponse>(bytes)
         .map_err(|_| HttpError::Message("response envelope schema or UTF-8".into()))?;
     execution.check_deadline()?;
+    if let Some(session) = execution.store.data_mut().http_session.as_mut() {
+        session.finish(&mut response)?;
+    }
     Ok(response)
 }
 
@@ -487,11 +520,14 @@ async fn stream(
         .transport
         .map(|transport| std::time::Duration::from_millis(transport.write_idle_ms));
     let first = pull(execution, (&instance, &memory), body).await?;
-    let response = serde_json::from_str::<HttpResponse>(
+    let mut response = serde_json::from_str::<HttpResponse>(
         &String::from_utf16(&first)
             .map_err(|_| HttpError::Message("response head UTF-16".into()))?,
     )
     .map_err(|_| HttpError::Message("response head schema".into()))?;
+    if let Some(session) = execution.store.data_mut().http_session.as_mut() {
+        session.finish(&mut response)?;
+    }
     if head.send(response.clone()).is_err()
         || bodyless
         || http::BODYLESS_STATUSES.contains(&response.status)

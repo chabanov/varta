@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import {registry} from '../../../varta-common/browser/registry.mjs';
+import * as sessionChannel from './session-channel.mjs';
 import {KvContainer,CONTAINER,FAILURES,crc32,compareBytes,versionstamp,openKvStorage,syncHandlesSupported,parseVirtualPath,virtualMatches,glob,createKvPolicy,createCodec,createKvHost} from './kv-store.mjs';
 
 const K=registry.kv;
@@ -332,7 +333,7 @@ async function startWorker({grants,scope}){
   class Tank{constructor(fuel){this.remaining=fuel;this.global={value:BigInt(-fuel)};}charge(){}beginTurn(fuel){this.remaining=fuel;}}
   const wasm={compile:async()=>({}),Module:{imports:()=>[{module:'varta',name:K.operations.open,kind:'function'},{module:registry.meter.module,name:registry.meter.counter,kind:'global'}],customSections:()=>{const bytes=new Uint8Array(4);new DataView(bytes.buffer).setUint32(0,registry.meter.version,true);return[bytes.buffer];}},
     instantiate:async()=>{instantiated=true;const version=registry.profiles.find(profile=>profile.name===descriptor.profile).exceptionVersion;return{exports:{memory:new WebAssembly.Memory({initial:1}),[version.global]:{value:version.value},_start(){}}};}};
-  const context=vm.createContext({registry,permissionBroker,eventSources,viewPolicy,viewWorker,environment,environmentAbi,kvStore,self,navigator:scope.navigator,WebAssembly:wasm,FuelTank:Tank,bundleSchemaVersion:1,
+  const context=vm.createContext({registry,permissionBroker,eventSources,viewPolicy,viewWorker,environment,environmentAbi,kvStore,sessionChannel,self,navigator:scope.navigator,WebAssembly:wasm,FuelTank:Tank,bundleSchemaVersion:1,
     reasonReader:()=>()=>'',browserTransport:()=>{throw new Error('unexpected transport');},TextEncoder,TextDecoder,URL,Uint8Array,Uint32Array,DataView,performance,setTimeout,clearTimeout,Date,crypto});
   vm.runInContext(code,context);
   await self.onmessage({data:{descriptor,image:new Uint8Array(),kvCodec:new Uint8Array(),manifest:new TextEncoder().encode(JSON.stringify({fsRoots:['data'],capabilities:grants})),mode:'run'}});

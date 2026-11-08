@@ -59,6 +59,8 @@ pub const PROGRAM_LIMITS_VERSION: u32 = 34;
 /// V39: checked snapshots for external JSON graphs. A distinct host ABI
 /// makes hosts without the snapshot contract reject before guest effects.
 pub const CHECKED_SNAPSHOT_VERSION: u32 = 35;
+/// V40: explicit protected session channels and server-owned session secrets.
+pub const PROTECTED_SESSION_VERSION: u32 = 36;
 #[must_use]
 pub fn supported(version: u32) -> bool {
     matches!(
@@ -98,6 +100,7 @@ pub fn supported(version: u32) -> bool {
             | NET_REQUEST_VERSION
             | PROGRAM_LIMITS_VERSION
             | CHECKED_SNAPSHOT_VERSION
+            | PROTECTED_SESSION_VERSION
     )
 }
 mod static_region;

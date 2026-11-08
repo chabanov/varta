@@ -232,6 +232,12 @@ impl Net {
     /// A recording logs a planned request before its transfer starts; a
     /// replay serves it from the log instead, once it claimed the next
     /// logged request. Both serve version 2 descriptors only.
+    pub(crate) fn refused_session(&mut self) -> Result<f64, wasmtime::Error> {
+        self.start(Err(Completion {
+            kind: CompletionKind::Failed,
+            text: "protected session transport is unavailable on the native client host".into(),
+        }))
+    }
     fn start(&mut self, outcome: Result<client::Plan, Completion>) -> Result<f64, wasmtime::Error> {
         self.full()?;
         self.next_id += 1;

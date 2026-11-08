@@ -121,7 +121,7 @@ self.onmessage = async ({ data }) => {
       permissions===undefined?undefined:(permissions[id]?.patterns??[]));
     const environmentScopes={'env.get':environmentPolicy('env.get'),'env.has':environmentPolicy('env.has')};
     const broker=permissionBroker.createPermissionBroker({manifest,ceiling:permissions,artifact:descriptor.original.identity,decisions,platform,v1:descriptor.turnBudgets,prompt:prompting,audit:false,
-      covers:(id,resource)=>id===registry.network.capability?policy.covers(resource):id===registry.view.capabilities.openUrl?uiPolicy.covers(resource):Object.hasOwn(environmentScopes,id)?environmentScopes[id].allows(resource):false,
+      covers:(id,resource)=>id===registry.network.capability?policy.covers(resource):id===registry.session.capability?rawSessionPolicy.covers(resource):id===registry.view.capabilities.openUrl?uiPolicy.covers(resource):Object.hasOwn(environmentScopes,id)?environmentScopes[id].allows(resource):false,
       onRecord:(record)=>self.postMessage({type:'permission_audit',record})});
     const allowed = () => {
       const id = registry.scheduler.timer.capability;
@@ -131,8 +131,11 @@ self.onmessage = async ({ data }) => {
     };
     const timers = createTimers(profile, scheduler, allowed, emit, renderReason);
     Object.assign(implementations, timers.implementations);
+    const rawSessionPolicy = networkPolicy(manifest, permissions, false, undefined, registry.session.capability);
+    const protectedChannel = await sessionChannel.createSessionChannel({bytes:data.sessionPolicy,binding:data.sessionBinding,pageOrigin:data.pageOrigin,explicitCeiling:permissions!==undefined&&Object.hasOwn(permissions,registry.session.capability)});
+    if (data.networkReplay!==undefined && manifest.capabilities.some(g=>g.id===registry.session.capability)) throw new Error('session channels cannot use network replay');
     const rawPolicy = networkPolicy(manifest, permissions, false);
-    const policy={...rawPolicy,allows:(url,method)=>broker.operation(registry.network.capability,`${method} ${url}`,rawPolicy.allows(url,method))};
+    const policy={...rawPolicy,session:{...rawSessionPolicy,allows:(url,method,channelAllowed)=>broker.operation(registry.session.capability,`${method} ${url}`,channelAllowed&&rawSessionPolicy.allows(url,method))},allows:(url,method)=>broker.operation(registry.network.capability,`${method} ${url}`,rawPolicy.allows(url,method))};
     const readDescriptor = (ptr, length) => {
       const memory = instance.exports[descriptor.memoryExport];
       if (!Number.isInteger(ptr) || ptr < 0 || !Number.isInteger(length) || length < 0 || length % 2 || length > registry.network.maxRequestBytes || ptr + length > memory.buffer.byteLength) throw new Error(registry.network.errors.descriptor);
@@ -275,7 +278,7 @@ self.onmessage = async ({ data }) => {
     }
     network = createNetwork(scheduler, policy, emit, readDescriptor, writeResult, replay
       ? Object.assign((plan, claim) => replay.transport(plan, claim), { claim: (plan) => replay.claim(plan), abandon: (claim) => replay.abandon(claim) })
-      : (plan) => browserTransport({...plan,timeoutMs:registry.network.readInactivityMs}));
+      : (plan) => browserTransport({...plan,sessionReserved:profile.protectedSessions,timeoutMs:registry.network.readInactivityMs}), protectedChannel);
     Object.assign(implementations, network.implementations);
     const uiPolicy = viewPolicy.createViewPolicy(manifest, permissions,broker.granted);
     const assetNames=new Set(descriptor.resources.filter((resource)=>!resource.font).map((resource)=>resource.key));
@@ -313,6 +316,7 @@ self.onmessage = async ({ data }) => {
         }else if(message?.type==='permission_revoke'){
           if(!application||!Number.isSafeInteger(message.id)||message.id!==controlId+1||typeof message.capability!=='string'||!registry.permissions.capabilities.some(({id})=>id===message.capability))throw new Error('invalid permission revocation');
           controlId=message.id;const revoked=broker.revoke(message.capability);
+          if(revoked&&message.capability===registry.session.capability)network.implementations.session_reset();
           self.postMessage({type:'permission_revoked',id:message.id,capability:message.capability,revoked});
         }else if(message?.type==='permission_platform'&&message.id===registry.view.capabilities.clipboard&&typeof message.state==='string'&&Object.hasOwn(registry.permissions.states,message.state))broker.setPlatform(message.id,message.state);
         else{view.receive(message);if(view.error)protocolFault(view.error);}
@@ -325,7 +329,7 @@ self.onmessage = async ({ data }) => {
     const varta = Object.create(null);
     // Capabilities whose checks this Worker implements; any other gated
     // import is refused before instantiation.
-    const checkedCapabilities = new Set([registry.scheduler.timer.capability, registry.network.capability, 'env.get', 'env.has', clock.capability, exit.capability, registry.kv.capabilities.read, registry.kv.capabilities.write]);
+    const checkedCapabilities = new Set([registry.scheduler.timer.capability, registry.network.capability, registry.session.capability, 'env.get', 'env.has', clock.capability, exit.capability, registry.kv.capabilities.read, registry.kv.capabilities.write]);
     for (const item of descriptor.imports) {
       const operation = registry.operations.find((operation) => operation.name === item.name);
       if (!operation || !operation.admittedUnder.includes(profile.name) || operation.capability !== null && !checkedCapabilities.has(operation.capability) || !Object.hasOwn(implementations, item.name)) throw new Error(`unsupported browser effect: ${item.name}`);

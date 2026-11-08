@@ -8,6 +8,88 @@ any previous check whose scope includes those inputs.
 
 ## Current verification evidence — 2026-11-07
 
+**Studio stabilization — one final full pass.** Two project TLS
+regressions check real certificate verification, TLS 1.3/HTTP/1.1, HTTPS origin
+checks, invalid-key refusal and shutdown with an incomplete handshake. The seven
+native TLS regressions preserve HTTP/2 and HTTP/1.1. Native session tests now
+cover autonomous expiry of suspended outbound I/O, idle refresh bounded by
+absolute age, and 1024 rounds of vault reservation/rotation/lease cleanup.
+The browser stress adds 4096 reset cycles across six transfer phases and preserves
+an ordinary transfer through every reset. Focused checks pass.
+
+The final sustained probe passes **1930 cycles in 90.976 seconds**, with native
+API RSS growth of **128 KiB** after warm-up. The sustained driver uses both
+official Varta HTTPS hosts, an isolated Chrome
+profile and synthetic credentials only. It never installs certificate trust,
+uses a TLS bypass or calls a provider. Supply an operator-trusted certificate
+with the exact loopback IP SAN and run:
+
+```bash
+node scripts/test-browser-session-soak.mjs \
+  --certificate /absolute/path/certificate.pem --key /absolute/path/key.pem
+```
+
+The default probe runs at least 90 seconds and 256 session cycles; after 64
+warm-up cycles it samples native API RSS every five seconds and permits at most
+64 MiB growth. This finite observation does not establish absence of all leaks
+or cross-platform performance. Short diagnostic runs below 30 seconds do not
+establish the RSS bound. The probe pins test consent to its exact portable
+artifact beneath the host ceiling, preserving ordinary application consent.
+Independent Cloud evidence covers the real Studio form, source editing, reload,
+restart and account isolation. Real OTP, SDK identity, project/source save and
+reload, BFF logout and rejection of the old provider key pass. The initial sole
+request-code delivered an email despite an unconfirmed UI response; its exact
+failure class remains unproven. Cloud adds client-only existing-code recovery
+and a focused regression, without sending another code.
+The completed code batch passes one full gate: **14/14 commands, 4690 Rust
+tests (26 ignored), 195 Node tests**, core 246 passed / 2 known unsupported,
+v39 3/3 and v40 4/4. Sources remained unchanged at SHA-256
+`841fbdf33fb7b41e92263b41355304968a17fae63a0be0e9b9b44c831869b6c4`.
+Report: `target/verification/20261107-211246-8413wmnk/report.json`.
+Temporary SSL trust, the exact keychain certificate and private key were removed.
+Only documentation/result annotations follow; no implementation/build input
+changed after the pass. See the
+[stabilization receipt](evidence/2026-11-07-studio-stabilization.json); earlier
+full reports are not reused as evidence for the new changes.
+
+**Protected-session package — one full pass and final scoped completion.** One
+unchanged snapshot passed all 14 commands: **4685 Rust tests (26 ignored), 194
+Node tests**, core 246 passed / 2 known unsupported out of 248, v39 3/3 and the
+then-current protected-session inventory 3/3. The full report is immutable:
+`target/verification/20261107-193453-fijjcumg/report.json`.
+
+Two additional edge cases were discovered during review: reset followed by
+cancelling an unread response leaked its request slot, and an overly broad v40
+prelude replacement changed ordinary undefined stream rejection values. After
+correction, all **194 Node tests**, **188 compiler tests (2 ignored)**, **93 project
+tests**, **6 native session tests**, **3 CLI tests**, **2 frozen-profile tests**,
+strict affected Clippy and the expanded protected-session inventory **4/4** pass.
+The rebuilt CLI passes real HTTPS Chrome including repeated reset/cancel beyond
+slot capacity, late-body AbortError and ordinary undefined-error preservation.
+No second full run was performed; **the final snapshot has scoped completion
+after the full pass**. See the
+[session evidence](evidence/2026-11-07-protected-session-verification.json).
+
+Cloud independently confirms synthetic login, project creation/edit/reload,
+restart/relogin, logout and second-account isolation through the official CLI.
+Its receipt pins the exact separate binaries and explicitly excludes live OTP,
+provider revocation and a production HTTPS deployment. Native stores remain
+isolated per request; the host vault is memory-only.
+
+To reproduce the real browser scope after building the CLI:
+
+```bash
+cargo build -p varta --bin varta --locked
+node scripts/test-browser-session.mjs target/debug/varta
+```
+
+The script creates temporary synthetic credentials and a local certificate,
+trusts that certificate only inside its isolated Chrome probe, and cleans up its
+servers/files. It makes no OTP or external provider request. The full gate also
+checks the new policy Wasm fingerprint and the separate protected-session
+conformance inventory; browser acceptance remains an explicit additional scope.
+
+
 **Combined package — final full gate passed before commit.** One uninterrupted
 run on unchanged sources passed all 12 commands: **4671 Rust tests (26 ignored)**,
 **190 Node tests**, core compatibility 246 passed / 2 known unsupported out of 248,

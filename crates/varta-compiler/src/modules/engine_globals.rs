@@ -272,7 +272,10 @@ mod tests {
                 .any(|(name, _)| kind(name, profile).is_some());
             assert_eq!(
                 folded,
-                matches!(profile, V38 | LanguageProfile::CheckedF64Utf16V39),
+                matches!(
+                    profile,
+                    V38 | LanguageProfile::CheckedF64Utf16V39 | LanguageProfile::CheckedF64Utf16V40
+                ),
                 "{profile:?}"
             );
         }

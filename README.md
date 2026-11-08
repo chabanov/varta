@@ -13,11 +13,19 @@ versioned language profiles; it is not general JavaScript, Node or npm
 compatibility yet. See the [status summary](docs/development-plan.md#status) and
 the [research thesis](docs/development-plan.md#research-thesis).
 
+The latest Studio stabilization package adds trusted local HTTPS to the official
+browser dev host and autonomous cancellation of expired sessions awaiting I/O.
+Finite native/browser resource stress and local HTTPS Studio acceptance pass;
+real OTP verify/restore/logout and old-key denial pass with existing-code
+recovery after an unconfirmed first send response. One final full run passes
+14 commands, 4690 Rust tests (26 ignored) and 195 Node tests on unchanged sources.
+See [the stabilization receipt](docs/evidence/2026-11-07-studio-stabilization.json).
+
 The verified working-tree increment adds complete constructor receivers for
 classes without non-template descendants, checked after generic materialization.
 Partial initialization remains guarded by the checked construction rules.
 
-Current development checkpoint (2026-11-07, based on `1407f8eb`): v38 remains
+Underlying v38 checkpoint (2026-11-07, based on `1407f8eb`): v38 remains
 unreleased and in stabilization. The application runtime, official metered
 browser host, OPFS KV storage, native/browser network replay and packaged
 `varta-shell` are integrated. The pinned uarp-sdk runs natively against the
@@ -196,6 +204,7 @@ inherits the one before it. Host and value ABI versions per profile are in the
 | `checked-f64-utf16-v37` | Pilot batch in development: language core, class generics, collections and binary text, RegExp, net.request |
 | `checked-f64-utf16-v38` | Batch in development: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping, codegen v2; wave 2: hashed dictionaries (value 18), strict members, Web bytes, virtual file roots, text imports; wave 3: Deno KV storage, hashed `Map`/`Set`; iteration protocol (`[Symbol.iterator]`, array spreads, `yield*`); K9 D standard library (ES2025 Array/Set/iterator/JSON methods, `AggregateError`, UTC `Date`); K9 D1 Node console (Node notation, standard error, `group`/`count`/`time`/`dir`/`table`); K9 D2 Symbol values and integrity levels (`Object.freeze`/`seal`/`preventExtensions`); K9 type level (conditional/mapped/template literal types, utility types, predicates, literal inference); K9 B declarations and classes (enums, namespaces, overloads, abstract classes, setters, static fields, class expressions); K9 C expression forms (`await` anywhere, object methods with `this`, iterable destructuring, `using`, thenables) |
 | `checked-f64-utf16-v39` | V38 plus isolated checked JSON snapshots retaining extra fields for SDK assertions; explicit checked parsing and previous profiles stay exact |
+| `checked-f64-utf16-v40` | V39 plus explicit protected browser channels and native server-host sessions; memory-only vault, separate grants and trusted origin policy |
 <!-- generated:profile-index:end -->
 
 ## Browser bundle (in development)

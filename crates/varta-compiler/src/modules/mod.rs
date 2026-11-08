@@ -3,6 +3,7 @@
 mod defaults;
 pub(crate) mod engine;
 pub(crate) mod engine_globals;
+mod engine_sessions;
 mod global_members;
 pub(crate) mod symbol_keys;
 mod syntax;

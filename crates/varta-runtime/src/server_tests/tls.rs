@@ -51,6 +51,7 @@ impl Certificate {
     fn policy(&self) -> HttpPolicy {
         HttpPolicy {
             limits: None,
+            session: None,
             tls: Some(TlsFiles {
                 certificate: self.directory.join("cert.pem").display().to_string(),
                 key: self.directory.join("key.pem").display().to_string(),

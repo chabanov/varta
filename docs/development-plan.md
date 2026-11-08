@@ -2,7 +2,75 @@
 
 ## Status
 
-**Current checkpoint — combined package passed the pre-commit full gate.**
+**Current checkpoint — Studio stabilization and local HTTPS acceptance verified.** The
+implementation is complete: official browser dev serves TLS 1.3 through the
+shared native TLS setup; native vault expiry autonomously cancels requests
+blocked on I/O. The browser reset stress covers 4096 cycles; native reservation,
+rotation and lease cleanup covers 1024 cycles with 16 reads per session.
+
+Local trusted HTTPS Chrome acceptance passes using the official Varta API and
+browser dev hosts. Independent Cloud UI acceptance covers bad-code recovery,
+login, source versions, reload, API restart with KV retention, logout and a second
+account's isolation. The application checkpoint and final verification are
+recorded separately in the [stabilization evidence](evidence/2026-11-07-studio-stabilization.json).
+Real OTP verification, SDK identity, project/source save, reload and confirmed
+BFF logout pass; the provider rejects the old key afterwards. The sole request-code
+email was delivered despite an unconfirmed UI response. A client-only existing-code
+recovery permits verification without another send; the initial error's exact
+cause remains unproven. No public deployment or live generation is included.
+One full gate passes all **14 commands, 4690 Rust tests (26 ignored) and 195 Node
+tests**, with unchanged sources. Core compatibility is 246 passed / 2 known
+unsupported out of 248; v39 is 3/3 and v40 is 4/4. Temporary certificate trust,
+its keychain certificate and private TLS key were removed after acceptance.
+The earlier protected-session full report below remains historical.
+
+The normal successful request-code response remains unaccepted; retain safe
+error classification/response diagnosis as follow-up without automatically
+sending another OTP. The delivered-email recovery is independently verified.
+
+The next separate Cloud/engine integration is a bounded trusted toolchain host:
+immutable source/dependency bundle → check/build diagnostics and validated,
+content-addressed artifact, with cancellation and an explicit host ceiling.
+There is no guest toolchain API today. Keep compilation out of runtime/launcher
+and Cloud jobs/ownership in the application; building never grants execution.
+Execution start/stop requires its own artifact/grant/budget boundary. This is a
+planned package, outside the completed stabilization gate.
+
+Next independent scopes remain production deployment acceptance, durable encrypted
+credential custody with multi-process ownership, native protected clients, and
+the previously tracked UI/GPU work. Local HTTPS acceptance does not close them.
+
+**Previous checkpoint — protected Studio sessions accepted with one full pass and
+final scoped corrections.** The trusted native BFF holds provider credentials in
+a bounded memory-only vault; the browser uses a separately granted, exact-origin
+channel. Cookie/CSRF/CORS custody, staged rotation, immediate clear/cancellation,
+strict anonymous guards and the official CLI host bootstrap are implemented.
+Earlier profiles retain their semantics; native protected clients fail closed.
+
+One immutable full snapshot passed all 14 commands: **4685 Rust tests (26
+ignored), 194 Node tests**, core compatibility 246/248 with two known unsupported
+cases, and both opt-in inventories. Subsequent edge-case review found an idle
+response-slot leak after reset/cancel and overly broad normalization of undefined
+stream errors. Both were fixed and verified through all browser Node tests,
+compiler/project tests, native session and frozen-profile scopes, CLI packaging,
+strict affected Clippy, an expanded protected-session inventory and real HTTPS
+Chrome. **The final code has scoped completion after that full pass, not a second
+full run.** The original full report remains immutable. See the
+[session evidence](evidence/2026-11-07-protected-session-verification.json).
+
+Cloud independently confirms synthetic Studio login, bad-code recovery, automatic
+project creation, revision updates, reload, restart/relogin persistence, logout
+and second-account isolation through the official bootstrap. No real OTP or live
+provider revocation is claimed. Sessions end on restart; project KV survives.
+See the [contract](architecture.md#protected-sessions-protected_sessions) and
+[host setup](embedding.md#protected-session-hosts).
+
+Next separate scopes: production HTTPS/provider acceptance, durable encrypted
+credential custody and multi-process ownership, and a native protected client.
+Broader CSS combinations, native tables, GPU effects and remaining application
+acceptance retain their existing roadmap; this increment does not close them.
+
+**Previous checkpoint — combined package passed the pre-commit full gate.**
 Managed KV values and keys now materialize through async-safe guest callbacks in
 native HTTP v2. The shared codec retains validation, fair fuel and root ordering;
 ordinary native/browser execution uses immediate adapters of that same builder.
@@ -111,7 +179,8 @@ Stores remain isolated; stored values persist across requests/process restart.
 Nested records/arrays/dictionaries/unions, list keys, mismatch recovery, atomic
 updates, forced GC and read-only host ceilings have targeted regressions. The
 one-worker policy's separate fiber-pool exhaustion is fixed in the same package.
-Browser-host session integration remains separate application work.
+The subsequent protected-session package above supplies the separate browser
+channel and trusted host custody needed by the Cloud Studio integration.
 
 **Active work next:** broader CSS combinations/native tables, direct GPU effects
 and remaining S6–S8 acceptance have their own scope. The 312-case application

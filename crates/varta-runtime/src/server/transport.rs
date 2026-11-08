@@ -7,7 +7,8 @@ use hyper::{
 use std::{convert::Infallible, sync::atomic::Ordering, time::Duration};
 use varta_common::http::{self, HttpHeader, HttpRequest, HttpResponse};
 
-type Reply = Response<Either<Full<Bytes>, StreamBody>>;
+pub(super) type ReplyBody = Either<Full<Bytes>, StreamBody>;
+type Reply = Response<ReplyBody>;
 
 /// The body of a streaming response: the chunks its worker pulls. Dropping
 /// it (a finished response or a client that left) cancels that worker.
@@ -76,13 +77,8 @@ fn failure(status: StatusCode) -> Reply {
     );
     response
 }
-/// A whole response, or the head of a streaming one (`stream` is its body;
-/// its length is unknown, so it has no `content-length`).
-fn response(
-    value: HttpResponse,
-    head: bool,
-    stream: Option<StreamBody>,
-) -> Result<Reply, HttpError> {
+/// Shared by publication of a staged session and the final wire adapter.
+pub(crate) fn validate_response(value: &HttpResponse) -> Result<(), HttpError> {
     let fail = || HttpError::Message("response status, body or headers".into());
     if !(http::MIN_STATUS..=http::MAX_STATUS).contains(&value.status)
         || value.body.len() > abi::MAX_RESULT_BYTES
@@ -97,6 +93,25 @@ fn response(
     {
         return Err(fail());
     }
+    for header in &value.headers {
+        let name =
+            hyper::header::HeaderName::from_bytes(header.name.as_bytes()).map_err(|_| fail())?;
+        if FRAMING_HEADERS.contains(&name.as_str()) {
+            return Err(fail());
+        }
+        hyper::header::HeaderValue::from_str(&header.value).map_err(|_| fail())?;
+    }
+    Ok(())
+}
+/// A whole response, or the head of a streaming one (`stream` is its body;
+/// its length is unknown, so it has no `content-length`).
+fn response(
+    value: HttpResponse,
+    head: bool,
+    stream: Option<StreamBody>,
+) -> Result<Reply, HttpError> {
+    validate_response(&value)?;
+    let fail = || HttpError::Message("response status, body or headers".into());
     let status = StatusCode::from_u16(value.status as u16).map_err(|_| fail())?;
     let length = value.body.len();
     let streamed = stream.is_some();
@@ -401,6 +416,39 @@ async fn envelope(
 }
 
 async fn handle_request(
+    req: Request<Incoming>,
+    shared: Arc<Shared>,
+    pool: Option<http::PoolLimits>,
+) -> Reply {
+    if shared.sessions.is_some() {
+        let ingress = checked_head(&req, http::MAX_BODY_BYTES, &shared.limits)
+            .and_then(|_| super::sessions::ingress(&shared, &req));
+        match ingress {
+            Err(status) => {
+                let mut reply = failure(status);
+                super::sessions::cors(&shared, &mut reply);
+                return reply;
+            }
+            Ok(true) => {
+                let value = HttpResponse {
+                    status: 204,
+                    body: String::new(),
+                    headers: super::sessions::preflight_headers(),
+                };
+                let mut reply = response(value, false, None)
+                    .unwrap_or_else(|_| failure(StatusCode::INTERNAL_SERVER_ERROR));
+                super::sessions::cors(&shared, &mut reply);
+                return reply;
+            }
+            Ok(false) => {}
+        }
+    }
+    let mut reply = handle_request_inner(req, shared.clone(), pool).await;
+    super::sessions::cors(&shared, &mut reply);
+    reply
+}
+
+async fn handle_request_inner(
     req: Request<Incoming>,
     shared: Arc<Shared>,
     pool: Option<http::PoolLimits>,

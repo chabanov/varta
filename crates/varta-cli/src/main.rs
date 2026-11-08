@@ -59,6 +59,7 @@ enum Commands {
         #[arg(long, value_enum)]
         target: Option<DevTarget>,
         /// Browser development listener; loopback only, default 127.0.0.1:0.
+        /// A host --policy http.tls certificate/key enables HTTPS.
         #[arg(long, value_name = "IP:PORT", requires = "target")]
         listen: Option<std::net::SocketAddr>,
         /// Print per-function fuel (self, total, calls) of this run to stderr.

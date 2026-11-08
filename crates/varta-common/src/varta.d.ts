@@ -1236,6 +1236,8 @@ declare const varta: {
     serve(options: { hostname: string; port: number }, handler: (request: Request) => VartaHttpResponse | Promise<VartaHttpResponse> | Response | Promise<Response>): void;
     /** Stop this owned service after the current response has drained. */
     stop(): void;
+    /** V40: native server-host sessions; separate exact session.* grants. */
+    session: { get(): string | null; set(secret: string): void; clear(): void };
   };
   json: {
     /** Decode against the supported closed T schema. Rejects malformed JSON,
@@ -1264,6 +1266,8 @@ declare const varta: {
   /** Exit requires an exact finite i32 code in either numeric profile. */
   process: { exit(code: number): void };
   net: { fetch(url: string): number; get(url: string): string };
+  /** V40: protected browser-only channel; exact net.session scopes and trusted host binding. */
+  session: { fetch(url: string, init?: RequestInit): Promise<Response>; reset(): void };
   /** checked-f64-utf16-v38: permission broker v1 (W3C Permissions API states). */
   permissions: {
     /** The state of a permission for this application; never prompts.

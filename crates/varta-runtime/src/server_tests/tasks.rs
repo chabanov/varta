@@ -51,6 +51,7 @@ fn start(limits: Option<HostLimits>) -> Server {
             http: limits.map(|limits| HttpPolicy {
                 limits: Some(limits),
                 tls: None,
+                session: None,
             }),
             ..RunOptions::default()
         },
@@ -177,6 +178,7 @@ fn admission_follows_the_memory_ceiling() {
                     ..HostLimits::default()
                 }),
                 tls: None,
+                session: None,
             }),
             ..RunOptions::default()
         },

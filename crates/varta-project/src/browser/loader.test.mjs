@@ -20,6 +20,7 @@ const CLEARED_WAIT_PERIODS = 5;
 const OUTPUT_BYTES = 1 << 20, MEMORY_BYTES = 1 << 24;
 const EXIT_CODE = 5;
 const MODULES = {
+  sessionChannel: 'session-channel.mjs',
   environment: 'environment.mjs', permissionBroker: 'permission-broker.mjs', permissionStore: 'permission-store.mjs',
   permissionPrompt: 'permission-prompt.mjs', eventSources: 'event-sources.mjs', viewCodec: 'view-codec.mjs',
   viewQueue: 'view-queue.mjs', viewFonts: 'view-fonts.mjs', viewPolicy: 'view-policy.mjs', viewModel: 'view-model.mjs',

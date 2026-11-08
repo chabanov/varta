@@ -160,6 +160,7 @@ fn register_mode(
     crate::scheduler::register(linker)?;
     crate::net::register(linker)?;
     crate::kv::register(linker, asynchronous)?;
+    crate::session::register(linker)?;
     crate::events::register(linker)?;
     crate::view::register(linker)?;
     crate::primitive_string::register(linker)?;

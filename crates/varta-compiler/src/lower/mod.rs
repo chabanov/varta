@@ -515,6 +515,7 @@ mod primitive_string;
 mod primitive_unary;
 pub(crate) mod promises;
 mod prune;
+mod sessions;
 mod simplify;
 pub(crate) mod symbols;
 pub(crate) use prune::LINKED_FUNCTIONS;

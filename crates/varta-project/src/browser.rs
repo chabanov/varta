@@ -55,6 +55,13 @@ impl BrowserArtifact {
         artifact.grants()?;
         let inspection = varta_runtime::VartaRuntime::new().inspect_module(&artifact.wasm)?;
         let profile = inspection.language.profile.unwrap_or_default();
+        if !profile.protected_sessions()
+            && host.is_some_and(|h| h.manifest().browser_session.is_some())
+        {
+            return Err(crate::ProjectError::Usage(
+                "browserSession requires the protected-session language profile".into(),
+            ));
+        }
         let budgets = if profile.turn_budgets() {
             Budgets::resolve(
                 &artifact.manifest.budget_request(),

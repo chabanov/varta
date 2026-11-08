@@ -1,4 +1,4 @@
-//! Native TLS of the HTTP server (K7 H3): rustls with the ring provider,
+//! Shared native TLS for trusted HTTP hosts: rustls with the ring provider,
 //! TLS 1.3 only, ALPN `h2` before `http/1.1`, no 0-RTT data. The certificate
 //! chain and key come from absolute paths the host policy names; the host
 //! reads them once before the listener exists, and no guest ever sees them.
@@ -6,7 +6,7 @@ use std::{path::Path, sync::Arc};
 use varta_common::http::{self, HttpError, TlsFiles};
 
 /// The application protocols offered, in server preference order.
-pub(super) const H2: &[u8] = b"h2";
+pub(crate) const H2: &[u8] = b"h2";
 const HTTP11: &[u8] = b"http/1.1";
 
 /// A host-supplied PEM file of at most `http::MAX_TLS_FILE_BYTES`.
@@ -34,7 +34,11 @@ fn read(path: &str) -> Result<Vec<u8>, HttpError> {
 }
 
 /// The server configuration of `files`.
-pub(super) fn config(files: &TlsFiles) -> Result<Arc<rustls::ServerConfig>, HttpError> {
+pub(crate) fn config(files: &TlsFiles) -> Result<Arc<rustls::ServerConfig>, HttpError> {
+    configuration(files, true)
+}
+
+fn configuration(files: &TlsFiles, http2: bool) -> Result<Arc<rustls::ServerConfig>, HttpError> {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
     let certificates = CertificateDer::pem_slice_iter(&read(&files.certificate)?)
         .collect::<Result<Vec<_>, _>>()
@@ -51,8 +55,32 @@ pub(super) fn config(files: &TlsFiles) -> Result<Arc<rustls::ServerConfig>, Http
         .with_no_client_auth()
         .with_single_cert(certificates, key)
         .map_err(|error| HttpError::Policy(format!("TLS certificate and key: {error}")))?;
-    config.alpn_protocols = vec![H2.to_vec(), HTTP11.to_vec()];
+    config.alpn_protocols = if http2 {
+        vec![H2.to_vec(), HTTP11.to_vec()]
+    } else {
+        vec![HTTP11.to_vec()]
+    };
     // 0-RTT data could be replayed.
     config.max_early_data_size = 0;
     Ok(Arc::new(config))
+}
+
+/// Trusted TLS delivery for an HTTP/1-only host such as browser development.
+/// Files are read and validated before binding; no guest receives key bytes.
+#[derive(Clone)]
+pub struct Http1TlsAcceptor(tokio_rustls::TlsAcceptor);
+impl Http1TlsAcceptor {
+    pub fn from_files(files: &TlsFiles) -> Result<Self, crate::RuntimeError> {
+        Ok(Self(tokio_rustls::TlsAcceptor::from(configuration(
+            files, false,
+        )?)))
+    }
+
+    /// The caller owns handshake/connection admission, timeout and shutdown.
+    pub async fn accept(
+        &self,
+        stream: tokio::net::TcpStream,
+    ) -> std::io::Result<tokio_rustls::server::TlsStream<tokio::net::TcpStream>> {
+        self.0.accept(stream).await
+    }
 }

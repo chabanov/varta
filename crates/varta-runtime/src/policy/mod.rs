@@ -19,6 +19,9 @@ pub(crate) struct Policy {
 }
 
 impl Policy {
+    pub(crate) fn session_enabled(&self, id: &str) -> bool {
+        self.ceiling.is_some() && self.enabled(id)
+    }
     #[cfg(test)]
     pub(crate) fn new(grants: &[CapabilityGrant]) -> Self {
         Self::with_ceiling(grants, None)
@@ -131,7 +134,9 @@ impl Policy {
             }
             varta_common::GrantKind::Patterns => self.env_scope(id, resource),
             varta_common::GrantKind::Urls => self.network_scope(id, resource).is_some(),
-            varta_common::GrantKind::Requests => self.request_scope(resource, None).is_some(),
+            varta_common::GrantKind::Requests => {
+                self.request_scope_for(id, resource, None).is_some()
+            }
             varta_common::GrantKind::Listeners => self.listen_scope(resource),
             // V38 `ui.open_url`: the link matches a pattern of the request
             // and of the ceiling (the any-HTTPS form included).
@@ -221,20 +226,20 @@ impl Policy {
     /// The URL scope of `net.request`; without a method, any granted method
     /// (a nonempty method list or none) qualifies.
     fn request_scope(&self, input: &str, method: Option<&str>) -> Option<url::Url> {
+        self.request_scope_for(varta_common::net::REQUEST_CAPABILITY, input, method)
+    }
+    fn request_scope_for(&self, id: &str, input: &str, method: Option<&str>) -> Option<url::Url> {
         let url = parse_network_url(input, &[HTTP, HTTPS])?;
         self.permits(|grants| {
-            grants
-                .iter()
-                .filter(|g| g.id == varta_common::net::REQUEST_CAPABILITY)
-                .any(|g| {
-                    let CapabilityValue::Requests(scope) = &g.value else {
-                        return false;
-                    };
-                    scope.methods.as_ref().is_none_or(|methods| match method {
-                        Some(method) => methods.iter().any(|m| m == method),
-                        None => !methods.is_empty(),
-                    }) && scope.urls.iter().any(|pattern| url_matches(pattern, &url))
-                })
+            grants.iter().filter(|g| g.id == id).any(|g| {
+                let CapabilityValue::Requests(scope) = &g.value else {
+                    return false;
+                };
+                scope.methods.as_ref().is_none_or(|methods| match method {
+                    Some(method) => methods.iter().any(|m| m == method),
+                    None => !methods.is_empty(),
+                }) && scope.urls.iter().any(|pattern| url_matches(pattern, &url))
+            })
         })
         .then_some(url)
     }

@@ -10,6 +10,8 @@ mod browser_build;
 mod browser_dev;
 #[path = "smoke/http_contract.rs"]
 mod http_contract;
+#[path = "smoke/sessions.rs"]
+mod sessions;
 
 fn varta() -> Command {
     Command::new(env!("CARGO_BIN_EXE_varta"))
@@ -12053,7 +12055,7 @@ fn pilot_profile_v35_declares_value16_and_host_abi_31_through_both_binaries() {
     const PROFILE: &str = "checked-f64-utf16-v35";
     // An unregistered successor of the same length: every binary sees it as a
     // v34 binary sees v35.
-    const UNKNOWN: &str = "checked-f64-utf16-v40";
+    const UNKNOWN: &str = "checked-f64-utf16-v41";
     let project = RegressionProject::new(
         "import {label} from './api.ts';export function main():void{console.log(label(35));}",
         serde_json::json!({}),
@@ -12137,7 +12139,7 @@ fn pilot_profile_v36_declares_host_abi_32_with_value17_through_both_binaries() {
     const PROFILE: &str = "checked-f64-utf16-v36";
     // An unregistered successor of the same length: every binary sees it as a
     // v35 binary sees v36.
-    const UNKNOWN: &str = "checked-f64-utf16-v40";
+    const UNKNOWN: &str = "checked-f64-utf16-v41";
     // The predecessor of the same length, whose host ABI is 31.
     const PREDECESSOR: &str = "checked-f64-utf16-v35";
     let project = RegressionProject::new(
@@ -12230,7 +12232,7 @@ fn pilot_profile_v37_declares_host_abi_33_with_value17_through_both_binaries() {
     const PROFILE: &str = "checked-f64-utf16-v37";
     // An unregistered successor of the same length: every binary sees it as a
     // v36 binary sees v37.
-    const UNKNOWN: &str = "checked-f64-utf16-v40";
+    const UNKNOWN: &str = "checked-f64-utf16-v41";
     // The predecessor of the same length, whose host ABI is 32.
     const PREDECESSOR: &str = "checked-f64-utf16-v36";
     let project = RegressionProject::new(
@@ -12323,7 +12325,7 @@ fn pilot_profile_v38_declares_host_abi_34_with_value18_through_both_binaries() {
     const PROFILE: &str = "checked-f64-utf16-v38";
     // An unregistered successor of the same length: every binary sees it as a
     // v37 binary sees v38.
-    const UNKNOWN: &str = "checked-f64-utf16-v40";
+    const UNKNOWN: &str = "checked-f64-utf16-v41";
     // The predecessor of the same length, whose host ABI is 33.
     const PREDECESSOR: &str = "checked-f64-utf16-v37";
     let project = RegressionProject::new(

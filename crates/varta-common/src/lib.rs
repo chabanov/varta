@@ -85,6 +85,8 @@ pub mod profile;
 pub mod regexp;
 #[cfg(feature = "std")]
 pub mod scheduler;
+/// Explicit protected channels and server-host session policy.
+pub mod session;
 pub mod text;
 #[cfg(feature = "std")]
 mod tool;

@@ -8,9 +8,9 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 static NEXT: AtomicU64 = AtomicU64::new(0);
-struct Project(PathBuf);
+pub(super) struct Project(pub(super) PathBuf);
 impl Project {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
             "varta-browser-dev-{}-{}",
             std::process::id(),
@@ -26,7 +26,7 @@ impl Project {
         std::fs::write(root.join("varta.config.json"),r#"{"entry":"main.ts","target":"wasm","out":"dist/app","languageProfile":"checked-f64-utf16-v38","fs":{"roots":{"unused":"missing"}}}"#).unwrap();
         Self(root)
     }
-    fn config(&self) -> PathBuf {
+    pub(super) fn config(&self) -> PathBuf {
         self.0.join("varta.config.json")
     }
 }
@@ -451,4 +451,41 @@ fn browser_builds_carry_every_packaged_face_of_the_resource_section() {
     ] {
         assert!(loader.contains(descriptor), "{descriptor}");
     }
+}
+
+#[test]
+fn browser_dev_protected_session_binding_is_trusted_runtime_input_only() {
+    let artifact = crate::Artifact {
+        wasm: Vec::new(),
+        manifest: varta_common::Manifest::new(&[]),
+    };
+    let mut manifest = varta_common::Manifest::new(&[varta_common::CapabilityGrant {
+        id: varta_common::session::CLIENT_CAPABILITY.into(),
+        value: varta_common::CapabilityValue::Requests(varta_common::RequestScope {
+            urls: vec!["https://api.test/api/**".into()],
+            methods: Some(vec!["GET".into(), "POST".into()]),
+            response_headers: None,
+        }),
+    }]);
+    manifest.abi_version = varta_common::abi::PROTECTED_SESSION_VERSION;
+    manifest.browser_session = Some(varta_common::session::ClientBinding {
+        api_origin: "https://api.test".into(),
+        client_origin: "https://studio.test".into(),
+        allow_insecure_loopback: false,
+    });
+    assert!(manifest.validate_package().is_err());
+    let policy = HostPolicy::from_manifest(manifest).unwrap();
+    let inputs = runtime_inputs(
+        &artifact,
+        Some(&policy),
+        None,
+        &BrowserDevOptions::default(),
+    );
+    assert_eq!(inputs["sessionBinding"]["apiOrigin"], "https://api.test");
+    assert_eq!(
+        inputs["permissionCeiling"]["net.session"]["patterns"],
+        serde_json::json!(["https://api.test/api/**"])
+    );
+    assert!(inputs.get("http").is_none());
+    assert!(inputs.get("fsRoots").is_none());
 }

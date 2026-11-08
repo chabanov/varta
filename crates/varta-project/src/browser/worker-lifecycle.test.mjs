@@ -9,14 +9,15 @@ import * as viewPolicy from './view-policy.mjs';
 import * as viewWorker from './view-worker.mjs';
 import * as environment from './environment.mjs';
 import * as environmentAbi from './environment-abi.mjs';
+import * as sessionChannel from './session-channel.mjs';
 const code=(await Promise.all(['scheduler.js','timers.js','network-policy.js','network.js','worker.js'].map(name=>readFile(new URL(name,import.meta.url),'utf8')))).join('\n');
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
-function fixture({mode='run',holdInstantiate=false,autoAck=true,importNames=['permission_query'],grants=[{id:'clipboard.write',enabled:true}],start,resume,clock=performance,transport=()=>{throw new Error('unexpected transport');},environmentInputs,permissions,testEnvironment=false,memoryMaximum=2}={}){
+function fixture({mode='run',profile='checked-f64-utf16-v38',session={},holdInstantiate=false,autoAck=true,importNames=['permission_query'],grants=[{id:'clipboard.write',enabled:true}],start,resume,clock=performance,transport=()=>{throw new Error('unexpected transport');},environmentInputs,permissions,testEnvironment=false,memoryMaximum=2}={}){
   const compile=deferred(),instantiate=deferred(),instantiating=deferred(),checkpoint=deferred(),messages=[],answers=[];
   const memory=new WebAssembly.Memory({initial:1,maximum:memoryMaximum});
   const text=[registry.permissions.descriptor.version,'clipboard.write',registry.permissions.descriptor.none,''].join('\n');
   new Uint16Array(memory.buffer,0,text.length).set(Array.from(text,unit=>unit.charCodeAt(0)));
-  const descriptor={profile:'checked-f64-utf16-v38',schemaVersion:1,fairFuel:true,turnBudgets:true,
+  const descriptor={profile,schemaVersion:1,fairFuel:true,turnBudgets:true,
     budgets:{fuelPerTurn:8000000,hostCallsPerTurn:1024,outputBytes:1048576,deadlinePerTurnMs:1000},
     imports:importNames.map(name=>({module:'varta',name})),hostModule:'varta',memoryExport:'memory',pendingExport:'pending',startExport:'_start',
     original:{identity:'sha256:'+'a'.repeat(64)},maxStringBytes:65536,decodeChunkBytes:65536,resources:[]};
@@ -29,10 +30,10 @@ function fixture({mode='run',holdInstantiate=false,autoAck=true,importNames=['pe
     return{exports:{memory,[registry.environment.resultLength]:{value:0},[registry.environment.resultStatus]:{value:0},[version.global]:{value:version.value},[registry.scheduler.resumeExport](token){return resume?.(imports.varta,token)??1;},_start(){if(start)start(imports.varta,memory);else answers.push(imports.varta.permission_query(0,text.length*2));}}};
   }};
   const testRegistry=testEnvironment?{...registry,operations:registry.operations.map(op=>['env_get16','env_has16'].includes(op.name)?{...op,capability:null}:op)}:registry;
-  context=vm.createContext({registry:testRegistry,permissionBroker,eventSources,viewPolicy,viewWorker,environment,environmentAbi,self,WebAssembly:wasm,FuelTank:Tank,bundleSchemaVersion:1,
+  context=vm.createContext({registry:testRegistry,permissionBroker,eventSources,viewPolicy,viewWorker,environment,environmentAbi,sessionChannel,self,WebAssembly:wasm,FuelTank:Tank,bundleSchemaVersion:1,
     reasonReader:()=>()=>'',browserTransport:transport,TextEncoder,TextDecoder,URL,Uint8Array,DataView,performance:clock,setTimeout,clearTimeout});
   vm.runInContext(code,context);
-  const running=self.onmessage({data:{descriptor,image:new Uint8Array(),manifest:new TextEncoder().encode(JSON.stringify({capabilities:grants})),platform:{'clipboard.write':'granted'},mode,environmentInputs,permissions}});
+  const running=self.onmessage({data:{descriptor,image:new Uint8Array(),manifest:new TextEncoder().encode(JSON.stringify({capabilities:grants})),platform:{'clipboard.write':'granted'},mode,environmentInputs,permissions,...session}});
   return{self,messages,answers,running,compile,instantiate,instantiating,checkpoint};
 }
 test('environment Worker handler honors the host ceiling before accessing the owned snapshot',{timeout:2000},async()=>{
@@ -150,4 +151,26 @@ test('pause controls reject gaps, premature resumes and duplicate requests',{tim
     const f=fixture({mode:'application',autoAck:false});f.compile.resolve({});await f.checkpoint.promise;
     for(const data of messages)await f.self.onmessage({data});await f.running;assert.equal(f.messages.at(-1).status,'failed');assert.match(f.messages.at(-1).error,/invalid host (pause|resume)/);
   }
+});
+
+test('session revocation wakes an idle Worker, aborts the transfer as a new task and denies subsequent requests',{timeout:3000},async()=>{
+  const bytes=new Uint8Array(await readFile(new URL('session-policy.wasm',import.meta.url)));
+  const N=registry.network,head=deferred(),started=deferred();
+  const text=[N.version,'GET','https://api.test/x','0',N.noBody,''].join(N.separator);
+  let request,starts=0,cancels=0,completed;
+  const grant={id:'net.session',patterns:['https://api.test/**'],methods:['GET']};
+  const f=fixture({mode:'application',profile:'checked-f64-utf16-v40',grants:[grant],permissions:{'net.session':{patterns:grant.patterns,methods:grant.methods}},
+    session:{sessionPolicy:bytes,sessionBinding:{apiOrigin:'https://api.test',clientOrigin:'https://studio.test'},pageOrigin:'https://studio.test'},
+    importNames:['promise_react','session_request_start','net_request_watch','net_request_take'],
+    transport(){starts++;started.resolve();return{head:head.promise,cancel(){cancels++;}};},
+    start(op,memory){new Uint16Array(memory.buffer,0,text.length).set(Array.from(text,unit=>unit.charCodeAt(0)));request=op.session_request_start(0,text.length*2);op.net_request_watch(op.promise_react(0,1n),request);},
+    resume(op){completed=op.net_request_take(request);const denied=op.session_request_start(0,text.length*2);assert.equal(op.net_request_take(denied),N.completion.denied);throw new Error('session revocation probe complete');},
+  });
+  f.compile.resolve({});await started.promise;
+  await f.self.onmessage({data:{type:'permission_revoke',id:1,capability:'net.session'}});
+  await f.running;
+  head.resolve({kind:N.completion.head,text:'stale secret response'});await Promise.resolve();
+  assert.equal(completed,N.completion.aborted);assert.equal(starts,1);assert(cancels>=1);
+  assert.equal(f.messages.filter(m=>m.type==='turn_begin').length,1);
+  assert.match(f.messages.at(-1).error,/session revocation probe complete/);
 });

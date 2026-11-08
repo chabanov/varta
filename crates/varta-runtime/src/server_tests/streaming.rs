@@ -277,6 +277,7 @@ fn a_request_that_finds_no_worker_in_time_gets_503_with_retry_after() {
                     ..Default::default()
                 }),
                 tls: None,
+                session: None,
             }),
             ..RunOptions::default()
         },

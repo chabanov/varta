@@ -40,6 +40,8 @@ jobs:
         run: python3 scripts/build-kv-codec.py --check
       - name: Checked-in browser view style engine matches its sources
         run: python3 scripts/build-view-engine.py --check
+      - name: Checked-in browser session policy matches its sources
+        run: python3 scripts/build-session-policy.py --check
       - name: Independent execution runtime without source tooling
         run: cargo build -p varta-launcher --bin varta-runtime --locked
       - name: Clippy
@@ -52,6 +54,8 @@ jobs:
         run: node --test crates/varta-common/browser/fuel.test.mjs crates/varta-project/src/browser/*.test.mjs
       - name: Checked core compatibility baseline (known gaps remain separate)
         run: cargo run -p varta-conformance --locked -- --json
+      - name: Protected session contract
+        run: cargo run -p varta-conformance --locked -- --suite conformance/session-v40/suite.json --require-supported --json
       - name: Checked structural snapshot contract
         run: cargo run -p varta-conformance --locked -- --suite conformance/snapshot-v39/suite.json --require-supported --json
 

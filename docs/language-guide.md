@@ -6962,3 +6962,59 @@ arrays, getters and non-JSON extras are refused. Exact typed values can be reuse
 Explicit `varta.json.parse<T>` and direct `JSON.parse(text) as T` still require
 exact keys, as do multi-record union matching and declared dictionary reads.
 Earlier profiles keep their behavior. See the [contract](architecture.md#checked-structural-snapshots-v39).
+
+## Protected browser-to-server sessions
+
+Use the protected-session profile for a trusted BFF that keeps provider keys
+away from browser guests. A server route can use:
+
+```ts
+// Trusted server handler, after validating a provider login response:
+varta.http.session.set(providerKey);
+// Return only explicitly selected public identity fields.
+
+// Another protected handler:
+const key: string | null = varta.http.session.get();
+// null means anonymous/expired; an invalid channel throws InvalidStateError.
+
+// POST logout: revoke the local session before optional provider I/O.
+varta.http.session.clear();
+```
+
+Grant only the server operations the application needs through `session.read`,
+`session.write` and `session.clear` in both package and explicit host policy.
+Configure exact origins and TLS through `http.session`/`http.tls` in the host
+policy, never the package. Mutations require POST/PUT/PATCH/DELETE. A failed login
+response does not publish a staged session; a completed clear remains effective
+even if subsequent provider logout fails. Sessions currently end on server restart.
+
+The browser application uses a separate scoped channel:
+
+```ts
+const me = await varta.session.fetch("https://api.example.test/api/me");
+// Response DTO contains public fields; no bearer key or cookie is readable.
+varta.session.reset(); // Cancel old account requests before changing UI state.
+await varta.session.fetch("https://api.example.test/api/auth/logout", {
+  method: "POST"
+}); // Only a received successful BFF response confirms local logout.
+```
+
+Declare `net.session` with URL/method bounds and provide the trusted loader
+[binding and ceiling](embedding.md#protected-session-hosts). Ordinary `fetch`
+continues to omit browser credentials. Redirects and guest credential headers
+are refused on the session channel. Native clients report this channel as
+unsupported; existing explicit bearer flows remain separate.
+
+For local Studio development, a host-only policy may bind the HTTP loopback API
+and Studio origins with `allowInsecureLoopback:true`. Pass it to
+`varta dev --target browser --listen 127.0.0.1:8788 --policy host.json --app`.
+For local HTTPS instead, use `https://127.0.0.1:<port>` origins, leave
+`allowInsecureLoopback` false, and add `http.tls` with absolute certificate/key
+paths to each host's own policy. The browser dev policy carries `browserSession`
+and TLS; only the native API policy carries `http.session`. Supply a certificate
+trusted by your browser for that exact address. Varta validates TLS files before
+listening but does not install certificate trust.
+
+The official development loader supplies the binding; distribution output never
+embeds it. Production requires HTTPS and a separate hostname for untrusted
+previews. See the [complete security and lifecycle contract](architecture.md#protected-sessions-protected_sessions).

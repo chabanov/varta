@@ -30,6 +30,7 @@ KV_CODEC_CHECK = [sys.executable, "scripts/build-kv-codec.py", "--check"]
 # The checked-in browser view style engine must match its sources
 # (scripts/build-view-engine.py).
 VIEW_ENGINE_CHECK = [sys.executable, "scripts/build-view-engine.py", "--check"]
+SESSION_POLICY_CHECK = [sys.executable, "scripts/build-session-policy.py", "--check"]
 CORE = ["varta-common", "varta-compiler", "varta-runtime", "varta-artifact"]
 # The browser host's engine modules (registry, fuel, Worker, loader) run in
 # Node's built-in test runner; no npm dependency is installed.
@@ -234,6 +235,7 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
               "-p", "varta-intl", "--no-default-features", "--lib", "--locked"),
         KV_CODEC_CHECK,
         VIEW_ENGINE_CHECK,
+        SESSION_POLICY_CHECK,
         companion(),
         cargo("clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"),
         cargo("build", "--workspace", "--all-targets", "--locked"),
@@ -242,6 +244,8 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
         cargo("run", "-p", "varta-conformance", "--locked", "--", "--json"),
         cargo("run", "-p", "varta-conformance", "--locked", "--", "--suite",
               "conformance/snapshot-v39/suite.json", "--require-supported", "--json"),
+        cargo("run", "-p", "varta-conformance", "--locked", "--", "--suite",
+              "conformance/session-v40/suite.json", "--require-supported", "--json"),
     ]
 
 

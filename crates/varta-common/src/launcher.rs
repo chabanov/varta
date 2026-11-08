@@ -54,7 +54,7 @@ impl LauncherInfo {
             arch: std::env::consts::ARCH.into(),
             pointer_width: usize::BITS,
             // Advertised maxima; the profile and payload probe select the pair.
-            host_abi: abi::CHECKED_SNAPSHOT_VERSION,
+            host_abi: abi::PROTECTED_SESSION_VERSION,
             value_abi: value::HASHED_DICTIONARY_VALUE_VERSION,
             http_contract: http::LATEST_VERSION,
             language_profiles: language::SUPPORTED_PROFILES.to_vec(),

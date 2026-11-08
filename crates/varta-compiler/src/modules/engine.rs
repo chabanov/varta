@@ -52,6 +52,9 @@ pub(crate) type Extension = (fn(LanguageProfile) -> bool, &'static str);
 impl Prelude {
     /// The module text this profile compiles.
     pub(crate) fn text(&self, profile: LanguageProfile) -> &'static str {
+        if self.path == FETCH.path && profile.protected_sessions() {
+            return super::engine_sessions::fetch();
+        }
         if let Some(lifted) = self.lifted
             && profile.data_limits()
         {
@@ -560,7 +563,11 @@ pub(crate) const FETCH: Prelude = Prelude {
         ("UnderlyingSource", Namespace::Type),
     ],
     members: &[],
-    triggers: &[],
+    triggers: &[Trigger {
+        names: &["varta.session.fetch"],
+        function: "sessionFetch",
+        local: "varta.session.fetch",
+    }],
     admitted: LanguageProfile::net_request,
     // V38 (`web_bytes`): byte bodies, `ReadableStream<Uint8Array>` and the
     // `Blob`/`ArrayBuffer`/`FormData` bodies of the blob prelude.
@@ -808,6 +815,40 @@ pub(crate) const KV: Prelude = Prelude {
     lifted: None,
     required: None,
 };
+/// Server-side session wrappers and per-instance client cancellation.
+pub(crate) const SESSION: Prelude = Prelude {
+    path: "<varta>/app/session.ts",
+    source: include_str!("../prelude/session.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[
+        Trigger {
+            names: &["varta.http.session.get"],
+            function: "httpSessionGet",
+            local: "varta.http.session.get",
+        },
+        Trigger {
+            names: &["varta.http.session.set"],
+            function: "httpSessionSet",
+            local: "varta.http.session.set",
+        },
+        Trigger {
+            names: &["varta.http.session.clear"],
+            function: "httpSessionClear",
+            local: "varta.http.session.clear",
+        },
+        Trigger {
+            names: &["varta.session.reset"],
+            function: "sessionReset",
+            local: "varta.session.reset",
+        },
+    ],
+    admitted: LanguageProfile::protected_sessions,
+    extended: None,
+    loads: &[],
+    lifted: None,
+    required: None,
+};
 /// The KV prelude's `KvU64` class, stored as Deno's `v_encoding` 2.
 pub(crate) const KV_U64_CLASS: &str = "KvU64";
 /// The L0 view protocol (v38 `view_protocol`): the batch encoder, the event
@@ -1020,7 +1061,7 @@ pub(crate) const SNAPSHOT: Prelude = Prelude {
     lifted: None,
     required: Some(|_, profile| profile.checked_snapshots()),
 };
-pub(crate) const PRELUDES: [&Prelude; 29] = [
+pub(crate) const PRELUDES: [&Prelude; 30] = [
     &SNAPSHOT,
     &HEADERS,
     &ABORT,
@@ -1046,6 +1087,7 @@ pub(crate) const PRELUDES: [&Prelude; 29] = [
     &PERMISSIONS,
     &EVENTS,
     &KV,
+    &SESSION,
     &URI,
     &ERRORS,
     &VIEW,
@@ -1362,20 +1404,28 @@ pub(super) fn implicit_imports(
                 .required
                 .is_some_and(|required| required(module, profile))
                 .then_some(module.span);
-            bindings.extend(prelude.triggers.iter().filter_map(|trigger| {
-                trigger
-                    .names
+            bindings.extend(
+                prelude
+                    .triggers
                     .iter()
-                    .filter(|name| !bound.contains(**name))
-                    .find_map(|name| references.found.get(*name).copied())
-                    .or(required)
-                    .map(|span| ImportBinding {
-                        imported: trigger.function.into(),
-                        local: trigger.local.into(),
-                        span,
-                        type_only: false,
+                    .filter(|trigger| {
+                        trigger.local != "varta.session.fetch" || profile.protected_sessions()
                     })
-            }));
+                    .filter_map(|trigger| {
+                        trigger
+                            .names
+                            .iter()
+                            .filter(|name| !bound.contains(**name))
+                            .find_map(|name| references.found.get(*name).copied())
+                            .or(required)
+                            .map(|span| ImportBinding {
+                                imported: trigger.function.into(),
+                                local: trigger.local.into(),
+                                span,
+                                type_only: false,
+                            })
+                    }),
+            );
             // A load trigger imports the module without a binding.
             let span = bindings
                 .first()

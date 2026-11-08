@@ -62,11 +62,18 @@ use crate::{Result, VartaError};
 #[must_use]
 pub fn capability_kind(id: &str) -> Option<GrantKind> {
     match id {
-        "time.now" | "time.timer" | "process.exit" => Some(GrantKind::Boolean),
+        "time.now"
+        | "time.timer"
+        | "process.exit"
+        | crate::session::READ_CAPABILITY
+        | crate::session::WRITE_CAPABILITY
+        | crate::session::CLEAR_CAPABILITY => Some(GrantKind::Boolean),
         "env.has" | "env.print" | "env.get" | "fs.read" | "fs.print" => Some(GrantKind::Patterns),
         crate::kv::READ_CAPABILITY | crate::kv::WRITE_CAPABILITY => Some(GrantKind::Patterns),
         "net.fetch" | "net.get" => Some(GrantKind::Urls),
-        crate::net::REQUEST_CAPABILITY => Some(GrantKind::Requests),
+        crate::net::REQUEST_CAPABILITY | crate::session::CLIENT_CAPABILITY => {
+            Some(GrantKind::Requests)
+        }
         crate::http::LISTEN_CAPABILITY => Some(GrantKind::Listeners),
         crate::view::OPEN_URL_CAPABILITY => Some(GrantKind::OpenUrls),
         crate::view::CLIPBOARD_WRITE_CAPABILITY => Some(GrantKind::Boolean),

@@ -1,0 +1,9 @@
+[package]
+name = "varta-session-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[lib]
+crate-type = ["cdylib", "rlib"]
+[dependencies]
+varta-common = { path = "../varta-common", default-features = false }

@@ -74,6 +74,16 @@ operations! {
     /// per byte). Same signature, grant check and budget; v38 imports only
     /// this form. Capability `net.request`.
     NetRequestStartV2,
+    /// V40: explicit protected browser session channel.
+    SessionRequestStart,
+    /// V40: abort all session-channel requests owned by the instance.
+    SessionReset,
+    /// V40: read a request-scoped server-host session secret.
+    HttpSessionRead,
+    /// V40: stage a server-host session rotation for response publication.
+    HttpSessionWrite,
+    /// V40: revoke the current server-host session.
+    HttpSessionClear,
     /// v38 (`web_bytes`): arm the next body chunk as bytes: its completion
     /// text carries each received byte as one code unit, undecoded.
     NetBodyReadBytes,
@@ -565,6 +575,9 @@ impl HostOperation {
                 | Self::EventText
                 | Self::KvEntry
                 | Self::KvText
+                | Self::HttpSessionRead
+                | Self::HttpSessionWrite
+                | Self::HttpSessionClear
                 | Self::JsonStringifyV5
                 | Self::StringCharAt16
                 | Self::StringToUpperCase16
@@ -682,6 +695,11 @@ impl HostOperation {
             Self::NetBodyRead => "net_body_read",
             Self::NetRequestAbort => "net_request_abort",
             Self::NetRequestStartV2 => "net_request_start_v2",
+            Self::SessionRequestStart => "session_request_start",
+            Self::SessionReset => "session_reset",
+            Self::HttpSessionRead => "http_session_read",
+            Self::HttpSessionWrite => "http_session_write",
+            Self::HttpSessionClear => "http_session_clear",
             Self::NetBodyReadBytes => "net_body_read_bytes",
             Self::EnvSnapshot => "env_snapshot",
             Self::KvOpen => "kv_open",
@@ -1106,12 +1124,26 @@ impl HostOperation {
                 | Self::EventSourceClose
         )
     }
+    #[must_use]
+    pub fn protected_session(self) -> bool {
+        matches!(
+            self,
+            Self::SessionRequestStart
+                | Self::SessionReset
+                | Self::HttpSessionRead
+                | Self::HttpSessionWrite
+                | Self::HttpSessionClear
+        )
+    }
     pub fn signature(self) -> (usize, usize) {
         let (params, results) = self.scalar_signature();
         (params.len(), results.len())
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
+        if self.protected_session() {
+            return crate::abi::PROTECTED_SESSION_VERSION;
+        }
         if self.instance_events()
             || self.web_bytes()
             || self.kv()
@@ -1423,7 +1455,12 @@ impl HostOperation {
             Self::EventWatch => (&[F64, F64], &[]),
             Self::EventTake | Self::EventText => (&[F64], &[I32]),
             Self::EventSourceClose => (&[F64], &[]),
-            Self::NetRequestStart | Self::NetRequestStartV2 => (&[I32, I32], &[F64]),
+            Self::NetRequestStart | Self::NetRequestStartV2 | Self::SessionRequestStart => {
+                (&[I32, I32], &[F64])
+            }
+            Self::HttpSessionRead | Self::HttpSessionClear => (&[], &[I32]),
+            Self::HttpSessionWrite => (&[I32, I32], &[I32]),
+            Self::SessionReset => (&[], &[]),
             Self::EnvSnapshot => (&[I32, I32], &[I32]),
             Self::KvOpen | Self::KvRead | Self::KvCommit => (&[I32, I32], &[F64]),
             Self::KvStage => (&[I32, I32, I32, I32], &[F64]),
@@ -1711,6 +1748,11 @@ impl HostOperation {
             "net_body_read" => Self::NetBodyRead,
             "net_request_abort" => Self::NetRequestAbort,
             "net_request_start_v2" => Self::NetRequestStartV2,
+            "session_request_start" => Self::SessionRequestStart,
+            "session_reset" => Self::SessionReset,
+            "http_session_read" => Self::HttpSessionRead,
+            "http_session_write" => Self::HttpSessionWrite,
+            "http_session_clear" => Self::HttpSessionClear,
             "net_body_read_bytes" => Self::NetBodyReadBytes,
             "env_snapshot" => Self::EnvSnapshot,
             "kv_open" => Self::KvOpen,
@@ -1930,7 +1972,8 @@ impl HostOperation {
     #[must_use]
     pub fn capability(self) -> Option<&'static str> {
         Some(match self {
-            Self::ViewCommit
+            Self::SessionReset
+            | Self::ViewCommit
             | Self::LogStderr16
             | Self::ConsoleRender
             | Self::StringNormalize16
@@ -2162,6 +2205,10 @@ impl HostOperation {
             Self::Time | Self::DateNow => "time.now",
             Self::TimerStart | Self::TimerStartV2 => "time.timer",
             Self::NetRequestStart | Self::NetRequestStartV2 => crate::net::REQUEST_CAPABILITY,
+            Self::SessionRequestStart => crate::session::CLIENT_CAPABILITY,
+            Self::HttpSessionRead => crate::session::READ_CAPABILITY,
+            Self::HttpSessionWrite => crate::session::WRITE_CAPABILITY,
+            Self::HttpSessionClear => crate::session::CLEAR_CAPABILITY,
             Self::KvOpen | Self::KvRead => crate::kv::READ_CAPABILITY,
             Self::KvCommit => crate::kv::WRITE_CAPABILITY,
             Self::EnvHas | Self::EnvHas16 => "env.has",

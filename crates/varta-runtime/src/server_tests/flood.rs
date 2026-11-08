@@ -34,6 +34,7 @@ fn start(limits: HostLimits) -> Server {
             http: Some(HttpPolicy {
                 limits: Some(limits),
                 tls: None,
+                session: None,
             }),
             ..RunOptions::default()
         },

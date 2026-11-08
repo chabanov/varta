@@ -6,7 +6,7 @@
 // that claim later (`transport(plan, claim)`); it is told of a request
 // aborted before its transfer was created (`abandon(claim)`), and an ended
 // instance closes its open transfers instead of aborting them.
-function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, transport) {
+function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, transport, sessionChannel) {
   const N = registry.network, C = N.completion, encoder = new TextEncoder();
   const requests = new Map(), events = new Map(), deferred = new Map();
   let nextId = 0, taken, notify, observer;
@@ -37,12 +37,15 @@ function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, tra
     } else fail(N.errors.descriptor);
     return { method, url, headers, body };
   };
-  const plan = (value) => {
+  const plan = (value, session = false) => {
+    const activePolicy = session ? policy.session : policy;
+    const capability = session ? registry.session.capability : N.capability;
     const failed = (text) => ({ kind: C.failed, text });
     if (!policy.method(value.method)) return failed(N.errors.method.replace("{value}", value.method));
     let url; try { url = new URL(value.url); } catch { return failed(N.errors.url.replace("{value}", value.url)); }
-    if (!policy.allows(value.url, value.method)) {
-      const text = `<capability denied: ${N.capability}> (${value.method} ${value.url})`;
+    const channelAllowed = !session || Boolean(sessionChannel?.allows(value));
+    if (!activePolicy?.allows(value.url, value.method, channelAllowed) || !channelAllowed) {
+      const text = `<capability denied: ${capability}> (${value.method} ${value.url})`;
       try { emit(text); } catch { return failed("output budget exhausted"); }
       return { kind: C.denied, text };
     }
@@ -56,19 +59,18 @@ function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, tra
       // Hyper HeaderValue permits HTAB and visible/obs-text bytes, but no DEL.
       for (const unit of data) { const code = unit.codePointAt(0); if (code > 255 || code === 127 || code < 32 && code !== 9) return failed(N.errors.headerValue.replace("{value}", name.toLowerCase())); }
     }
-    return { ...value, url: url.href, visible: policy.visibleHeaders() };
+    return { ...value, url: url.href, visible: activePolicy.visibleHeaders(), session };
   };
   const cancel = (item) => { item.cancelled = true; item.transfer?.cancel(); };
-  const implementations = {
-    net_request_start_v2(ptr, length) {
+  const startRequest = (ptr, length, session) => {
       const value = parse(readDescriptor(ptr, length));
       if (requests.size >= N.maxPending) fail(N.errors.budget);
-      const outcome = plan(value);
+      const outcome = plan(value, session);
       if (!Number.isSafeInteger(nextId + 1)) fail();
       const id = ++nextId;
       // Only a request that reaches the transport claims a logged request.
       const claim = outcome.kind ? undefined : transport.claim?.(outcome);
-      const item = { phase: outcome.kind ? "ready" : "armed", completion: outcome.kind ? outcome : undefined, watcher: undefined, cancelled: false, transfer: undefined, claim };
+      const item = { phase: outcome.kind ? "ready" : "armed", completion: outcome.kind ? outcome : undefined, watcher: undefined, cancelled: false, transfer: undefined, claim, session };
       requests.set(id, item);
       if (!outcome.kind) deferred.set(id, () => {
         if (requests.get(id) !== item || item.cancelled) return;
@@ -76,7 +78,31 @@ function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, tra
         transfer.head.then((completion) => publish(id, completion), (error) => publish(id, { kind: C.failed, text: String(error.message ?? error) }));
       });
       return id;
-    },
+  };
+  // A host reset cannot update the guest Response object. Keep a bounded
+  // terminal completion for an idle session body until its next read observes
+  // AbortError, instead of turning that read into a host protocol trap.
+  const abort = (id, hostReset = false) => {
+    const item = requests.get(id); if (!item) return;
+    cancel(item); events.delete(id);
+    // A guest cancel after an idle reset has no waiter left to consume it.
+    if (!hostReset && item.resetIdle) { requests.delete(id); return; }
+    if (deferred.delete(id) && !item.transfer && item.claim !== undefined) transport.abandon?.(item.claim);
+    if (hostReset && item.phase === "armed") {
+      // Revocation can arrive while the application is idle. Deliver the
+      // cancellation as a network task, with a fresh turn and a host wakeup.
+      events.set(id,{completion:{kind:C.aborted,text:""},arrived:(globalThis.performance?.timeOrigin??0)+(globalThis.performance?.now()??0)});
+      notify?.();observer?.();return;
+    }
+    if (item.phase === "idle" && !hostReset) { requests.delete(id); return; }
+    if (hostReset && item.phase === "idle") item.resetIdle = true;
+    item.phase = "ready"; item.completion = { kind: C.aborted, text: "" };
+    if (item.watcher !== undefined) { scheduler.wake(item.watcher); item.watcher = undefined; }
+  };
+  const implementations = {
+    net_request_start_v2(ptr,length) { return startRequest(ptr,length,false); },
+    session_request_start(ptr,length) { return startRequest(ptr,length,true); },
+    session_reset() { for (const [id,item] of requests) if(item.session) abort(id,true); },
     net_request_watch(serial, id) {
       serial = scheduler.watchable(serial);
       const item = request(id); if (item.watcher !== undefined) fail();
@@ -96,17 +122,12 @@ function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, tra
     },
     net_body_read(id) { read(id, false); },
     net_body_read_bytes(id) { read(id, true); },
-    net_request_abort(id) {
-      const item = requests.get(id); if (!item) return;
-      cancel(item); events.delete(id);
-      if (deferred.delete(id) && !item.transfer && item.claim !== undefined) transport.abandon?.(item.claim);
-      if (item.phase === "idle") { requests.delete(id); return; }
-      item.phase = "ready"; item.completion = { kind: C.aborted, text: "" };
-      if (item.watcher !== undefined) { scheduler.wake(item.watcher); item.watcher = undefined; }
-    },
+    net_request_abort(id) { abort(id); },
   };
   const read = (id, bytes) => {
-    const item = request(id); if (item.phase !== "idle" || item.watcher !== undefined || !item.transfer || item.cancelled) fail();
+    const item = request(id);
+    if (item.session && item.cancelled && item.phase === "ready" && item.completion?.kind === C.aborted) { item.resetIdle = false; return; }
+    if (item.phase !== "idle" || item.watcher !== undefined || !item.transfer || item.cancelled) fail();
     item.phase = "armed";
     deferred.set(id, () => {
       if (requests.get(id) !== item || item.cancelled) return;

@@ -98,6 +98,9 @@ impl Lower<'_> {
     /// The intrinsic call `name(argument)` of the `fetch` prelude (v37) or of
     /// the permission and host event preludes (v38), if it is one.
     pub(super) fn prelude_net(&mut self, call: &ast::CallExpr, name: &str) -> Result<Option<Expr>> {
+        if let Some(value) = self.prelude_session(call, name)? {
+            return Ok(Some(value));
+        }
         let net = INTRINSICS
             .iter()
             .find(|(intrinsic, ..)| *intrinsic == name)

@@ -210,6 +210,7 @@ fn async_http_kv_callbacks_fit_a_single_worker_pool() {
             ..Default::default()
         }),
         tls: None,
+        session: None,
     });
     let server = Server::start_options(bytes, options);
     assert_eq!(server.request("POST", "/", b"").0, 201);

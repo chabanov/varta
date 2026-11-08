@@ -5684,8 +5684,11 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders),
   compilation/resources/admission in project tooling and serve only an immutable
   in-memory bundle. Reject non-loopback binding and foreign authority/origin;
   never map a request to the source filesystem. Bound connections, headers and
-  connection lifetime, and close active work on shutdown. Pass policy/budget/
-  current-artifact decision inputs through a trusted dev bootstrap, with renewed
+  connection lifetime, and close active work on shutdown. Optional host-only TLS
+  must reuse the native PEM/TLS setup, offer HTTP/1.1 only, include the handshake
+  in connection bounds and use HTTPS for exact-origin checks. Reject native HTTP
+  session/limit policy on this browser host; never modify OS/browser trust.
+  Pass policy, budget and current-artifact decision inputs through a trusted dev bootstrap, with renewed
   loader SRI/CSP; fail closed on bootstrap format drift. A memory ceiling must
   match the privately instrumented image. Never expose other applications' decisions
   or native root mappings, and preserve portable bytes plus policy-free builds.
@@ -5911,3 +5914,33 @@ Contract: [class/function increment](architecture.md#classfunction-prerequisite-
   and `Object.assign` on the separate set protocol. Never cache both operations
   under one dictionary-helper key. Historical case directories remain frozen;
   new async-return fixtures live in `promise_return_cases`, outside their digest.
+
+## Protected sessions (`protected_sessions`)
+
+- Read the [normative contract](architecture.md#protected-sessions-protected_sessions).
+  Gate source helpers and all new imports on the opt-in profile. Inherit v39
+  snapshots without altering earlier bytecode/diagnostics or value layout.
+- Keep routes, OTP, provider SDKs and user/tenant DTOs in applications. Trusted
+  server code may retrieve a credential; browser guest code never may. Separate
+  server read/write/clear grants from the browser net.session scope and require
+  an explicit host ceiling for both sides.
+- Keep browser channel policy in safe shared Rust compiled to Wasm. JS may
+  marshal and use Fetch, not duplicate origin/header policy. Bind the actual
+  page and target API origin before I/O. Never silently fall back to ordinary
+  net.request, replay or native bearer transport.
+- Reserve writes before handler completion; publish only a fully validated
+  successful head. Release failed reservations. Clear is immediate and fences
+  pending rotation; leased requests must stop on revocation/expiry. Arrange a
+  server-owned expiry deadline even when requests are suspended without another
+  vault read or host call; idle refresh never extends absolute age. Seal mutations
+  at streaming-head publication. No rollback or delivery guarantee is implied.
+- Host cookies/CORS and request sanitization are indivisible. Strip cookies and
+  marker before guest request construction; refuse guest Set-Cookie/CORS. Guard
+  anonymous get as strictly as authenticated get. Do not let safe HTTP methods
+  mutate the session or let same-port separation stand in for a distinct host.
+- Preserve the memory-only/restart-logout boundary. KV is not a secret vault.
+  Reset aborts transfers; only a server clear confirms BFF logout. Tests use
+  synthetic credentials and local endpoints; never request real OTP automatically.
+- Verify capability denial, source-free artifacts, exact origin/ceiling refusal,
+  cross-request rotation, rejected/invalid heads, streaming sealing, cancellation,
+  Rust/Wasm browser policy and a real HTTPS browser flow before the final gate.

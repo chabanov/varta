@@ -11,6 +11,7 @@ import * as viewPolicy from './view-policy.mjs';
 import * as viewWorker from './view-worker.mjs';
 import * as environment from './environment.mjs';
 import * as environmentAbi from './environment-abi.mjs';
+import * as sessionChannel from './session-channel.mjs';
 const code=(await Promise.all(['scheduler.js','timers.js','network-policy.js','network.js','worker.js'].map(name=>readFile(new URL(name,import.meta.url),'utf8')))).join('\n');
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
 const {clock,random,exit,collector:C}=registry.effects,E=registry.environment;
@@ -33,7 +34,7 @@ function fixture({mode='run',importNames=[],grants=[],permissions,environmentInp
     if(idle)exports[C.idleExport]=units=>idle(units,tanks[0]);
     return{exports};
   }};
-  const context=vm.createContext({registry,permissionBroker,eventSources,viewPolicy,viewWorker,environment,environmentAbi,self,WebAssembly:wasm,FuelTank:Tank,bundleSchemaVersion:1,
+  const context=vm.createContext({registry,permissionBroker,eventSources,viewPolicy,viewWorker,environment,environmentAbi,sessionChannel,self,WebAssembly:wasm,FuelTank:Tank,bundleSchemaVersion:1,
     reasonReader:()=>()=>'',browserTransport:()=>{throw new Error('unexpected transport');},TextEncoder,TextDecoder,URL,Uint8Array,Uint32Array,DataView,performance,setTimeout,clearTimeout,
     Date:{now(){reads.clock++;return now();}},
     crypto:{getRandomValues(array){reads.entropy++;const next=words.shift();if(!next)throw new Error('test entropy exhausted');array.set(next);return array;}}});

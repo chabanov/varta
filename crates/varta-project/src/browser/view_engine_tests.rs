@@ -734,6 +734,7 @@ fn view_engine_matches_its_sources() {
         [
             "Cargo.toml",
             "src/lib.rs",
+            "src/session.rs",
             "src/abi.rs",
             "src/abi/static_region.rs",
             "src/bigint.rs",

@@ -17,6 +17,9 @@ const LOADER: &str = include_str!("loader.js");
 const SCHEDULER: &str = include_str!("scheduler.js");
 const REASONS: &str = include_str!("reasons.js");
 const NETWORK_POLICY: &str = include_str!("network-policy.js");
+const SESSION_CHANNEL: &str = include_str!("session-channel.mjs");
+const SESSION_POLICY: &[u8] = include_bytes!("session-policy.wasm");
+const SESSION_POLICY_FILE: &str = "varta-session-policy.wasm";
 const NETWORK: &str = include_str!("network.js");
 const TRANSPORT: &str = include_str!("network-transport.js");
 const TIMERS: &str = include_str!("timers.js");
@@ -62,6 +65,8 @@ const PAGE_STYLE: &str = "html,body{height:100%;margin:0}body{display:flex;flex-
 /// An implementation is admitted only under the profiles whose native host
 /// imports that operation ([`admitted_effect`]).
 const EFFECTS: &[H] = &[
+    H::SessionRequestStart,
+    H::SessionReset,
     H::LogInt,
     H::LogFloatV2,
     H::LogUndefined,
@@ -147,6 +152,12 @@ pub(super) fn unimplemented_effects<'a>(
 /// loader/Worker. No generated file follows a transitive or unverified import.
 fn embedded_sources(dom: bool) -> String {
     let modules = [
+        (
+            "sessionChannel",
+            "",
+            SESSION_CHANNEL,
+            "snapshotSessionBinding,createSessionChannel",
+        ),
         (
             "environment",
             "",
@@ -431,7 +442,7 @@ impl BrowserArtifact {
             "hostModule":varta_common::abi::HOST_MODULE,
             "original":file(ORIGINAL,&self.original.wasm),"image":file(IMAGE,&self.image),
             "manifest":file(MANIFEST,&manifest),"worker":file(WORKER_FILE,&worker),
-            "booleanCapabilities":registry_data["booleanCapabilities"],"network":registry_data["network"],
+            "booleanCapabilities":registry_data["booleanCapabilities"],"network":registry_data["network"],"session":registry_data["session"],
             "view":registry_data["view"],"hasView":self.inspection.imports.iter().any(|import|import.name==H::ViewCommit.name()),
             "permissions":registry_data["permissions"],"environment":registry_data["environment"],"effects":registry_data["effects"],"console":registry_data["console"],
             "hasPermissions":!self.original.manifest.capabilities.is_empty(),
@@ -446,6 +457,10 @@ impl BrowserArtifact {
             "kv":kv_ceiling,
         });
         let mut descriptor = descriptor;
+        if profile.protected_sessions() {
+            descriptor["sessionPolicy"] = file(SESSION_POLICY_FILE, SESSION_POLICY);
+            resource_files.insert(SESSION_POLICY_FILE.to_owned(), SESSION_POLICY.to_vec());
+        }
         if uses_kv {
             descriptor["kvCodec"] = file(KV_CODEC_FILE, KV_CODEC);
             resource_files.insert(KV_CODEC_FILE.to_owned(), KV_CODEC.to_vec());
@@ -459,7 +474,7 @@ impl BrowserArtifact {
         let parent_view = embedded_sources(true);
         // The loader validates an embedder's recorded network log with the
         // transport module's reader before any file loads.
-        let loader = format!("const descriptor = {descriptor};\nconst registry = {{network:descriptor.network,view:descriptor.view,permissions:descriptor.permissions,environment:descriptor.environment,console:descriptor.console}};\n{parent_view}\n{NETWORK_POLICY}\n{TRANSPORT}\n{LOADER}").into_bytes();
+        let loader = format!("const descriptor = {descriptor};\nconst registry = {{network:descriptor.network,session:descriptor.session,view:descriptor.view,permissions:descriptor.permissions,environment:descriptor.environment,console:descriptor.console}};\n{parent_view}\n{NETWORK_POLICY}\n{TRANSPORT}\n{LOADER}").into_bytes();
         let origins = varta_common::browser::request_origins(&self.original.manifest)?;
         // URL domains admit punctuation that CSP host-source tokens do not.
         // Reject it before HTML generation: neither attribute escaping nor a

@@ -1,0 +1,241 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-07",
+  "package": "protected Studio sessions",
+  "baseCommit": "5c3fae9069d9dd92448fc0bd33023e82bc743378",
+  "status": "accepted: one immutable full pass followed by verified scoped corrections",
+  "contract": "docs/architecture.md#protected-sessions-protected_sessions",
+  "focused": {
+    "nativeSessionTests": 6,
+    "cliSessionTests": 3,
+    "compilerTests": {
+      "passed": 188,
+      "ignored": 2
+    },
+    "projectUnitTests": 93,
+    "boundaryTests": 2,
+    "frozenProfileTests": 2,
+    "finalCommonSessionFilter": 4,
+    "workerAndNetworkFilter": 37,
+    "realHttpsChrome": "passed; synthetic credentials only",
+    "conformance": {
+      "total": 3,
+      "passed": 3,
+      "knownUnsupported": 0,
+      "unexpectedSupport": 0,
+      "regressions": 0,
+      "infrastructureFailures": 0
+    }
+  },
+  "cloud": {
+    "status": "peer confirms synthetic browser acceptance with actual native HTTP session host and KV",
+    "flows": [
+      "anonymous",
+      "bad OTP refusal",
+      "valid fixture OTP",
+      "pending idea creates one project",
+      "revision update",
+      "browser reload restores session and project",
+      "server restart requires relogin and keeps KV revision",
+      "confirmed BFF logout",
+      "reload remains anonymous",
+      "second account cannot see prior account projects"
+    ],
+    "provider": "synthetic SDK transport; no real OTP or external provider request",
+    "evidence": {
+      "path": "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/studio-session-browser.json",
+      "sha256": "973f7745dbf00e067d2425a371704fc69cb66e3373028133c40f8f5be11b520c",
+      "status": "cloud-local-synthetic-browser-session-lifecycle-passed",
+      "engine": {
+        "baseCheckpoint": "5c3fae9069d9dd92448fc0bd33023e82bc743378",
+        "workingPackage": "v40 session worktree after base; final full gate owned by Varta Development and pending at capture",
+        "languageProfile": "checked-f64-utf16-v40",
+        "abiVersion": 36,
+        "browserRestartCliSha256": "6d5f6c3ab7a617b015082a3c84149335334267ed64ff3f441c201e99643a6a5c",
+        "finalCheckBuildCliSha256": "c0c035cab65fc2fc70ba7415213083db00b81407e607ad0690208080e78db55c",
+        "binaryCaptureNote": "Browser hash captured immediately before restarting fixture hosts; owner subsequently rebuilt CLI. Final checks/build use the later binary. Engine sources remain owned by Varta Development."
+      },
+      "note": "Independent synthetic application acceptance on the recorded earlier CLI binaries; final local corrections have separate engine scopes above."
+    }
+  },
+  "limits": [
+    "memory-only server vault; restart ends sessions",
+    "native protected client explicitly unsupported",
+    "production HTTPS deployment and live provider OTP not exercised by Cloud acceptance",
+    "only local macOS verification; other platforms not claimed"
+  ],
+  "logs": {
+    "chrome-acceptance.log": {
+      "path": "target/protected-session-20261107/chrome-acceptance.log",
+      "sha256": "83736e550828446f7cc4ceca85e5b4dc8aa3191bc1fbba0c1491d9176414c063"
+    },
+    "session-isolation-final.log": {
+      "path": "target/protected-session-20261107/session-isolation-final.log",
+      "sha256": "de6deaf17bfb0e51536aba63758932a766b7e39e44279d5e46e04f5e7c10ae7a"
+    },
+    "common-session-final3.log": {
+      "path": "target/protected-session-20261107/common-session-final3.log",
+      "sha256": "6c409dd025676c7771dda62e559b0e86c12bc0e6b2ab082285568669f7037119"
+    },
+    "cli-session2.log": {
+      "path": "target/protected-session-20261107/cli-session2.log",
+      "sha256": "344e64c3d707068c85a3effee768266deebd875db80c38f67573fbaed7a64336"
+    },
+    "worker-final.log": {
+      "path": "target/protected-session-20261107/worker-final.log",
+      "sha256": "c58ea64a11427e50c3e2cbec44d6b419a2651ec4cf03a7ed786f39b825b9ad2f"
+    },
+    "node-kv-fixed.log": {
+      "path": "target/protected-session-20261107/node-kv-fixed.log",
+      "sha256": "a7830fc47e44fd1418222ca064ac2e9c85d488a19f2701ef5046495ab1f578eb"
+    },
+    "compiler-project-final.log": {
+      "path": "target/protected-session-20261107/compiler-project-final.log",
+      "sha256": "aea570bb7cba7b3709c722330d37e35f8fd320e1cc2b74af3034227347932130"
+    },
+    "boundaries-final.log": {
+      "path": "target/protected-session-20261107/boundaries-final.log",
+      "sha256": "f3a96076c06a702e334fc6a29f0c59bfda03760aa7d7754402c879e3f892fdff"
+    },
+    "frozen-final.log": {
+      "path": "target/protected-session-20261107/frozen-final.log",
+      "sha256": "65538ff0400ddfff5790a5831c88dc75aae2e99dae5536f6d80bc2eced764484"
+    },
+    "clippy-final2.log": {
+      "path": "target/protected-session-20261107/clippy-final2.log",
+      "sha256": "779cedcb9943ef567178e7ebcb7125ca83805f5f4dd7dc355dde39385e109c35"
+    },
+    "session-conformance3.json": {
+      "path": "target/protected-session-20261107/session-conformance3.json",
+      "sha256": "b8f7a580de3023df28084c5307599eb7563be35655ef6fbb38bef29595a78519"
+    }
+  },
+  "full": {
+    "report": "target/verification/20261107-193453-fijjcumg/report.json",
+    "sha256": "2bd5f519e684daade0b491a5123ace50196f976e48c2708559e7dac5dca9777c",
+    "commands": 14,
+    "rustPassed": 4685,
+    "rustIgnored": 26,
+    "nodePassed": 194,
+    "sourceUnchanged": true,
+    "sourceSha256": "95e44d0d97e78fc73920cc6c6688355dd6a4429aedb5a94d5cd5089152d752ae",
+    "seconds": 2061.144,
+    "snapshotIsFinalCode": false,
+    "note": "After this unchanged full snapshot, two additional discovered edge cases were corrected and all affected boundaries rechecked. No second full run was performed.",
+    "core": {
+      "total": 248,
+      "passed": 246,
+      "knownUnsupported": 2,
+      "unexpectedSupport": 0,
+      "regressions": 0,
+      "infrastructureFailures": 0
+    },
+    "snapshotV39": {
+      "total": 3,
+      "passed": 3,
+      "knownUnsupported": 0,
+      "unexpectedSupport": 0,
+      "regressions": 0,
+      "infrastructureFailures": 0
+    },
+    "sessionV40AtFullSnapshot": {
+      "total": 3,
+      "passed": 3,
+      "knownUnsupported": 0,
+      "unexpectedSupport": 0,
+      "regressions": 0,
+      "infrastructureFailures": 0
+    }
+  },
+  "postFullCorrections": {
+    "issues": [
+      "Reset followed by cancellation of an unread Response retained a bounded request slot; release it when no waiter remains, while preserving AbortError for a later read.",
+      "V40 normalized every undefined stream rejection to AbortError; now only an aborted transport completion supplies a missing abort reason."
+    ],
+    "sourceFiles": {
+      "crates/varta-project/src/browser/network.js": "976bd21e394b66f453c7580277d2e2e91e031d14d4d742fb8455b8727e572230",
+      "crates/varta-project/src/browser/session-channel.test.mjs": "6fdc00b873a62f52fa67a193f5eeb6f8e246d465be9c0fbd67160ec907661fac",
+      "crates/varta-compiler/src/modules/engine_sessions.rs": "d82e780df1b3855745ba583fbeae571f09d22e428e7abf82e18ae1ebcb9db771",
+      "conformance/session-v40/cases/undefined-stream-error.ts": "8434a00dc19b6044d026bf67ec9723c15e83b55e7dc08406d9525e5130b01201",
+      "conformance/session-v40/suite.json": "45e45cd40072bd5a8f42b8cee0529dd9360fdc06f94854ee4c5157b8696c24aa",
+      "scripts/test-browser-session.mjs": "382c3e275c43542baab29156dcd2112dbca755ecfedc3ac125b5d5031a667a58"
+    },
+    "checks": {
+      "nodePassed": 194,
+      "compilerPassed": 188,
+      "compilerIgnored": 2,
+      "projectPassed": 93,
+      "runtimeSessionPassed": 6,
+      "cliPassed": 3,
+      "frozenProfilePassed": 2,
+      "conformance": {
+        "total": 4,
+        "passed": 4,
+        "knownUnsupported": 0,
+        "unexpectedSupport": 0,
+        "regressions": 0,
+        "infrastructureFailures": 0
+      },
+      "strictAffectedClippy": "passed",
+      "rebuiltCli": "passed",
+      "realHttpsChrome": "passed, including more reset/cancel cycles than pending-slot capacity and preservation of undefined stream errors"
+    },
+    "logs": {
+      "post-node.log": {
+        "path": "target/protected-session-20261107/post-node.log",
+        "sha256": "54246fcef6cf08f9bdfcab173f43d5a01d1f76e0e608fcbf0bf4770b4eab9526"
+      },
+      "post-build.log": {
+        "path": "target/protected-session-20261107/post-build.log",
+        "sha256": "38c0415c93bc7d74fbd0f1fdab9a28dc232a4b4b1e2dab2a22bf11f3f3052cad"
+      },
+      "post-compiler-project.log": {
+        "path": "target/protected-session-20261107/post-compiler-project.log",
+        "sha256": "0dcb9d219364d95d7edb797d7a50e628a600678fd9ddcf022284548dad4489d0"
+      },
+      "post-conformance.json": {
+        "path": "target/protected-session-20261107/post-conformance.json",
+        "sha256": "4ed0dd9e6bd2b97ab56c1c61307cb2d4c729176dd1a930dcbd470013b3881018"
+      },
+      "post-conformance.log": {
+        "path": "target/protected-session-20261107/post-conformance.log",
+        "sha256": "a76beb9334697b0a43880ee27f322cb7d3d289584e1455cd002528220ac85654"
+      },
+      "post-clippy.log": {
+        "path": "target/protected-session-20261107/post-clippy.log",
+        "sha256": "93c2d7133b24c5bdc2b2d922d63631e3a6398aa215bc14681ecb05776d0f66c8"
+      },
+      "post-runtime.log": {
+        "path": "target/protected-session-20261107/post-runtime.log",
+        "sha256": "d3bc115e7dbcde8024c6c81a3e1e475d03d4d4f9eeb6ad178b26545b7c80d09f"
+      },
+      "post-frozen.log": {
+        "path": "target/protected-session-20261107/post-frozen.log",
+        "sha256": "d59bf19cf8c3979485a491d6404ea93936688336f5c3d775432cdb52bb49726e"
+      },
+      "post-cli.log": {
+        "path": "target/protected-session-20261107/post-cli.log",
+        "sha256": "7aefaa9c44e4eccc1b3a52ab93d50544a3f45f0e742263cea3c65dcd3550e143"
+      },
+      "post-chrome.log": {
+        "path": "target/protected-session-20261107/post-chrome.log",
+        "sha256": "83736e550828446f7cc4ceca85e5b4dc8aa3191bc1fbba0c1491d9176414c063"
+      }
+    }
+  },
+  "finalCodeInputs": {
+    "algorithm": "SHA-256 over sorted Git listed tracked/untracked paths NUL bytes NUL; excludes docs/, examples/, .claude/ and Markdown",
+    "files": 2513,
+    "sha256": "69befdf30d94dae34cbfed54819d261acb09f1a6a58668c945b281125db8216b"
+  },
+  "finalCliSha256": "62bc85e8600f4bfac54a66d86ab2c15fd91ce9405e1c491ecf3a4dc54dad2bfa",
+  "closeout": {
+    "documentationRegistryTests": 14,
+    "localMarkdownFileDestinationsChecked": 667,
+    "missingFileDestinations": 0,
+    "formatCheck": "passed",
+    "diffWhitespaceCheck": "passed",
+    "sessionPolicyFingerprint": "current",
+    "changesAfterFinalBehaviorChecks": "documentation/evidence only"
+  }
+}

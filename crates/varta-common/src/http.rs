@@ -374,7 +374,7 @@ pub struct HttpHeader {
     pub name: String,
     pub value: String,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct HttpRequest {
     pub method: String,
     pub target: String,
@@ -414,6 +414,9 @@ pub struct HttpPolicy {
     /// endpoint with [`LISTEN_TLS_PREFIX`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tls: Option<TlsFiles>,
+    /// V40 host-owned, memory-only sessions. Never package data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<crate::session::ServerPolicy>,
 }
 
 /// Absolute paths of the PEM files the host reads before binding: the
@@ -560,7 +563,10 @@ mod tests {
     fn service_versions_preserve_legacy_profiles_and_gate_utf16_to_v38() {
         use crate::language::{LanguageProfile as P, SUPPORTED_PROFILES};
         for profile in SUPPORTED_PROFILES {
-            let expected = if matches!(*profile, P::CheckedF64Utf16V38 | P::CheckedF64Utf16V39) {
+            let expected = if matches!(
+                *profile,
+                P::CheckedF64Utf16V38 | P::CheckedF64Utf16V39 | P::CheckedF64Utf16V40
+            ) {
                 Some(UTF16_VERSION)
             } else if !profile.binary64() {
                 Some(VERSION)

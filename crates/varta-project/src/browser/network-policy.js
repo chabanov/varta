@@ -1,5 +1,5 @@
 // Exact URL/method intersection. This module performs no I/O.
-function networkPolicy(manifest, ceiling, optionalRequests = true, grantAllowed) {
+function networkPolicy(manifest, ceiling, optionalRequests = true, grantAllowed, capability = registry.network.capability) {
   const N = registry.network, encoder = new TextEncoder();
   const whitespace = /[\u0000-\u0020\u007f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/u;
   const token = (value) => typeof value === "string" && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(value);
@@ -49,15 +49,15 @@ function networkPolicy(manifest, ceiling, optionalRequests = true, grantAllowed)
   };
   // Package validation happened before bundling. Runtime ceilings take the same
   // bounded validation path and are snapshotted before any request can start.
-  const request = manifest.capabilities.find((grant) => grant.id === N.capability);
+  const request = manifest.capabilities.find((grant) => grant.id === capability);
   const packageScope = request && scope({ patterns: request.patterns, methods: request.methods, responseHeaders: request.responseHeaders });
-  const hostScope = ceiling === undefined ? undefined : Object.hasOwn(ceiling, N.capability) ? scope(ceiling[N.capability]) : null;
+  const hostScope = ceiling === undefined ? undefined : Object.hasOwn(ceiling, capability) ? scope(ceiling[capability]) : null;
   const permits = (grant, url, verb) => grant && (verb===undefined || grant.methods === undefined || grant.methods.includes(verb)) && grant.patterns.some((pattern) => match(pattern, url));
   return {
     parse, method, scope, wildcard,
     allows(input, verb) {
       const url = parse(input);
-      return Boolean(url && (grantAllowed?grantAllowed(N.capability):!optionalRequests || request?.required !== false) && permits(packageScope, url, verb) && (hostScope === undefined || permits(hostScope, url, verb)));
+      return Boolean(url && (grantAllowed?grantAllowed(capability):!optionalRequests || request?.required !== false) && permits(packageScope, url, verb) && (hostScope === undefined || permits(hostScope, url, verb)));
     },
     covers(input){const url=parse(input);return Boolean(url&&permits(packageScope,url)&& (hostScope===undefined||permits(hostScope,url)));},
     visibleHeaders() {

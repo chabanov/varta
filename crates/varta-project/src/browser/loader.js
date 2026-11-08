@@ -81,7 +81,7 @@ function resolvePermissions(ceiling) {
       environment.createEnvironmentPolicy(patterns);
       snapshot[id] = {patterns}; continue;
     }
-    if (id === descriptor.network.capability) {
+    if (id === descriptor.network.capability || id === descriptor.session?.capability) {
       snapshot[id] = networkPolicy({capabilities:[]}).scope(value); continue;
     }
     if(descriptor.kv&&Object.values(descriptor.kv.capabilities).includes(id)){snapshot[id]=kvCeiling(value);continue;}
@@ -95,10 +95,12 @@ function resolvePermissions(ceiling) {
   }
   return snapshot;
 }
-function execute({ signal, budgetCeiling, permissionCeiling, decisions, decisionStore, environmentInputs, networkReplay, onPrompt, onAudit, container, mode="run", onControl=()=>{}, onReady=()=>{}, onTurn=()=>{}, onLog=()=>{}, onFrameTiming } = {}) {
+function execute({ signal, budgetCeiling, permissionCeiling, sessionBinding, decisions, decisionStore, environmentInputs, networkReplay, onPrompt, onAudit, container, mode="run", onControl=()=>{}, onReady=()=>{}, onTurn=()=>{}, onLog=()=>{}, onFrameTiming } = {}) {
   return new Promise((resolve, reject) => {
     // A recorded network log (its JSON text) replaces Fetch; it is
     // validated before anything loads.
+    const sessionSnapshot = sessionChannel.snapshotSessionBinding(sessionBinding);
+    const pageOrigin = globalThis.location?.origin;
     const replayLog = networkReplay === undefined ? undefined : snapshotNetworkLog(networkReplay);
     if(onFrameTiming!==undefined&&typeof onFrameTiming!=="function")throw new TypeError("invalid UI timing callback");
     const timing=onFrameTiming===undefined?undefined:uiTiming.createUiTiming({now:()=>performance.now(),request:f=>requestAnimationFrame(f),cancel:id=>cancelAnimationFrame(id),emit:sample=>{try{onFrameTiming(sample);}catch(error){finish(error);}},limit:descriptor.view.limits.events});
@@ -217,8 +219,8 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
       const base = new URL("./", import.meta.url);
       // Every response is bounded and verified before Worker creation. In
       // particular, Workers do not follow an unchecked URL/import graph.
-      const [original, image, manifest, script, kvCodec, viewEngineBytes, ...resourceBytes] = await Promise.all(
-        [descriptor.original, descriptor.image, descriptor.manifest, descriptor.worker, descriptor.kvCodec, descriptor.viewEngine, ...descriptor.resources.map((resource)=>resource.file)]
+      const [original, image, manifest, script, kvCodec, viewEngineBytes, sessionPolicyBytes, ...resourceBytes] = await Promise.all(
+        [descriptor.original, descriptor.image, descriptor.manifest, descriptor.worker, descriptor.kvCodec, descriptor.viewEngine, descriptor.sessionPolicy, ...descriptor.resources.map((resource)=>resource.file)]
           .map((item) => item===undefined?undefined:verifiedFile(base, item, controller.signal)));
       if (settled) return;
       const packageManifest=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(manifest));
@@ -371,7 +373,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
       };
       worker.onerror = () => finish(new Error("browser worker failed"));
       worker.onmessageerror = () => finish(new Error("invalid browser worker message"));
-      worker.postMessage({ descriptor: { ...descriptor, budgets }, mode, permissions, decisions:storedDecisions,prompting, platform, environmentInputs:environmentSnapshot.entries(), networkReplay:replayLog, original, image, manifest, kvCodec, viewEngine:viewEngineBytes }, [original.buffer, image.buffer, manifest.buffer, ...(kvCodec?[kvCodec.buffer]:[]), ...(viewEngineBytes?[viewEngineBytes.buffer]:[])]);
+      worker.postMessage({ descriptor: { ...descriptor, budgets }, mode, permissions, decisions:storedDecisions,prompting, platform, environmentInputs:environmentSnapshot.entries(), networkReplay:replayLog, sessionBinding:sessionSnapshot, pageOrigin, sessionPolicy:sessionPolicyBytes, original, image, manifest, kvCodec, viewEngine:viewEngineBytes }, [original.buffer, image.buffer, manifest.buffer, ...(sessionPolicyBytes?[sessionPolicyBytes.buffer]:[]), ...(kvCodec?[kvCodec.buffer]:[]), ...(viewEngineBytes?[viewEngineBytes.buffer]:[])]);
       onControl({deliver(event){
         const E=descriptor.permissions.events;
         if(settled)return Promise.reject(new Error('browser application ended'));

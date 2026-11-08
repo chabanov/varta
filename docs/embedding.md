@@ -138,10 +138,10 @@ one grant kind:
 <!-- generated:embedding-grant-kinds:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
 | Grant kind | Wire form | Ids |
 | --- | --- | --- |
-| Boolean | `"enabled": true \| false` | `clipboard.write`, `process.exit`, `time.now`, `time.timer` |
+| Boolean | `"enabled": true \| false` | `clipboard.write`, `process.exit`, `session.clear`, `session.read`, `session.write`, `time.now`, `time.timer` |
 | Name/path patterns | `"patterns": [...]` | `env.get`, `env.has`, `env.print`, `fs.print`, `fs.read`, `kv.read`, `kv.write` |
 | URL patterns | `"patterns": [...]` | `net.fetch`, `net.get` |
-| Request scopes (v37) | `"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies) and, v38, optional `"responseHeaders": [...]` (the only id that accepts it; exact lowercase names a v38 request shows, absent shows the CORS-safelisted names, `[]` shows none; see [canonical head](#canonical-head-v38)) | `net.request` |
+| Request scopes (v37) | `"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies) and, v38, optional `"responseHeaders": [...]` (the only id that accepts it; exact lowercase names a v38 request shows, absent shows the CORS-safelisted names, `[]` shows none; see [canonical head](#canonical-head-v38)) | `net.request`, `net.session` |
 | External-link patterns (v38) | `"patterns": [...]`, `https://` admitted, plus the exact `"https://*"` (any HTTPS link, prompting on every activation; valid for this id only) | `ui.open_url` |
 | Listen endpoints | `"patterns": ["127.0.0.1:8080"]` (cleartext) or `["https://127.0.0.1:8443"]` (TLS, when the host policy names `http.tls`) | `net.listen` |
 <!-- generated:embedding-grant-kinds:end -->
@@ -174,7 +174,7 @@ cannot carry `budgets`, since its `abiVersion` equals its module's host ABI, and
 runs with the fixed values once per execution.
 
 <!-- generated:embedding-manifest-budgets:begin (checked by crates/varta-common/tests/embedding_documentation/manifest.rs) -->
-| `budgets` member | Accepted request or ceiling value | `checked-f64-utf16-v38` – `checked-f64-utf16-v39`: default, and cap without a ceiling (per turn; maintenance per idle period) | `checked-i32-utf8-v1` – `checked-f64-utf16-v37`: fixed (per execution) | Source constants |
+| `budgets` member | Accepted request or ceiling value | `checked-f64-utf16-v38` – `checked-f64-utf16-v40`: default, and cap without a ceiling (per turn; maintenance per idle period) | `checked-i32-utf8-v1` – `checked-f64-utf16-v37`: fixed (per execution) | Source constants |
 | --- | --- | --- | --- | --- |
 | `fuelPerTurn` | 1 to 1000000000 | 1000000000 | 1000000 | `budget::MAX_FUEL_PER_TURN`, `budget::TURN_FUEL`, `abi::FUEL` |
 | `deadlinePerTurnMs` | 1 to 60000 | 5000 | 5000 | `budget::MAX_DEADLINE_PER_TURN_MS`, `abi::DEADLINE_SECONDS` |
@@ -349,7 +349,7 @@ the other rows hold for every profile.
 | Binary header (magic and version 1) | `00 61 73 6d 01 00 00 00` | `abi::WASM_HEADER` |
 | `varta.language` metadata (bytes) | 1024 | `language::MAX_METADATA_BYTES` |
 | Wasm module (bytes), `checked-i32-utf8-v1` – `checked-f64-utf16-v37` | 4194304 | `abi::MAX_WASM_BYTES` |
-| Wasm module (bytes), `checked-f64-utf16-v38` – `checked-f64-utf16-v39` | 1073741824 | `limits::WASM` |
+| Wasm module (bytes), `checked-f64-utf16-v38` – `checked-f64-utf16-v40` | 1073741824 | `limits::WASM` |
 | Parameters of one function type | 32 | `abi::MAX_WASM_PARAMETERS` |
 | Results of one function type | 2 | `abi::MAX_WASM_RESULTS` |
 | Imports | 64 | `abi::MAX_IMPORTS` |
@@ -425,6 +425,7 @@ profile may import.
 | `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no / no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | — | 93 |
 | `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no / v2 | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | `simd128` | 55 |
 | `checked-f64-utf16-v39` | 35 | 18 | binary64 | UTF-16LE | no / v2 | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | `simd128` | 55 |
+| `checked-f64-utf16-v40` | 36 | 18 | binary64 | UTF-16LE | no / v2 | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | `simd128` | 60 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -474,6 +475,7 @@ Acceptance details per profile (used by validation steps 3, 7 and 9):
 | `checked-f64-utf16-v37` | 17 | 1 (no frames), 3 (frames) | 13 | 270 |
 | `checked-f64-utf16-v38` | 18 | 1 (no frames), 3 (frames) | 13 | 1000000 with imports |
 | `checked-f64-utf16-v39` | 18 | 1 (no frames), 3 (frames) | 13 | 1000000 with imports |
+| `checked-f64-utf16-v40` | 18 | 1 (no frames), 3 (frames) | 13 | 1000000 with imports |
 <!-- generated:embedding-profile-acceptance:end -->
 
 Numbers are signed i32 in `checked-i32-utf8-v1` (wrapping arithmetic, truncating
@@ -498,6 +500,7 @@ permissions and the view protocol: effects only
 | --- | --- | --- |
 | `checked-f64-utf16-v38` | `value_format_v12`, `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`, `value_is_error_class_v7`, `json_parse_v19`, `primitive_to_string_v6`, `primitive_to_number_v6`, `bigint_from_value_v5`, `string_normalize16`, `console_render`, `json_stringify_owned`, `primitive_compare`, `primitive_equal`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `regexp_exec`, `regexp_compile`, `number_remainder`, `number_power`, `date_zone_offset`, `date_zone_name`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
 | `checked-f64-utf16-v39` | `value_format_v12`, `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`, `value_is_error_class_v7`, `json_parse_v19`, `primitive_to_string_v6`, `primitive_to_number_v6`, `bigint_from_value_v5`, `string_normalize16`, `console_render`, `json_stringify_owned`, `primitive_compare`, `primitive_equal`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `regexp_exec`, `regexp_compile`, `number_remainder`, `number_power`, `date_zone_offset`, `date_zone_name`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
+| `checked-f64-utf16-v40` | `value_format_v12`, `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`, `value_is_error_class_v7`, `json_parse_v19`, `primitive_to_string_v6`, `primitive_to_number_v6`, `bigint_from_value_v5`, `string_normalize16`, `console_render`, `json_stringify_owned`, `primitive_compare`, `primitive_equal`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `regexp_exec`, `regexp_compile`, `number_remainder`, `number_power`, `date_zone_offset`, `date_zone_name`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
 <!-- generated:embedding-linked-intrinsics:end -->
 
 - **One memory.** A linked module has exactly one memory, so every engine
@@ -1645,34 +1648,34 @@ import the operation, as contiguous runs in registry order.
 | `env_print` | (i32, i32) → () | 1 | `env.print` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
 | `fs_print` | (i32, i32) → () | 1 | `fs.print` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
 | `fs_read` | (i32, i32) → (i32) | 1 | `fs.read` | yes | yes | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
-| `http_service` | () → () | 1 | none | — | — | `checked-i32-utf8-v1`, `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `http_stop` | () → () | 1 | `net.listen` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v39` |
+| `http_service` | () → () | 1 | none | — | — | `checked-i32-utf8-v1`, `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `http_stop` | () → () | 1 | `net.listen` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v40` |
 | `json_parse` | (i32, i32, i32, i32) → (i32) | 1 | none | yes | — | `checked-i32-utf8-v1` |
 | `json_stringify` | (i32, i32, i32) → (i32) | 1 | none | yes | yes | `checked-i32-utf8-v1` |
-| `log_i32` | (i32) → () | 1 | none | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v39` |
+| `log_i32` | (i32) → () | 1 | none | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v40` |
 | `log_string` | (i32, i32) → () | 1 | none | — | — | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
 | `net_fetch` | (i32, i32) → (i32) | 1 | `net.fetch` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
 | `net_get` | (i32, i32) → (i32) | 1 | `net.get` | yes | yes | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
-| `process_exit` | (i32) → () | 1 | `process.exit` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v39` |
-| `time_now` | () → (i32) | 1 | `time.now` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v39` |
+| `process_exit` | (i32) → () | 1 | `process.exit` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v40` |
+| `time_now` | () → (i32) | 1 | `time.now` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v40` |
 | `json_parse_v3` | (i32, i32, i32, i32) → (i64) | 2 | none | yes | — | `checked-f64-utf8-v1` |
 | `json_stringify_v3` | (i32, i32, i32) → (i32) | 2 | none | yes | yes | `checked-f64-utf8-v1` |
 | `log_f64` | (f64) → () | 2 | none | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v17` |
 | `number_remainder` | (f64, f64) → (f64) | 2 | none | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v37` |
-| `process_exit_f64` | (f64) → () | 2 | `process.exit` | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v39` |
+| `process_exit_f64` | (f64) → () | 2 | `process.exit` | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v40` |
 | `json_parse_v4` | (i32, i32, i32, i32) → (i64) | 3 | none | yes | — | `checked-f64-utf8-v2` |
 | `json_stringify_v4` | (i32, i32, i32) → (i32) | 3 | none | yes | yes | `checked-f64-utf8-v2` |
-| `log_undefined` | (i32) → () | 3 | none | — | — | `checked-f64-utf8-v2` – `checked-f64-utf16-v39` |
-| `env_get16` | (i32, i32) → (i32) | 4 | `env.get` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v39` |
-| `env_has16` | (i32, i32) → (i32) | 4 | `env.has` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v39` |
-| `env_print16` | (i32, i32) → () | 4 | `env.print` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v39` |
-| `fs_print16` | (i32, i32) → () | 4 | `fs.print` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v39` |
-| `fs_read16` | (i32, i32) → (i32) | 4 | `fs.read` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v39` |
+| `log_undefined` | (i32) → () | 3 | none | — | — | `checked-f64-utf8-v2` – `checked-f64-utf16-v40` |
+| `env_get16` | (i32, i32) → (i32) | 4 | `env.get` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v40` |
+| `env_has16` | (i32, i32) → (i32) | 4 | `env.has` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v40` |
+| `env_print16` | (i32, i32) → () | 4 | `env.print` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v40` |
+| `fs_print16` | (i32, i32) → () | 4 | `fs.print` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v40` |
+| `fs_read16` | (i32, i32) → (i32) | 4 | `fs.read` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v40` |
 | `json_parse_v5` | (i32, i32, i32, i32) → (i64) | 4 | none | yes | — | `checked-f64-utf16-v1` |
 | `json_stringify_v5` | (i32, i32, i32) → (i32) | 4 | none | yes | yes | `checked-f64-utf16-v1` |
-| `log_string16` | (i32, i32) → () | 4 | none | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v39` |
-| `net_fetch16` | (i32, i32) → (i32) | 4 | `net.fetch` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v39` |
-| `net_get16` | (i32, i32) → (i32) | 4 | `net.get` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v39` |
+| `log_string16` | (i32, i32) → () | 4 | none | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v40` |
+| `net_fetch16` | (i32, i32) → (i32) | 4 | `net.fetch` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v40` |
+| `net_get16` | (i32, i32) → (i32) | 4 | `net.get` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v40` |
 | `string_char_at16` | (i32, i32, f64) → (i32) | 4 | none | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
 | `string_char_code_at16` | (i32, i32, f64) → (f64) | 4 | none | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
 | `json_parse_v6` | (i32, i32, i32, i32) → (i64) | 5 | none | yes | — | `checked-f64-utf16-v2` |
@@ -1756,8 +1759,8 @@ import the operation, as contiguous runs in registry order.
 | `number_sinh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
 | `number_tan` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
 | `number_tanh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_random` | () → (f64) | 20 | none | — | — | `checked-f64-utf16-v17` – `checked-f64-utf16-v39` |
-| `log_f64_v2` | (f64) → () | 21 | none | — | — | `checked-f64-utf16-v18` – `checked-f64-utf16-v39` |
+| `number_random` | () → (f64) | 20 | none | — | — | `checked-f64-utf16-v17` – `checked-f64-utf16-v40` |
+| `log_f64_v2` | (f64) → () | 21 | none | — | — | `checked-f64-utf16-v18` – `checked-f64-utf16-v40` |
 | `value_log_v7` | (i64) → () | 21 | none | — | — | `checked-f64-utf16-v18` – `checked-f64-utf16-v28` |
 | `primitive_to_string` | (i64) → (i32) | 22 | none | yes | yes | `checked-f64-utf16-v19` – `checked-f64-utf16-v37` |
 | `primitive_to_number` | (i64) → (f64) | 23 | none | — | — | `checked-f64-utf16-v20` – `checked-f64-utf16-v37` |
@@ -1799,11 +1802,11 @@ import the operation, as contiguous runs in registry order.
 | `json_stringify_v14` | (i32, i32, i32) → (i32, i32) | 30 | none | yes | — | `checked-f64-utf16-v34` |
 | `primitive_to_number_v3` | (i64) → (f64) | 30 | none | — | — | `checked-f64-utf16-v34` |
 | `primitive_to_string_v3` | (i64) → (i32) | 30 | none | yes | yes | `checked-f64-utf16-v34` |
-| `promise_handled` | (f64) → () | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v39` |
-| `promise_react` | (f64, i64) → (f64) | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v39` |
-| `promise_settle` | (f64) → () | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v39` |
-| `promise_unhandled` | (i64) → (f64) | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v39` |
-| `scheduler_enqueue` | (i64) → () | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v39` |
+| `promise_handled` | (f64) → () | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v40` |
+| `promise_react` | (f64, i64) → (f64) | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v40` |
+| `promise_settle` | (f64) → () | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v40` |
+| `promise_unhandled` | (i64) → (f64) | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v40` |
+| `scheduler_enqueue` | (i64) → () | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v40` |
 | `value_is_array_v8` | (i64) → (i32) | 30 | none | — | — | `checked-f64-utf16-v34` |
 | `value_is_error_class_v4` | (i64, i32) → (i32) | 30 | none | — | — | `checked-f64-utf16-v34` |
 | `value_log_v9` | (i64) → () | 30 | none | — | — | `checked-f64-utf16-v34` |
@@ -1830,10 +1833,10 @@ import the operation, as contiguous runs in registry order.
 | `json_stringify_v16` | (i32, i32, i32) → (i32, i32) | 32 | none | yes | — | `checked-f64-utf16-v36` |
 | `primitive_to_number_v5` | (i64) → (f64) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `primitive_to_string_v5` | (i64) → (i32) | 32 | none | yes | yes | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `timer_clear` | (f64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v39` |
+| `timer_clear` | (f64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v40` |
 | `timer_start` | (f64, f64, i32) → (f64) | 32 | `time.timer` | — | — | `checked-f64-utf16-v36` |
-| `timer_take` | (f64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v39` |
-| `timer_uncaught` | (i64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v39` |
+| `timer_take` | (f64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v40` |
+| `timer_uncaught` | (i64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v40` |
 | `value_is_array_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `value_is_error_class_v6` | (i64, i32) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `value_log_v11` | (i64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
@@ -1842,45 +1845,45 @@ import the operation, as contiguous runs in registry order.
 | `value_strict_equal_v10` | (i64, i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `value_truthy_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `value_typeof_v10` | (i64) → (i32) | 32 | none | yes | yes | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `date_now` | () → (f64) | 33 | `time.now` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v39` |
+| `date_now` | () → (f64) | 33 | `time.now` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v40` |
 | `json_stringify_v17` | (i32, i32, i32) → (i32, i32) | 33 | none | — | — | `checked-f64-utf16-v37` |
-| `net_body_read` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v39` |
-| `net_request_abort` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v39` |
+| `net_body_read` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v40` |
+| `net_request_abort` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v40` |
 | `net_request_start` | (i32, i32) → (f64) | 33 | `net.request` | — | — | `checked-f64-utf16-v37` |
-| `net_request_take` | (f64) → (i32) | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v39` |
-| `net_request_text` | (f64) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` – `checked-f64-utf16-v39` |
-| `net_request_watch` | (f64, f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v39` |
+| `net_request_take` | (f64) → (i32) | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v40` |
+| `net_request_text` | (f64) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` – `checked-f64-utf16-v40` |
+| `net_request_watch` | (f64, f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v40` |
 | `string_to_lower_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
 | `string_to_upper_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
-| `timer_start_v2` | (f64, f64, i32) → (f64) | 33 | `time.timer` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v39` |
+| `timer_start_v2` | (f64, f64, i32) → (f64) | 33 | `time.timer` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v40` |
 | `bigint_from_value_v5` | (i64) → (i32, i32) | 34 | none | yes | — | — |
 | `console_render` | (i32, i64) → (i32) | 34 | none | yes | yes | — |
 | `date_zone_name` | (i32, i32, i32, i32, f64) → (i32) | 34 | none | yes | yes | — |
 | `date_zone_offset` | (i32, i32, f64, f64) → (f64) | 34 | none | — | — | — |
-| `env_snapshot` | (i32, i32) → (i32) | 34 | `env.get` | yes | yes | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `event_source_close` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `event_source_open` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `event_take` | (f64) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `event_text` | (f64) → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `event_watch` | (f64, f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `intl_locale` | () → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `intl_time_zone` | () → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
+| `env_snapshot` | (i32, i32) → (i32) | 34 | `env.get` | yes | yes | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `event_source_close` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `event_source_open` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `event_take` | (f64) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `event_text` | (f64) → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `event_watch` | (f64, f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `intl_locale` | () → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `intl_time_zone` | () → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
 | `json_parse_v19` | (i32, i32, i32, i32) → (i64) | 34 | none | yes | — | — |
 | `json_stringify_owned` | (i32, i32, i32) → (i64, i32) | 34 | none | — | — | — |
-| `kv_close` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `kv_commit` | (i32, i32) → (f64) | 34 | `kv.write` | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `kv_entry` | (f64, f64) → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `kv_key` | (f64, i32, i32) → (i64) | 34 | none | yes | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `kv_open` | (i32, i32) → (f64) | 34 | `kv.read` | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `kv_read` | (i32, i32) → (f64) | 34 | `kv.read` | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `kv_stage` | (i32, i32, i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `kv_text` | () → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `kv_value` | (f64, i32, i32) → (i64) | 34 | none | yes | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `log_stderr16` | (i32, i32, i32) → () | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `net_body_read_bytes` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `net_request_start_v2` | (i32, i32) → (f64) | 34 | `net.request` | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `permission_query` | (i32, i32) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
-| `permission_request` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
+| `kv_close` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `kv_commit` | (i32, i32) → (f64) | 34 | `kv.write` | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `kv_entry` | (f64, f64) → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `kv_key` | (f64, i32, i32) → (i64) | 34 | none | yes | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `kv_open` | (i32, i32) → (f64) | 34 | `kv.read` | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `kv_read` | (i32, i32) → (f64) | 34 | `kv.read` | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `kv_stage` | (i32, i32, i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `kv_text` | () → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `kv_value` | (f64, i32, i32) → (i64) | 34 | none | yes | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `log_stderr16` | (i32, i32, i32) → () | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `net_body_read_bytes` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `net_request_start_v2` | (i32, i32) → (f64) | 34 | `net.request` | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `permission_query` | (i32, i32) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `permission_request` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
 | `primitive_to_number_v6` | (i64) → (f64) | 34 | none | — | — | — |
 | `primitive_to_string_v6` | (i64) → (i32) | 34 | none | yes | yes | — |
 | `regexp_compile` | (i32, i32, i32, i32) → (i32) | 34 | none | yes | yes | — |
@@ -1895,7 +1898,12 @@ import the operation, as contiguous runs in registry order.
 | `value_strict_equal_v11` | (i64, i64) → (i32) | 34 | none | — | — | — |
 | `value_truthy_v11` | (i64) → (i32) | 34 | none | — | — | — |
 | `value_typeof_v11` | (i64) → (i32) | 34 | none | yes | yes | — |
-| `view_commit` | (i32, i32) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v39` |
+| `view_commit` | (i32, i32) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` – `checked-f64-utf16-v40` |
+| `http_session_clear` | () → (i32) | 36 | `session.clear` | yes | yes | `checked-f64-utf16-v40` |
+| `http_session_read` | () → (i32) | 36 | `session.read` | yes | yes | `checked-f64-utf16-v40` |
+| `http_session_write` | (i32, i32) → (i32) | 36 | `session.write` | yes | yes | `checked-f64-utf16-v40` |
+| `session_request_start` | (i32, i32) → (f64) | 36 | `net.session` | — | — | `checked-f64-utf16-v40` |
+| `session_reset` | () → () | 36 | none | — | — | `checked-f64-utf16-v40` |
 <!-- generated:embedding-host-operations:end -->
 
 ## Status and control codes
@@ -2137,12 +2145,12 @@ The held-token and timer bounds are the declared profile's data limits
 | Limit | Value | Source constant |
 | --- | --- | --- |
 | Tokens held at once (queued and registered), `checked-f64-utf16-v34` – `checked-f64-utf16-v37` | 64 | `scheduler::MAX_PENDING_CONTINUATIONS` |
-| Tokens held at once (queued and registered), `checked-f64-utf16-v38` – `checked-f64-utf16-v39` | 131072 | `limits::V38_MAX_PENDING_CONTINUATIONS` |
+| Tokens held at once (queued and registered), `checked-f64-utf16-v38` – `checked-f64-utf16-v40` | 131072 | `limits::V38_MAX_PENDING_CONTINUATIONS` |
 | Timers armed or awaiting their take at once, `checked-f64-utf16-v36` – `checked-f64-utf16-v37` | 32 | `scheduler::MAX_PENDING_TIMERS` |
-| Timers armed or awaiting their take at once, `checked-f64-utf16-v38` – `checked-f64-utf16-v39` | 65536 | `limits::V38_MAX_PENDING_TIMERS` |
+| Timers armed or awaiting their take at once, `checked-f64-utf16-v38` – `checked-f64-utf16-v40` | 65536 | `limits::V38_MAX_PENDING_TIMERS` |
 | Tokens taken from the queue per execution (v38: per turn) | 65536 | `scheduler::MAX_EXECUTION_JOBS` |
 | Promise serials, and separately tracking ids and timer ids, per execution, `checked-f64-utf16-v34` – `checked-f64-utf16-v37` | 1048576 | `scheduler::MAX_PROMISE_SERIALS` |
-| Promise serials, and separately tracking ids and timer ids, over the instance's lifetime, never reused, `checked-f64-utf16-v38` – `checked-f64-utf16-v39` | 9007199254740991 | `limits::V38_MAX_PROMISE_SERIALS` |
+| Promise serials, and separately tracking ids and timer ids, over the instance's lifetime, never reused, `checked-f64-utf16-v38` – `checked-f64-utf16-v40` | 9007199254740991 | `limits::V38_MAX_PROMISE_SERIALS` |
 | Unhandled-rejection reports outstanding at once, `checked-f64-utf16-v38` (earlier profiles: bounded by the ids issued) | 1048576 | `limits::V38_MAX_OUTSTANDING_REJECTIONS` |
 | Unhandled-rejection reasons kept | 16 | `scheduler::MAX_RETAINED_REJECTION_REASONS` |
 | UTF-16 units per rendered reason field | 256 | `scheduler::MAX_REJECTION_REASON_UNITS` |
@@ -3967,3 +3975,72 @@ Not normative yet; each needs its own change to the engine, CLI or contract.
 | Denial targets | Runtime constants (`clock`, `process`, otherwise the guest input), documented by hand | Move each operation's denial target into the `HostOperation` registry so the target table is generated | `varta-common` registry data read by the runtime handlers; no observable change |
 | Logs in failure envelopes | `run_with` keeps the lines of a failed run and the CLI and companion print them before the diagnostic (adopted); failure envelopes carry no `logs` | A `logs` member in failure envelopes | JSON failure envelopes of the CLI and the companion; they would need a new envelope version |
 | Denied `timer_start` | Fatal for the execution | Keep it fatal, or reject the timer's promise so the guest can recover; needs a decision | Runtime scheduler and the timer prelude, in a new profile if changed |
+
+## Protected session hosts
+
+Implementations admitting `protected_sessions` must implement the
+[protected-session contract](architecture.md#protected-sessions-protected_sessions)
+as well as inherited snapshot behavior. No new value layout or unchecked
+callback is introduced. The generated operation table owns import signatures.
+
+Server imports return a copied UTF-16 host result with one status prefix:
+`O` followed by a credential for a successful read, `N` for a valid anonymous
+read, `O` for successful write/clear, `D` for denied authority, or `E` for invalid
+context/state. The engine prelude turns D/E into NotAllowedError/InvalidStateError.
+No credential may appear in an error or audit entry. A host must not substitute
+an ambient cookie jar or a package-defined secret store. The native server
+implements these imports; browser bundles reject server-only imports before
+starting the guest.
+
+Browser `session_request_start` shares the checked network descriptor, bounded
+pending slots and completion protocol with `net_request_start_v2`, but authorizes
+only `net.session`. `session_reset` aborts only that channel. A native client
+returns an explicit unsupported completion without I/O. Browser hosts must not
+implement it by forwarding to ordinary fetch or ignoring absent host bindings.
+
+The official loader's existing `run` and `mount` options accept host-owned
+`sessionBinding` alongside an explicit `permissionCeiling`. For example:
+
+```js
+mount({
+  sessionBinding: {
+    apiOrigin: "https://api.example.test",
+    clientOrigin: "https://studio.example.test"
+  },
+  permissionCeiling: {
+    "net.session": {
+      patterns: ["https://api.example.test/api/**"],
+      methods: ["GET", "POST", "PATCH"],
+      responseHeaders: []
+    }
+  }
+});
+```
+
+The bindings are snapshotted before guest execution and checked against the
+actual embedding page by the companion policy Wasm. The companion owns separate
+linear memory and has no imports; it receives origin/method/header-name facts,
+never credentials or cookies. Its source fingerprint is checked by
+`scripts/build-session-policy.py --check`. The bundle resource digest is verified
+before instantiation.
+
+`varta dev --target browser --policy host.json --app` reads the host-only manifest
+field `browserSession` (the same binding shape) and `net.session` ceiling into the
+existing in-memory development bootstrap. This field requires the protected
+session ABI; package manifests reject it. An earlier-profile browser artifact
+refuses the binding before serving. Distribution builds still refuse `--policy`
+and include no host binding or ceiling; production owners pass loader options
+from their deployment. No frontend source shim is required.
+
+
+For local HTTPS, the browser dev policy also accepts `http.tls` with absolute
+`certificate` and `key` paths. The native API policy separately contains its own
+TLS settings and `http.session`. Do not copy native HTTP limits/session policy
+into the browser host: it refuses them. Browser delivery negotiates TLS 1.3 and
+HTTP/1.1; the native API retains TLS 1.3 with HTTP/2 or HTTP/1.1. Both reuse the
+same checked PEM loader. The operator supplies browser-trusted certificates;
+Varta does not modify local certificate trust.
+
+An alternate native session host must arrange autonomous expiry of leases,
+including requests awaiting I/O without further host calls. Checking expiry only
+on `get()` or on guest execution does not meet this lifecycle guarantee.

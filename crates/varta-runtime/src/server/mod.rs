@@ -4,7 +4,8 @@ mod engine;
 mod handler;
 mod io;
 mod report;
-mod tls;
+mod sessions;
+use crate::tls;
 mod transport;
 use crate::{RunOutput, RuntimeError, policy};
 pub use report::{HttpReport, HttpRequestOutcome, HttpRequestReport};
@@ -12,6 +13,7 @@ use std::{
     net::{SocketAddr, TcpListener},
     sync::{Arc, Mutex},
 };
+pub(crate) use transport::validate_response;
 use varta_common::{
     CapabilityGrant, abi,
     http::{HttpContract, HttpError, HttpLimits, HttpPolicy},
@@ -106,6 +108,7 @@ struct Shared {
     contract: HttpContract,
     /// The contract's limits as the host policy lowered them.
     limits: HttpLimits,
+    sessions: Option<Arc<crate::session::Vault>>,
     /// The listener's actual address: a Web `Request`'s authority when the
     /// request names none.
     address: SocketAddr,
@@ -281,6 +284,22 @@ fn run_owned(
     } else {
         crate::host::register(&mut linker)?;
     }
+    let sessions = policy
+        .and_then(|p| p.session.clone())
+        .map(crate::session::Vault::new)
+        .transpose()?;
+    if let Some(vault) = &sessions {
+        let secure = policy.is_some_and(|p| p.tls.is_some());
+        if !module.profile.protected_sessions()
+            || !asynchronous
+            || secure != vault.policy.origin.starts_with("https://")
+        {
+            return Err(HttpError::Policy(
+                "session policy requires v40 HTTP v2 with matching TLS origin".into(),
+            )
+            .into());
+        }
+    }
     let linked = linker.instantiate_pre(module.module())?;
     let _ticker = engine::Ticker::start(engine.clone()).map_err(HttpError::Io)?;
     let listener = TcpListener::bind(&contract.bind).map_err(HttpError::Io)?;
@@ -311,6 +330,7 @@ fn run_owned(
         listen,
         tls,
         request_setup,
+        sessions,
         requested: requested.to_vec(),
         ceiling: ceiling.map(ToOwned::to_owned),
         files,

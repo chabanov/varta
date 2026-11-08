@@ -17,8 +17,10 @@ pub fn request_origins(manifest: &crate::Manifest) -> crate::Result<Vec<String>>
     manifest.validate_package()?;
     let mut origins = std::collections::BTreeSet::new();
     for grant in manifest.grants()? {
-        if grant.id == crate::net::REQUEST_CAPABILITY
-            && let crate::CapabilityValue::Requests(scope) = grant.value
+        if matches!(
+            grant.id.as_str(),
+            crate::net::REQUEST_CAPABILITY | crate::session::CLIENT_CAPABILITY
+        ) && let crate::CapabilityValue::Requests(scope) = grant.value
         {
             for pattern in scope.urls {
                 let url = url::Url::parse(&pattern)
@@ -94,7 +96,7 @@ fn profile(profile: LanguageProfile) -> Value {
         "toolEntries":!profile.binary64(),"httpVersion":http::version_for(profile),
         "exceptionChannel":profile.exceptions(),"exceptionVersion":exceptions,
         "frames":function::admission::frame_catalog_version(profile).map(|catalog|json!({"catalog":catalog})),
-        "scheduler":profile.promises(),"fairFuel":profile.fair_fuel(),"simd128":profile.simd128(),
+        "scheduler":profile.promises(),"fairFuel":profile.fair_fuel(),"protectedSessions":profile.protected_sessions(),"simd128":profile.simd128(),
         "schedulerLimits":{"held":profile.limits().data.pending_continuations,
             "timers":profile.limits().data.pending_timers,
             "timerError":if profile.limits().data.pending_timers==crate::scheduler::MAX_PENDING_TIMERS {crate::scheduler::SchedulerError::TimerBudget.to_string()}else{crate::scheduler::SchedulerError::TimerLimit{limit:profile.limits().data.pending_timers}.to_string()},
@@ -125,6 +127,7 @@ pub fn registry() -> Value {
         "schemaVersion":SCHEMA_VERSION,
         "maxTurnFuel":crate::budget::MAX_FUEL_PER_TURN,
         "scheduler":layout::scheduler(),"values":layout::values(),"network":network::registry(),"view":view::registry(),
+        "session":{"capability":crate::session::CLIENT_CAPABILITY,"header":crate::session::HEADER,"headerValue":crate::session::HEADER_VALUE,"maxPolicyBytes":crate::session::MAX_POLICY_BYTES,"operations":{"start":HostOperation::SessionRequestStart.name(),"reset":HostOperation::SessionReset.name()}},
         "permissions":permissions::registry(),"effects":effects::registry(),"kv":kv::registry(),
         "console":{
             "logPrefix":crate::console::LOG_PREFIX,

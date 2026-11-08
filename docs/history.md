@@ -7,6 +7,42 @@ statements in them are historical. Current status is in the
 [development plan](development-plan.md#status); current contracts are in
 [architecture.md](architecture.md).
 
+## 2026-11-07 — Studio stabilization and local HTTPS
+
+The official browser dev host now reuses the native checked TLS setup with
+HTTP/1.1-only ALPN, HTTPS origin checks and bounded handshake shutdown. A
+server-owned expiry deadline cancels authenticated requests awaiting I/O without
+another vault read. Finite browser and native resource stress, real trusted
+HTTPS host probes and independent Cloud UI acceptance are recorded in the
+[stabilization receipt](evidence/2026-11-07-studio-stabilization.json).
+Real OTP verification, project/source restore, BFF logout and provider rejection
+of the old key pass. The first request-code email arrived despite an unconfirmed
+response; validated existing-code recovery sent no second OTP. The exact initial
+error remains unproven. One full pass verifies 14 commands, 4690 Rust tests
+(26 ignored), 195 Node tests and all three inventories on unchanged sources.
+Temporary certificate trust and key were removed. Only result annotations follow.
+
+## 2026-11-07 — Protected Studio session channel
+
+Added the opt-in protected browser channel, safe shared Rust origin/header policy
+compiled to Wasm, separate grants/host ceilings, and native HTTP-host session
+custody. Rotation reserves capacity and publishes only a validated successful
+head; clear immediately revokes leases and staged replacements. Cookie and CORS
+headers are host-owned. Strict anonymous guards precede application OTP work.
+The official CLI carries host-only bindings in its development bootstrap.
+
+Cloud's independent synthetic Studio acceptance covers login, retained ideas,
+project creation/edit/reload, restart/relogin with durable KV, logout and another
+account's isolation. Production/live provider acceptance remains separate.
+
+One immutable full snapshot passes all 14 gates. Two final edge-case corrections
+release reset/cancelled body slots and preserve arbitrary undefined stream
+rejections; affected browser, compiler, packaging, native, frozen-profile and
+HTTPS scopes pass afterwards. This is one full pass plus final scoped completion,
+not a second full run of final code. The vault is memory-only and native protected
+clients remain unsupported. See the
+[verification evidence](evidence/2026-11-07-protected-session-verification.json).
+
 ## 2026-11-07 — Async HTTP/KV guest callback boundary
 
 An SDK-free service reproduced a successful KV write followed by a 500 when the

@@ -19,7 +19,11 @@ pub(super) fn runtime_inputs(
             let value = match &grant.value {
                 CapabilityValue::Boolean(value) => Some(serde_json::json!(value)),
                 CapabilityValue::Requests(scope)
-                    if grant.id == varta_common::net::REQUEST_CAPABILITY =>
+                    if matches!(
+                        grant.id.as_str(),
+                        varta_common::net::REQUEST_CAPABILITY
+                            | varta_common::session::CLIENT_CAPABILITY
+                    ) =>
                 {
                     let mut value = serde_json::json!({"patterns":scope.urls});
                     if let Some(methods) = &scope.methods {
@@ -45,6 +49,9 @@ pub(super) fn runtime_inputs(
             if let Some(value) = value {
                 ceiling.insert(grant.id.clone(), value);
             }
+        }
+        if let Some(binding) = &policy.manifest().browser_session {
+            inputs["sessionBinding"] = serde_json::json!(binding);
         }
         inputs["permissionCeiling"] = serde_json::Value::Object(ceiling);
         if let Some(request) = policy.manifest().budgets {

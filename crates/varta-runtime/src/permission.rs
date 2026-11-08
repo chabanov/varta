@@ -293,6 +293,16 @@ impl Broker {
         self.operation(id, "", decision)
     }
 
+    /// The explicit host ceiling must authorize each server session operation.
+    pub(crate) fn session(&mut self, policy: &Policy, id: &str) -> Decision<()> {
+        let decision = if policy.session_enabled(id) {
+            Decision::Granted(())
+        } else {
+            Decision::Denied
+        };
+        self.operation(id, "", decision)
+    }
+
     /// Reading the wall clock (`time.now`, an exact boolean grant).
     pub fn clock(&mut self, policy: &Policy) -> Decision<()> {
         let decision = if policy.enabled(CLOCK_CAPABILITY) {

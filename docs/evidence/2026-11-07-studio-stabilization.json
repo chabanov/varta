@@ -1,0 +1,302 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-07",
+  "package": "Studio stabilization and local HTTPS acceptance",
+  "baseCommit": "5c3fae9069d9dd92448fc0bd33023e82bc743378",
+  "status": "accepted with documented request-code response uncertainty; one full pass on unchanged sources",
+  "implementation": [
+    "Official browser dev host TLS 1.3/HTTP1 through shared native TLS configuration; host-only TLS files; bounded handshake/shutdown; correct HTTPS origin checks",
+    "Server-owned vault expiry deadline cancels leases blocked on I/O without another request or vault access",
+    "No profile, ABI or guest permission expansion"
+  ],
+  "focused": {
+    "projectTlsTests": 2,
+    "nativeTlsTests": 7,
+    "nativeSessionFilterPassed": 8,
+    "additionalAbsoluteIdleExpiryTest": 1,
+    "vaultSoak": {
+      "cycles": 1024,
+      "readsPerSession": 16,
+      "entriesAndPendingAfterEveryClear": 0
+    },
+    "browserResetSoak": {
+      "cycles": 4096,
+      "phases": 6,
+      "ordinaryTransferPreserved": true
+    },
+    "affectedStrictClippy": "passed"
+  },
+  "trustedHttpsProbe": {
+    "status": "passed",
+    "script": "scripts/test-browser-session-soak.mjs",
+    "minimumDurationSeconds": 90,
+    "minimumCycles": 256,
+    "warmupCycles": 64,
+    "sampleIntervalMs": 5000,
+    "maximumWarmGrowthKiB": 65536,
+    "trustBypass": false,
+    "providerRequests": 0,
+    "hosts": "official Varta native API and browser dev, both HTTPS",
+    "testConsent": "explicit allow decisions pinned to exact synthetic portable artifact, below host ceiling",
+    "scope": "official Varta HTTPS hosts; isolated Chrome; synthetic session credentials only",
+    "cycles": 1930,
+    "elapsedMs": 90976,
+    "nativeWarmGrowthKiB": 128,
+    "maxWarmGrowthKiB": 65536,
+    "samples": [
+      {
+        "elapsedMs": 801,
+        "cycle": 0,
+        "nativeRssKiB": 145680
+      },
+      {
+        "elapsedMs": 5842,
+        "cycle": 96,
+        "nativeRssKiB": 149328
+      },
+      {
+        "elapsedMs": 10884,
+        "cycle": 192,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 15927,
+        "cycle": 320,
+        "nativeRssKiB": 149328
+      },
+      {
+        "elapsedMs": 20972,
+        "cycle": 416,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 26015,
+        "cycle": 512,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 31064,
+        "cycle": 640,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 36108,
+        "cycle": 736,
+        "nativeRssKiB": 149328
+      },
+      {
+        "elapsedMs": 41159,
+        "cycle": 864,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 46204,
+        "cycle": 960,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 51251,
+        "cycle": 1056,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 56306,
+        "cycle": 1184,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 61375,
+        "cycle": 1280,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 66424,
+        "cycle": 1376,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 71471,
+        "cycle": 1504,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 76521,
+        "cycle": 1600,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 81567,
+        "cycle": 1696,
+        "nativeRssKiB": 149232
+      },
+      {
+        "elapsedMs": 86617,
+        "cycle": 1824,
+        "nativeRssKiB": 149456
+      }
+    ],
+    "realProviderCalls": 0,
+    "scriptSha256": "128b861dede3871ddd76a7af05fc8918462b10fb1741612188452ba4d03399ca"
+  },
+  "cloud": {
+    "status": "accepted local trusted HTTPS synthetic UI and real UARP lifecycle with client-only recovery",
+    "initialCheckpoint": {
+      "path": "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/cloud-source-auth-checkpoint.json",
+      "sha256": "8d80bf46ffda4c3abe86fcbefed772f17ba718d0641bd8b2ddfa0d5a92e77a84",
+      "applicationSourceSha256": "c2902f71ac8970bc615e1c10b1c2514be31b68cde3ca5b65ecaf762a2f42b250"
+    },
+    "syntheticFlows": [
+      "bad-code recovery",
+      "login",
+      "source version creation and editing",
+      "reload restores saved source",
+      "API process restart retains KV",
+      "logout and anonymous reload",
+      "second account isolation"
+    ],
+    "liveOtp": "one request delivered its email but UI received an unconfirmed generic failure; user entered existing code in visible Studio form using client-only recovery; verification and SDK identity passed; no OTP/key recorded",
+    "publicDeployment": false,
+    "liveGeneration": false,
+    "liveFlows": [
+      "real OTP verify",
+      "SDK getMe confirms person and tenant",
+      "private project create and metadata revision 2",
+      "source version 1 saved",
+      "browser reload restores session and metadata/source",
+      "BFF logout",
+      "bounded SDK getMe with old key denied after logout",
+      "reload stays anonymous"
+    ],
+    "requestCodeCaveat": "Normal successful request-code response was not accepted: sole send delivered email but UI response was uncertain; exact initial failure class remains unproven. Validated client-only existing-code recovery sent no second request.",
+    "finalAcceptanceCheckpoint": {
+      "path": "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/studio-https-uarp-acceptance.json",
+      "sha256": "9f1bd29c0227c8d1c0c3061388ede4561188e6392efdc927114cedf963ad6e64",
+      "applicationSourceSha256": "e552dd3f381fbac42d1ed8a62cf97c4e0cd58808c61e6f260389f91cdff91ecb",
+      "cliSha256AtCapture": "95fa047a6c85352271bea8f6b8fde64a070ddb67668bd0417e8d0edd02c2433a",
+      "focusedRecoveryPassedGroups": 5,
+      "scope": "Accepted application snapshot; subsequent Cloud build/execute work is a separate package."
+    },
+    "providerKeyVerdict": "Old credential denied by bounded SDK identity request after BFF logout; domain denial may represent upstream 401 or 403, raw status/body not recorded."
+  },
+  "certificate": {
+    "subject": "Varta Studio local acceptance",
+    "san": "IP:127.0.0.1",
+    "ca": false,
+    "validUntilUtc": "2026-11-10T01:38:43Z",
+    "sha256": "BFDB6D5D3C732749D1AD6DF96AAF514DB5DAAF7DB258B65E8988A2E1A26230E8",
+    "trust": "removed after acceptance; exact temporary leaf certificate also removed from login keychain",
+    "negativeHostnameCheck": "not-permitted.invalid refused with hostname mismatch",
+    "privateKey": "ignored local file; never included in evidence",
+    "cleanup": {
+      "status": "passed",
+      "sslVerificationExitCode": 1,
+      "certificateLookupExitCode": 44,
+      "privateKeyRemoved": true,
+      "note": "Removed only the approved temporary certificate trust and its exact SHA1-identified login keychain certificate.",
+      "trustRemovalExitCode": 0,
+      "certificateDeletionExitCode": 0
+    }
+  },
+  "fullGate": {
+    "status": "passed",
+    "runs": 1,
+    "commands": 14,
+    "report": "target/verification/20261107-211246-8413wmnk/report.json",
+    "reportSha256": "e6aed338754b7a11ef2821616625b5e3ceaeb165947700ac67069b4d9889fadf",
+    "sourceSha256": "841fbdf33fb7b41e92263b41355304968a17fae63a0be0e9b9b44c831869b6c4",
+    "sourceUnchanged": true,
+    "rustPassed": 4690,
+    "rustIgnored": 26,
+    "nodePassed": 195,
+    "skippedCommands": 0,
+    "knownGateGaps": 0,
+    "conformance": {
+      "checked-core-v1": {
+        "total": 248,
+        "passed": 246,
+        "knownUnsupported": 2,
+        "unexpectedSupport": 0,
+        "regressions": 0,
+        "infrastructureFailures": 0
+      },
+      "checked-snapshots-v39": {
+        "total": 3,
+        "passed": 3,
+        "knownUnsupported": 0,
+        "unexpectedSupport": 0,
+        "regressions": 0,
+        "infrastructureFailures": 0
+      },
+      "protected-sessions-v40": {
+        "total": 4,
+        "passed": 4,
+        "knownUnsupported": 0,
+        "unexpectedSupport": 0,
+        "regressions": 0,
+        "infrastructureFailures": 0
+      }
+    }
+  },
+  "limits": [
+    "Normal successful request-code response remains unaccepted; delivered email plus existing-code recovery accepted separately.",
+    "Finite resource stress is not proof of no leaks under arbitrary workloads",
+    "Local macOS Chrome acceptance only; no production deployment or alternate platform claim",
+    "Memory-only credential vault; restart logs out; durable encrypted/multi-process custody remains future work",
+    "Native protected client remains unsupported"
+  ],
+  "logs": {
+    "tls-tests1.log": {
+      "path": "target/studio-stabilization-20261107/tls-tests1.log",
+      "sha256": "5a10a60ac13a1ce1c30d07fff1547573cec9fa845370bd308d05961147f40010"
+    },
+    "native-tls.log": {
+      "path": "target/studio-stabilization-20261107/native-tls.log",
+      "sha256": "2bc110b40c83509e132264d3a7ebebe955474751c5113ea2459cef36d865a66c"
+    },
+    "session-tests2.log": {
+      "path": "target/studio-stabilization-20261107/session-tests2.log",
+      "sha256": "34273fcb1c656755de37f33601ecae69e331c3c6c25eb3c2b677974e47dad5c9"
+    },
+    "expiry-rearm.log": {
+      "path": "target/studio-stabilization-20261107/expiry-rearm.log",
+      "sha256": "1b8c2c6c0fc76e781561b6f0dd144b5df2291cbb15a88aa25382ecc77fcbb697"
+    },
+    "browser-soak1.log": {
+      "path": "target/studio-stabilization-20261107/browser-soak1.log",
+      "sha256": "b9e46b3161e1bd03f341bed5e26529b180b74a0e44bb7d4cc0c21b8611e3c1d1"
+    },
+    "check1.log": {
+      "path": "target/studio-stabilization-20261107/check1.log",
+      "sha256": "4b4c3b626a818fedef6b2517c4b555a023fd42260cb13d7f86ba0832313086e6"
+    },
+    "cli-build1.log": {
+      "path": "target/studio-stabilization-20261107/cli-build1.log",
+      "sha256": "0619f88e732b58095895aca3efd112d2901f92de30af398dc78d46425f3333a5"
+    },
+    "clippy-final.log": {
+      "path": "target/studio-stabilization-20261107/clippy-final.log",
+      "sha256": "e7212ff0650425c3edbf8bc9cb684a8d49309f3ef5158db9f2e8ad0783c0155a"
+    },
+    "https-soak-receipt.log": {
+      "path": "target/studio-stabilization-20261107/https-soak-receipt.log",
+      "sha256": "faf5e9a95124941de83ec3c50c208b15338766ce7a52dc5ba26bf72cf316b9e2"
+    },
+    "full.log": {
+      "path": "target/studio-stabilization-20261107/full.log",
+      "sha256": "3ddcc33393b95fcb7ed2915eddd3e9f8bfce5c368a91df3645bf6ae37ab165c2"
+    },
+    "trust-cleanup.json": {
+      "path": "target/studio-stabilization-20261107/trust-cleanup.json",
+      "sha256": "9abc651616abd58eb9686b44edb663a9ea986a2df7dea04ff1039bb6c63c0a7d"
+    },
+    "fmt-final.log": {
+      "path": "target/studio-stabilization-20261107/fmt-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "priorEvidence": "docs/evidence/2026-11-07-protected-session-verification.json remains historical and unchanged",
+  "acceptanceCliSha256": "95fa047a6c85352271bea8f6b8fde64a070ddb67668bd0417e8d0edd02c2433a",
+  "postFullCliSha256": "e1bd86a7dbe5ee5b3dfe3f2af0c9bf7223bbe353c635d8c555a425373320e737",
+  "binaryScopeNote": "Live Cloud and sustained HTTPS use the pinned acceptance CLI. The workspace all-target build yields the separate post-full CLI; no post-full Cloud replay is claimed. Engine sources remained unchanged throughout the full gate.",
+  "postGateEdits": "Only documentation/result annotations follow the full pass; implementation and build inputs unchanged."
+}

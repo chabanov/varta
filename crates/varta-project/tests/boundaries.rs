@@ -56,6 +56,8 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
             "varta-kv-codec-wasm",
             ["varta-kv-codec", "varta-common"].as_slice(),
         ),
+        // Protected-channel policy is a no_std shim over common only.
+        ("varta-session-wasm", ["varta-common"].as_slice()),
         // The linked intrinsics read the value layout from common's `no_std`
         // core (checked below: default features off).
         (
@@ -159,6 +161,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                         | "varta-intrinsics-wasm"
                         | "varta-kv-codec"
                         | "varta-kv-codec-wasm"
+                        | "varta-session-wasm"
                 ) && target == "varta-common"
                 {
                     assert_eq!(
@@ -180,6 +183,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                         | "varta-intrinsics-wasm"
                         | "varta-kv-codec"
                         | "varta-kv-codec-wasm"
+                        | "varta-session-wasm"
                         | "varta-intl"
                         | "varta-style"
                         | "varta-style-wasm"
@@ -387,6 +391,7 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
         "varta-intrinsics-wasm",
         "varta-kv-codec",
         "varta-kv-codec-wasm",
+        "varta-session-wasm",
         "varta-view",
     ] {
         assert!(

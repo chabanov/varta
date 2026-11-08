@@ -32,6 +32,9 @@ impl Cancellation {
             engine,
         }
     }
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
     pub fn cancel(&self) {
         if !self.state.swap(true, Ordering::SeqCst) {
             self.engine.increment_epoch();

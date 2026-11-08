@@ -52,6 +52,7 @@ mod resources;
 mod server;
 #[cfg(test)]
 mod server_tests;
+pub mod tls;
 mod unions;
 mod utf16;
 pub use server::{
@@ -138,6 +139,7 @@ mod net_loopback;
 #[cfg(test)]
 mod net_tests;
 mod replay;
+mod session;
 pub use local_time::system_host_inputs;
 pub use replay::NetworkMode;
 pub use varta_common::net::replay::{NetworkLog, NetworkLogError, ReplayError};
@@ -361,6 +363,7 @@ pub(crate) struct RuntimeContext {
     /// Rearms the store's epoch thread for the next turn's deadline.
     rearm: Option<std::sync::mpsc::Sender<Option<Instant>>>,
     http_control: Option<(String, HttpShutdown)>,
+    http_session: Option<session::RequestSession>,
     cancellation: Option<cancellation::Cancellation>,
     random: random::RandomSource,
     scheduler: scheduler::Scheduler,
@@ -423,6 +426,9 @@ impl RuntimeContext {
     /// The deadline of host bookkeeping: typed in a v38 turn, the frozen
     /// legacy text before.
     pub(crate) fn check_cancelled(&self) -> Result<(), wasmtime::Error> {
+        if let Some(session) = &self.http_session {
+            session.check()?;
+        }
         if let Some(cancellation) = &self.cancellation {
             cancellation.check()?;
         }

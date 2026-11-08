@@ -31,6 +31,7 @@ SOURCES = ("crates/varta-bigint", "crates/varta-intl", "crates/varta-intrinsics"
 COMMON_CORE = (
     "crates/varta-common/Cargo.toml",
     "crates/varta-common/src/lib.rs",
+    "crates/varta-common/src/session.rs",
     "crates/varta-common/src/abi.rs",
     "crates/varta-common/src/abi/static_region.rs",
     "crates/varta-common/src/bigint.rs",

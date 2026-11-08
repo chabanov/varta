@@ -1,6 +1,26 @@
 # Varta functional overview
 
-Checkpoint: 2026-11-07, checked snapshots, Tailwind/CSS shadow motion and the
+Current implementation package: Studio stabilization with official local HTTPS
+delivery, autonomous session expiry during suspended I/O, and repeated
+reset/cancellation/resource checks. Independent Cloud acceptance exercises the
+actual Studio UI over trusted local HTTPS, including real OTP, save/reload,
+logout and provider rejection of the old key. An initial unconfirmed request-code
+response is recorded with its existing-code recovery. One full run passes all
+14 commands with unchanged sources: 4690 Rust tests (26 ignored), 195 Node tests,
+core 246 passed / 2 known unsupported out of 248, v39 3/3 and v40 4/4. Temporary certificate trust and key were removed. Evidence is in the
+[stabilization receipt](evidence/2026-11-07-studio-stabilization.json).
+
+Previous accepted package: protected browser-to-native BFF sessions, opt-in and
+unreleased. A bounded memory-only server vault holds credentials; Studio uses a
+separately granted channel with exact host origins. Real HTTPS engine acceptance
+and synthetic Cloud login/project/reload/restart/logout/second-account acceptance
+pass. One full snapshot passed, followed by targeted verification of two final
+cancellation/stream-error fixes; this is not a repeated full pass of the final
+code. See the [session evidence](evidence/2026-11-07-protected-session-verification.json).
+Restart ends sessions; encrypted persistence and a native protected client remain
+future work. See the [contract](architecture.md#protected-sessions-protected_sessions).
+
+Previous verified checkpoint: 2026-11-07, checked snapshots, Tailwind/CSS shadow motion and the
 subsequent async HTTP/KV correction on base `1407f8eb`. The combined snapshot
 passes [full verification](evidence/2026-11-07-precommit-verification.json):
 4671 Rust tests (26 ignored), 190 Node tests and both compatibility inventories.
@@ -17,7 +37,7 @@ classes without non-template descendants, checked after generic materialization.
 It covers publication, methods/getters/setters, closures, abrupt completion and
 async retention; partial receiver observation remains outside this increment.
 
-The current stage is **v38 stabilization with an opt-in v39 SDK increment,
+The current stage is **v38 stabilization with opt-in SDK/session increments,
 unreleased**. V39 adds [checked snapshots](architecture.md#checked-structural-snapshots-v39):
 recursive declared-field checks, retained extras, isolation, enumeration and JSON
 round trips. Native, standalone and Chrome synthetic SDK acceptance passes;

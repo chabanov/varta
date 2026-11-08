@@ -173,10 +173,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v37` | 33 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v17` | `json_parse_v18` | — |
 | `checked-f64-utf16-v38` | 34 | 18 | `varta.exception.version_v9` = 9 | `json_stringify_owned` | `json_parse_v19` | `simd128` |
 | `checked-f64-utf16-v39` | 35 | 18 | `varta.exception.version_v9` = 9 | `json_stringify_owned` | `json_parse_v19` | `simd128` |
+| `checked-f64-utf16-v40` | 36 | 18 | `varta.exception.version_v9` = 9 | `json_stringify_owned` | `json_parse_v19` | `simd128` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **3** advertises host ABI **35**, value ABI **18**, HTTP contract **2** and **42** language profiles (the rows above).
+Launcher protocol **3** advertises host ABI **36**, value ABI **18**, HTTP contract **2** and **43** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -19784,6 +19785,17 @@ buffer at 8192 bytes and connection lifetime at five seconds; these are dev-host
 limits, not changes to production guest budgets. Shutdown cancels/drains active
 connections and releases the listener.
 
+A browser dev host may enable HTTPS with host-only `http.tls` certificate/key
+paths. It reuses the native runtime's bounded PEM loading and TLS 1.3 setup,
+with HTTP/1.1-only ALPN because this delivery server has no HTTP/2 adapter.
+Certificate/key validation finishes before binding. Its printed URL, immutable
+bundle URL and exact-origin checks use HTTPS. The five-second connection bound
+includes the TLS handshake; shutdown cancels incomplete handshakes too. Browser
+dev rejects native `http.limits` and `http.session` settings rather than silently
+ignoring them. Certificates, private keys and host TLS policy never enter the
+bundle. Browser/OS certificate trust remains an operator responsibility; the
+host does not install trust or bypass certificate checks.
+
 Development preparation opts into a bounded input journal on the same source
 loader used by ordinary compilation. It records SHA-256 of the bytes actually
 read, read failures and existence probes, including absent `.ts`/`.tsx` resolution
@@ -21020,3 +21032,131 @@ wall/virtual clock scope; their contract is in the
 Native server and source-free/hostile-artifact acceptance passed the full gate
 recorded in the [development plan](development-plan.md#status). Broader sustained
 native RSS, cross-host and release acceptance remain open.
+
+## Protected sessions (`protected_sessions`)
+
+The opt-in protected-session profile inherits the checked snapshots contract and
+adds an explicit browser-to-native-server channel. Earlier profiles retain their
+existing semantics and cannot import its operations. Versions and import
+signatures are owned by the generated registry tables above and in
+[embedding](embedding.md#protected-session-hosts).
+
+The engine supplies session custody and transport, not login routes, OTP,
+identity schemas or a provider SDK. A trusted server application validates its
+provider response and stores a credential with `varta.http.session.set(secret)`.
+`get()` returns that credential only to the trusted server handler; public DTOs
+must explicitly select public identity fields. The browser guest receives only
+ordinary public response bodies. Neither cookies nor credentials enter the view
+protocol, persistent KV, application packages or diagnostics.
+
+### Authority and deployment
+
+Server operations require separate Boolean package grants `session.read`,
+`session.write` and `session.clear`, the corresponding **explicit host ceiling**,
+an enabled HTTP-v2 host session policy, and a valid request channel. A package
+alone grants no session authority. Browser `varta.session.fetch` requires its own
+`net.session` URL/method/response-header scope, an explicit host permission
+ceiling, and a trusted `sessionBinding`. `net.request` cannot authorize it.
+Ordinary `fetch` continues to omit credentials. Native client session fetch is
+explicitly unsupported and fails before I/O; there is no native ambient cookie
+jar or fallback to bearer authentication.
+
+The host policy's `http.session` binds an exact canonical API `origin` and
+`clientOrigin`. The listener requires TLS, with certificates supplied through
+host-only `http.tls`. The browser binding uses `apiOrigin`, `clientOrigin` and
+optional `allowInsecureLoopback`; the actual page origin must equal the client
+origin, and each requested origin must equal the API origin. The shared safe
+Rust policy is also compiled into the browser's separately verified Wasm module;
+JS only marshals policy facts and calls browser APIs.
+
+Production uses same-site HTTPS Studio and API origins. Untrusted previews need
+a **different hostname**: cookies are scoped to hosts, not ports. `SameSite=Strict`
+is the default. Host-selected `sameSite:"none"` requires HTTPS on both origins;
+third-party cookie blocking may still make a cross-site deployment unusable.
+The engine does not bypass browser privacy controls. Explicit HTTP loopback
+policies are for development, use a separate cookie name, and do not carry the
+production Secure guarantee. Noncanonical origins, credentials, paths,
+wildcards, default-port aliases and unapproved nonloopback HTTP are refused.
+
+### Request and response boundary
+
+The host transport uses Fetch credentials `include`, redirect `error`, CORS,
+`no-store` and `no-referrer`; the host inserts `x-varta-session: 1`. Guest
+credential, Origin, marker and browser-owned headers are refused. Allowed guest
+headers are the shared registry allowlist. The marker is reserved on ordinary
+browser transports in this profile too. Streaming request bodies are refused;
+normal bounded text and byte bodies use the existing network descriptor.
+Session traffic cannot use network replay. The first host CORS policy exposes
+Fetch-safelisted response headers; declaring `responseHeaders` narrows visibility
+and does not itself expand CORS exposure.
+
+The native server checks exact request Host/authority and Origin, validates the
+marker, and refuses mixed session/bearer credentials before any guest handler.
+For equal client/API origins only, an absent Origin can be replaced by a browser
+`Sec-Fetch-Site: same-origin` assertion. CORS preflight requires the exact client
+origin and admitted method/header names; it returns directly without consulting
+identity or invoking the application. Actual anonymous requests can reach public
+routes, but `get()` rejects an invalid or absent channel even when no cookie is
+present. A valid anonymous or expired session returns `null`. Thus a BFF may call
+`get()` before OTP/provider work as a strict channel guard.
+
+The host removes all Cookie and session-marker fields from server guest request
+headers. The response cookie uses the `__Host-` prefix, `Path=/`, no Domain,
+HttpOnly, Secure, configured SameSite and bounded Max-Age. Guest `Set-Cookie` and
+`Access-Control-*` response fields are refused while host sessions are enabled.
+The host owns exact-origin CORS, credentials, `Vary: Origin` and `no-store`, also
+on error responses; Fetch never exposes Set-Cookie to the browser guest.
+
+### Vault and lifecycle
+
+The first increment uses one bounded, memory-only vault per running server. Each
+session token is generated with OS randomness; only its SHA-256 digest indexes
+the vault. Provider credentials remain in host memory, including temporary
+request values in trusted server Wasm. There is no at-rest secret persistence,
+secure-erasure claim, multi-process replication or recovery after restart.
+Restart logs every session out. Application KV remains independently durable.
+Absolute age, idle age, secret size and capacity are bounded by the shared
+session registry; a host can lower them through policy.
+
+`set` and `clear` require a mutable request method (POST/PUT/PATCH/DELETE) and an
+unpublished response head. `set` reserves capacity immediately, so refusal is
+catchable in the handler. A staged secret becomes active only after validation
+of an entire successful response head. A failed status, invalid head, trap or
+dropped request discards it and releases the reservation; the prior session
+continues to work. Rotation publishes a fresh token, invalidates the prior token
+and cancels other request leases. Only one replacement of a live token can be
+staged at once. Publication is a server-side decision: delivery over a failing
+network cannot prove the client received the new cookie.
+
+`clear` revokes immediately, cancels other authenticated requests and staged
+replacements, and cannot be undone by a later handler failure. A successful head
+also expires the cookie. Revocation or expiry stops leased request execution at
+host/epoch checks and drops in-flight I/O; it does not roll back effects that
+already completed. Request destruction releases leases. Once a streaming
+response head is published, later set/clear attempts fail; checked reads remain
+subject to expiry/revocation.
+
+One server-owned deadline future expires vault entries and cancels their leases
+even when every authenticated request is suspended on I/O and no later request
+reads the vault. Publishing an earlier deadline wakes that future. A successful
+read can extend idle age, but never absolute age; an earlier idle timer recomputes
+the next minimum. The future is dropped with the server and creates no per-session
+tasks or polling loop.
+
+`varta.session.reset()` aborts and discards outstanding session-channel transfers
+and late replies without affecting ordinary network traffic. An unread
+response keeps a bounded terminal completion so its next read can observe
+AbortError; consuming or cancelling it releases the slot. Ordinary stream
+rejection values, including undefined, retain their inherited behavior. Host revocation of
+`net.session` also aborts those transfers and blocks new ones. **Reset is not
+logout** and cannot delete an HttpOnly cookie. Logout is an application POST whose
+trusted server handler calls `clear()` before best-effort provider revocation.
+If the browser does not receive the BFF response, local logout is unconfirmed;
+a confirmed BFF clear with an unconfirmed provider revocation is a separate
+state. No engine operation promises to revoke provider-side credentials.
+
+The cookie and credentials model follows the primary
+[Fetch standard](https://fetch.spec.whatwg.org/#credentials-mode) and
+[HTTP cookie specification](https://www.rfc-editor.org/rfc/rfc6265#section-4.1).
+The stronger origin, marker, explicit-ceiling and staging rules above are the
+Varta contract.

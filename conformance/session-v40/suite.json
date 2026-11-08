@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "protected-sessions-v40",
+  "edition": "ECMAScript 2025",
+  "sourceModel": "checked-ts-main-v1",
+  "profile": "checked-f64-utf16-v40",
+  "features": [
+    {
+      "id": "protected-sessions",
+      "title": "Explicit protected channels and host-owned server sessions",
+      "core": [
+        "CORE-01",
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#protected-sessions-protected_sessions"
+    }
+  ],
+  "cases": [
+    {
+      "id": "server-context",
+      "feature": "protected-sessions",
+      "path": "cases/server-context.ts",
+      "sha256": "095a6ce7b8e1581025f2693578f2431b01f42e3fc78d6286705952b1487ce4fc",
+      "stdout": [
+        "varta log: true true true"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "native-channel",
+      "feature": "protected-sessions",
+      "path": "cases/native-channel.ts",
+      "sha256": "359a06e02390c02bc8b6c774fcab2716984c0fe5966964f5b06d6d4ff055e527",
+      "stdout": [
+        "varta log: native channel refused true"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "snapshot-inheritance",
+      "feature": "protected-sessions",
+      "path": "cases/snapshot-inheritance.ts",
+      "sha256": "8aa340adfe8d23e6487cd9369d68db71e4e05c079c9eccc7073240d1cac148c6",
+      "stdout": [
+        "varta log: {\"value\":1,\"retained\":2}",
+        "varta log: strict parse true"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "undefined-stream-error",
+      "feature": "protected-sessions",
+      "path": "cases/undefined-stream-error.ts",
+      "sha256": "8434a00dc19b6044d026bf67ec9723c15e83b55e7dc08406d9525e5130b01201",
+      "stdout": [
+        "varta log: undefined errors preserved true true"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    }
+  ]
+}

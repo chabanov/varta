@@ -35,3 +35,7 @@ wasmtime.workspace = true
 # checked-in wasm32 view engine must agree with (`browser::view_engine_tests`).
 varta-style = { path = "../varta-style" }
 varta-view = { path = "../varta-view" }
+# TLS delivery acceptance uses the already locked native HTTP primitives.
+rcgen.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true

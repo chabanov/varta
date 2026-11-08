@@ -66,6 +66,7 @@ pub struct BrowserDevServer {
     delivery: Arc<RwLock<Delivery>>,
     rebuilder: Rebuilder,
     cancelled: Arc<AtomicBool>,
+    tls: Option<varta_runtime::tls::Http1TlsAcceptor>,
 }
 impl BrowserDevServer {
     pub fn bind(
@@ -79,6 +80,14 @@ impl BrowserDevServer {
                 "browser development binds only to loopback".into(),
             ));
         }
+        let http = policy.and_then(|p| p.manifest().http.as_ref());
+        if http.is_some_and(|http| http.limits.is_some() || http.session.is_some()) {
+            return Err(ProjectError::Usage("browser development accepts http.tls only; native HTTP limits/session settings do not apply".into()));
+        }
+        let tls = http
+            .and_then(|http| http.tls.as_ref())
+            .map(varta_runtime::tls::Http1TlsAcceptor::from_files)
+            .transpose()?;
         if let Some(decisions) = decisions {
             decisions.validate()?;
         }
@@ -96,6 +105,7 @@ impl BrowserDevServer {
             delivery: Arc::new(RwLock::new(delivery)),
             rebuilder,
             cancelled,
+            tls,
         })
     }
     #[must_use]
@@ -104,7 +114,11 @@ impl BrowserDevServer {
     }
     #[must_use]
     pub fn url(&self) -> String {
-        format!("http://{}/", self.address)
+        format!("{}://{}/", self.scheme(), self.address)
+    }
+
+    fn scheme(&self) -> &'static str {
+        if self.tls.is_some() { "https" } else { "http" }
     }
 
     /// This snapshot's immutable asset directory. The root page refers to it;
@@ -112,7 +126,8 @@ impl BrowserDevServer {
     #[must_use]
     pub fn bundle_url(&self) -> String {
         format!(
-            "http://{}{}",
+            "{}://{}{}",
+            self.scheme(),
             self.address,
             self.delivery
                 .read()
@@ -141,9 +156,11 @@ impl BrowserDevServer {
         self,
         shutdown: impl Future<Output = std::io::Result<()>>,
     ) -> Result<()> {
+        let scheme = self.scheme();
         let listener = tokio::net::TcpListener::from_std(self.listener)?;
+        let tls = self.tls;
         let authority = self.address.to_string();
-        let origin = format!("http://{authority}");
+        let origin = format!("{scheme}://{authority}");
         let mut tasks = tokio::task::JoinSet::new();
         let mut rebuilder = Some(self.rebuilder);
         let mut builds = tokio::task::JoinSet::new();
@@ -177,17 +194,19 @@ impl BrowserDevServer {
                 accepted = listener.accept(), if tasks.len() < MAX_CONNECTIONS => {
                     let (stream, _) = match accepted { Ok(value) => value, Err(error) => break Err(error.into()) };
                     let delivery = Arc::clone(&self.delivery); let authority = authority.clone(); let origin = origin.clone();
+                    let tls = tls.clone();
                     tasks.spawn(async move {
-                        let service = service_fn(move |request| {
-                            let response = match delivery.read() {
-                                Ok(delivery) => serve(request, &delivery, &authority, &origin),
-                                Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR),
-                            };
-                            async move { Ok::<_, Infallible>(response) }
-                        });
-                        let mut http = hyper::server::conn::http1::Builder::new();
-                        http.keep_alive(false).max_headers(MAX_HEADERS).max_buf_size(HEADER_BUFFER_BYTES);
-                        let _ = tokio::time::timeout(CONNECTION_DEADLINE, http.serve_connection(TokioIo::new(stream), service)).await;
+                        let connection = async move {
+                            match tls {
+                                Some(tls) => {
+                                    if let Ok(stream) = tls.accept(stream).await {
+                                        serve_connection(stream, delivery, authority, origin).await;
+                                    }
+                                }
+                                None => serve_connection(stream, delivery, authority, origin).await,
+                            }
+                        };
+                        let _ = tokio::time::timeout(CONNECTION_DEADLINE, connection).await;
                     });
                 }
             }
@@ -197,6 +216,28 @@ impl BrowserDevServer {
         tasks.shutdown().await;
         result
     }
+}
+
+async fn serve_connection<T>(
+    stream: T,
+    delivery: Arc<RwLock<Delivery>>,
+    authority: String,
+    origin: String,
+) where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let service = service_fn(move |request| {
+        let response = match delivery.read() {
+            Ok(delivery) => serve(request, &delivery, &authority, &origin),
+            Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR),
+        };
+        async move { Ok::<_, Infallible>(response) }
+    });
+    let mut http = hyper::server::conn::http1::Builder::new();
+    http.keep_alive(false)
+        .max_headers(MAX_HEADERS)
+        .max_buf_size(HEADER_BUFFER_BYTES);
+    let _ = http.serve_connection(TokioIo::new(stream), service).await;
 }
 
 fn media_type(name: &str) -> &'static str {
@@ -318,3 +359,6 @@ fn error(status: StatusCode) -> Response<Full<Bytes>> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tls_tests;

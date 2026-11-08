@@ -78,6 +78,7 @@ crates/
   varta-intl/            # engine: no_std time zones (TZif) and locale data (ICU4X) of local time and Intl, linked into guest code
   varta-kv-codec/        # engine: no_std KV value layer shared by the native runtime and the browser host
   varta-kv-codec-wasm/   # wasm32-only browser shim of varta-kv-codec; built by scripts/build-kv-codec.py
+  varta-session-wasm/    # wasm32-only browser shim of safe common session policy; no credentials or I/O
   varta-view/            # engine: headless L0 view renderer (common only; no Wasm, I/O or clocks)
   varta-compiler/        # explicit TS module graph (SWC) -> Wasm; no runtime dependency
     src/link/intrinsics.wasm # checked-in linked intrinsic library (+ intrinsics.json fingerprint)
@@ -111,7 +112,8 @@ Placement rules:
   `varta-kv-codec`, `varta-view`, `varta-compiler` and `varta-runtime`; `varta-intrinsics-wasm` is the wasm32 build of
   `varta-intrinsics` (a workspace member only so it shares the lockfile and the
   `intrinsics` profile; empty on host targets and not a default member), and
-  `varta-kv-codec-wasm` likewise the wasm32 build of `varta-kv-codec`;
+  `varta-kv-codec-wasm` likewise the wasm32 build of `varta-kv-codec`, and
+  `varta-session-wasm` a wasm32-only, no_std shim over common's session policy;
   `varta-conformance` is development tooling. Artifact
   and launcher crates supply the independent distribution layer. They must
   not depend on project tooling/CLI, including through test dependencies. Runtime
@@ -190,6 +192,11 @@ lints. Cargo dependencies remain locked.
   locked `Cargo.lock`) and are referenced with `.workspace = true`.
 - Keep functions focused; extract helpers instead of nesting match arms past three levels. Delete dead code and redundant `let _ =` bindings rather than silencing them.
 - Workspace code forbids unsafe, with one exception: the guest shim `varta-intrinsics-wasm` builds only for wasm32, stays out of host builds (it is not a default member, and on host targets, including workspace builds and Clippy, it compiles to an empty crate), is built by `scripts/build-intrinsics.py`, and may use `unsafe` only to read and write its arguments in linear memory (its extern accessors, exports, arena and panic handler). It runs inside the guest sandbox, never in the host. All intrinsics logic stays in the safe `varta-intrinsics` (`#![forbid(unsafe_code)]`). The browser KV codec shim `varta-kv-codec-wasm` follows the same rule (wasm32 only, built by `scripts/build-kv-codec.py`, `unsafe` only for its host imports, exports, arena and panic handler, all logic in the safe `varta-kv-codec`). Never deserialize native Wasmtime payloads from package input; only validated portable Wasm is accepted.
+
+The `varta-session-wasm` shim follows the same wasm32-only exception: unsafe
+is confined to exported ABI symbols, its bounded private input buffer, allocator
+and panic handler. Session policy is safe shared Rust in `varta-common::session`;
+no credential, cookie store, network I/O or policy logic lives in this shim.
 
 ## 6. Compiler rules (`varta-compiler`)
 
@@ -356,4 +363,5 @@ One line per profile; details in [profile rules](docs/profile-rules.md) and the
 | `checked-f64-utf16-v37` | Pilot batch in development: language core, class generics, collections and binary text, RegExp, net.request |
 | `checked-f64-utf16-v38` | Batch in development: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping, codegen v2; wave 2: hashed dictionaries (value 18), strict members, Web bytes, virtual file roots, text imports; wave 3: Deno KV storage; SDK paths (Error options, `File`/`FormData` entries, collection `instanceof`); iteration protocol (`[Symbol.iterator]`, array spreads, `yield*`); K9 D standard library (ES2025 Array/Set/iterator/JSON methods, `AggregateError`, UTC `Date`); K9 D1 Node console (Node notation, standard error, `group`/`count`/`time`/`dir`/`table`); K9 D2 Symbol values and integrity levels (`Object.freeze`/`seal`/`preventExtensions`); K9 type level (conditional/mapped/template literal types, utility types, predicates, literal inference); K9 B declarations and classes (enums, namespaces, overloads, abstract classes, setters, static fields, class expressions); K9 C expression forms (`await` anywhere, object methods with `this`, iterable destructuring, `using`, thenables) |
 | `checked-f64-utf16-v39` | V38 plus isolated checked JSON snapshots retaining extra fields for SDK assertions; explicit checked parsing and previous profiles stay exact |
+| `checked-f64-utf16-v40` | V39 plus explicit protected browser channels and native server-host sessions; memory-only vault, separate grants and trusted origin policy |
 <!-- generated:profile-index:end -->
