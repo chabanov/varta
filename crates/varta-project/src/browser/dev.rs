@@ -26,6 +26,7 @@ const MAX_HEADERS: usize = 32;
 const HEADER_BUFFER_BYTES: usize = 8192;
 const CONNECTION_DEADLINE: Duration = Duration::from_secs(5);
 mod bootstrap;
+mod entry;
 mod rebuild;
 mod revisions;
 use bootstrap::{install_bootstrap, runtime_inputs};
@@ -40,6 +41,9 @@ pub struct BrowserDevOptions {
     pub address: SocketAddr,
     pub application: bool,
     pub report_budgets: bool,
+    /// Opt-in shell route /<prefix>/<opaque-id>; exposes its public path as
+    /// VARTA_ENTRY_PATH through the existing, explicitly granted env.get API.
+    pub entry_prefix: Option<String>,
 }
 impl Default for BrowserDevOptions {
     fn default() -> Self {
@@ -47,6 +51,7 @@ impl Default for BrowserDevOptions {
             address: (Ipv4Addr::LOCALHOST, 0).into(),
             application: false,
             report_budgets: false,
+            entry_prefix: None,
         }
     }
 }
@@ -75,6 +80,13 @@ impl BrowserDevServer {
         decisions: Option<&DecisionFile>,
         options: BrowserDevOptions,
     ) -> Result<Self> {
+        if options
+            .entry_prefix
+            .as_deref()
+            .is_some_and(|prefix| !entry::valid_prefix(prefix))
+        {
+            return Err(ProjectError::Usage("browser entry prefix must be / followed by 1..64 ASCII letters, digits, - or _; __varta and index.html are reserved".into()));
+        }
         if !options.address.ip().is_loopback() {
             return Err(ProjectError::Usage(
                 "browser development binds only to loopback".into(),
@@ -93,9 +105,11 @@ impl BrowserDevServer {
         }
         let address = options.address;
         let cancelled = Arc::new(AtomicBool::new(false));
+        let entry_prefix = options.entry_prefix.clone();
         let (rebuilder, revision) =
             Rebuilder::new(config, policy, decisions, options, cancelled.clone())?;
-        let delivery = Delivery::new(revision);
+        let mut delivery = Delivery::new(revision);
+        delivery.entry_prefix = entry_prefix;
         let listener = TcpListener::bind(address)?;
         listener.set_nonblocking(true)?;
         let address = listener.local_addr()?;
@@ -299,7 +313,13 @@ fn serve(
             status = delivery.status();
             Some(&status)
         } else {
-            delivery.file(request.uri().path())
+            // Entry paths carry only a public opaque identifier. Queries never
+            // become implicit configuration or authority for the shell.
+            if delivery.is_entry(request.uri().path()) && request.uri().query().is_some() {
+                None
+            } else {
+                delivery.file(request.uri().path())
+            }
         };
         match file {
             None => error(StatusCode::NOT_FOUND),

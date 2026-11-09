@@ -967,6 +967,13 @@ fn a_path_swapped_while_opening_is_rejected() {
     let path = tree.fixture("fixture.kv");
     let other = tree.root().join("other.kv");
     std::fs::write(&other, FIXTURE).unwrap();
+    let held = rusqlite::Connection::open(&other).unwrap();
+    held.execute_batch("BEGIN; SELECT count(*) FROM sqlite_master;")
+        .unwrap();
+    // Force SQLite's cached-fd branch for the swapped-in replacement too.
+    let cached = rusqlite::Connection::open(&other).unwrap();
+    assert!(cached.main_file_identity().is_ok());
+    drop(cached);
     let roots = tree.roots();
     let policy = crate::policy::Policy::with_files(
         &read_write(),
@@ -992,6 +999,8 @@ fn a_path_swapped_while_opening_is_rejected() {
         error.message,
         "the KV database /data/fixture.kv changed while it was opened"
     );
+    held.execute_batch("ROLLBACK").unwrap();
+    drop(held);
     // Restore, then swap in a symbolic link.
     std::fs::rename(&path, &other).unwrap();
     std::fs::rename(path.with_extension("moved"), &path).unwrap();
@@ -1010,6 +1019,47 @@ fn a_path_swapped_while_opening_is_rejected() {
     std::fs::remove_file(&path).unwrap();
     std::fs::rename(path.with_extension("moved"), &path).unwrap();
     assert!(store::open(target(), "/data/fixture.kv", true).is_ok());
+}
+
+/// SQLite retains a closed connection's fd while another connection holds a
+/// POSIX read lock, then reuses it. Identity must belong to that concrete
+/// connection regardless of whether any new OS descriptor appeared.
+#[test]
+#[cfg(unix)]
+fn sqlite_connection_identity_survives_cached_descriptor_reuse() {
+    use std::os::unix::fs::MetadataExt;
+    let tree = Tree::new();
+    let path = tree.fixture("fixture.kv");
+    let metadata = std::fs::metadata(&path).unwrap();
+    let identity = (metadata.dev(), metadata.ino());
+    let a = rusqlite::Connection::open(&path).unwrap();
+    a.execute_batch("BEGIN; SELECT count(*) FROM sqlite_master;")
+        .unwrap();
+    let b = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(b.main_file_identity().unwrap(), identity);
+    drop(b);
+    let c = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(c.main_file_identity().unwrap(), identity);
+    // Change ctime without opening/closing an extra fd of a locked file.
+    std::fs::set_permissions(&path, metadata.permissions()).unwrap();
+    assert_eq!(c.main_file_identity().unwrap(), identity);
+    let other = tree.fixture("other.kv");
+    let other = rusqlite::Connection::open(other).unwrap();
+    assert_ne!(other.main_file_identity().unwrap(), identity);
+    assert!(
+        rusqlite::Connection::open_in_memory()
+            .unwrap()
+            .main_file_identity()
+            .is_err()
+    );
+    let unsupported = rusqlite::Connection::open_with_flags_and_vfs(
+        &path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        "unix-none",
+    )
+    .unwrap();
+    assert!(unsupported.main_file_identity().is_err());
+    a.execute_batch("ROLLBACK").unwrap();
 }
 
 #[test]

@@ -25,6 +25,58 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Run bounded source-free native HTTP services under an operator ceiling.
+    ExecutionHost {
+        #[arg(long)]
+        ceiling: PathBuf,
+    },
+    #[command(hide = true)]
+    ExecutionWorker {
+        #[arg(long)]
+        address_space_bytes: u64,
+        #[arg(long)]
+        cpu_seconds: u64,
+        #[arg(long)]
+        validate_only: bool,
+    },
+    /// Serve explicitly scoped browser applications on an isolated loopback hostname.
+    ApplicationHost {
+        #[arg(long)]
+        ceiling: PathBuf,
+    },
+    #[command(hide = true)]
+    ApplicationWorker {
+        #[arg(long)]
+        address_space_bytes: u64,
+        #[arg(long)]
+        cpu_seconds: u64,
+    },
+    /// Serve source-free, deny-all browser previews on a separate loopback hostname.
+    PreviewHost {
+        #[arg(long)]
+        ceiling: PathBuf,
+    },
+    #[command(hide = true)]
+    PreviewWorker {
+        #[arg(long)]
+        address_space_bytes: u64,
+        #[arg(long)]
+        cpu_seconds: u64,
+    },
+    /// Serve bounded check/build operations for an explicitly authorized local client.
+    Toolchain {
+        #[arg(long)]
+        ceiling: PathBuf,
+    },
+    #[command(hide = true)]
+    ToolchainWorker {
+        #[arg(long)]
+        address_space_bytes: u64,
+        #[arg(long)]
+        cpu_seconds: u64,
+        #[arg(long)]
+        probe: bool,
+    },
     /// Create a new project (refuses to overwrite an existing directory).
     Init { name: PathBuf },
     /// Check the supported language, types, policy schema and emitted Wasm.
@@ -62,6 +114,10 @@ enum Commands {
         /// A host --policy http.tls certificate/key enables HTTPS.
         #[arg(long, value_name = "IP:PORT", requires = "target")]
         listen: Option<std::net::SocketAddr>,
+        /// Opt-in /PREFIX/OPAQUE_ID browser shell routes. Exposes the public
+        /// pathname as VARTA_ENTRY_PATH through explicitly granted env.get.
+        #[arg(long, requires = "target", value_name = "/PREFIX")]
+        browser_entry_prefix: Option<String>,
         /// Print per-function fuel (self, total, calls) of this run to stderr.
         #[arg(long)]
         profile_fuel: bool,
@@ -253,6 +309,26 @@ fn execute(
     policy_path: Option<&Path>,
     decisions_path: Option<&Path>,
 ) -> Result<i32, ProjectError> {
+    if policy_path.is_some()
+        && matches!(
+            command,
+            Some(
+                Commands::Toolchain { .. }
+                    | Commands::ToolchainWorker { .. }
+                    | Commands::ExecutionHost { .. }
+                    | Commands::ExecutionWorker { .. }
+                    | Commands::PreviewHost { .. }
+                    | Commands::PreviewWorker { .. }
+                    | Commands::ApplicationHost { .. }
+                    | Commands::ApplicationWorker { .. }
+            )
+        )
+    {
+        return Err(ProjectError::Usage(
+            "toolchain/preview/execution/application uses its separate --ceiling; --policy does not apply"
+                .into(),
+        ));
+    }
     if decisions_path.is_some()
         && !matches!(
             command,
@@ -281,8 +357,112 @@ fn execute(
             "--listen requires dev --target browser".into(),
         ));
     }
+    if matches!(&command,Some(Commands::Dev{browser_entry_prefix:Some(_),target,..}) if *target!=Some(DevTarget::Browser))
+    {
+        return Err(ProjectError::Usage(
+            "--browser-entry-prefix requires dev --target browser".into(),
+        ));
+    }
 
     match command {
+        Some(Commands::ExecutionHost { ceiling }) => {
+            let ceiling = varta_project::execution::ExecutionCeiling::read(&ceiling)?;
+            let token = std::env::var(varta_project::execution::TOKEN_ENV)
+                .map_err(|_| ProjectError::Usage("execution credential is missing".into()))?;
+            let host = varta_project::execution::ExecutionHost::bind(
+                ceiling,
+                &token,
+                &std::env::current_exe()?,
+            )?;
+            println!(
+                "varta execution: http://{} host={}",
+                host.address()?,
+                host.host_sha256()
+            );
+            host.run()?;
+        }
+        Some(Commands::ExecutionWorker {
+            address_space_bytes,
+            cpu_seconds,
+            validate_only,
+        }) => {
+            varta_project::execution::run_execution_worker(
+                address_space_bytes,
+                cpu_seconds,
+                validate_only,
+            )?;
+        }
+        Some(Commands::ApplicationHost { ceiling }) => {
+            let ceiling = varta_project::application::ApplicationCeiling::read(&ceiling)?;
+            let token = std::env::var(varta_project::application::TOKEN_ENV)
+                .map_err(|_| ProjectError::Usage("application control token unavailable".into()))?;
+            let server = varta_project::preview::PreviewHost::bind_application(
+                ceiling,
+                &token,
+                &std::env::current_exe()?,
+            )?;
+            println!(
+                "varta application control: http://{}",
+                server.control_address()?
+            );
+            println!("varta application public: {}", server.public_origin());
+            server.run()?;
+        }
+        Some(Commands::ApplicationWorker {
+            address_space_bytes,
+            cpu_seconds,
+        }) => {
+            varta_project::preview::run_application_validation_worker(
+                address_space_bytes,
+                cpu_seconds,
+            )?;
+        }
+        Some(Commands::PreviewHost { ceiling }) => {
+            let ceiling = varta_project::preview::PreviewCeiling::read(&ceiling)?;
+            let token = std::env::var(varta_project::preview::TOKEN_ENV)
+                .map_err(|_| ProjectError::Usage("preview credential is missing".into()))?;
+            let host = varta_project::preview::PreviewHost::bind(
+                ceiling,
+                &token,
+                &std::env::current_exe()?,
+            )?;
+            println!(
+                "varta preview: http://{} public=http://{} host={}",
+                host.control_address()?,
+                host.public_address()?,
+                host.host_sha256()
+            );
+            host.run()?;
+        }
+        Some(Commands::PreviewWorker {
+            address_space_bytes,
+            cpu_seconds,
+        }) => {
+            varta_project::preview::run_validation_worker(address_space_bytes, cpu_seconds)?;
+        }
+        Some(Commands::Toolchain { ceiling }) => {
+            let ceiling = varta_project::toolchain::ToolchainCeiling::read(&ceiling)?;
+            let token = std::env::var(varta_project::toolchain::TOKEN_ENV)
+                .map_err(|_| ProjectError::Usage("toolchain credential is missing".into()))?;
+            let host = varta_project::toolchain::ToolchainHost::bind(
+                ceiling,
+                &token,
+                &std::env::current_exe()?,
+            )?;
+            println!(
+                "varta toolchain: http://{} compiler={}",
+                host.address()?,
+                host.compiler_sha256()
+            );
+            host.run()?;
+        }
+        Some(Commands::ToolchainWorker {
+            address_space_bytes,
+            cpu_seconds,
+            probe,
+        }) => {
+            varta_project::toolchain::run_worker(address_space_bytes, cpu_seconds, probe)?;
+        }
         Some(Commands::Init { name }) => {
             varta_project::init(&name)?;
             println!("initialized varta project: {}", name.display());
@@ -304,6 +484,7 @@ fn execute(
             execution,
             target: Some(DevTarget::Browser),
             listen,
+            browser_entry_prefix,
             profile_fuel,
             view_script,
             ..
@@ -316,6 +497,7 @@ fn execute(
             let mut options = varta_project::browser::BrowserDevOptions {
                 application: execution.app,
                 report_budgets: execution.budget_report,
+                entry_prefix: browser_entry_prefix,
                 ..Default::default()
             };
             if let Some(address) = listen {

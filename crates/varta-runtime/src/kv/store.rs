@@ -15,12 +15,10 @@
 //!    the components; its no-follow metadata must name the pinned file.
 //! 4. SQLite opens that path with `SQLITE_OPEN_NOFOLLOW` (which fails on a
 //!    symbolic link in any component) and without `SQLITE_OPEN_CREATE`.
-//! 5. A read transaction checks the schema; then the process's own open
-//!    descriptors (`/dev/fd`, `/proc/self/fd` on Linux) are compared with
-//!    the ones before step 4: each SQLite connection (the worker's, and the
-//!    lock probe of a writable database) must have opened the pinned file. A swap of the path between steps 3 and 4 makes SQLite
-//!    open another file, which this check rejects (KV opens are serialized
-//!    in the process, so no other open of the same file can interleave).
+//! 5. Each concrete SQLite connection (worker and write-lock probe) reports
+//!    its actual device/inode through a safe read-only file-control wrapper,
+//!    before the schema read or any write. A swapped path is rejected even
+//!    when SQLite reuses a cached descriptor; content changes are not identity.
 //! 6. A writable database probes the write lock (`BEGIN IMMEDIATE` with no
 //!    busy wait): a file another writer holds fails clearly.
 //!
@@ -45,7 +43,6 @@ use denokv_proto::{
 use rand::SeedableRng;
 use rusqlite::{OpenFlags, OptionalExtension};
 use std::{
-    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::Mutex,
     time::{Duration, Instant},
@@ -64,9 +61,6 @@ fn io(path: &str, error: impl std::fmt::Display) -> KvError {
 /// The busy wait of an open database (rusqlite's default, which Deno keeps);
 /// the open-time checks wait for no lock at all.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// KV opens, one at a time in the process (step 5 above).
-static OPENING: Mutex<()> = Mutex::new(());
 
 /// The (device, inode) identity of a file.
 type Identity = (u64, u64);
@@ -155,6 +149,8 @@ impl Drop for Database {
         } else {
             self.sqlite.close();
         }
+        drop(self.probe.take());
+        drop(self.pinned.take());
     }
 }
 
@@ -175,9 +171,6 @@ pub(crate) fn open_with(
     writable: bool,
     before_sqlite: &mut dyn FnMut(&Path),
 ) -> Result<Database, KvError> {
-    let _serial = OPENING
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some((name, parents)) = target.components.split_last() else {
         return Err(KvError::no_file(path));
     };
@@ -205,7 +198,6 @@ pub(crate) fn open_with(
             "the KV database {path} changed while it was opened"
         )));
     }
-    let before = open_descriptors().map_err(|e| io(path, e))?;
     before_sqlite(&host);
     let mut flags = OpenFlags::SQLITE_OPEN_NOFOLLOW | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     flags |= if writable {
@@ -215,12 +207,14 @@ pub(crate) fn open_with(
     };
     let connection =
         rusqlite::Connection::open_with_flags(&host, flags).map_err(|e| io(path, e))?;
+    verify_connection(&connection, identity, path)?;
     connection
         .busy_timeout(Duration::ZERO)
         .map_err(|e| io(path, e))?;
     check_schema(&connection, path, writable)?;
     let probe = if writable {
         let probe = rusqlite::Connection::open_with_flags(&host, flags).map_err(|e| io(path, e))?;
+        verify_connection(&probe, identity, path)?;
         probe
             .busy_timeout(Duration::ZERO)
             .map_err(|e| io(path, e))?;
@@ -228,22 +222,6 @@ pub(crate) fn open_with(
     } else {
         None
     };
-    let after = open_descriptors().map_err(|e| io(path, e))?;
-    // The pinned descriptor itself is no open by SQLite, whatever a rename
-    // of its file did to the change time it shows.
-    let pinned_fd = descriptor(&pinned);
-    let reference = pinned_fd.and_then(shown);
-    // Each SQLite connection opens the file once: the worker's, and the
-    // probe of a writable database.
-    let opened = after
-        .difference(&before)
-        .filter(|(fd, opened)| Some(*fd) != pinned_fd && Some(*opened) == reference)
-        .count();
-    if reference.is_none() || opened < 1 + usize::from(writable) {
-        return Err(KvError::type_error(format!(
-            "the KV database {path} changed while it was opened"
-        )));
-    }
     if writable {
         probe_write_lock(&connection, path)?;
     }
@@ -294,6 +272,28 @@ pub(crate) fn open_with(
         fence,
         abandoned: false,
     })
+}
+
+/// Verify the concrete SQLite connection, even when SQLite reuses a cached fd.
+/// This read-only safe wrapper never duplicates/closes a descriptor or consults
+/// mutable path metadata after SQLite's open. Unsupported VFSes fail closed.
+#[cfg(unix)]
+fn verify_connection(
+    connection: &rusqlite::Connection,
+    identity: Identity,
+    path: &str,
+) -> Result<(), KvError> {
+    let actual = connection.main_file_identity().map_err(|e| io(path, e))?;
+    if actual != identity {
+        return Err(KvError::type_error(format!(
+            "the KV database {path} changed while it was opened"
+        )));
+    }
+    Ok(())
+}
+#[cfg(not(unix))]
+fn verify_connection(_: &rusqlite::Connection, _: Identity, path: &str) -> Result<(), KvError> {
+    Err(io(path, unsupported()))
 }
 
 /// Open (or, writable, create) the database file `name` of `parent`
@@ -367,59 +367,6 @@ fn path_identity(path: &Path) -> std::io::Result<Identity> {
     Ok((metadata.dev(), metadata.ino()))
 }
 
-/// Where the process lists its open descriptors.
-#[cfg(target_os = "linux")]
-const DESCRIPTORS: &str = "/proc/self/fd";
-#[cfg(all(unix, not(target_os = "linux")))]
-const DESCRIPTORS: &str = "/dev/fd";
-
-/// What a descriptor shows of its open file through the descriptor
-/// directory: device and inode (macOS reports its devfs device there, so the
-/// size and change time are compared too). Read with `stat`, never by
-/// opening the descriptor: closing any descriptor of a file releases every
-/// POSIX lock the process holds on it, SQLite's included.
-type Shown = (u64, u64, u64, i64, i64);
-
-/// The regular files the process has open, as (descriptor, shown file)
-/// pairs: a descriptor number the listing itself used before is reused by a
-/// later open, so a new open is a new pair, not a new number.
-#[cfg(unix)]
-fn open_descriptors() -> std::io::Result<BTreeSet<(u32, Shown)>> {
-    let mut numbers = Vec::new();
-    for entry in std::fs::read_dir(DESCRIPTORS)? {
-        if let Some(fd) = entry?.file_name().to_str().and_then(|n| n.parse().ok()) {
-            numbers.push(fd);
-        }
-    }
-    Ok(numbers
-        .into_iter()
-        .filter_map(|fd| shown(fd).map(|file| (fd, file)))
-        .collect())
-}
-
-/// The regular file open as descriptor `fd`, as the descriptor directory
-/// shows it.
-#[cfg(unix)]
-fn shown(fd: u32) -> Option<Shown> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::metadata(Path::new(DESCRIPTORS).join(fd.to_string())).ok()?;
-    metadata.is_file().then(|| {
-        (
-            metadata.dev(),
-            metadata.ino(),
-            metadata.size(),
-            metadata.ctime(),
-            metadata.ctime_nsec(),
-        )
-    })
-}
-
-#[cfg(unix)]
-fn descriptor(file: &std::fs::File) -> Option<u32> {
-    use std::os::fd::AsRawFd;
-    u32::try_from(file.as_raw_fd()).ok()
-}
-
 #[cfg(not(unix))]
 fn unsupported() -> std::io::Error {
     std::io::Error::other("KV databases need a Unix host")
@@ -435,18 +382,6 @@ fn directory_identity(_: &Dir) -> std::io::Result<Identity> {
 #[cfg(not(unix))]
 fn path_identity(_: &Path) -> std::io::Result<Identity> {
     Err(unsupported())
-}
-#[cfg(not(unix))]
-fn open_descriptors() -> std::io::Result<BTreeSet<(u32, Shown)>> {
-    Err(unsupported())
-}
-#[cfg(not(unix))]
-fn shown(_: u32) -> Option<Shown> {
-    None
-}
-#[cfg(not(unix))]
-fn descriptor(_: &std::fs::File) -> Option<u32> {
-    None
 }
 
 /// The schema check, in one read transaction: an empty file is a new

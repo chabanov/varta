@@ -18,3 +18,5 @@ serde_json = { workspace = true }
 varta-common = { path = "../varta-common" }
 # Test-only: the certificate of the TLS listener smoke test.
 rcgen.workspace = true
+# Verify the toolchain's downloaded artifact bytes independently of metadata.
+sha2.workspace = true

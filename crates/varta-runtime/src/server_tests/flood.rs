@@ -32,6 +32,7 @@ fn start(limits: HostLimits) -> Server {
                 value: CapabilityValue::Boolean(true),
             }],
             http: Some(HttpPolicy {
+                delegation: None,
                 limits: Some(limits),
                 tls: None,
                 session: None,

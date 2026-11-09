@@ -794,4 +794,5 @@ mod web_request;
 
 mod kv;
 
+mod delegation;
 mod sessions;

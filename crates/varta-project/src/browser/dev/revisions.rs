@@ -68,12 +68,14 @@ impl Revision {
 }
 
 pub(super) struct Delivery {
+    pub(super) entry_prefix: Option<String>,
     revisions: VecDeque<Arc<Revision>>,
     diagnostic: Option<String>,
 }
 impl Delivery {
     pub(super) fn new(revision: Revision) -> Self {
         let mut delivery = Self {
+            entry_prefix: None,
             revisions: VecDeque::new(),
             diagnostic: None,
         };
@@ -127,7 +129,7 @@ impl Delivery {
         true
     }
     pub(super) fn file(&self, path: &str) -> Option<&File> {
-        if path == "/" || path == "/index.html" {
+        if path == "/" || path == "/index.html" || self.is_entry(path) {
             return self.latest().files.get(INDEX);
         }
         let (id, name) = path.strip_prefix(PREFIX)?.split_once('/')?;
@@ -135,6 +137,11 @@ impl Delivery {
         revision
             .files
             .get(if name.is_empty() { INDEX } else { name })
+    }
+    pub(super) fn is_entry(&self, path: &str) -> bool {
+        self.entry_prefix
+            .as_deref()
+            .is_some_and(|prefix| super::entry::matches(prefix, path))
     }
 }
 

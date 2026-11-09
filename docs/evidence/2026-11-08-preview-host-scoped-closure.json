@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "status": "passed",
+  "kind": "targeted completion after single failed full attempt; not a new full pass",
+  "nativeCli": {
+    "argv": [
+      "cargo",
+      "test",
+      "-p",
+      "varta",
+      "--test",
+      "smoke",
+      "_cli_",
+      "--locked",
+      "--",
+      "--test-threads=4"
+    ],
+    "passed": 12,
+    "log": "target/preview-host-20261108/native-closure.log",
+    "sha256": "d08c679d5194acd882bae20057e0b605f27b6ae0477848781739da26dda962f9",
+    "recoveredFailures": 4,
+    "alreadyPassingRepeated": 8
+  },
+  "remainingCliTailwind": {
+    "argv": [
+      "cargo",
+      "test",
+      "-p",
+      "varta",
+      "--test",
+      "tailwind",
+      "--locked"
+    ],
+    "passed": 7,
+    "log": "target/preview-host-20261108/cli-tailwind-closure.log",
+    "sha256": "7a3f264aa6c46572b470bb48c291bd7633976635cd3fc72114b97e45999cf1c8"
+  },
+  "tailReport": {
+    "path": "docs/evidence/2026-11-08-preview-host-tail-report.json",
+    "sha256": "9c553d5a6512e98557ea1b27282ea263e35c122ea5d385d92e51b410707f1c0a"
+  },
+  "uniqueRustCoverage": {
+    "passed": 4709,
+    "ignored": 26,
+    "calculation": "29 CLI module +374 initially passing CLI smoke +4 recovered CLI smoke +7 remaining CLI Tailwind +4295 non-CLI workspace =4709; repeated8 CLI passes are not added"
+  },
+  "nodePassed": 195,
+  "conformance": {
+    "checked-core-v1": {
+      "counts": {
+        "total": 248,
+        "passed": 246,
+        "knownUnsupported": 2,
+        "unexpectedSupport": 0,
+        "regressions": 0,
+        "infrastructureFailures": 0
+      },
+      "baselineMatches": true,
+      "logSha256": "912190be2e3ec666c59edf14fb719a1ed3f6adf4c9e52ea57556c511d0d80328"
+    },
+    "checked-snapshots-v39": {
+      "counts": {
+        "total": 3,
+        "passed": 3,
+        "knownUnsupported": 0,
+        "unexpectedSupport": 0,
+        "regressions": 0,
+        "infrastructureFailures": 0
+      },
+      "baselineMatches": true,
+      "logSha256": "289bf6ad46cc22dc591ab2f9e03ab7d345aa2774b89646015d446288935e6dc5"
+    },
+    "protected-sessions-v40": {
+      "counts": {
+        "total": 4,
+        "passed": 4,
+        "knownUnsupported": 0,
+        "unexpectedSupport": 0,
+        "regressions": 0,
+        "infrastructureFailures": 0
+      },
+      "baselineMatches": true,
+      "logSha256": "f4c307c782cb84a9fb1ead141692edf03d915ac2772aa2ba4697e4f7337dd0f4"
+    }
+  },
+  "testOnlyCorrection": {
+    "files": [
+      "crates/varta-cli/tests/smoke/preview.rs",
+      "crates/varta-cli/tests/smoke/toolchain.rs"
+    ],
+    "change": "outer readiness recv_timeout20s to60s; explanatory comments only",
+    "productionCodeChanged": false,
+    "productionResourceBudgetsChanged": false,
+    "observation": "all four original failures timed out before host readiness; phase-level cause not separately profiled",
+    "fourWayReadinessProbe": [
+      {
+        "probe": 0,
+        "ready": true,
+        "seconds": 13.673
+      },
+      {
+        "probe": 2,
+        "ready": true,
+        "seconds": 13.672
+      },
+      {
+        "probe": 1,
+        "ready": true,
+        "seconds": 13.674
+      },
+      {
+        "probe": 3,
+        "ready": true,
+        "seconds": 13.675
+      }
+    ],
+    "ownedFailedStartupCleanup": {
+      "ownedStoppedProcessIds": [
+        2268,
+        2269,
+        2270,
+        2271,
+        97451,
+        97452,
+        98977,
+        98983
+      ],
+      "scope": "only private worker-only directories of the four failed tests and four direct startup probes",
+      "otherPathsTouched": false
+    }
+  },
+  "codeFingerprint": {
+    "sha256": "42f457f89b3664fd37bf84c79fa4111aca77b3c966434784f545e8830120ec61",
+    "files": 2657,
+    "excludes": [
+      "docs/",
+      "README.md",
+      ".claude/",
+      "examples/"
+    ]
+  }
+}

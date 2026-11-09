@@ -1,5 +1,7 @@
 # Varta embedding contract
 
+The additive [startup readiness and private-entry contract](application-readiness.md) describes the official local app control host and optional development shell input. It adds no guest import, capability grant, profile or distribution-loader change.
+
 This document is the normative contract for **third-party hosts**: programs other
 than `varta-runtime` that validate and execute Varta-compiled portable Wasm, for
 example a JavaScript host in Node or a browser, or a host on another Wasm engine.
@@ -4044,3 +4046,101 @@ Varta does not modify local certificate trust.
 An alternate native session host must arrange autonomous expiry of leases,
 including requests awaiting I/O without further host calls. Checking expiry only
 on `get()` or on guest execution does not meet this lifecycle guarantee.
+
+
+## Trusted compiler tooling service
+
+The [local toolchain host](toolchain-host.md) is an optional project-tooling
+service, with no new Wasm operation or native-runtime obligation. Its library
+entry point is varta_project::toolchain::ToolchainHost; the trusted embedder
+supplies a ceiling, runtime-only token and trusted executable implementing the
+worker entry point. The CLI pins its own executable; its hidden worker uses a private framed-input
+protocol and parent-lifetime channel, never a user-selected command. Never accept an executable
+path or host configuration from a source bundle. Source is resolved solely from
+owned in-memory files; it cannot access the host filesystem or dependency network.
+
+A server client needs separate, narrowly scoped env.get and net.request grants
+and explicit ceilings. Keep the credential in trusted server state, never in a
+browser loader or distribution. Pin compilerSha256 before application enqueue;
+use a stable Idempotency-Key to recover a lost acceptance reply before cancelling.
+Download needed artifact files before explicit release/terminal TTL. Persistence,
+user/tenant authorization and execution authority belong to the application and
+its separate deployment policy.
+
+
+## Local preview host
+
+`varta_project::preview::PreviewHost` is optional trusted project tooling, separate
+from both compiler operations and ordinary runtime embedding. Supply the explicit
+[preview ceiling](preview-host.md), runtime-only `VARTA_PREVIEW_TOKEN`, a trusted
+executable implementing the hidden validator, and distinct public/control
+loopback hostnames. The executable is copied and resource-probed before serving.
+Never obtain executable paths, protected origins or host grants from an artifact.
+
+Pin authenticated `/v1/info` before enqueue. Upload exact immutable file chunks,
+seal and observe readiness, then create with a stable start key. On lost replies,
+replay that same start before re-importing bytes. On cancellation, reconcile by
+key even if no run id was received. Keep durable terminal state after host receipt
+retention or restart. Keep activation tickets transient while presenting an Open action; navigate
+only on a deliberate user gesture. Exclude URLs from logs, saved state and
+accessibility snapshots.
+
+The public page owns the short per-run cookie/lease, with no application session
+binding. Closing a page ends authority through lease loss; stop/TTL revoke all
+assets immediately. Native execution-only hosts gain no preview requirement.
+Production HTTPS and native OS/service launch need separate accepted contracts.
+
+
+## Bounded native execution host
+
+`varta_project::execution::ExecutionHost` is an optional trusted artifact-only
+service with the explicit [execution ceiling](execution-host.md), separate
+runtime-only credential and pinned executable. It adds no runtime/launcher
+compiler dependency. The embedder must implement the fixed hidden worker entry;
+artifact/source input never selects a command or executable path.
+
+Import the immutable two-file pair in binary chunks and observe validation before
+starting under a stable key. Pin host identity; preserve compiler provenance in
+your own durable build record. Listening readiness is not a health verdict. Stop
+must be reconciled until terminal; server-side stopping does not claim an already
+reaped process. Host restart/receipt expiry do not erase an application's durable
+cancellation decision. The first policy grants only exact ephemeral loopback
+listening; additional I/O and persistent/private application routing need explicit
+separate accepted policies.
+
+### Native delegation control adapter
+
+The optional host-only `http.delegation` ceiling is documented in the normative
+[native contract](native-delegation.md). It adds no guest import and must not be
+confused with a guest-set request header or browser activation API. An enabled
+server adapter verifies the native-injected proof with authenticated asynchronous
+lookup, removes the carrier before application routing, retains delegated mode
+independently of context liveness and never falls back when lookup fails.
+
+### Application-scoped browser adapter
+
+Use the separate [application-host contract](application-host.md) for explicit
+app-data-v1 artifacts, scoped-json-v1 runs, protected native scope metadata and
+per-run browser runtime inputs. Opt in to compiler origins through the operator
+ceiling; source cannot supply arbitrary grants. The native scope extension needs
+the new pinned executable, not the preceding native-only accepted binary. Bind
+Cloud authorization/provenance/CAS before generic host admission. Keep trusted
+control tokens and delegation context out of browser inputs and portable files.
+The local localhost HTTP policy does not provide public TLS hosting or stable
+release promotion. Preserve preview-host deny-all unchanged.
+
+### Reconcile application runs after a service restart
+
+Persist your own logical run/desired state and effect keys before request-bound
+admission. Worker fencing and owner command revisions are separate identities.
+GET a known host run; if its state is lost, close durable data authority and
+reconcile cancel-by-key, then restage and require a fresh owner session before a
+new attempt. Neither 404 nor a repeated POST proves that the original run never
+executed. The accepted host has no boot-epoch or lookup-by-key API; hostSha256 is
+binary identity, and cancellation receipts/tombstones have bounded retention.
+
+Never store native credentials/proofs or reuse one-use tickets to recover. The
+parent actor issuing a ticket must match the stored run generation, including
+a post-await check. The [Cloud checkpoint](evidence/2026-11-08-application-recovery-verification.json)
+is an application-level example of these rules. It retains data/identities but
+does not restore browser heap/cookies or promote an active release.

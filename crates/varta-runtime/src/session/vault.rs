@@ -1,6 +1,9 @@
 //! Memory-only host secrets. Token hashes, staged reservations and active
 //! request leases are bounded by policy; no credential enters KV or a log.
+mod delegation;
 use super::*;
+pub(crate) use delegation::Issue;
+pub(super) use delegation::Proof;
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
@@ -27,6 +30,7 @@ struct State {
     pending: BTreeMap<u64, Pending>,
     serial: u64,
     next_expiration: Option<Instant>,
+    delegation: Option<delegation::Delegations>,
 }
 pub(crate) struct Vault {
     pub policy: contract::ServerPolicy,
@@ -82,6 +86,7 @@ fn cancel(entry: Entry, except: Option<&crate::cancellation::Cancellation>) {
     }
 }
 fn revoke(state: &mut State, token: Token, except: Option<&crate::cancellation::Cancellation>) {
+    delegation::revoke_parent(state, token);
     if let Some(entry) = state.entries.remove(&token) {
         cancel(entry, except);
     }
@@ -108,6 +113,7 @@ fn expire(state: &mut State, now: Instant) {
     for id in expired {
         revoke(state, id, None);
     }
+    delegation::expire(state, now);
 }
 impl State {
     fn serial(&mut self) -> Result<u64, &'static str> {
@@ -135,6 +141,7 @@ impl Vault {
                 pending: BTreeMap::new(),
                 serial: 0,
                 next_expiration: None,
+                delegation: None,
             }),
             changed: tokio::sync::Notify::new(),
         }))
@@ -156,6 +163,7 @@ impl Vault {
                         .entries
                         .values()
                         .map(|entry| entry.expires.min(entry.idle))
+                        .chain(delegation::deadline(&state))
                         .min();
                 }
                 state.next_expiration
@@ -313,7 +321,7 @@ impl Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn vault() -> Arc<Vault> {
+    pub(super) fn vault() -> Arc<Vault> {
         Vault::new(contract::ServerPolicy {
             origin: "https://api.test".into(),
             client_origin: "https://studio.test".into(),

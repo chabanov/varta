@@ -13,6 +13,10 @@ pub(super) fn runtime_inputs(
 ) -> serde_json::Value {
     use varta_common::{CapabilityValue, budget::BudgetKind};
     let mut inputs = serde_json::json!({"application":options.application,"reportBudgets":options.report_budgets});
+    if options.entry_prefix.is_some() {
+        inputs["entryPathInput"] = serde_json::json!("VARTA_ENTRY_PATH");
+        inputs["entryPathPrefix"] = serde_json::json!(options.entry_prefix);
+    }
     if let Some(policy) = policy {
         let mut ceiling = serde_json::Map::new();
         for grant in policy.grants() {

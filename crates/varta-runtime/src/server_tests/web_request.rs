@@ -79,6 +79,7 @@ fn start(options: RunOptions) -> Server {
 fn lowered(limits: HostLimits) -> RunOptions {
     RunOptions {
         http: Some(HttpPolicy {
+            delegation: None,
             limits: Some(limits),
             tls: None,
             session: None,

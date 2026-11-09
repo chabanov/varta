@@ -4,14 +4,26 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use varta_common::budget::TURN_FUEL;
+#[cfg(unix)]
+#[path = "smoke/application.rs"]
+mod application;
 #[path = "smoke/browser_build.rs"]
 mod browser_build;
 #[path = "smoke/browser_dev.rs"]
 mod browser_dev;
+#[cfg(unix)]
+#[path = "smoke/execution.rs"]
+mod execution;
 #[path = "smoke/http_contract.rs"]
 mod http_contract;
+#[cfg(unix)]
+#[path = "smoke/preview.rs"]
+mod preview;
 #[path = "smoke/sessions.rs"]
 mod sessions;
+#[cfg(unix)]
+#[path = "smoke/toolchain.rs"]
+mod toolchain;
 
 fn varta() -> Command {
     Command::new(env!("CARGO_BIN_EXE_varta"))

@@ -7018,3 +7018,70 @@ listening but does not install certificate trust.
 The official development loader supplies the binding; distribution output never
 embeds it. Production requires HTTPS and a separate hostname for untrusted
 previews. See the [complete security and lifecycle contract](architecture.md#protected-sessions-protected_sessions).
+
+
+## Checking and building a supplied source bundle
+
+A trusted local application server may use the optional
+[toolchain host](toolchain-host.md), started by the developer with an explicit
+ceiling and a runtime-only credential. It checks/builds immutable supplied files
+and returns source diagnostics plus a validated browser bundle. Read/pin its
+compiler identity before enqueue, keep an idempotency key for recovery and cancel
+through the explicit operation endpoint when aborting.
+
+This first policy has no package downloads, source-owned configuration, capability
+grants or Tailwind preprocessing. Build does not run code. The cache is temporary;
+artifact persistence and any later preview/execution require separate application
+work and authority. This is not a new varta global or permission on ordinary apps.
+
+
+## Previewing a built browser application
+
+The optional [local preview host](preview-host.md) accepts an immutable official
+browser bundle, independently checks it without running main, and starts a
+separately authorized browser run. Its first policy requires v40 and no requested
+capabilities. TSX/View interactions execute in the official metered Wasm Worker
+on a hostname distinct from Studio/API; networking and persistent data are denied.
+
+The trusted server stages file chunks, seals them and creates a run under a
+stable idempotency key. A deliberate Open action fetches a short-lived one-use
+link. Never save or log that link. Stop ends server authority; the trusted loader
+closes its Worker on lease failure. Run expiry is fixed, including while idle.
+This is browser execution only; native OS applications and services are separate.
+
+
+## Running a built native HTTP service
+
+The optional [local execution host](execution-host.md) accepts a checked v40
+native HTTP Wasm/manifest pair without its sources. Its first policy permits
+only an exact 127.0.0.1:0 or [::1]:0 net.listen request. The operator supplies the
+ceiling and runtime-only credential. No source compiler is exposed to the guest.
+
+Stage/seal immutable bytes, start with a stable key, then observe typed listening
+readiness. Call the reported loopback address using an appropriately authorized
+trusted client. A request trap does not terminate other requests; a startup trap
+prevents readiness. Stop and expiry end the process and wait for OS reaping.
+Browser-only source toolchain output is a different format/policy; native HTTP
+source compilation and persistent private service deployment remain follow-up.
+
+## Local app-scoped browser data (existing v40, explicit build policy)
+
+The separate [application host](application-host.md) accepts app-data-v1 source
+builds only when the compiler operator lists the exact localhost origin. With
+`application:{publicOrigin:"http://localhost:8810",access:"read"}`, source can
+read its one nonsecret injected URL and use the existing protected client:
+
+```ts
+export async function main(): Promise<void> {
+  const base = varta.env.get("VARTA_APP_DATA_URL");
+  const response = await varta.session.fetch(base + "/state");
+  console.log(await response.text());
+}
+```
+
+The application defines the suffix and JSON schema. The host narrows the request
+to this run's path; other runs, ordinary fetch and secret environment access
+remain denied. Read-write additionally permits JSON PATCH/POST within that same
+namespace. Native parent credentials/context are never source inputs. Existing
+local-only builds and deny-all previews do not gain these permissions. This
+local policy does not yet mean public hosting or a stable promoted address.

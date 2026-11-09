@@ -184,3 +184,6 @@ pub fn descriptor(text: &str) -> bool {
 
 #[cfg(all(test, feature = "std"))]
 mod tests;
+
+#[cfg(feature = "std")]
+pub mod delegation;

@@ -1,0 +1,530 @@
+{
+  "schemaVersion": 1,
+  "capturedAtUtc": "2026-11-08T11:36:47.684039+00:00",
+  "status": "local-durable-artifacts-accepted",
+  "scope": "Varta-only verified artifact KV storage, fenced publication and private binary streaming; synthetic SDK identity, no execution or production deployment",
+  "sourceDigest": "f34a39b2efdb86f639b19c826ce66fba8a00519ee53632faa6f651abb5cf7cc3",
+  "sourceDigestAlgorithm": "SHA256 sorted relative path + NUL + bytes + NUL; Markdown excluded",
+  "sourceSha256": {
+    ".editorconfig": "a383480676f6cbf905cd1fac05e4c400bb6fede931ee7a7b26f15f150cf46a24",
+    ".gitignore": "0be19fe514c72d44a77610087341c0fd007dbb48450a0bbb8e6aa93d6089671b",
+    ".prettierignore": "cc45edeaec037e96080650a2de828486a7e1ebd022d09e15390f11a620c62cb0",
+    ".zed/settings.json": "e34c3b4d4a1df5583b6caeb419e62a28e813c63daf83a93fa39a01b68827e4b4",
+    ".zed/tasks.json": "4b188202b0dae75392baf43c77918d7dc6b29636add131c28a8df299d7ed3c0d",
+    ".zed/varta-config.schema.json": "0c65d6caa0ab94fa22b99e10c092ea162a2877972f9bd8b45b11f410a55a9bfe",
+    "apps/server/http/body.ts": "a8987fa89b7ecbbda94a718f68134915cd55c1c8666fd8a704fd19dab28d421b",
+    "apps/server/http/errors.ts": "e884fb6dad0c847f413d49cbd52a6b654d363f9bd95341439bc2aeac8aa2f9c2",
+    "apps/server/http/headers.ts": "659bf023d4be957ce0ad86aa9d13d828ec64db03ada35094ff8bdb277986f054",
+    "apps/server/http/responses.ts": "f7faf9ff6c46bc5475b3cf23694167614299010bae87d20e94692292454a9524",
+    "apps/server/http/router.ts": "e95d459cf508e5c054cfeca52466a9ef64d54a6e2143a07c167c63c819bdc792",
+    "apps/server/http/session.ts": "ffbdedea822970c2ffebc10ce321bdbe100338f3a12a535ee64b86bba1ec3db0",
+    "apps/server/http/web.ts": "82e5120f83878cd6e0f525a2201179eade936bd95dc2da5d7947f92106fd5689",
+    "apps/server/main.ts": "47ebf658e4f2ce742990c4e213f7431e04b8cd825bb549972b45e0c79e4d8b2d",
+    "apps/server/modules/access/identity.ts": "9838b4c2f89a274b6df6cb225d675fb324250322ed68b0504795be08b2bf50f4",
+    "apps/server/modules/auth/routes.ts": "0e4d032c6107859b73fcf178e8b08b81e7129472fa272dee40e18dcb46e0cc88",
+    "apps/server/modules/auth/service.ts": "17115af6a348e4dc478997741006ada7f2e0d9e2d3f01a305cef2f3f67764363",
+    "apps/server/modules/auth/session.ts": "c26601b8ab302af4c1b1a2f6cc949d60ea346557558f9da39ae2c2d7d6619f21",
+    "apps/server/modules/jobs/repository.ts": "06669e48f9556e696bef3ac4723d88f15d9a21657fed98ffdea16fdaf311e181",
+    "apps/server/modules/jobs/routes.ts": "f43e2d837f191328804f40932b0f1f378572f4f3322a1bee0d8ac1fecb4b0d51",
+    "apps/server/modules/projects/records.ts": "d8cf724a6d3dad2c9adac79675315fe884a45edff831725632c9da59f6c58068",
+    "apps/server/modules/projects/repository.ts": "df930f8e6d48fe1a34636fb2edc5f77d2a00f9a21c5491a7f42bd82880b5bb09",
+    "apps/server/modules/projects/routes.ts": "ebdb6822a424a7eec2e6681663641aaf8b6f360ef14c50d4681efa186b6360bc",
+    "apps/server/modules/source/records.ts": "d6f70f01c572a261573355ed97f85e18d3c1cf6fb4e3be44d1e4fe95287914cf",
+    "apps/server/modules/source/repository.ts": "dba9922163a6c12ac0e305b8af3d57676dc45606a5b10f37bbc6f7232712c283",
+    "apps/server/modules/source/routes.ts": "a09cb3544d171487a18ee189a2e260c5d9b49fe000e200e7ed5a0b562ba4f512",
+    "apps/server/runtime/toolchain.ts": "da99c67c56f02f5886e6f66f2aeb4ad8ed554713a8a834ae4bba35ad51a0eb7d",
+    "apps/studio/api/auth.ts": "4c6390f0a24e38d408ed5a3c6c483e14f63d0d11164e148816cc3035db2ea914",
+    "apps/studio/api/client.ts": "9ca54c371a267977b0ccec3743d9691420d663e7174f3636a3a07a56e508e0a5",
+    "apps/studio/api/jobs.ts": "3ff50a574e4cde06abff8b59b86f8a2980fe0f61c98a3e90a91fabe0adb3f93a",
+    "apps/studio/api/session.ts": "09f5afadd15f289402fa9b067dd6cf3bc2c6877e3bf9083d1d95846228186ac9",
+    "apps/studio/app.tsx": "2e3aea06e7620518a04f7b1245fff2e4891318076ef1f47acff0d520e2f389f9",
+    "apps/studio/bootstrap.tsx": "762aed288508ee835aa1f20eed0932d167f36e11e18a2d4977019162c024ce8f",
+    "apps/studio/components/build-panel.tsx": "4ca5b659cc7bfad58884b3722f8d6aa34b3c7220d6dd41ba1a745af24e8ed909",
+    "apps/studio/components/source-editor.tsx": "9e8ff2ea5a05d8dc8cde44f4127c95c5b8a5fe5c84252f1c16a82acdac81615e",
+    "apps/studio/main.tsx": "c762f9e2c69251f2f5a92a94e5fb31e226583375cb4c08b79f52d068d2e9a989",
+    "apps/studio/screens/editor.tsx": "f2367b6d749ffb7302a2c753430e72658951ea6812a11ac5c8701014e60289dd",
+    "apps/studio/screens/projects.tsx": "fd3499224dd505ca3e955b830a9b5d3674a22c7b4e9748f028bb47b5a1757b9d",
+    "apps/studio/screens/sign-in.tsx": "5013d874b3c343f05b62dafe0e4fb472c0c71ac23b808122bf46cb51ef0d0db9",
+    "apps/studio/screens/start.tsx": "53e5ade8842cbd3f679b6cbf932d127b8b6aae28bf751169d51cbb3e1bf851b4",
+    "apps/studio/state/jobs.ts": "2f0251342306b45ab0d50df774d9a8bbaf07ce01d0b49567a0998f31661bb54d",
+    "apps/studio/state/projects.ts": "a933cd49636bd171eafcef516e58ba05847fc8220168ceff9e39688236fa4d5c",
+    "apps/studio/state/session.ts": "b8ad066cb51b52dbf2698ffab68605d07d17a4cd560790e0138e726d9c436ccc",
+    "apps/studio/state/source.ts": "a7516cb67ff1d07c0879a8f452b660faba917451424655d03bb6c27aceda473e",
+    "apps/studio/styles/app.css": "39a02f9dfe91488b59b73a4203178426a965d13d5e6199964c5423ae90fe3e59",
+    "apps/worker/jobs/loop.ts": "1c7e9af03a09985717d74b29609805477ef8158ab3fbb0accaaea01c21c2e8e4",
+    "apps/worker/jobs/process.ts": "37ad7759f0103e73da71f5e0e3ea2612a0f6117f93be03653507c07904290dbf",
+    "apps/worker/main.ts": "0ed7c4a43e1fe0fca61a8e363622e473cf03c15bd1b1fd2c0a9a4112fbe5dd13",
+    "package-lock.json": "681a26df1758085ae2c63f7d465090209e84d36fe74ceab800c3f5ff8621f10a",
+    "package.json": "7251e124e63f280b3fbda3f4e3be715cd7adf577a6275e58b7d61e1c662ab18a",
+    "platform/artifacts/catalog.ts": "9ad51f8785014669b6609f37201fbef3fbcb1544ccc75da8d6f28af8a219a4f6",
+    "platform/artifacts/read.ts": "4e3eb44f1db0d205c258e9f9207d2b9d273182360517e0bfbc6d54f1960d65b1",
+    "platform/artifacts/records.ts": "954f0d5db4f737a3c75c3608fea885d5229273e919b4ee04e44745ddd992df55",
+    "platform/artifacts/sha256.ts": "9d29740313d0382981388276507045a3c350397fed980b3900a53c65a0ec5797",
+    "platform/artifacts/staging.ts": "3371e15de2fbf1c9bb0fe7fec620c5bf911ee7f8163332cfd32480ed333b5fea",
+    "platform/engine/compiler.ts": "da13b093eb9bc4172b0cdc8c6a7181e36d316ebfede96f69360456209074b71f",
+    "platform/engine/configuration.ts": "05959305746e29fa9a368fb742ed8473ea93220b2f0a472c4aae1527309a58ce",
+    "platform/engine/contracts.ts": "ed7f31b85f250ac1f28b5af158350106308092143d84a49889220b264ab80a1a",
+    "platform/engine/normalize.ts": "1be506ac11744da977be693a37b726a898009f8399c5161d7ae5d4b88c094dd0",
+    "platform/engine/result.ts": "79f5849295038856972288e7a9fe787318ceac8c6ee06b378bec4530958f88f9",
+    "platform/engine/transport.ts": "1d208aefba419e35ee02d49897b2e8fff0fa4c93d8eaf43458f426577c59edc2",
+    "platform/engine/wire.ts": "9416b1140baf022921232f1b5b39be41942a40fdf3bee83edfceb55b346b7638",
+    "platform/jobs/queue.ts": "6c59ec88b9271b0e24abde8f59eb1e960190f81df1d3cf11e2930c85ba1acbd3",
+    "platform/jobs/records.ts": "76150185451cb1001076f33cd1426cffe210dc443cee2e2ce3b3427568bdbb72",
+    "platform/storage/keys.ts": "44b4480b0014a969b5876998818f6f789ee48d41413698e044d90ac63d77b530",
+    "platform/storage/kv.ts": "489df6942d07e62396b9bfaec7094710a8d55f6d0df185cd6a9df977dae2fa0d",
+    "platform/uarp/client.ts": "6f2541f18ae01574a3685f9917a82efa688e526280c3ecf2868fc7a8fb9f8307",
+    "platform/uarp/identity.ts": "3d50a82e4aadb8b106e2f9012785f3cc104754777537def836742df5200d2eb2",
+    "platform/uarp/llm.ts": "972f582c6c640987f3e0fc9455b8e532cd25cc0130258907cfc952d54623d811",
+    "platform/uarp/quotas.ts": "d8805b530873ee80b2c5abd839d071c48fa64ddd03d8f16633c321db7557d48e",
+    "shared/contracts/auth.ts": "4f43614f2c8e848c7ce283310e9dbe1ded7d2985e8da4e4628323f43c5b21e5f",
+    "shared/contracts/jobs.ts": "cb84536aa5164dcb11a4fe969c03a303f75f021632b93e88394f6a0bb647d3d6",
+    "shared/contracts/platform.ts": "cd20931c6fa144ae7dfd1f0fc9d4e73d2b44fe44c1a05ef6d39cad666fb4b66d",
+    "shared/contracts/projects.ts": "c692a7c0b69139e7e48916b4636c6b498f03893ac51bfb69542ebfa64e646b6d",
+    "shared/contracts/source.ts": "a9189b2a0287e063034171ed8cf40cd6c7619e8739c5bcba94789512e79b1b6f",
+    "shared/errors/http.ts": "16d5b3c79d015bfabd050ff3163149cc6cf3ad1df5a2c46f07757f8bf94c0c5e",
+    "shared/models/artifact.ts": "e0d7c7b128dbf3c79a82a1377b68456cf1106f56f11a86a1c187e2dda88c5092",
+    "shared/models/job.ts": "f8a832003f19f865217c84099204e7cb78a285d35742bb5fa447b16027e7908d",
+    "shared/models/project.ts": "1bf5b6125ad7d00918611977e55affa89cc2ce08fa6e5d0e9f427c7032c3872e",
+    "shared/models/source.ts": "a807dfee907415ede8f4f6a5769c1b58e0a62411fc5db1c9bd23e0074d6d00a2",
+    "shared/models/user.ts": "73e7933a35bb1342ddc92dfc8afd88179735fd44c1c1ceeb4bf667a592649d09",
+    "shared/validation/auth.ts": "d38dc3e23b830a517732711b7eb5ee1f8744cbadaa78c0e8730a858ceca6b160",
+    "shared/validation/jobs.ts": "97f0f3ff1c81f7723751d6df5c08af623a3f110dddb34f09e61a045d2aebffe5",
+    "shared/validation/object.ts": "93072619fdb52d0a634796e4e1f852db27f688beeeec1983028ccff97bfbc9df",
+    "shared/validation/projects.ts": "be574e2d867d1bc212f464a9f1238ae7a98a4bf3874a08cd89720f94983d430f",
+    "shared/validation/source.ts": "d1c8d6103bf2525b4418e0f6dce7527966e46dcb0771073e9fec968f3014ae08",
+    "tests/configs/integration/artifact-hash.json": "7f2a046ca9386d6c3f9fbebd47a010af02f3841bb29c7205deda621f3b5d5a85",
+    "tests/configs/integration/artifact-reopen.json": "cbf230703f3a41f6dce93dc2983c6ef46429c12a93e0ddaac0bf79d19ac8d14f",
+    "tests/configs/integration/artifacts.json": "c00be8ff5461ec50e74e453d3db2d94433f379bcdfbd0fcd2eb24ef450e878b2",
+    "tests/configs/integration/auth-http-server.json": "9464a9390f8262f5bdb47ebaf9a770a310219d3634b5120511fbc47156ee656e",
+    "tests/configs/integration/auth.json": "73d3691ddb85dff1cf6a4475b48f77ae7eb3cc8a76c5c0c11f3c775296ecd87e",
+    "tests/configs/integration/jobs.json": "422d495a54e93598d39ed2010d9464f77636d13804870068738679167cc7fde1",
+    "tests/configs/integration/platform.json": "8a7d9298d2124c3c4669fe1901f6bd731edac17b6936a9249833b446e2caf1f2",
+    "tests/configs/integration/projects.json": "5d8b69a30403fb57eefa96f432cd10c15baf1fdf6c8558d6f6e2e71f8e7971be",
+    "tests/configs/integration/source.json": "71e50a7aba54a267be07d1feab8182aa6d024c56ff4a3cc99e42897bbc831565",
+    "tests/configs/integration/storage-retry.json": "28de2aa3b663527c5962ec9ec8afc6fb6a35cd8c1c2927a913ea31a03f5c79f1",
+    "tests/configs/integration/studio-auth.json": "2226e7029f7860774c0c5c87a0d6798478bcb4570379a5919e65d82671fa36ee",
+    "tests/configs/integration/studio-jobs-view.json": "4b7c0698c903bca359ced0c526695ff59bf7b069a92075a7ac3cbfad89170d75",
+    "tests/configs/integration/studio-jobs.json": "ee7b5e224e9f67982b87c2966cb2b4c5ecac2eb36009217c6c238b3e4f50e921",
+    "tests/configs/integration/studio-projects.json": "1304e6726e729ce4adfb77b8e4a6e26f71dc5b33d2ca690d113516174e72ae9f",
+    "tests/configs/integration/studio-view.json": "a73c975b8d4a82c5deda057221b17fc0663dcae56999f71d213a410cbbc58fc6",
+    "tests/configs/integration/toolchain-native.json": "f2b43d6f8e402c4be1d5d6a7fdad4b0176fad1faafb20d336ec673b1caf98d27",
+    "tests/configs/integration/toolchain-server.json": "11b5be1bc954a6e71ea6b4c7b3cfbac20b3de11e1e00fa67e159548b8e168a69",
+    "tests/configs/integration/toolchain-studio.json": "ac69ba411db2e40445785c3d2008d2afcbeab7fbf815db6d006c414b1d35f966",
+    "tests/configs/integration/toolchain-worker.json": "aea6aed6699eeedc1f0a018ce5c8b6d36f310fc7da630b29400b427fcb0adeb8",
+    "tests/configs/integration/toolchain.json": "30c9a5b1604961da471d1ecf76c9188aa72d06a9a22e4f74093cdd0c22f300fa",
+    "tests/configs/integration/uarp-llm.json": "496f6b376eeb089f7cce7e8e27ccecbb5a1bceb9068aa5598c8c121da18ece22",
+    "tests/configs/integration/uarp-sdk.json": "927369a397ada27f439807bcd7eb56174226af48f0d5d052c98f42e801812081",
+    "tests/configs/manual/projects-http.json": "846fac9614d80b76baca01c19ce98fed48fd55a0d373de4be38b7f96e732b41c",
+    "tests/configs/manual/projects-server.json": "d91729860cd0edcf09d9bad5c7df39b0b218b5d95f779180cffe33b66d315ac9",
+    "tests/configs/manual/uarp-account.json": "d7cbfc0bcc29ea93ebbbca38a613eb1c4fa8e7253baf4bbf3c539f830bc27921",
+    "tests/configs/manual/uarp-agent-audit.json": "b6e93fe3b10fbe0305a1c7ffbe03dc02fc5df74c6cc921f13fb2c3d0a33bd0c6",
+    "tests/configs/manual/uarp-agent-run.json": "a24b2ff93d8446ab04629b18e0ba8239cfffd331fd49fffba054ad56c2ac8984",
+    "tests/configs/manual/uarp-llm.json": "84043f10b7a85c4460d8a677c5ba437cdf077734ed99998baf989164c18d3b64",
+    "tests/configs/manual/uarp-quota-diagnostic.json": "0b464100b3ab09ee5de384eba3208f15d44df77df379782950cd65d4aa8234fd",
+    "tests/configs/regressions/browser-mount.json": "ae9169cfe6d779f880d83c5bfdecfb26da1901f716dd459865bcbc686f01b63e",
+    "tests/configs/regressions/http-binary.json": "689f6ddf52f0a6b4f5c81ac524b82c78e33e1e4acee796bfdfd31f41f17f56ad",
+    "tests/configs/regressions/http-kv-client.json": "26ab5d8c22755a3ddf72f115499b7f4d2dd4f15d202d3e9ab5ef2aa1a1e29f65",
+    "tests/configs/regressions/http-kv-reader.json": "3f82d4321f7e2b6b54bfcc69768d0856535bb8a0e330a759d99763db36390566",
+    "tests/configs/regressions/http-kv-record.json": "c7081ada3084528ca4ec2b0a25a7413fafd7be357ba27cf083dcb051d975c603",
+    "tests/configs/regressions/http-kv-reopen.json": "8c045c94224e7abb94740a37c65af9375e9967a1c9fec6dd9c39f6d6df17ae4c",
+    "tests/configs/regressions/http-projects-kv.json": "e5ce772a1773474ecc6b4b88d948687783e1a6ea679eeaf0c52598be73aa06dd",
+    "tests/configs/regressions/kv-opener.json": "96bb6d472dbce645ca1e1bc1ca4535418a12e8d649d41f38bda29f36e9ff8692",
+    "tests/configs/regressions/optional-nullable-record.json": "433e2b4dd69ff00eeb90007f7b16aff939a3001a5fbc8cb02ac7e4297f70d2c8",
+    "tests/configs/regressions/sdk-quota-counters.json": "4272b8816beb3d412f6c7d0b1b5372216825bc6a50b89c0d59e976086ee398e0",
+    "tests/configs/regressions/sdk-request-text.json": "bfb6c2f0603da606e26aec4e291273fed36de40e34946e35fbe2396d366fc36b",
+    "tests/configs/regressions/sdk-tuple-callback.json": "3044dad59f00c1ae751ceddfdafbd521f0b8fe043b5a7d10dee8a0fd87d8de46",
+    "tests/fixtures/auth/http-server.ts": "016fe68f1086163476a0aee14ae015b569f39c383454a159ea9a7938aa9f6c72",
+    "tests/fixtures/auth/transport.ts": "c86e2e84ffd2e614f1e681a9583af9d625a980d5720f63b3bacc8db36c1e871b",
+    "tests/fixtures/studio/app.tsx": "88a4bcba47e4727117dcdce441767994eab40d5df4aea1656fe26588ee0b59a6",
+    "tests/fixtures/studio/jobs-app.tsx": "ab46defc20e0fbc388f1f9eb11ae4a42ae194312718fe14476d9e9f7b228f0c3",
+    "tests/fixtures/studio/transport.ts": "125171bd2ad120c1bcff986db6a800ae2419bb53894772b2d53e9932139ffdaa",
+    "tests/fixtures/toolchain/artifact.ts": "f682dbed9bcb5825c731019c617bf9d93138f48d5459f3ec6d4dbae4a86ac1cc",
+    "tests/fixtures/toolchain/reopen.ts": "46c5e6e6e0c676f849f81ae6b78da3953cc8f9b0ed5d2a21880898dc6b174659",
+    "tests/fixtures/toolchain/server.ts": "f840f5afc13cf3b696922c5b8ff11a1ae93db94ebe1dc1f455b55a01576d0537",
+    "tests/fixtures/toolchain/studio.tsx": "1bb7a4d5d4ef1ac05a9674179060a80a777e5859b27c7552b34986c8b885a196",
+    "tests/fixtures/toolchain/transport.ts": "ff22492ac2ed61355b7205823e327d856c079c3ddc599487899f3b5490361958",
+    "tests/fixtures/uarp/auth.ts": "3db098d096de5efd76d527cf5ecbef28d133d8da0d1f1b45a1377a000d493021",
+    "tests/fixtures/uarp/completion.json": "5f5ab5c266d9eeb36944b258f8808fb4b3b7052312e1315b0b89123b789e742c",
+    "tests/fixtures/uarp/identity.json": "88cb3c993bbd913588a0c6e4858efc6c95e1f38859857f72fd12876004255f60",
+    "tests/fixtures/uarp/llm-models.json": "0c9ff556bc4a4370054098c6f04aa67db3b7420d68fe5afdb8dc40e98d8b8640",
+    "tests/fixtures/uarp/models.json": "f1c84b32173c69172fb33679d93ec87cc59532dc1e97f198e2ea46796ede5119",
+    "tests/fixtures/uarp/quota.json": "716e72fe11a4ada505b8ce3437e17cfd4d5b095cf7d1eece811e0d9df6f8ebaf",
+    "tests/integration/artifact-hash.ts": "57e927f8fb850a9e1b93bb36e750a8bc8dad6093ad37db76ebf6af3b9c313196",
+    "tests/integration/artifact-reopen.ts": "379fa927d53408298c523ce2b9e4b0ad291de39004150fe4d255dde22b0456c9",
+    "tests/integration/artifacts.ts": "627052943c5475b7268e6cce54c4ad40a4a5459e3a0c9d6bd5c1e14488cdcbcf",
+    "tests/integration/auth.ts": "80336f32b14ecffc29d6df68ff3086c29d6d583e634ad1661b590a1e5ab05c31",
+    "tests/integration/jobs.ts": "d4b72bb8c4ff1c95e95d813ae2295cc688275f8eaf6d578f3758362e0c05e832",
+    "tests/integration/platform.ts": "1ee0ae99ccd4fd50ed127096785842a64967d0426222168d2917bb00f20b637f",
+    "tests/integration/projects.ts": "0abbd80c14bc72554b9509e5d005461e16312c80e71ac230cecfcb125daa06f2",
+    "tests/integration/source.ts": "265d07645d69606f5b900e478a98f0f81b44c176204f08d594e16f5f1f4c6080",
+    "tests/integration/storage-retry.ts": "0fffc511ca682158c9e2e965e55547d2bc54459b0301ad51b5c350764f418452",
+    "tests/integration/studio-auth.ts": "08f9f996e6edf15e57bb43e73214469eba21fe229bd6a39a3463dcd10d750a05",
+    "tests/integration/studio-jobs.ts": "01ac58960ffc6e193364f2eecbc5fc051c4f1926798936cc8b270f39b77105ba",
+    "tests/integration/studio-projects.ts": "a60d03033651ab1733ca573a2137276437fab7e09d385aa80cd3436755c9725e",
+    "tests/integration/toolchain-native.ts": "cbdf8b763aa8b1fb66e9af377c1b30e3ff0610f061f2a76d3224afcf962c6638",
+    "tests/integration/toolchain.ts": "c98fc0582427fc20aab11c5d5beaf3ce3d51688636c0865a4e85e82b1dc92048",
+    "tests/integration/uarp-llm-direct-fixture.ts": "488a15ad0c53661c62eef4b303217bb1ce0ebecba226e76e40342c7bd545130e",
+    "tests/integration/uarp-smoke.ts": "09cdf9560c0097da41e89d8015fa90ae32c1db110773d6238dda8722df944694",
+    "tests/manual/projects-http.ts": "09fdd935b6e10980ce8a06f7c6a8cda869ccb03147077d23418aaa1dcd52a6da",
+    "tests/manual/projects-server.ts": "3b56672c325f238896647bef7e35533014b622f5b20da32c608a8134209b7955",
+    "tests/manual/session-audit.ts": "c5b7216ebf0ac272cbb89a63969225fb044f5b328c52aca47af38acde8d6b303",
+    "tests/manual/uarp-account.ts": "e91b834b5b0671d9c2535da2019df49b6cbac8e124d334700140424bd253de2b",
+    "tests/manual/uarp-agent-audit.ts": "7168e2ed56c7ff39814af8a18c289edc5b44ebe8dc51c57e8ea0be2a681c9443",
+    "tests/manual/uarp-agent-run.ts": "7a6b5bd4546aedc434f74f04ff567b40f9a22214e8c4f604937d6dfbddb500be",
+    "tests/manual/uarp-llm.ts": "d7e21342f4563104e12d89a031e53beb64abd1c0e9da20e40f626eac9e7c5d4f",
+    "tests/manual/uarp-quota-diagnostic.ts": "ccba4f8aa7c6f89b67bdc3f27ac8537d233083c6cbcd7665e047b8f207d56e21",
+    "tests/regressions/browser-mount.tsx": "97f6048a0900113c27cbdbf476cea01add4d90d8a068dae6bbc68e4104fa0c3b",
+    "tests/regressions/http-binary.ts": "ca472e4dc6394578e9499df2c3b0a9db5e522aaec1868ec3c1a22fc583072b60",
+    "tests/regressions/http-kv-record-reader.ts": "21e9e4fccdbf84ce125eeec56ea49998174a628467f10ebbc91192ce2a8918b4",
+    "tests/regressions/http-kv-record.ts": "4189f247855f08731031929fa4027eb222790b421a810c06c69ea8f040699188",
+    "tests/regressions/http-kv-reopen.ts": "dcdfd786cc860a7cecda0443e4c1dfec6bacacf32dcf2038c7a156223e8fc288",
+    "tests/regressions/http-projects-client.ts": "80decda4283de64f11fcde50b82afb8c1b5e4971e6f63efcf8a2531c9cde5ebf",
+    "tests/regressions/http-projects-kv.ts": "837a40b241449f20ce206830de0ac1e0a0e657db9631ce9a96f9d5fe9c1fb0cf",
+    "tests/regressions/kv-opener.ts": "47bc2f18c6aa555388e83ee3c34bd71c658f34a24803ce59eeed695e0531b5c8",
+    "tests/regressions/optional-nullable-record.ts": "538506eb8b7f11fc0234f507c744860944f22cd50b7c6b56c09bfda37bb0b4d0",
+    "tests/regressions/sdk-quota-counters.ts": "49e9998fae4149207af9fd45a139e9df59c6f5675b28b6e4464668f297276f21",
+    "tests/regressions/sdk-request-text.ts": "7aecac5dbdeadd3b0ace5f0f0f9bcfa63e433808ceb16575a70ed5b1a6e03d07",
+    "tests/regressions/sdk-tuple-callback.ts": "1273bb95ad3622420602ca8f0fe0e658b792a0d03d50de5db8955f5284b85bf8",
+    "tests/scenarios/studio-build-unavailable.json": "7c5956060671986fd9f869e333d2e0b43efa77d92b201c2e43f8c23bb436199c",
+    "tests/scenarios/studio-edit-project.json": "5942fb57555ad4281ef311e561b532d2af605fb636eb5c746158efb7811f1a3a",
+    "tests/scenarios/studio-empty.json": "75cec604394fd5dc9e36612ad95fc1ae0b4b7186385f527105269102af921563",
+    "tests/scenarios/studio-list-projects.json": "44dac4c6ba3b0d7c75401bc93bd6a9e1b2f824d8e96fd88ea33dbf1302842a66",
+    "tests/scenarios/studio-save-idea.json": "d46a57fb655aa26b5847ab905949ee1b3a1c59a79ad5ff4c48d44293675e3635",
+    "tests/scenarios/studio-source-file.json": "44155dcf46a3387850b8960332494b1cc0acfd117d049c2e02b94273cd74d038",
+    "tests/scenarios/toolchain-studio.json": "1d18f66b600a26932fe6a33f13a05d377912b1bcf25b73e2824db886918ace34",
+    "tools/format": "a709c29415f41ffab171574c5d436b3841db416fa7c23cf250d607ce8e7808c1",
+    "tools/session-acceptance": "14f97c4b21a963bbaaebbb10f78520f644cbf99fccbe5bec2d8af100081587a8",
+    "tools/toolchain-acceptance": "fc66c59ddd875e8046e999ea0a604304e68ef8070b11a6944fbed627f0f06ba7",
+    "tools/varta": "962b1d1203576c168a20c6da6daed72be8c64cdfd0b1db3e3fdd894339d6c2bf",
+    "tsconfig.json": "43ebbb3778b0a50151155eda1ae7f35c9d0cd8e9693a1b82316f7e95ea86731b",
+    "types/varta-assets.d.ts": "f7d06f269dabbd961962f6af9796557467074328130ceeb0a4e5637161965a3c",
+    "varta.config.json": "9caad8c0bb62c0000fff3d42bdd6d1125c920a37af9e41c6f7d9b7da2a15346c",
+    "varta.server.config.json": "aa898785c8878e982bc2b76be4a6ba152512afaaf46b69f77b8c53e86cc96155",
+    "varta.worker.config.json": "70179c04b5bdad27fb4e4075c8b4dc0424d7bb7c47d06fa1e323142eea4b2cd3"
+  },
+  "acceptedCliSha256": "2097c42d17d31514cc5e7148f147c3a483aafe33d222c2b0d8286397feeb244f",
+  "sdkSourceSha256": "01a09b25d0894ba9087fcc1dbeb5320524bb0c802a5630c5ee3e663e5d2d73be",
+  "verification": {
+    "offline": {
+      "storage-retry": {
+        "exitCode": 0,
+        "passGroups": 3,
+        "completed": true,
+        "failed": false
+      },
+      "toolchain": {
+        "exitCode": 0,
+        "passGroups": 4,
+        "completed": true,
+        "failed": false
+      },
+      "studio-jobs": {
+        "exitCode": 0,
+        "passGroups": 3,
+        "completed": true,
+        "failed": false
+      },
+      "jobs": {
+        "exitCode": 0,
+        "passGroups": 5,
+        "completed": true,
+        "failed": false
+      },
+      "auth": {
+        "exitCode": 0,
+        "passGroups": 4,
+        "completed": true,
+        "failed": false
+      },
+      "source": {
+        "exitCode": 0,
+        "passGroups": 4,
+        "completed": true,
+        "failed": false
+      },
+      "artifact-hash": {
+        "exitCode": 0,
+        "passGroups": 2,
+        "completed": true,
+        "failed": false
+      },
+      "projects": {
+        "exitCode": 0,
+        "passGroups": 5,
+        "completed": true,
+        "failed": false
+      },
+      "artifacts": {
+        "exitCode": 0,
+        "passGroups": 5,
+        "completed": true,
+        "failed": false
+      }
+    },
+    "offlinePassGroups": 35,
+    "actualNativeCases": {
+      "compilerSha256": "2097c42d17d31514cc5e7148f147c3a483aafe33d222c2b0d8286397feeb244f",
+      "viewArtifactCatalog": {
+        "sha256": "28ea94abbc049e1d6c77661c39a5c6a0576cf024488f69ec7c9aa151c83273eb",
+        "files": [
+          {
+            "path": "app.manifest.json",
+            "sha256": "1b7d06a13f75a403c4464d1847a2a8fb02416b135e05f520840321d9ae003287",
+            "bytes": 131
+          },
+          {
+            "path": "app.private.wasm",
+            "sha256": "bdd995117500e997997b38a7a94edac59607e8e772c5341bd91307ca861a6a8c",
+            "bytes": 111260
+          },
+          {
+            "path": "app.wasm",
+            "sha256": "976288e728a8612b1926b225404651e2fa6edcbab0bea3048dc303a533b0593e",
+            "bytes": 77453
+          },
+          {
+            "path": "index.html",
+            "sha256": "6b660524257b4a20c68d92946781a0218425820eef3cdd83b7ffbe2ff7ccd07b",
+            "bytes": 993
+          },
+          {
+            "path": "varta-host.js",
+            "sha256": "98036fbc7f588555ba69d4130919a25f6f1e9897557db8763c6d176db61b97a2",
+            "bytes": 225563
+          },
+          {
+            "path": "varta-session-policy.wasm",
+            "sha256": "a7cb5683b5a41e773b373895a4fbab9c31d40142ce3464863636e9ed41797f62",
+            "bytes": 39339
+          },
+          {
+            "path": "varta-view-engine.wasm",
+            "sha256": "5a90abef0fa0b573a93350bad52c99fa3b92f6494a36ce966ab6477be0f739f0",
+            "bytes": 709532
+          },
+          {
+            "path": "varta-worker.js",
+            "sha256": "e2f32a903967e0cc02eda5c40e5867c9eb57e9d5277e9598ee9dfbceb7722662",
+            "bytes": 432691
+          }
+        ]
+      },
+      "durableReopenAfterHostStop": true,
+      "artifactCatalog": {
+        "sha256": "ff19e93ad4ebde007130bbb594bf273d77345d52667df3613b51d8c024d7b0b1",
+        "files": [
+          {
+            "path": "app.manifest.json",
+            "sha256": "489df4bafa09fe84d97432407f49b6bbb69ad7e347f3fd8f99591f12b1627860",
+            "bytes": 130
+          },
+          {
+            "path": "app.private.wasm",
+            "sha256": "fd166d5df08f95e4f97630f715668df024d09156d489a8faf057c56628d2a354",
+            "bytes": 18410
+          },
+          {
+            "path": "app.wasm",
+            "sha256": "e291369145679e5611f35a2e5e3c9b225aeae06ad3a6b59752a965c519237856",
+            "bytes": 10950
+          },
+          {
+            "path": "index.html",
+            "sha256": "78de6fddbae019a55bdf9d7191d18413638bb36d7a4ed37c2350e3294b71d53b",
+            "bytes": 993
+          },
+          {
+            "path": "varta-host.js",
+            "sha256": "4be355fb856d6d2b8ad7c45464da652fb7e96f0c9df92c1b546f626c52d03f5f",
+            "bytes": 225377
+          },
+          {
+            "path": "varta-session-policy.wasm",
+            "sha256": "a7cb5683b5a41e773b373895a4fbab9c31d40142ce3464863636e9ed41797f62",
+            "bytes": 39339
+          },
+          {
+            "path": "varta-worker.js",
+            "sha256": "e2f32a903967e0cc02eda5c40e5867c9eb57e9d5277e9598ee9dfbceb7722662",
+            "bytes": 432691
+          }
+        ]
+      },
+      "compilerRequestSha256": "63f6f347e4c576b4435d959300caa347a7c63cce7fa436fbe52a6f3f8c6e7bd4",
+      "cases": [
+        "check",
+        "build",
+        "error",
+        "lost",
+        "cancel",
+        "view"
+      ],
+      "status": "passed",
+      "credentialWritten": false,
+      "providerOrOtpCalls": 0,
+      "toolingHostOwnedByLauncher": true
+    },
+    "configuredHttpStudio": {
+      "compilerSha256": "2097c42d17d31514cc5e7148f147c3a483aafe33d222c2b0d8286397feeb244f",
+      "status": "passed",
+      "uiCompilerCredential": false,
+      "realProviderRequests": 0,
+      "buildSha256": "ff19e93ad4ebde007130bbb594bf273d77345d52667df3613b51d8c024d7b0b1",
+      "scope": "real HTTP/Studio/KV/compiler; synthetic authenticated UARP identity; headless UI"
+    },
+    "allCatalogFilesDownloadedOverHttpAndHashed": true,
+    "postToolingStopReopenProcess": "no net/env grants; per-file and catalog independently verified from KV",
+    "httpBudgetAndChunkProbe": {
+      "routes": {
+        "/json": {
+          "status": 200,
+          "bytes": 11
+        },
+        "/binary": {
+          "status": 200,
+          "bytes": 3
+        },
+        "/hash": {
+          "status": 200,
+          "bytes": 64
+        },
+        "/hash-large": {
+          "status": 500,
+          "bytes": 15
+        },
+        "/large": {
+          "status": 200,
+          "bytes": 300000
+        },
+        "/oversized-chunk": {
+          "status": 500,
+          "bytes": 15
+        }
+      },
+      "allOwnedChildrenStopped": true,
+      "expectedBudgetAndChunkRefusals": true
+    },
+    "rootChecks": {
+      "studio": true,
+      "server": true,
+      "worker": true,
+      "defaultWorkerUnavailable": true
+    },
+    "typescriptNoEmit": "passed",
+    "formatting": "passed",
+    "editor": {
+      "configurationFiles": 44,
+      "allValid": true,
+      "actualZedFilePatternsMatched": true,
+      "unknownPropertyRejected": true,
+      "taskCount": 24,
+      "allTaskTargetsExist": true,
+      "manualServiceTasks": 0,
+      "sourceStorageVisible": true
+    },
+    "configuredUiAudit": {
+      "savedArtifactConfirmationVisible": true,
+      "savedConfirmationCount": 1,
+      "attachedIds": 26,
+      "duplicateIds": 0,
+      "checkSucceeded": true,
+      "buildSucceeded": true,
+      "cancelled": true,
+      "scope": "headless TSX accessibility/tree from actual HTTP fixture; not a Chrome or visual screenshot acceptance"
+    },
+    "documentation": {
+      "markdownFiles": 25,
+      "localLinks": 166,
+      "validTargets": true
+    }
+  },
+  "storage": {
+    "maxArtifactBytes": 8388608,
+    "maxFiles": 64,
+    "chunkBytes": 8192,
+    "chunkDigestWrittenAtomically": true,
+    "publicationAtomicWithJob": true,
+    "orphanGcResumable": true
+  },
+  "negativeCases": [
+    "bad file hash",
+    "bad aggregate catalog",
+    "missing staging",
+    "truncated/extra binary bytes",
+    "path traversal/case collision",
+    "anonymous/foreign owner/tenant/revoked identity",
+    "cancelled/stale fence",
+    "interrupted orphan cleanup",
+    "first chunk corruption before headers",
+    "later chunk corruption aborts before damaged bytes"
+  ],
+  "implementationFindings": [
+    "explicit 32KiB output stream solved oversized Uint8Array response chunk refusal",
+    "whole-file pure TS hashing before headers still exceeds aggregate HTTP request budget despite timer yields",
+    "final 8KiB KV chunks and atomic chunk digests verified in fresh stream pulls; no budget increase or engine edit"
+  ],
+  "cleanup": {
+    "run": {
+      "allOwnedChildrenStopped": true,
+      "otherProcessesTouched": false,
+      "credentialWritten": false
+    },
+    "studio": {
+      "allOwnedChildrenStopped": true,
+      "otherProcessesTouched": false,
+      "credentialWritten": false
+    }
+  },
+  "privacy": {
+    "realProviderCalls": 0,
+    "otpRequests": 0,
+    "realUarpRequests": 0,
+    "realCredentialsWritten": false,
+    "uiCompilerCredential": false,
+    "sdkPatched": false,
+    "engineEditedByCloud": false,
+    "engineFullRerunByCloud": false
+  },
+  "limits": [
+    "no ZIP/browser file-save UX",
+    "no preview/start/stop/source execution",
+    "no release activation/publication/domain/deployment",
+    "no billing/storage quota or published-artifact retention",
+    "prior accepted metadata-only jobs are not stored artifacts"
+  ],
+  "priorReceipts": {
+    "docs/evidence/cloud-toolchain-adapter-checkpoint.json": "3739b74d83c989584427052192889915552fc28615ac0cc67915c0bb05630ace",
+    "docs/evidence/cloud-toolchain-engine-full.json": "19fe5be68ddabde8049f338eabd18ba8e2f926426e6d04d9e21935bcd0ba974b",
+    "docs/evidence/cloud-jobs-foundation.json": "d28c65f9982d9029f2a91152ab042c42c02e7d384ee919e4c718a3205828ca28",
+    "docs/evidence/studio-https-uarp-acceptance.json": "9f1bd29c0227c8d1c0c3061388ede4561188e6392efdc927114cedf963ad6e64"
+  },
+  "logSha256": {
+    "dist/acceptance/artifacts/artifact-hash.log": "0d41240a9121789eda78ac4312ce9fc3ed3f59005f5bfd86e83824862ae848c1",
+    "dist/acceptance/artifacts/artifacts.log": "b9202227ce7eb7b051fd3f1e2ce8bfa9b095d6aeb25403bfe16b79fccf22408c",
+    "dist/acceptance/artifacts/auth.log": "815cb06c6a58faf0245ee80dc7d58222c1f2613d6f5efc3aa3e21ed0361391e2",
+    "dist/acceptance/artifacts/check-server.log": "1f31d250d6364adf1d62a92afe857227296eccd7c5f7260da6d2df41548bf9e9",
+    "dist/acceptance/artifacts/check-studio.log": "5b84318659139c1f837d6470c749ae6b2875036d1ad7b9f690577701c57fdafd",
+    "dist/acceptance/artifacts/check-worker.log": "f4a5836563bb8f83bc749b544c0017d87bf28b08cb6864aa3901be8bd15ed161",
+    "dist/acceptance/artifacts/default-worker.log": "05b7c7588f929574b8b06a8418638ddaac1d84e117d7e597e201766afe831fcf",
+    "dist/acceptance/artifacts/editor-summary.json": "d1917d406a161027a868838bc5ea13052eb80262e3791daea7859e065cefdc96",
+    "dist/acceptance/artifacts/format.log": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+    "dist/acceptance/artifacts/http-binary-summary.json": "abe839731fa43e53b31a06ae1f687e29a664256ffcca2fe317638108391af4d6",
+    "dist/acceptance/artifacts/jobs.log": "081d1d0f8a35243ba4550441b9bc62a2988d92b153245f22ce6b82b815a0c238",
+    "dist/acceptance/artifacts/offline-summary.json": "6e5ed9abe25c68a81489df4fb4b2756d4c5b89c6ce5fbf1340e2e17554369d74",
+    "dist/acceptance/artifacts/projects.log": "723a6e4bc4f653120b68e505f59191f2258db16d65a9aa581d85c19bb1ca787c",
+    "dist/acceptance/artifacts/root-summary.json": "bf19b5be5b88458a0156bf1325fa7d327b23b3b19b33c5e1bbe0040376a44421",
+    "dist/acceptance/artifacts/source.log": "40f46dcc3f27b51cfe48a4fea12e18c6bf78ea40f41fc665cb3821e305804f24",
+    "dist/acceptance/artifacts/storage-retry.log": "357a38d373a615727dc13699e7b64e7016d003be70eb46b5b8c99509a1407f02",
+    "dist/acceptance/artifacts/studio-jobs.log": "fd2bab845586c6df927355724754572f2e21c85931c623ca1e421bfef451fbe8",
+    "dist/acceptance/artifacts/toolchain.log": "233f5abb66943eb5ba9b0f038319a29c61c90a8886f079a10a2946737d83a866",
+    "dist/acceptance/artifacts/ui-summary.json": "320325e7013a1723efb4afd9e051c76fbaf757d24fb19056f7d45db9d00d21dd",
+    "dist/acceptance/toolchain/build.log": "187283f9e66932aef2e2d1c948fab47ff0df564a55f1cf1960960f7adc9ae4aa",
+    "dist/acceptance/toolchain/cancel.log": "ea388eeb7951bdc4e6a296de104a317ff18ddff85d71919aa38bf83b37b1f2cb",
+    "dist/acceptance/toolchain/check.log": "4302d8529896271f5f6e608089c1936dc3fbe95e3502f2d51fe684c93d8c2f35",
+    "dist/acceptance/toolchain/error.log": "703696fb348bb962e79edb2d7427089e4d8e38af9df40cc15d06589fca3787e9",
+    "dist/acceptance/toolchain/lost.log": "f73733363a3beb606711c2b5f727f7f18a7637f5cdcaed300d94b019c090913e",
+    "dist/acceptance/toolchain/reopen.log": "be207bcf04b2f913098b16a70df02ce4278a22c8c458ee8eedce3dfaef97dd59",
+    "dist/acceptance/toolchain/studio.log": "3ec061510b32117e29f8c6e4c77780cf7d2d640a9d758ac768c540961f606d6b",
+    "dist/acceptance/toolchain/view.log": "e1f480156bcab7e65213ba6005856802c3422deeacdca56207619cac5c99fd42"
+  }
+}

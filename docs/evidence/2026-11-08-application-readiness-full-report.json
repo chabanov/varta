@@ -1,0 +1,253 @@
+{
+  "scope": "full",
+  "before": {
+    "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+    "sourceSha256": "a9ff0f2f32ae0dea0314d9a1dce84f6f7eb7acc2a6b7e078bfa95158c83ac4d6"
+  },
+  "testThreads": "4",
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 3.763,
+      "log": "01.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "check",
+        "-p",
+        "varta-common",
+        "-p",
+        "varta-compiler",
+        "-p",
+        "varta-runtime",
+        "-p",
+        "varta-artifact",
+        "--lib",
+        "--locked"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 111.709,
+      "log": "02.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "check",
+        "-p",
+        "varta-common",
+        "-p",
+        "varta-intrinsics",
+        "-p",
+        "varta-kv-codec",
+        "-p",
+        "varta-intl",
+        "--no-default-features",
+        "--lib",
+        "--locked"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 0.184,
+      "log": "03.log"
+    },
+    {
+      "argv": [
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        "scripts/build-kv-codec.py",
+        "--check"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 0.1,
+      "log": "04.log"
+    },
+    {
+      "argv": [
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        "scripts/build-view-engine.py",
+        "--check"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 0.148,
+      "log": "05.log"
+    },
+    {
+      "argv": [
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        "scripts/build-session-policy.py",
+        "--check"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 0.076,
+      "log": "06.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "build",
+        "-p",
+        "varta-launcher",
+        "--bin",
+        "varta-runtime",
+        "--locked"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 65.012,
+      "log": "07.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 92.637,
+      "log": "08.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "build",
+        "--workspace",
+        "--all-targets",
+        "--locked"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 85.63,
+      "log": "09.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--locked"
+      ],
+      "exitCode": 0,
+      "passedTests": 4735,
+      "seconds": 1571.318,
+      "log": "10.log"
+    },
+    {
+      "argv": [
+        "node",
+        "--test",
+        "crates/varta-common/browser/fuel.test.mjs",
+        "crates/varta-project/src/browser/dev-client.test.mjs",
+        "crates/varta-project/src/browser/environment-abi.test.mjs",
+        "crates/varta-project/src/browser/environment.test.mjs",
+        "crates/varta-project/src/browser/event-sources.test.mjs",
+        "crates/varta-project/src/browser/kv-store.test.mjs",
+        "crates/varta-project/src/browser/loader.test.mjs",
+        "crates/varta-project/src/browser/network-replay.test.mjs",
+        "crates/varta-project/src/browser/network-transport.test.mjs",
+        "crates/varta-project/src/browser/network.test.mjs",
+        "crates/varta-project/src/browser/permission-broker.test.mjs",
+        "crates/varta-project/src/browser/permission-prompt.test.mjs",
+        "crates/varta-project/src/browser/permission-store.test.mjs",
+        "crates/varta-project/src/browser/reasons.test.mjs",
+        "crates/varta-project/src/browser/scheduler.test.mjs",
+        "crates/varta-project/src/browser/session-channel.test.mjs",
+        "crates/varta-project/src/browser/session-soak.test.mjs",
+        "crates/varta-project/src/browser/timers.test.mjs",
+        "crates/varta-project/src/browser/ui-timing.test.mjs",
+        "crates/varta-project/src/browser/view-depth.test.mjs",
+        "crates/varta-project/src/browser/view-engine.test.mjs",
+        "crates/varta-project/src/browser/view-fonts.test.mjs",
+        "crates/varta-project/src/browser/view-model.test.mjs",
+        "crates/varta-project/src/browser/view-naming.test.mjs",
+        "crates/varta-project/src/browser/view-policy.test.mjs",
+        "crates/varta-project/src/browser/view-radio.test.mjs",
+        "crates/varta-project/src/browser/view-select.test.mjs",
+        "crates/varta-project/src/browser/view-session.test.mjs",
+        "crates/varta-project/src/browser/view-text.test.mjs",
+        "crates/varta-project/src/browser/worker-effects.test.mjs",
+        "crates/varta-project/src/browser/worker-lifecycle.test.mjs"
+      ],
+      "exitCode": 0,
+      "passedTests": 196,
+      "seconds": 0.864,
+      "log": "11.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "run",
+        "-p",
+        "varta-conformance",
+        "--locked",
+        "--",
+        "--json"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 121.203,
+      "log": "12.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "run",
+        "-p",
+        "varta-conformance",
+        "--locked",
+        "--",
+        "--suite",
+        "conformance/snapshot-v39/suite.json",
+        "--require-supported",
+        "--json"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 4.824,
+      "log": "13.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "run",
+        "-p",
+        "varta-conformance",
+        "--locked",
+        "--",
+        "--suite",
+        "conformance/session-v40/suite.json",
+        "--require-supported",
+        "--json"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 5.242,
+      "log": "14.log"
+    }
+  ],
+  "after": {
+    "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+    "sourceSha256": "a9ff0f2f32ae0dea0314d9a1dce84f6f7eb7acc2a6b7e078bfa95158c83ac4d6"
+  },
+  "sourceUnchanged": true,
+  "skipped": 0,
+  "knownGaps": 0,
+  "passed": true
+}

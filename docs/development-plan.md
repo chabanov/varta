@@ -2,7 +2,219 @@
 
 ## Status
 
-**Current checkpoint — Studio stabilization and local HTTPS acceptance verified.** The
+**Current accepted local package — startup readiness and stable private entry.**
+The additive [contract](application-readiness.md) supplies fresh native/client/lease evidence and host incarnation, plus an opt-in trusted Studio path input. Cloud separates draft selection, candidate initialization and active generation, denies candidate writes until a fresh startup observation passes the final atomic switch, and bounds reentry to new scoped executions.
+
+Actual automated Chrome verifies candidate denial, 41→42→stable-entry43→new-release44→full API/host/worker restart→fresh Studio session45. All four native executions are distinct. A separate read-only process retains 45/revision5, the same resource/address and stopped approval; all owned test processes close. The SDK HTTP boundary is synthetic; no live UARP, OTP or LLM call is part of this acceptance.
+
+One completed-package full gate passes 14/14 commands, 4735 Rust tests (26 ignored), 196 Node tests and all three compatibility baselines (core 246/248 plus two known unsupported cases; v39 3/3; v40 4/4). All 396 Cloud source files, 76 final evidence files and 61 archived partial outcomes independently match their frozen hashes; 75 Cloud groups/18 targets, actual semantic-link rendering and final affected default checks pass. See the [package receipt](evidence/2026-11-08-application-readiness-verification.json) and [full report](evidence/2026-11-08-application-readiness-full-report.json).
+
+**Next coherent package:** editor deployment/update/rollback controls over the accepted API boundary. Schema migrations, test-data copy, quotas/backups and production TLS hosting remain separate work. The stable URL is an authenticated entry into a fresh bounded execution; readiness establishes startup rather than business health or permanent VM availability. Source profiles, guest ABI, budgets, default compiler pin and production admission retain their existing meaning.
+
+**Previous coordinated Cloud package — durable application runs and restart recovery.**
+Cloud now persists a logical run, desired state, immutable artifact/resource pins
+and fenced attempts. Its preparation worker stages artifacts and reconciles known
+host runs; unknown run IDs or lost host state require durable revoke/cancel,
+restaging and a fresh verified owner session. No saved credential, native parent
+reference, request proof or ticket recreates authority after vault restart.
+
+Actual API/host/worker shutdown and restart retain logical/application/resource/
+release identities and data. Normal Chrome writes 41→42, recovers through a new
+session/attempt, then writes 42→43. Old session 401, two-parent ticket 403/200,
+confirmed native cancellation and fresh read-only 43/revision 3 pass. Cloud runs
+15 scoped targets/62 groups; all 357 source files and 38 logs independently match.
+See the [recovery checkpoint](evidence/2026-11-08-application-recovery-verification.json).
+This adds no engine code or new full gate; the accepted pair and preceding full
+report below remain unchanged. Stable private routing and active promotion are
+not enabled by recovery alone.
+
+**Previous accepted local package — application host and explicit source policy.**
+The [application-host contract](application-host.md) implements separate
+`application-host`/`scoped-json-v1` runs and `app-data-v1` compilation. Immutable
+canonical artifacts receive only per-run env/net.session authority, one-use
+activation, fresh applied-frame readiness and native parent checks/cancellation.
+Normal Chrome works with unrelated localhost cookies; duplicate own cookies and
+cross-run/path/method expansion fail. Existing local-only/deny-all preview, guest
+ABI/profiles, production budgets and browser distribution bytes retain their
+meaning.
+
+Root native/Chrome and coordinated Cloud normal-profile acceptance pass:
+actual compiler/worker/KV artifact, separate artifact staging, fresh owner/native
+scope admission, read 41/click 42, confirmed cancellation and Worker close. A fresh
+read-only process retains 42/revision 2. All 333 Cloud source files and 58 logs were
+independently matched; 13 offline targets pass 50 groups. See the [Cloud checkpoint](evidence/2026-11-08-cloud-application-host-adapter.json).
+
+One [full gate](evidence/2026-11-08-application-host-full-report.json) passes
+14/14 commands, 4731 Rust tests (26 ignored), 195 Node tests and all three
+compatibility inventories on unchanged sources. The [package receipt](evidence/2026-11-08-application-host-verification.json)
+pins the accepted executable pair and code. Only documentary annotations follow.
+
+The preceding application-host and recovery checkpoints remain immutable evidence for their exact code; the new receipt above records the additive readiness/entry package.
+
+The earlier package checkpoints below are historical, not remaining prerequisites
+for the local application-host boundary now accepted above.
+
+**Previous accepted package — host-only native session delegation and Cloud adapter.**
+The [native delegation v1 contract](native-delegation.md) is implemented: explicit
+host policy, authenticated issue/lookup/revoke, bounded opaque scopes and literal
+method/path relay. Native proof and cancellation attach before guest initialization.
+Delegated provenance remains immutable after revoke/expiry/logout/rotation and
+scope receipt collection; parent credentials remain in trusted request RAM.
+Existing v40 APIs are reused without guest imports or ABI/profile changes.
+
+Actual native buffered and streaming Web Response acceptance passes with one
+worker. Cloud's [accepted async native adapter](evidence/2026-11-08-cloud-native-data-adapter.json)
+passes synthetic fresh SDK plus real HTTP/KV read/write, late-CAS no-write,
+revoke/logout/forgery/restart refusal and persistent owner data. All 299 files and
+19 logs matched independently at the checkpoint; subsequent Cloud work is a
+separate package. The preceding bounded-retention lifecycle checkpoint is kept
+separately. Production grants and browser preview deny-all remain unchanged.
+
+One final [full gate](evidence/2026-11-08-native-delegation-full-report.json)
+passes 14/14 commands, 4725 Rust tests (26 ignored), 195 Node tests and all three
+compatibility inventories, with unchanged sources. The [package receipt](evidence/2026-11-08-native-delegation-verification.json)
+pins the retained native executable, code fingerprint and exact scope. Only
+documentation/evidence annotations follow; historical reports stay immutable.
+
+Cloud's separate [request-bound control checkpoint](evidence/2026-11-08-cloud-data-channel-control.json)
+also passes 36 offline groups and actual native issue/exact replay/revoke with
+fresh SDK and persistent KV. All 307 source hashes and the aggregate digest
+matched independently at 18:06 UTC, before later app adapter changes. Original
+TTL persistence, receipt CAS and durable-revoke-first semantics are application
+code, not engine business policy. This historical checkpoint does not cover the
+new browser adapter.
+
+**Previous package — bounded local native HTTP execution, one final full gate passed.**
+The separate [execution host](execution-host.md) is implemented under an agreed
+Cloud contract. It accepts only an immutable native Wasm/manifest pair, v40 HTTP
+contract v2, and the exact ephemeral loopback net.listen request. Source, native
+machine code, filesystem, environment, persistent storage, outbound network and
+session authority are outside this first policy. Runtime/launcher stay free of
+compiler dependencies; the trusted CLI implements the source-free worker entry.
+
+Readiness is typed startup/listening evidence, separate from application health.
+Cloud retains identity, owner checks, release/data records and CAS promotion.
+Stop and TTL remain stopping until OS reaping is confirmed; lost acceptance can
+be reconciled by a stable key. Parent loss ends the execution process. A native
+GUI, persistent service deployment and arbitrary source-selected commands are
+not part of this increment. Five unit cases and two real native CLI scenarios
+pass, together with 112 project library tests, 14 related CLI scenarios,
+dependency boundaries and strict affected Clippy. One final full gate passes all
+14 commands, 4716 Rust tests (26 ignored), 195 Node tests and all three
+compatibility inventories, with unchanged sources.
+
+Cloud's current private-app/resource/data work is independent. A stable browser
+resource channel is not available: the protected session binding currently names
+origins, not app/resource/owner/release scope. The first source toolchain policy
+also emits no capability requests. Before a real private web-app launch,
+implement an explicit build/request policy, an engine-owned scoped browser channel and
+fresh guest readiness before atomic release promotion. The preview deny-all
+policy remains unchanged. Saved release candidates must not be labelled active
+without that accepted runtime boundary. The native source toolchain target is
+likewise a separate follow-up; browser-only compilation cannot emit HTTP service
+bundles.
+
+The [single immutable full
+report](evidence/2026-11-08-execution-host-full-report.json) passes 14/14
+commands, 4716 Rust tests (26 ignored), 195 Node tests, core 246/248 with two
+known unsupported cases, v39 3/3 and v40 4/4. Before/after sources match. This
+new full covers the combined working tree, including preceding preview
+corrections; it does not relabel the older failed preview report. See the
+[execution receipt](evidence/2026-11-08-execution-host-verification.json).
+
+Cloud's separate [applications
+foundation](evidence/2026-11-08-cloud-applications-foundation.json) is accepted
+as saved candidate/data groundwork; 268 source hashes were independently
+verified. No active private launch is implied. The agreed [application-channel draft](application-channel-draft.md) describes
+the complete browser boundary. Its native parent/provenance building block and
+Cloud lookup adapter are now accepted above; explicit compile/request policy,
+browser activation and production lifecycle wiring remain before stable private
+launch. Keep the production adapter default-off meanwhile.
+
+Cloud's separate [data-channel authorizer](evidence/2026-11-08-cloud-data-channel-authorizer.json)
+is accepted as application groundwork: 278 source/config/test/tool hashes match
+independently. It implements immutable intent/revocation, scope and selected-release
+checks, exact resource routes and write CAS fences. Delegated provenance remains
+delegated when its live context disappears; owner/binary authorization cannot be
+used as fallback. Five new scope groups and 38 regression groups pass, with real
+HTTP default-off and owner-data restart checks. Production uses the unavailable
+adapter and returns 503; launch remains disabled. At that authorizer checkpoint the intent ledger had a technical
+cap of 16 lifetime entries per project; Cloud's subsequent bounded-retention
+work has a separate immutable checkpoint, followed by the accepted native adapter
+above. The native parent/relay implementation is now a new package under focused
+acceptance above; browser launch remains a later boundary. This historical
+checkpoint does not cover the newer Cloud lifecycle work.
+
+**Previous package — local preview/browser launch implemented and accepted, with scoped completion after one failed full attempt.**
+The [preview host contract](preview-host.md) is agreed with Cloud: independent
+bounded native service, pinned executable, staged immutable binary import,
+canonical official-browser admission, explicit deny-all operator ceiling,
+replay-first starts, cancel-by-key fencing and fixed run TTL. The public hostname
+is distinct from Studio/API, including cookie scope; ports alone are insufficient.
+One-use fragment activation yields only per-run HttpOnly custody. Trusted browser
+bootstrap uses a unique claim and short renewable lease; stop/expiry immediately
+revoke server authority and the bridge closes the Worker when scheduled.
+
+Cloud owns durable per-owner artifact bytes, preview rows, queues, leases and
+cancellation reconciliation. Its earlier durable-artifact checkpoint
+independently verified per-file/catalog hashes, bounded KV chunks and offline
+reopen after compiler shutdown; this does not grant execution. The preview
+adapter and Studio headless Open-link acceptance pass (one link, 28 unique IDs;
+after activation zero links, 27 unique IDs and one synthetic opened URL). Engine
+acceptance covers real Chrome TSX rendering, a trusted click, protected-cookie
+isolation, denied fetch, Worker stop and guest-trap reporting pass on the pinned
+candidate.
+
+The sole full attempt passed nine commands, then four CLI tests exceeded their
+outer 20-second readiness wait. Only those test helpers changed to 60 seconds;
+product code and admitted budgets stayed unchanged. Twelve CLI scenarios, the
+seven remaining CLI Tailwind tests, 4295 non-CLI Rust tests, 195 Node tests and
+all three compatibility inventories pass. Combined unique Rust coverage is 4709
+with 26 ignored. Full and completion sources each stayed unchanged during their
+own run. The original full is still failed; no second full was run.
+
+Cloud follow-up includes displaying guest health/trap details separately from
+asset readiness, a durable history retention quota/index, and archive/download UX.
+Current history is bounded per page, not globally retained-data bounded. Engine
+preview imports/runs/receipts remain bounded by the host contract.
+
+After this package: production HTTPS/isolation and release acceptance, a
+separate native OS/service execution contract, broader capability policies and
+dependency/ Tailwind source preprocessing. Existing UI/GPU work remains on its
+own roadmap. No additional OTP or live-provider requests belong to this local
+acceptance. See the [package
+receipt](evidence/2026-11-08-preview-host-verification.json).
+
+**Previous checkpoint — local toolchain host and headless Studio queue acceptance verified.**
+Immutable supplied-file bundles now pass through the existing compiler and browser
+artifact validator in bounded trusted workers. Exact compiler pinning, server-only
+authentication, explicit ceilings, cancellation and lost-response idempotency are
+implemented. Cloud's headless native TSX Studio, authenticated HTTP API and
+separate native application worker pass check/build/type-error/cancel and access-denial acceptance
+on the final pinned CLI. Six direct native cases also pass, including TSX/View
+bundle generation without executing submitted main. Cloud keeps ownership, durable
+queues, retries, leases and fencing; no domain code enters engine crates.
+
+A native KV blocker found during integration is corrected: concrete SQLite file
+identity replaces process-fd deltas, handles cached descriptors, and rejects
+swapped files before schema reads/writes. Paired read-only vendor patches retain
+existing versions, storage format and locks. Forty KV/HTTP cases pass (3 ignored
+helpers), including 400 parallel requests with zero identity errors. Five toolchain
+library tests, three CLI integration tests, architecture boundaries and strict
+affected Clippy pass. One final full run passes all **14 commands, 4700 Rust
+tests (26 ignored), 195 Node tests**, core 246/248 with two known unsupported
+cases, v39 3/3 and v40 4/4. Source fingerprints match before/after. Only
+documentation result annotations follow; code inputs remain identical.
+See the [wire and limits](toolchain-host.md) and
+[package evidence](evidence/2026-11-07-toolchain-host-verification.json).
+
+Durable artifact byte custody, preview/deployment/execution authority, package
+resolution and Tailwind preprocessing remain separate scopes. The first policy
+is local-only browser compilation, never execution. At that earlier checkpoint Cloud had no independent
+artifact byte ingest/hash or preview. Later custody and preview work is recorded above. This package adds no new Chrome/HTTPS or
+live-provider acceptance; the preceding HTTPS receipt retains its own scope.
+
+**Previous checkpoint — Studio stabilization and local HTTPS acceptance verified.** The
 implementation is complete: official browser dev serves TLS 1.3 through the
 shared native TLS setup; native vault expiry autonomously cancels requests
 blocked on I/O. The browser reset stress covers 4096 cycles; native reservation,
@@ -28,13 +240,13 @@ The normal successful request-code response remains unaccepted; retain safe
 error classification/response diagnosis as follow-up without automatically
 sending another OTP. The delivered-email recovery is independently verified.
 
-The next separate Cloud/engine integration is a bounded trusted toolchain host:
-immutable source/dependency bundle → check/build diagnostics and validated,
-content-addressed artifact, with cancellation and an explicit host ceiling.
+The preceding separate Cloud/engine integration was the bounded trusted toolchain
+host described above: immutable source bundle → check/build diagnostics and
+validated, content-addressed artifact, cancellation and an explicit host ceiling.
 There is no guest toolchain API today. Keep compilation out of runtime/launcher
 and Cloud jobs/ownership in the application; building never grants execution.
 Execution start/stop requires its own artifact/grant/budget boundary. This is a
-planned package, outside the completed stabilization gate.
+separate package, outside the completed stabilization gate.
 
 Next independent scopes remain production deployment acceptance, durable encrypted
 credential custody with multi-process ownership, native protected clients, and
@@ -5020,7 +5232,7 @@ production fuel budgets and unbounded host calls).
 | `x = x + i` loop | 10,000 | 140,669 | 140,689 | +0.01% |
 | 3-char string `===` | 4,000 | 305,002 | 304,970 | −0.01% |
 | string `===` literal | 4,000 | 132,964 | 132,932 | −0.02% |
-| `s = s + "x"` | 800 | 50,392 | 50,357 | −0.1% |
+| `s = s + "x"` | 800 | 50,392 | 50, 357 | −0.1% |
 | dictionary 50 inserts + 50 reads | 50 | 162,075 | 157,733 | −2.7% |
 | record field reads | 1,000 | 22,787 | 22,755 | −0.1% |
 | direct function calls | 1,000 | 27,661 | 27,655 | −0.0% |
@@ -5075,7 +5287,7 @@ for its work):
   `primitive_to_string` 9.3 KiB of code (ryu-js), `primitive_to_number`
   12 KiB, `primitive_to_string_v6` 55 KiB (BigInt text), the comparisons
   28–29 KiB, each value18 reader about 25 KiB (shared). Modules: the
-  dictionary workload 20,184 → 41,357 bytes, the keyed view 36,538 → 57,560,
+  dictionary workload 20,184 → 41, 357 bytes, the keyed view 36,538 → 57,560,
   the Markdown fixture 17,396 → 38,212, `"v" + x` alone 6,827 → 27,867
   (fractional Number text links ryu-js); without the BigInt-free variants
   and narrowed cells the keyed view had 96,972 bytes.

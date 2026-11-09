@@ -19,7 +19,7 @@ async function handler(request:VartaHttpRequest):Promise<VartaHttpResponse>{
 }
 varta.http.serve({hostname:'127.0.0.1',port:0},handler);
 "#;
-fn options() -> RunOptions {
+pub(super) fn options() -> RunOptions {
     let requested = [
         contract::READ_CAPABILITY,
         contract::WRITE_CAPABILITY,
@@ -36,6 +36,7 @@ fn options() -> RunOptions {
         requested,
         ceiling: Some(ceiling),
         http: Some(varta_common::http::HttpPolicy {
+            delegation: None,
             limits: None,
             tls: None,
             session: Some(contract::ServerPolicy {

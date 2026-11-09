@@ -417,6 +417,9 @@ pub struct HttpPolicy {
     /// V40 host-owned, memory-only sessions. Never package data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<crate::session::ServerPolicy>,
+    /// Opt-in native request proof/delegation control plane. Host-owned only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<crate::session::delegation::DelegationPolicy>,
 }
 
 /// Absolute paths of the PEM files the host reads before binding: the

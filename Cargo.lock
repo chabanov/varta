@@ -2765,8 +2765,6 @@ dependencies = [
 [[package]]
 name = "libsqlite3-sys"
 version = "0.38.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6c19a05435c21ac299d71b6a9c13db3e3f47c520517d58990a462a1397a61db"
 dependencies = [
  "cc",
  "pkg-config",
@@ -4148,8 +4146,6 @@ dependencies = [
 [[package]]
 name = "rusqlite"
 version = "0.40.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11438310b19e3109b6446c33d1ed5e889428cf2e278407bc7896bc4aaea43323"
 dependencies = [
  "bitflags 2.13.2",
  "fallible-iterator",
@@ -5302,6 +5298,7 @@ dependencies = [
  "clap",
  "rcgen",
  "serde_json",
+ "sha2",
  "tracing-subscriber",
  "varta-common",
  "varta-project",
@@ -5479,17 +5476,21 @@ dependencies = [
  "base64 0.22.1",
  "cap-fs-ext",
  "cap-std",
+ "getrandom 0.3.4",
  "http-body-util",
  "hyper",
  "hyper-util",
  "rcgen",
+ "rustix 1.1.5",
  "rustls",
  "serde",
  "serde_json",
  "sha2",
+ "subtle",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
+ "url",
  "varta-artifact",
  "varta-common",
  "varta-compiler",
@@ -5521,8 +5522,10 @@ dependencies = [
  "rusqlite",
  "rustls",
  "ryu-js",
+ "serde",
  "serde_json",
  "sha2",
+ "subtle",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",

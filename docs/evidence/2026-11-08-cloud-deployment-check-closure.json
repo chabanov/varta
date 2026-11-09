@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "capturedAtUtc": "2026-11-08T23:19:55.915767+00:00",
+  "status": "passed",
+  "scope": "Default server configuration check repeated on the frozen396-file final Cloud source after promotion error curation; append-only verification closure, no source/runtime/grant changes or engine full repetition.",
+  "sourceDigest": "6e3de535cb86aa4eb5ee6c52b62155c2a376fff2c4201d785e29869a7253f391",
+  "sourceFilesVerifiedUnchanged": 396,
+  "priorReceipt": {
+    "path": "docs/evidence/cloud-deployments.json",
+    "sha256": "1b372d84690971940fe37ec5044b77b65a35c732c48c2c3842155aa329691557",
+    "all76LogsUnchanged": true
+  },
+  "check": {
+    "target": "server",
+    "action": "check",
+    "exitCode": 0,
+    "cliSha256": "aa1485c6bc09b63aede0e54d05acdb8dbef51fc8c6665ac5cd2eafb4005af768",
+    "log": "dist/acceptance/application-deployments-postfreeze/server-check.log",
+    "logSha256": "3097a92ddf4e3a6905be9fc102005e7dc67ee95c2e3bfb5da8c96a3661c60e22"
+  },
+  "otherChecks": "Default Studio check23:07 and final TypeScript/format23:13 already postdate final Screen fix23:06; worker dependency source predates its accepted check/dev. Actual configured API/worker/Studio acceptance also passed on final source.",
+  "engineFullGate": "Varta Development single full remains independently in progress; this is only an affected Cloud default check."
+}

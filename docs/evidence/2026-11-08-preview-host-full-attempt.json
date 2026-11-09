@@ -1,0 +1,161 @@
+{
+  "scope": "full",
+  "before": {
+    "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+    "sourceSha256": "ee4e53824cac2839d7d2a85cfb177f5bc408abcf16c97048f2caa824a16348d1"
+  },
+  "testThreads": "4",
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 3.448,
+      "log": "01.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "check",
+        "-p",
+        "varta-common",
+        "-p",
+        "varta-compiler",
+        "-p",
+        "varta-runtime",
+        "-p",
+        "varta-artifact",
+        "--lib",
+        "--locked"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 16.629,
+      "log": "02.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "check",
+        "-p",
+        "varta-common",
+        "-p",
+        "varta-intrinsics",
+        "-p",
+        "varta-kv-codec",
+        "-p",
+        "varta-intl",
+        "--no-default-features",
+        "--lib",
+        "--locked"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 0.173,
+      "log": "03.log"
+    },
+    {
+      "argv": [
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        "scripts/build-kv-codec.py",
+        "--check"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 0.097,
+      "log": "04.log"
+    },
+    {
+      "argv": [
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        "scripts/build-view-engine.py",
+        "--check"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 0.149,
+      "log": "05.log"
+    },
+    {
+      "argv": [
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        "scripts/build-session-policy.py",
+        "--check"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 0.072,
+      "log": "06.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "build",
+        "-p",
+        "varta-launcher",
+        "--bin",
+        "varta-runtime",
+        "--locked"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 28.71,
+      "log": "07.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 68.636,
+      "log": "08.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "build",
+        "--workspace",
+        "--all-targets",
+        "--locked"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 59.321,
+      "log": "09.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--locked"
+      ],
+      "exitCode": 101,
+      "passedTests": 29,
+      "seconds": 342.965,
+      "log": "10.log"
+    }
+  ],
+  "after": {
+    "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+    "sourceSha256": "ee4e53824cac2839d7d2a85cfb177f5bc408abcf16c97048f2caa824a16348d1"
+  },
+  "sourceUnchanged": true,
+  "skipped": 0,
+  "knownGaps": 0,
+  "passed": false
+}

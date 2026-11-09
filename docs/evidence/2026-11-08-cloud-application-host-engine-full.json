@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "capturedAtUtc": "2026-11-08T20:02:29.552566+00:00",
+  "status": "application-host-engine-single-full-pass-linked-to-frozen-cloud-checkpoint",
+  "scope": "Documentary closure of the Varta Development application-host package. Independently checked immutable reports, accepted/candidate byte identity and existing Cloud source/log hashes. No runtime test, Cloud full, engine edit or new product work in this closure.",
+  "engineReceipts": {
+    "/Users/snaga/Developer/Laboratory/varta/docs/evidence/2026-11-08-application-host-full-report.json": "aeb738b391e8dfd23ad7a4635dbb1a93462e4502ee646866796c016ba17d93b8",
+    "/Users/snaga/Developer/Laboratory/varta/docs/evidence/2026-11-08-application-host-verification.json": "85a5dd17b4c90de9a5647dcdaa507115820f5dd468e5d2420ce162e3223fe582",
+    "/Users/snaga/Developer/Laboratory/varta/docs/application-host.md": "c981529cfc9177a7f7374cf40923dd427092b805a2cf4c31c1620f0af9e4881f"
+  },
+  "acceptedPair": {
+    "cli": {
+      "path": "/Users/snaga/Developer/Laboratory/varta/target/application-host-20261108/accepted/varta",
+      "sha256": "4e2ecbef800010da2345370de7aea825e3901d69a1f357b15c3c7d0c90a6e541",
+      "byteIdenticalCandidatePath": "/Users/snaga/Developer/Laboratory/varta/target/application-host-20261108/candidate-2/varta"
+    },
+    "runtime": {
+      "path": "/Users/snaga/Developer/Laboratory/varta/target/application-host-20261108/accepted/varta-runtime",
+      "sha256": "a46e98f58e6c9a5cfc2a1151929ac34603c22deedfbe251a4f3789d12e570171",
+      "byteIdenticalCandidatePath": "/Users/snaga/Developer/Laboratory/varta/target/application-host-20261108/candidate-2/varta-runtime"
+    }
+  },
+  "ownerFull": {
+    "owner": "Varta Development",
+    "attempts": 1,
+    "commandsPassed": 14,
+    "rustPassed": 4731,
+    "rustIgnored": 26,
+    "nodePassed": 195,
+    "rawBefore": {
+      "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+      "sourceSha256": "3d7a9061bfb0f4490cca145a5ad65d6165ac8402ced5b84eb7b8862717554052"
+    },
+    "rawAfter": {
+      "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+      "sourceSha256": "3d7a9061bfb0f4490cca145a5ad65d6165ac8402ced5b84eb7b8862717554052"
+    },
+    "sourceUnchanged": true,
+    "conformanceCounts": {
+      "core": {
+        "total": 248,
+        "passed": 246,
+        "knownUnsupported": 2,
+        "unexpectedSupport": 0,
+        "regressions": 0,
+        "infrastructureFailures": 0
+      },
+      "snapshotV39": {
+        "total": 3,
+        "passed": 3,
+        "knownUnsupported": 0,
+        "unexpectedSupport": 0,
+        "regressions": 0,
+        "infrastructureFailures": 0
+      },
+      "sessionV40": {
+        "total": 4,
+        "passed": 4,
+        "knownUnsupported": 0,
+        "unexpectedSupport": 0,
+        "regressions": 0,
+        "infrastructureFailures": 0
+      }
+    }
+  },
+  "ownerCodeFingerprint": {
+    "sha256": "73dfce54c25dd6e800419fa1da4cb9be9c52d5ef453fe5c4215a4d6311d3e37c",
+    "files": 2678,
+    "excludes": [
+      "docs/",
+      "README.md",
+      ".claude/",
+      "examples/"
+    ]
+  },
+  "cloudCheckpoint": {
+    "path": "docs/evidence/cloud-application-host-adapter.json",
+    "sha256": "fb396c334934c004256d673754630db6d9d81782fce58414dba9412884772bb1",
+    "sourceDigest": "1c10ae77a607c3a8c8d57768595665e861c4695e7827804e44189ce2100fd975",
+    "sourceFilesRechecked": 333,
+    "logHashesRechecked": 58,
+    "portableOwnerCopy": "docs/evidence/2026-11-08-cloud-application-host-adapter.json",
+    "independentOwnerVerification": {
+      "receiptSha256": "fb396c334934c004256d673754630db6d9d81782fce58414dba9412884772bb1",
+      "sourceDigest": "1c10ae77a607c3a8c8d57768595665e861c4695e7827804e44189ce2100fd975",
+      "expectedSourceDigest": "1c10ae77a607c3a8c8d57768595665e861c4695e7827804e44189ce2100fd975",
+      "matchedFiles": 333,
+      "matchedLogs": 58,
+      "verifiedAtUtc": "2026-11-08T19:20:33.408478+00:00",
+      "mismatches": [],
+      "pass": true
+    },
+    "existingOfflineGroups": 50,
+    "newRuntimeTests": 0
+  },
+  "boundaries": {
+    "oldCloudCheckpointRewritten": false,
+    "cloudSourceChanged": false,
+    "rootGrantsChanged": false,
+    "cloudLauncherPathChanged": false,
+    "engineEditedByCloud": false,
+    "fullRerunByCloud": false,
+    "newLiveUarpOtpLlmCalls": 0,
+    "publicIssue": 503,
+    "launchAvailable": false,
+    "stablePrivateAddress": false,
+    "activeReleasePromotion": false
+  },
+  "nextPackage": "Durable application-run intent, scheduling/reconcile and restart recovery; then stable private address, readiness-before-active promotion and Studio launch/update."
+}

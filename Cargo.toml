@@ -29,6 +29,8 @@ exclude = [
     "vendor/accesskit_macos",
     "vendor/accesskit_consumer",
     "vendor/taffy",
+    "vendor/rusqlite",
+    "vendor/libsqlite3-sys",
 ]
 
 [workspace.package]
@@ -134,6 +136,10 @@ pollster = "=0.4.0"
 ryu-js = "=1.0.3"
 # OS entropy for bounded Math.random samples; no guest seed or ambient file access.
 getrandom = "=0.3.4"
+# Already locked via TLS; constant-time comparison of tool-host credential hashes.
+subtle = "=2.6.1"
+# Existing locked safe Unix resource-limit API for isolated compiler workers.
+rustix = { version = "=1.1.5", features = ["process", "param"] }
 # Already locked via the compiler; bounded exact intervals for numeric radix text.
 num-bigint = "=0.4.8"
 # `call-hook`: the v38 fair host fuel charge of every host import call.
@@ -261,3 +267,6 @@ accesskit_macos = { path = "vendor/accesskit_macos" }
 accesskit_consumer = { path = "vendor/accesskit_consumer" }
 # A resolver for `calc()` handles in the high-level tree; see its patch record.
 taffy = { path = "vendor/taffy" }
+# Read-only concrete SQLite file identity, including reused cached descriptors.
+rusqlite = { path = "vendor/rusqlite" }
+libsqlite3-sys = { path = "vendor/libsqlite3-sys" }

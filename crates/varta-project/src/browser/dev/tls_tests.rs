@@ -31,6 +31,7 @@ impl Certificate {
     fn policy(&self) -> HostPolicy {
         let mut manifest = Manifest::new(&[]);
         manifest.http = Some(HttpPolicy {
+            delegation: None,
             limits: None,
             session: None,
             tls: Some(TlsFiles {

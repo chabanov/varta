@@ -18,6 +18,10 @@ pub(super) struct Streaming {
 
 /// What a worker hands its adapter.
 pub(super) enum Envelope {
+    Delegated {
+        inner: Box<Self>,
+        id: String,
+    },
     /// The whole request as the `VartaHttpRequest` JSON envelope.
     Text(Vec<u8>),
     /// A Web `Request` service's request head and its body still unread
@@ -172,7 +176,37 @@ fn envelope(
     execution: &mut Execution,
     request: Envelope,
 ) -> Result<Vec<u8>, RuntimeError> {
+    let (request, delegation) = match request {
+        Envelope::Delegated { inner, id } => (*inner, Some(id)),
+        request => (request, None),
+    };
+    let session = |vault: Arc<crate::session::Vault>,
+                   headers: &mut Vec<http::HttpHeader>,
+                   method: &str,
+                   owner| {
+        match &delegation {
+            Some(id) => {
+                crate::session::RequestSession::delegated(vault, headers, id.clone(), owner)
+            }
+            None => crate::session::RequestSession::new(vault, headers, method, owner),
+        }
+    };
+    let check_headers = |headers: &[http::HttpHeader]| -> Result<(), HttpError> {
+        if headers.len() > shared.limits.headers
+            || headers
+                .iter()
+                .map(|h| h.name.len() + h.value.len())
+                .sum::<usize>()
+                > shared.limits.header_bytes
+        {
+            return Err(HttpError::Message("native request header budget".into()));
+        }
+        Ok(())
+    };
     let (mut head, body) = match request {
+        Envelope::Delegated { .. } => {
+            return Err(HttpError::Message("nested native envelope".into()).into());
+        }
         Envelope::Text(bytes) => {
             let Some(vault) = &shared.sessions else {
                 return Ok(bytes);
@@ -181,7 +215,7 @@ fn envelope(
                 .map_err(|_| HttpError::Message("request envelope".into()))?;
             let context = execution.store.data_mut();
             context.http_session = Some(
-                crate::session::RequestSession::new(
+                session(
                     vault.clone(),
                     &mut request.headers,
                     &request.method,
@@ -189,6 +223,7 @@ fn envelope(
                 )
                 .map_err(|e| HttpError::Message(e.into()))?,
             );
+            check_headers(&request.headers)?;
             return serde_json::to_vec(&request)
                 .map_err(|_| HttpError::Message("request envelope".into()).into());
         }
@@ -197,7 +232,7 @@ fn envelope(
     if let Some(vault) = &shared.sessions {
         let context = execution.store.data_mut();
         context.http_session = Some(
-            crate::session::RequestSession::new(
+            session(
                 vault.clone(),
                 &mut head.headers,
                 &head.method,
@@ -206,6 +241,7 @@ fn envelope(
             .map_err(|e| HttpError::Message(e.into()))?,
         );
     }
+    check_headers(&head.headers)?;
     if let (Some(body), Some(transport)) = (body, shared.limits.transport) {
         let context = execution.store.data_mut();
         let deadline = context
@@ -228,11 +264,36 @@ async fn invoke(
     streaming: Option<Streaming>,
     started: &mut Option<wasmtime::Instance>,
 ) -> Result<HttpResponse, RuntimeError> {
+    // Establish native provenance and its cancellation lease before source
+    // initialization can perform any host effect on an opt-in service.
+    let mut request = Some(request);
+    let prepared = if shared
+        .sessions
+        .as_ref()
+        .is_some_and(|v| v.delegation_enabled())
+    {
+        Some(envelope(
+            shared,
+            execution,
+            request
+                .take()
+                .ok_or_else(|| HttpError::Message("missing request".into()))?,
+        )?)
+    } else {
+        None
+    };
     let instance = execution
         .instantiate_pre_async(&shared.module, &shared.linked)
         .await?;
     *started = Some(instance);
-    let request = envelope(shared, execution, request)?;
+    let request = match prepared {
+        Some(request) => request,
+        None => envelope(
+            shared,
+            execution,
+            request.ok_or_else(|| HttpError::Message("missing request".into()))?,
+        )?,
+    };
     let memory = instance
         .get_memory(&mut execution.store, varta_common::abi::MEMORY_EXPORT)
         .ok_or_else(|| HttpError::Message("missing ABI memory".into()))?;

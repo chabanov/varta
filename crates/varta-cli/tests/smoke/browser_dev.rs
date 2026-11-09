@@ -162,6 +162,26 @@ fn browser_dev_cli_rejects_native_only_flags_and_nonloopback_listeners() {
     let project = project();
     for (args, needle) in [
         (
+            vec![
+                "dev",
+                "--target",
+                "native",
+                "--browser-entry-prefix",
+                "/apps",
+            ],
+            "--browser-entry-prefix",
+        ),
+        (
+            vec![
+                "dev",
+                "--target",
+                "browser",
+                "--browser-entry-prefix",
+                "/__varta",
+            ],
+            "entry prefix",
+        ),
+        (
             vec!["dev", "--target", "browser", "--profile-fuel"],
             "native fuel",
         ),
@@ -192,6 +212,40 @@ fn browser_dev_cli_rejects_native_only_flags_and_nonloopback_listeners() {
     let native = project.command(&["dev", "--target", "native"]);
     assert!(native.status.success(), "{}", combined(&native));
     assert!(combined(&native).contains("varta log: browser only"));
+}
+
+#[test]
+fn browser_dev_cli_entry_path_is_opt_in_and_uses_pinned_shell_assets() {
+    let project = project();
+    let server = Running::start(
+        &project,
+        &[
+            "dev",
+            "--target",
+            "browser",
+            "--browser-entry-prefix",
+            "/apps",
+        ],
+    );
+    let html = server.get("/apps/stable-id");
+    assert!(html.starts_with("HTTP/1.1 200"));
+    let loader_path = html
+        .split_once("data-varta-dev src=\"")
+        .unwrap()
+        .1
+        .split('"')
+        .next()
+        .unwrap();
+    assert!(loader_path.starts_with("/__varta/"));
+    assert!(
+        server
+            .get(loader_path)
+            .contains("\"entryPathInput\":\"VARTA_ENTRY_PATH\"")
+    );
+    assert!(server.get("/apps/a/b").starts_with("HTTP/1.1 404"));
+    drop(server);
+    let default = Running::start(&project, &["dev", "--target", "browser"]);
+    assert!(default.get("/apps/stable-id").starts_with("HTTP/1.1 404"));
 }
 #[cfg(unix)]
 #[test]

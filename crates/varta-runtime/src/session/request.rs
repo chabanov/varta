@@ -7,6 +7,8 @@ use varta_common::{
 
 pub(crate) struct RequestSession {
     vault: Arc<Vault>,
+    _proof: Option<super::vault::Proof>,
+    delegated: Option<String>,
     token: Option<String>,
     channel: bool,
     mutable: bool,
@@ -31,6 +33,11 @@ impl RequestSession {
         method: &str,
         owner: Option<crate::cancellation::Cancellation>,
     ) -> Result<Self, &'static str> {
+        if vault.delegation_enabled()
+            && field(headers, contract::delegation::REQUEST_PROOF_HEADER)?.is_some()
+        {
+            return Err(INVALID);
+        }
         let marker = field(headers, contract::HEADER)?;
         let origin = field(headers, "origin")?;
         let same_origin = vault.policy.origin == vault.policy.client_origin
@@ -75,7 +82,22 @@ impl RequestSession {
         headers.retain(|h| {
             !h.name.eq_ignore_ascii_case("cookie") && !h.name.eq_ignore_ascii_case(contract::HEADER)
         });
+        let mut proof = None;
+        let mut lease = None;
+        if vault.delegation_enabled()
+            && let Some(owner) = &owner
+        {
+            let (nonce, guard, parent) = vault.request_proof(token.as_deref(), None, owner)?;
+            headers.push(HttpHeader {
+                name: contract::delegation::REQUEST_PROOF_HEADER.into(),
+                value: nonce,
+            });
+            proof = Some(guard);
+            lease = parent;
+        }
         Ok(Self {
+            _proof: proof,
+            delegated: None,
             vault,
             token,
             channel,
@@ -83,17 +105,63 @@ impl RequestSession {
             pending: None,
             cleared: false,
             sealed: false,
-            lease: None,
+            lease,
             owner,
         })
     }
+    pub(crate) fn delegated(
+        vault: Arc<Vault>,
+        headers: &mut Vec<HttpHeader>,
+        scope: String,
+        owner: Option<crate::cancellation::Cancellation>,
+    ) -> Result<Self, &'static str> {
+        let owner = owner.ok_or(INVALID)?;
+        if !vault.delegation_live(&scope)
+            || headers.iter().any(|h| {
+                h.name
+                    .eq_ignore_ascii_case(contract::delegation::REQUEST_PROOF_HEADER)
+                    || h.name.eq_ignore_ascii_case("cookie")
+                    || h.name.eq_ignore_ascii_case("authorization")
+                    || h.name.eq_ignore_ascii_case(contract::HEADER)
+            })
+        {
+            return Err(INVALID);
+        }
+        let (nonce, proof, lease) = vault.request_proof(None, Some(&scope), &owner)?;
+        headers.push(HttpHeader {
+            name: contract::delegation::REQUEST_PROOF_HEADER.into(),
+            value: nonce,
+        });
+        Ok(Self {
+            vault,
+            _proof: Some(proof),
+            delegated: Some(scope),
+            token: None,
+            channel: false,
+            mutable: false,
+            pending: None,
+            cleared: false,
+            sealed: false,
+            lease,
+            owner: Some(owner),
+        })
+    }
     pub(crate) fn check(&self) -> Result<(), wasmtime::Error> {
-        if self.lease.is_some() && self.token.as_deref().is_none_or(|t| !self.vault.live(t)) {
+        let invalid = match &self.delegated {
+            Some(scope) => !self.vault.delegation_live(scope),
+            None => {
+                self.lease.is_some() && self.token.as_deref().is_none_or(|t| !self.vault.live(t))
+            }
+        };
+        if invalid {
             return Err(wasmtime::Error::new(crate::cancellation::Cancelled));
         }
         Ok(())
     }
     pub(crate) fn get(&mut self) -> Result<Option<String>, &'static str> {
+        if let Some(scope) = &self.delegated {
+            return self.vault.delegated_secret(scope);
+        }
         if !self.channel || self.owner.is_none() {
             return Err(INVALID);
         }

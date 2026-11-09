@@ -1,5 +1,7 @@
 # Varta architecture and implemented contract
 
+The additive [startup readiness and private-entry contract](application-readiness.md) defines fresh app-host evidence and opt-in browser shell paths. Release slots, ownership and promotion remain Cloud domain policy. See the development plan for current verification status.
+
 This document is the normative contract of the implemented compiler and runtime.
 Planned work, including agreed designs that are not implemented yet, is tracked in
 [development-plan.md](development-plan.md). The explicitly marked
@@ -14169,15 +14171,15 @@ into the static type the program names. V37 and earlier profiles reject
   canonicalized and checked to be the pinned root directory, joined with the
   components, and its no-follow metadata must name the pinned file. SQLite then
   opens it with `SQLITE_OPEN_NOFOLLOW` (a symbolic link in any component fails)
-  and without `SQLITE_OPEN_CREATE`. After the schema check, the process's open
-  descriptors (`/dev/fd`, `/proc/self/fd` on Linux, read with `stat` only, since
-  closing any descriptor of a file drops the process's POSIX locks on it) must
-  show a new descriptor of the pinned file for each SQLite connection (the
-  worker's, and the lock probe of a writable database): a swap of the path between the
-  check and SQLite's open makes SQLite open another file, which this rejects
-  (`the KV database … changed while it was opened`). KV opens are serialized in
-  the process. SQLite opens the `-wal` and `-shm` files beside the verified
-  file by name with `O_NOFOLLOW`; a process that can rename directories inside
+  and without `SQLITE_OPEN_CREATE`. Before the schema read or any write, each
+  concrete SQLite connection (worker and write-lock probe) reports its actual
+  device/inode through the pinned safe read-only file-control wrapper. It must
+  match the pinned file. A swapped path is rejected even if SQLite reuses a
+  cached descriptor (`the KV database … changed while it was opened`). Process
+  fd snapshots, macOS devfs metadata and mutable size/timestamps are not identity.
+  No process-wide open/close/operation lock is needed. Unsupported VFSes and
+  unpatched SQLite fail closed. SQLite opens the `-wal` and `-shm` files beside
+  the verified file by name with `O_NOFOLLOW`; a process that can rename directories inside
   the host root already controls the database and is outside the check. KV
   storage needs a Unix host.
 - **Schema.** An empty file is a new database (writable opens only):
@@ -21160,3 +21162,122 @@ The cookie and credentials model follows the primary
 [HTTP cookie specification](https://www.rfc-editor.org/rfc/rfc6265#section-4.1).
 The stronger origin, marker, explicit-ceiling and staging rules above are the
 Varta contract.
+
+
+## Bounded source toolchain host (toolchain-host-v1)
+
+The trusted local tooling service implements the versioned
+[toolchain host wire](toolchain-host.md). It accepts immutable UTF-8 source bundles
+under an explicit operation/profile/resource ceiling, checks or builds through
+the compiler and browser admission, and returns bounded diagnostics plus a
+validated content-addressed browser artifact. Compilation never executes guest
+initialization or main. The first source policy is local-only with explicit
+relative TypeScript imports and supplied text resources; it does not install
+packages, consume source-owned configuration or preprocess Tailwind.
+
+This is separate from the Wasm host ABI and Tool Contract v1. Native runtime and
+execution launcher do not depend on the compiler or gain compile/spawn imports.
+A trusted application server uses existing env.get/net.request authority and a
+runtime-only credential to reach the loopback service. Browser source receives
+neither that credential nor a compiler grant. Each compiler operation uses the
+pinned trusted executable in a fresh process with no inherited environment,
+CPU/address-space-growth limits and a wall deadline. Unsupported resource
+enforcement fails before listening. No shell or source-selected command runs.
+
+Idempotency correlation survives lost acceptance replies within bounded terminal
+retention. Cancellation fences publication and kills/reaps an active compiler;
+shutdown cancels/drains all active work. Artifact data and operation receipts are
+bounded ephemeral host memory; the application owns durable jobs, ownership,
+leases/retries, artifact ingestion and recovery after restart. Check/build does
+not authorize artifact execution, preview, deployment or broader application
+contracts. No public production service or platform matrix is implied.
+
+
+## Isolated local preview and browser launch (preview-host-v1)
+
+The normative [preview wire and limits](preview-host.md) define a separate
+trusted native project-tooling service. No new language profile, guest import,
+compiler dependency in runtime/launcher or execution right follows from a build.
+Original immutable bundle bytes are independently hashed, fully admitted, and
+compared with the canonical official browser bundle. Uploaded HTML/JS is never
+served directly; runtime files are regenerated with an explicit deny-all ceiling.
+Validation workers never execute guest initialization or main.
+
+Control and public listeners are separate loopback hostnames. Studio/API origins
+are operator-owned exclusions, not source configuration. Authentication and
+one-use ticket consumption live in Rust. The engine-owned browser transport
+removes the fragment, activates a scoped HttpOnly cookie and claims one bounded
+page lease before creating the official metered Wasm Worker. Guest code receives
+no Studio session, token, cookie value or page lease. No permission persistence,
+network grant or untrusted framing is introduced.
+
+Application owners retain durable bytes, identities, queues and CAS/fences. The
+host retains only bounded ephemeral imports, runs and cancellation receipts.
+Start replay precedes catalog/capacity admission; cancel-before-create is terminal
+within receipt retention. Fixed run lifetime never slides. Server authority ends
+immediately on stop/expiry; browser Worker termination depends on scheduled lease
+callbacks. This local contract is not production HTTPS, remote OS process killing
+or a native service/deployment contract.
+
+
+## Bounded native HTTP execution (execution-host-v1)
+
+The [execution-host contract](execution-host.md) is a separate artifact-only local
+service. Full manifest/ABI/Wasm admission happens before execution in a bounded
+validator. A fresh pinned child then runs only the admitted HTTP service, with
+an explicit exact loopback listener ceiling and existing guest/request budgets.
+No source resolution, native machine code or domain ownership enters admission.
+
+Typed Listening evidence establishes startup readiness. Guest logs cannot forge
+that evidence. A request trap retains fresh-store isolation. Cancellation and
+fixed TTL revoke address/readiness immediately, while terminal stopped/expired
+requires successful child termination/reaping. Replay and pre-create tombstones
+preserve accepted terminal decisions within bounded host retention. Cloud owns
+persistent release/data state and must fence late results and verify application
+health before promotion. This does not provide browser resource sessions, native
+GUI presentation or persistent/private production routing.
+
+
+## Application data channels — accepted local application host
+
+The [application-channel design](application-channel-draft.md) is separate from
+preview and native HTTP execution. It requires native protected-vault parent
+leases, immutable opaque scope binding, explicit package requests, trusted relay
+and fresh application authorization/revocation. The native control plane below provides parent provenance; the separate
+[application-host contract](application-host.md) implements explicit app-data-v1
+source requests, canonical artifact admission, per-run browser ceilings, one-use
+activation and bounded Rust relay to native delegation. It introduces no guest
+API or ABI. Old preview/local-only policies keep their meanings. Public hosting,
+stable private addresses and active release promotion require separate acceptance.
+
+## Native session delegation (host-only v1)
+
+The normative [native delegation contract](native-delegation.md) defines an opt-in
+HTTP control plane beside the protected native vault: authenticated issue/lookup/
+revoke, bounded opaque scopes and relay with immutable native request provenance.
+It uses existing v40 env/net/session semantics, adds no guest imports, and remains
+separate from browser activation and private application build policy.
+
+## Durable lifecycle above memory-only application hosts
+
+The accepted application host stores runs, cookies, tickets, catalog receipts and
+cancellation tombstones in process memory. hostSha256 identifies the executable,
+not an incarnation. A 404 can mean never-admitted, receipt collection or restart.
+Same-key POST is create-or-recover, not a read-only lookup, and cannot promise
+cross-restart exactly-once execution. Known-ID GET rechecks current native scope;
+POST replay alone is not fresh liveness or health. Cancellation acknowledgements
+do not make bounded memory tombstones durable or confirm native/durable revoke.
+
+An application adapter owns durable desired state, immutable pins, attempts,
+worker leases and CAS fences. It must persist effect identities before admission,
+revoke application data authority before uncertain cleanup, and avoid background
+POST replay for an unknown run ID. Artifact staging/status/cancel need no persisted
+parent credential. After vault loss, fresh request-bound owner/native verification
+creates a new scope and attempt; metadata never restores the parent. Ticket
+issuance must match the current verified parent generation to the run parent
+before effects and after async checks. These are embedder responsibilities, not
+new guest APIs, host persistence or Cloud domain schemas inside engine crates.
+
+Cloud's [recovery acceptance](evidence/2026-11-08-application-recovery-verification.json)
+uses this boundary without engine changes. Stable routing, active-release CAS,
+schema migration and production deployment remain separate contracts.

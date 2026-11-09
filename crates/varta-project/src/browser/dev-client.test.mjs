@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 const revision='0'.repeat(64),url=`http://127.0.0.1:9443/__varta/${revision}/varta-host.js`;
 const source=(await readFile(new URL('./dev/client.js',import.meta.url),'utf8')).replaceAll('import.meta.url',JSON.stringify(url));
-function host(fetcher){
+function host(fetcher,runtimeOptions={application:true},pathname='/'){
   let next=0,options;const timers=new Map(),events=new Map(),elements=new Map(),effects=[];
   const document={querySelector:id=>elements.get(id),body:{append(element){elements.set('#'+element.id,element);}},createElement(){return{setAttribute(){},remove(){elements.delete('#'+this.id);}};}};
   const setTimer=(fn,delay)=>{timers.set(++next,{fn,delay});return next;};
   const bootstrap=value=>{options=value;value.signal.addEventListener('abort',()=>effects.push('stop'));};
-  const start=new Function('bootstrap','document','fetch','location','addEventListener','setTimeout','clearTimeout',`${source}\nreturn devBootstrap;`)(bootstrap,document,fetcher,{replace:value=>effects.push(value)},(name,fn)=>events.set(name,fn),setTimer,id=>timers.delete(id));
-  start({application:true});
-  return{timers,elements,effects,get signal(){return options.signal;},hide(){events.get('pagehide')();},async step(){const item=[...timers].find(([,timer])=>timer.delay===750);assert(item,'next poll');timers.delete(item[0]);await item[1].fn();}};
+  const start=new Function('bootstrap','document','fetch','location','addEventListener','setTimeout','clearTimeout',`${source}\nreturn devBootstrap;`)(bootstrap,document,fetcher,{pathname,replace:value=>effects.push(value)},(name,fn)=>events.set(name,fn),setTimer,id=>timers.delete(id));
+  start(runtimeOptions);
+  return{timers,elements,effects,get environmentInputs(){return options.environmentInputs;},get signal(){return options.signal;},hide(){events.get('pagehide')();},async step(){const item=[...timers].find(([,timer])=>timer.delay===750);assert(item,'next poll');timers.delete(item[0]);await item[1].fn();}};
 }
 const response=(error=null,id=revision)=>new Response(JSON.stringify({revision:id,error}));
 test('dev polling renders diagnostics as text, clears errors and stays serial',async()=>{
@@ -22,6 +22,16 @@ test('dev polling renders diagnostics as text, clears errors and stays serial',a
 test('dev reload aborts the owned application before navigating to the trusted root',async()=>{
   const runtime=host(async()=>response(null,'1'.repeat(64)));await runtime.step();
   assert.deepEqual(runtime.effects,['stop','http://127.0.0.1:9443/']);assert.equal(runtime.timers.size,0);
+});
+test('opt-in public path forwarding preserves entry on rebuild and defaults to root for immutable pages',async()=>{
+  const options={application:true,entryPathInput:'VARTA_ENTRY_PATH',entryPathPrefix:'/apps'};
+  for(const path of ['/apps/opaque-id','/__varta/'+revision+'/index.html']){
+    const runtime=host(async()=>response(null,'1'.repeat(64)),options,path);
+    assert.deepEqual(runtime.environmentInputs,[['VARTA_ENTRY_PATH',path]]);
+    await runtime.step();
+    assert.deepEqual(runtime.effects,['stop','http://127.0.0.1:9443'+(path.startsWith('/apps/')?path:'/')]);
+  }
+  assert.equal(host(async()=>response()).environmentInputs,undefined);
 });
 test('pagehide cancels pending status and ignores late responses',async()=>{
   let answer,signal;const runtime=host((_,options)=>{signal=options.signal;return new Promise(resolve=>answer=resolve);});

@@ -113,6 +113,121 @@ impl BrowserArtifact {
     }
 }
 
+/// Runtime-only preview delivery. Distribution bytes remain unchanged.
+pub(crate) fn preview_files(
+    artifact: &Artifact,
+    ceiling: varta_common::budget::BudgetRequest,
+) -> Result<std::collections::BTreeMap<String, Vec<u8>>> {
+    delivery_files(artifact, ceiling, None)
+}
+pub(crate) fn application_files(
+    artifact: &Artifact,
+    ceiling: varta_common::budget::BudgetRequest,
+    application: &crate::application::ApplicationRequest,
+) -> Result<std::collections::BTreeMap<String, Vec<u8>>> {
+    delivery_files(artifact, ceiling, Some(application))
+}
+fn delivery_files(
+    artifact: &Artifact,
+    ceiling: varta_common::budget::BudgetRequest,
+    application: Option<&crate::application::ApplicationRequest>,
+) -> Result<std::collections::BTreeMap<String, Vec<u8>>> {
+    use base64::Engine;
+    use sha2::Digest;
+    let mut manifest = Manifest::new(&application.map_or_else(Vec::new, |a| a.grants()));
+    if let Some(app) = application {
+        manifest.browser_session = Some(varta_common::session::ClientBinding {
+            api_origin: app.public_origin.clone(),
+            client_origin: app.public_origin.clone(),
+            allow_insecure_loopback: true,
+        });
+    }
+    manifest.abi_version = artifact.manifest.abi_version;
+    manifest.budgets = Some(ceiling);
+    let policy = HostPolicy::from_manifest(manifest)?;
+    let prepared = BrowserArtifact::prepare(artifact, Some(&policy))?;
+    let mut files = prepared.development_bundle(&[])?.into_files();
+    let mut loader = files
+        .remove("varta-host.js")
+        .ok_or_else(|| crate::ProjectError::Artifact("preview loader missing".into()))?;
+    let sri = |b: &[u8]| {
+        format!(
+            "sha256-{}",
+            base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(b))
+        )
+    };
+    let before = sri(&loader);
+    let source =
+        String::from_utf8(loader).map_err(|e| crate::ProjectError::Artifact(e.to_string()))?;
+    // Only the fixed verified-asset fetch uses the preview-only HttpOnly
+    // cookie. Ordinary guest networking retains credentials:omit.
+    const ASSET_FETCH: &str =
+        "fetch(new URL(item.name, base), { signal, credentials: \"omit\", redirect: \"error\" })";
+    if source.matches(ASSET_FETCH).count() != 1 {
+        return Err(crate::ProjectError::Artifact(
+            "preview asset boundary changed".into(),
+        ));
+    }
+    loader = source.replace(ASSET_FETCH,
+        "fetch(new URL(item.name, base), { signal, credentials: \"same-origin\", redirect: \"error\" })").into_bytes();
+    if application.is_some() {
+        let source =
+            String::from_utf8(loader).map_err(|e| crate::ProjectError::Artifact(e.to_string()))?;
+        const FRAME: &str =
+            r#"lastBatch=data.id;worker.postMessage({type:"view_ack",id:data.id});"#;
+        if source.matches(FRAME).count() != 1 {
+            return Err(crate::ProjectError::Artifact(
+                "application frame boundary changed".into(),
+            ));
+        }
+        loader=source.replace(FRAME,r#"applicationFrame?.(data.id);lastBatch=data.id;worker.postMessage({type:"view_ack",id:data.id});"#).into_bytes();
+        loader.extend_from_slice(b"\nlet applicationFrame;\n");
+    }
+    loader.extend_from_slice(include_bytes!("browser/preview-client.js"));
+    let budgets: std::collections::BTreeMap<_, _> = varta_common::budget::BudgetKind::ALL
+        .into_iter()
+        .map(|k| (k.wire_name(), k.production()))
+        .collect();
+    let mut budgets = budgets;
+    for k in varta_common::budget::BudgetKind::ALL {
+        if let Some(v) = ceiling.value(k) {
+            budgets.insert(k.wire_name(), v);
+        }
+    }
+    let mut inputs = serde_json::json!({"permissionCeiling":{},"budgetCeiling":budgets,"application":true,"pollMs":crate::preview::POLL_MS});
+    if application.is_some() {
+        inputs["readyAfterFrame"] = serde_json::json!(
+            prepared
+                .inspection()
+                .imports
+                .iter()
+                .any(|import| import.name == varta_common::HostOperation::ViewCommit.name())
+        );
+    }
+    loader.extend_from_slice(format!("\nif(typeof document!==\"undefined\"&&[...document.querySelectorAll(\"script[data-varta-preview]\")].some(script=>script.src===import.meta.url))previewBootstrap({inputs});\n").as_bytes());
+    let after = sri(&loader);
+    let html = String::from_utf8(
+        files
+            .remove("index.html")
+            .ok_or_else(|| crate::ProjectError::Artifact("preview index missing".into()))?,
+    )
+    .map_err(|e| crate::ProjectError::Artifact(e.to_string()))?;
+    const OPTIN: &str = " data-varta-bootstrap src=";
+    if html.matches(OPTIN).count() != 1 || html.matches(&before).count() != 2 {
+        return Err(crate::ProjectError::Artifact(
+            "preview bootstrap boundary changed".into(),
+        ));
+    }
+    files.insert(
+        "index.html".into(),
+        html.replace(&before, &after)
+            .replace(OPTIN, " data-varta-preview src=")
+            .into_bytes(),
+    );
+    files.insert("varta-host.js".into(), loader);
+    Ok(files)
+}
+
 #[cfg(test)]
 mod kv_codec_tests;
 #[cfg(test)]

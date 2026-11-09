@@ -47,7 +47,9 @@ function devBootstrap(runtime) {
       report(status.error);
       if (status.revision !== revision) {
         close(); // terminate the owned Worker/requests before navigating
-        location.replace(new URL('/', import.meta.url).href);
+        const entry = runtime.entryPathPrefix && location.pathname.startsWith(runtime.entryPathPrefix + '/')
+          ? location.pathname : '/';
+        location.replace(new URL(entry, import.meta.url).href);
         return;
       }
     } catch (error) {
@@ -61,6 +63,10 @@ function devBootstrap(runtime) {
     }
     timer = setTimeout(poll, 750);
   };
-  bootstrap({...runtime, signal: lifetime.signal});
+  // Only a public browser path is forwarded. Existing Wasm environment policy
+  // still checks env.get; no host process environment is read or published.
+  const environmentInputs = runtime.entryPathInput
+    ? [[runtime.entryPathInput, location.pathname]] : undefined;
+  bootstrap({...runtime, environmentInputs, signal: lifetime.signal});
   timer = setTimeout(poll, 750);
 }

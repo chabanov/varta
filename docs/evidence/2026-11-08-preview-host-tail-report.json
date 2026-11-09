@@ -1,0 +1,121 @@
+{
+  "kind": "completion after one failed full attempt; no repeated full gate",
+  "before": {
+    "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+    "sourceSha256": "a4e899b09b332b281a436fc1694656fbadd24e61576caa7510f6c094d4982f07"
+  },
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--exclude",
+        "varta",
+        "--locked"
+      ],
+      "exitCode": 0,
+      "passedTests": 4295,
+      "seconds": 1411.989,
+      "log": "target/preview-host-20261108/tail/01.log"
+    },
+    {
+      "argv": [
+        "node",
+        "--test",
+        "crates/varta-common/browser/fuel.test.mjs",
+        "crates/varta-project/src/browser/dev-client.test.mjs",
+        "crates/varta-project/src/browser/environment-abi.test.mjs",
+        "crates/varta-project/src/browser/environment.test.mjs",
+        "crates/varta-project/src/browser/event-sources.test.mjs",
+        "crates/varta-project/src/browser/kv-store.test.mjs",
+        "crates/varta-project/src/browser/loader.test.mjs",
+        "crates/varta-project/src/browser/network-replay.test.mjs",
+        "crates/varta-project/src/browser/network-transport.test.mjs",
+        "crates/varta-project/src/browser/network.test.mjs",
+        "crates/varta-project/src/browser/permission-broker.test.mjs",
+        "crates/varta-project/src/browser/permission-prompt.test.mjs",
+        "crates/varta-project/src/browser/permission-store.test.mjs",
+        "crates/varta-project/src/browser/reasons.test.mjs",
+        "crates/varta-project/src/browser/scheduler.test.mjs",
+        "crates/varta-project/src/browser/session-channel.test.mjs",
+        "crates/varta-project/src/browser/session-soak.test.mjs",
+        "crates/varta-project/src/browser/timers.test.mjs",
+        "crates/varta-project/src/browser/ui-timing.test.mjs",
+        "crates/varta-project/src/browser/view-depth.test.mjs",
+        "crates/varta-project/src/browser/view-engine.test.mjs",
+        "crates/varta-project/src/browser/view-fonts.test.mjs",
+        "crates/varta-project/src/browser/view-model.test.mjs",
+        "crates/varta-project/src/browser/view-naming.test.mjs",
+        "crates/varta-project/src/browser/view-policy.test.mjs",
+        "crates/varta-project/src/browser/view-radio.test.mjs",
+        "crates/varta-project/src/browser/view-select.test.mjs",
+        "crates/varta-project/src/browser/view-session.test.mjs",
+        "crates/varta-project/src/browser/view-text.test.mjs",
+        "crates/varta-project/src/browser/worker-effects.test.mjs",
+        "crates/varta-project/src/browser/worker-lifecycle.test.mjs"
+      ],
+      "exitCode": 0,
+      "passedTests": 195,
+      "seconds": 0.861,
+      "log": "target/preview-host-20261108/tail/02.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "run",
+        "-p",
+        "varta-conformance",
+        "--locked",
+        "--",
+        "--json"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 129.73,
+      "log": "target/preview-host-20261108/tail/03.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "run",
+        "-p",
+        "varta-conformance",
+        "--locked",
+        "--",
+        "--suite",
+        "conformance/snapshot-v39/suite.json",
+        "--require-supported",
+        "--json"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 4.21,
+      "log": "target/preview-host-20261108/tail/04.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "run",
+        "-p",
+        "varta-conformance",
+        "--locked",
+        "--",
+        "--suite",
+        "conformance/session-v40/suite.json",
+        "--require-supported",
+        "--json"
+      ],
+      "exitCode": 0,
+      "passedTests": null,
+      "seconds": 4.856,
+      "log": "target/preview-host-20261108/tail/05.log"
+    }
+  ],
+  "after": {
+    "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+    "sourceSha256": "a4e899b09b332b281a436fc1694656fbadd24e61576caa7510f6c094d4982f07"
+  },
+  "sourceUnchanged": true,
+  "passed": true
+}

@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-08",
+  "package": "bounded local native HTTP execution host",
+  "baseCommit": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+  "status": "passed: implemented bounded native HTTP host, native/Chrome regression acceptance and one immutable full gate",
+  "contract": "docs/execution-host.md",
+  "acceptedCli": {
+    "path": "target/execution-host-20261108/varta-accepted",
+    "sha256": "5262414256f5948ed8b50d595edc9904229f01ead05683531a6c9350c7df15ae"
+  },
+  "wire": {
+    "version": 1,
+    "target": "native-http",
+    "artifactPolicy": "native-http-v1",
+    "policyId": "loopback-http-v1",
+    "guestAbiChanged": false,
+    "runtimeCompilerDependency": false,
+    "sourceExecutionDuringImport": false,
+    "nativeMachineCodeAccepted": false,
+    "authority": "only exact ephemeral loopback net.listen; all other source authority refused",
+    "readiness": "trusted startup/listening event; semantic health belongs to application",
+    "termination": "stop/expiry revoke address, terminal only after OS wait; unconfirmed reap fails closed"
+  },
+  "focused": {
+    "newUnitTests": 5,
+    "nativeCliTests": 2,
+    "allProjectLibraryTests": 112,
+    "relatedCliTests": 14,
+    "dependencyBoundaryTests": 2,
+    "strictAffectedClippy": "passed; final full also passes strict workspace/all-target Clippy on final code",
+    "logs": [
+      "target/execution-project-final.log",
+      "target/execution-cli-final.log",
+      "target/execution-native-closure.log",
+      "target/execution-boundaries.log",
+      "target/execution-clippy-final.log"
+    ],
+    "browserRegression": {
+      "passed": true,
+      "hostSha256": "5262414256f5948ed8b50d595edc9904229f01ead05683531a6c9350c7df15ae",
+      "sourceExecutionInHost": false,
+      "scopes": [
+        "real TSX first frame",
+        "trusted click updates state",
+        "hostname/HttpOnly/Studio-cookie isolation",
+        "no privileged fetch",
+        "one-use fragment removed",
+        "stop closes Worker",
+        "guest trap reported"
+      ],
+      "privilegedRequests": 0,
+      "ownedChromeCleanup": true
+    },
+    "browserRegressionReportSha256": "dc38f55c5dc9a6f7cdd81f1a08cfc105632fe182a77cd1d9c4fe562d5f1c02ed"
+  },
+  "cloud": {
+    "scope": "contract reviewed read-only with existing Cloud peer; no native Cloud adapter or native compile-target integration claimed",
+    "browserResourceChannel": "separate unsupported contract; preview remains deny-all",
+    "owns": [
+      "identity and owner checks",
+      "durable data/resourceId",
+      "immutable compiler/build provenance",
+      "release CAS and semantic-health promotion",
+      "cancellation fencing across host restarts"
+    ],
+    "applicationsFoundation": {
+      "receipt": "docs/evidence/2026-11-08-cloud-applications-foundation.json",
+      "receiptSha256": "f08444061dfff25a69edf121e12484586998dfcb1d5449db6edeaba17571bb89",
+      "sourceDigest": "afef10733aecf3a58c6bf4116556583c2e05f84ffc5a389d2b7d6e2a66d8dced",
+      "files": 268,
+      "independentlyVerified": true,
+      "note": "independent Cloud checkpoint verified before successor channel-authorizer work; not a native adapter or active private-app launch"
+    },
+    "applicationChannelDraft": {
+      "path": "docs/application-channel-draft.md",
+      "status": "agreed design only; production transport/API unavailable",
+      "launchAvailable": false
+    }
+  },
+  "full": {
+    "attempts": 1,
+    "passed": true,
+    "commands": 14,
+    "rustPassed": 4716,
+    "rustIgnored": 26,
+    "nodePassed": 195,
+    "report": "docs/evidence/2026-11-08-execution-host-full-report.json",
+    "reportSha256": "b2192eb3e685932101b4928bc8ba8eb5c125d9d22cfc094e756ce1951c618b52",
+    "sourceUnchanged": true,
+    "sourceSha256": "d666d7081366ee33b31ef357ae67f15564c3b5a06d8b41f93de35656522bfe52",
+    "codeBefore": {
+      "sha256": "e869d87a561f4ffc8bb30e153e951dee6204ba0f5abc8ce302b8b1900d2c3e87",
+      "files": 2668,
+      "excludes": [
+        "docs/",
+        "README.md",
+        ".claude/",
+        "examples/"
+      ]
+    },
+    "codeAfter": {
+      "sha256": "e869d87a561f4ffc8bb30e153e951dee6204ba0f5abc8ce302b8b1900d2c3e87",
+      "files": 2668,
+      "excludes": [
+        "docs/",
+        "README.md",
+        ".claude/",
+        "examples/"
+      ]
+    },
+    "conformance": {
+      "checked-core-v1": {
+        "counts": {
+          "total": 248,
+          "passed": 246,
+          "knownUnsupported": 2,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "baselineMatches": true
+      },
+      "checked-snapshots-v39": {
+        "counts": {
+          "total": 3,
+          "passed": 3,
+          "knownUnsupported": 0,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "baselineMatches": true
+      },
+      "protected-sessions-v40": {
+        "counts": {
+          "total": 4,
+          "passed": 4,
+          "knownUnsupported": 0,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "baselineMatches": true
+      }
+    }
+  },
+  "limitations": [
+    "short-lived local native HTTP only, not native GUI or persistent/private routing",
+    "native source toolchain target remains separate; browser-only source service cannot emit HTTP artifacts",
+    "no stable private browser application/resource session",
+    "no real OTP/UARP/LLM calls or production deployment",
+    "process virtual-growth limits are not total RSS or an OS sandbox",
+    "previous full FAIL/targeted preview completion receipts remain immutable"
+  ],
+  "completion": "All implementation and verification complete. Only documentary result annotations and immutable evidence copies follow the full; code unchanged."
+}

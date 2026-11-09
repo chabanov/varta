@@ -398,7 +398,8 @@ async fn envelope(
     req: Request<Incoming>,
     shared: &Shared,
 ) -> Result<(handler::Envelope, bool), StatusCode> {
-    match shared.limits.transport {
+    let route = req.extensions().get::<super::delegation::Route>().cloned();
+    let (envelope, head) = match shared.limits.transport {
         Some(transport) if shared.contract.web_request => web_request(
             req,
             shared.scheme,
@@ -412,7 +413,17 @@ async fn envelope(
         )
         .await
         .unwrap_or(Err(StatusCode::REQUEST_TIMEOUT)),
-    }
+    }?;
+    Ok((
+        match route {
+            Some(route) => handler::Envelope::Delegated {
+                inner: Box::new(envelope),
+                id: route.0,
+            },
+            None => envelope,
+        },
+        head,
+    ))
 }
 
 async fn handle_request(
@@ -420,6 +431,36 @@ async fn handle_request(
     shared: Arc<Shared>,
     pool: Option<http::PoolLimits>,
 ) -> Reply {
+    let prefix = varta_common::session::delegation::CONTROL_PREFIX;
+    if shared
+        .sessions
+        .as_ref()
+        .is_some_and(|v| v.delegation_enabled())
+        && (req.uri().path() == prefix
+            || req
+                .uri()
+                .path()
+                .strip_prefix(prefix)
+                .is_some_and(|s| s.starts_with('/')))
+    {
+        let body_limit = if req.uri().path().starts_with(&format!("{prefix}/relay/")) {
+            shared
+                .limits
+                .transport
+                .map_or(http::MAX_BODY_BYTES, |t| t.request_body_bytes)
+        } else {
+            varta_common::session::delegation::MAX_CONTROL_BYTES
+        };
+        if let Err(status) = checked_head(&req, body_limit, &shared.limits) {
+            return failure(status);
+        }
+        return match super::delegation::dispatch(req, &shared).await {
+            super::delegation::Dispatch::Reply(reply) => reply,
+            super::delegation::Dispatch::Relay(req) => {
+                handle_request_inner(req, shared, pool).await
+            }
+        };
+    }
     if shared.sessions.is_some() {
         let ingress = checked_head(&req, http::MAX_BODY_BYTES, &shared.limits)
             .and_then(|_| super::sessions::ingress(&shared, &req));

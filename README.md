@@ -1,11 +1,13 @@
 # Varta
 
-Varta compiles strictly typed TypeScript to portable WebAssembly ahead of time and
-runs it in a thin, capability-checked host: write typed TS, compile it once, and
-run the safe program on any supported OS. There is no JavaScript engine on the
-target device. System access is denied unless the exact operation and resource
-are declared, and an application can ship as a single native executable that
-contains portable Wasm and its runtime.
+Current accepted local package: [startup readiness and stable private entry](docs/application-readiness.md), coordinated with Cloud generation-fenced promotion. Actual Studio Chrome acceptance covers two releases, fresh executions, full-service restart and retained data 45/revision 5. One completed-package full gate passes 14/14 commands, 4735 Rust tests (26 ignored), 196 Node tests and all three compatibility baselines (core 246/248 plus two known unsupported cases; v39 3/3; v40 4/4). See the [package evidence](docs/evidence/2026-11-08-application-readiness-verification.json). Candidate/promotion controls are API operations; Studio supplies private entry, authentication, preparation and opening. Public hosting and editor deployment controls remain separate work.
+
+Varta compiles strictly typed TypeScript to portable WebAssembly ahead of time
+and runs it in a thin, capability-checked host: write typed TS, compile it once,
+and run the safe program on any supported OS. There is no JavaScript engine on
+the target device. System access is denied unless the exact operation and
+resource are declared, and an application can ship as a single native executable
+that contains portable Wasm and its runtime.
 
 **Status:** experimental research project in active development, not a production
 release. The language is a checked TypeScript subset that grows through explicit,
@@ -13,7 +15,56 @@ versioned language profiles; it is not general JavaScript, Node or npm
 compatibility yet. See the [status summary](docs/development-plan.md#status) and
 the [research thesis](docs/development-plan.md#research-thesis).
 
-The latest Studio stabilization package adds trusted local HTTPS to the official
+Previous local package: [app-scoped browser host](docs/application-host.md) and
+explicit `app-data-v1` source policy, separate from deny-all preview. Native and
+normal-Chrome Cloud/KV read/write, scope isolation, parent loss and cancellation
+pass. One full gate passes 14/14 commands, 4731 Rust tests (26 ignored), 195 Node
+and all three compatibility inventories. See the [package evidence](docs/evidence/2026-11-08-application-host-verification.json).
+Cloud [durable run recovery](docs/evidence/2026-11-08-application-recovery-verification.json)
+now also passes full-service restart, fresh-session recovery and retained data
+43/revision 3: 15 scoped targets/62 groups, 357 source files and 38 logs independently
+matched. The engine is unchanged; no extra full run. Stable private addresses and
+active release promotion remain next work; public launch stays disabled.
+
+Previous accepted package: [native protected-session delegation](docs/native-delegation.md)
+and a coordinated Cloud async lookup adapter. Explicit host policy enables
+native issue/lookup/revoke, bounded scopes and method/path relay; native request
+provenance stays delegated after authority disappears. Synthetic actual HTTP,
+fresh SDK-fixture/KV, late-CAS no-write and restart acceptance pass. One final
+full gate passes 14 commands, 4725 Rust tests (26 ignored), 195 Node tests and all
+three compatibility inventories on unchanged sources. See the [package evidence](docs/evidence/2026-11-08-native-delegation-verification.json).
+That preceding receipt does not cover the current app-host code. Public hosting,
+stable private addresses and active release promotion remain separate.
+
+Previous package: [bounded native HTTP execution](docs/execution-host.md). A
+separate artifact-only host stages and independently validates a checked
+Wasm/manifest pair, then runs a loopback-only service in a bounded child with
+explicit authority. Listening readiness follows startup; stop/expiry revoke the
+endpoint and become terminal only after the child is reaped. Replay,
+cancellation tombstones and parent-loss termination are covered. Five new unit
+and two native CLI cases pass; one full gate passes 14 commands, 4716 Rust tests
+(26 ignored) and 195 Node tests. This is not native GUI, persistent private
+deployment or a browser resource session.
+
+The preceding [local preview host](docs/preview-host.md) launches validated official
+browser bundles on a hostname isolated from Studio/API. It uses one-use
+activation, deny-all authority, bounded leases and terminal stop/expiry. Real
+Chrome TSX rendering, click updates, cookie isolation, denied networking and
+Worker shutdown pass. Cloud owns durable artifact/preview records and owner
+authorization. One full attempt found test-host readiness timeouts; targeted
+correction and remaining verification pass (4709 unique Rust tests, 26 ignored,
+195 Node). The original full remains failed; see the [current
+evidence](docs/evidence/2026-11-08-preview-host-verification.json). Native GUI and production deployment remain separate contracts; the new local
+service boundary is described above.
+
+The preceding verified [local toolchain package](docs/toolchain-host.md) adds authenticated,
+bounded check/build of immutable supplied source bundles, pinned compiler
+identity, cancellation and idempotent recovery. Headless native TSX Studio/API/worker
+acceptance and six direct native scenarios pass. One full gate passes 14 commands,
+4700 Rust tests (26 ignored) and 195 Node tests on unchanged sources. Compilation
+grants no artifact execution; see the [package evidence](docs/evidence/2026-11-07-toolchain-host-verification.json).
+
+The preceding Studio stabilization package adds trusted local HTTPS to the official
 browser dev host and autonomous cancellation of expired sessions awaiting I/O.
 Finite native/browser resource stress and local HTTPS Studio acceptance pass;
 real OTP verify/restore/logout and old-key denial pass with existing-code

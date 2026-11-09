@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-08",
+  "package": "Coordinated Cloud durable application-run lifecycle and restart recovery on unchanged accepted engine",
+  "status": "read-only-review-and-independent-checkpoint-verification-pass",
+  "cloudReceipt": {
+    "path": "docs/evidence/2026-11-08-cloud-application-run-recovery.json",
+    "sha256": "7286d43a003f57121c58808e956778db0af6ed205fde0449af479cf26ea69c9b"
+  },
+  "independentVerification": {
+    "receiptSha256": "7286d43a003f57121c58808e956778db0af6ed205fde0449af479cf26ea69c9b",
+    "sourceDigest": "076dea8492e5c8a25970691f0cc4173feb78f0459f1bd666aa59747cc250eb96",
+    "expectedSourceDigest": "076dea8492e5c8a25970691f0cc4173feb78f0459f1bd666aa59747cc250eb96",
+    "matchedFiles": 357,
+    "matchedLogs": 38,
+    "verifiedAtUtc": "2026-11-08T21:06:48.756689+00:00",
+    "mismatches": [],
+    "pass": true
+  },
+  "checksOwnedByCloud": {
+    "offlineTargets": 15,
+    "offlineGroups": 62,
+    "lifecycleGroups": 8,
+    "actualThreeServiceRestart": true,
+    "sameLogicalApplicationResourceReleaseIds": true,
+    "freshSessionNewAttempt": true,
+    "readOnlyReopenValue": 43,
+    "readOnlyReopenRevision": 3,
+    "ticketParentAffinityNegativeAndPositive": true
+  },
+  "rootReview": {
+    "mode": "read-only; no source edits or test runs",
+    "finding": "Ticket issuance checked SDK owner but not current parent generation against stored run parent.",
+    "resolution": "Cloud adds parentGeneration equality before host effects and after await; focused and actual two-parent tests pass.",
+    "otherBoundaries": "Known run GET recovery; unknown run no background POST; durable binding revoke before cancel; owner revisions separate from lease fences; no native proof/credential/ticket persistence."
+  },
+  "engine": {
+    "codeFingerprint": {
+      "sha256": "73dfce54c25dd6e800419fa1da4cb9be9c52d5ef453fe5c4215a4d6311d3e37c",
+      "files": 2678,
+      "excludes": [
+        "docs/",
+        "README.md",
+        ".claude/",
+        "examples/"
+      ]
+    },
+    "acceptedCli": {
+      "path": "target/application-host-20261108/accepted/varta",
+      "sha256": "4e2ecbef800010da2345370de7aea825e3901d69a1f357b15c3c7d0c90a6e541"
+    },
+    "executionOnlyCompanion": {
+      "path": "target/application-host-20261108/accepted/varta-runtime",
+      "sha256": "a46e98f58e6c9a5cfc2a1151929ac34603c22deedfbe251a4f3789d12e570171"
+    },
+    "unchangedEvidence": {
+      "docs/evidence/2026-11-08-application-host-full-report.json": "aeb738b391e8dfd23ad7a4635dbb1a93462e4502ee646866796c016ba17d93b8",
+      "docs/evidence/2026-11-08-application-host-verification.json": "85a5dd17b4c90de9a5647dcdaa507115820f5dd468e5d2420ce162e3223fe582",
+      "docs/application-host.md": "c981529cfc9177a7f7374cf40923dd427092b805a2cf4c31c1620f0af9e4881f"
+    },
+    "newFullRun": false,
+    "priorFullRustPassed": 4731,
+    "priorFullRustIgnored": 26,
+    "priorFullNodePassed": 195,
+    "priorFullCommandsPassed": 14
+  },
+  "limitations": {
+    "engineEditedByCloud": false,
+    "newEngineFullRun": false,
+    "sdkPatched": false,
+    "rootGrantsChanged": false,
+    "rootDefinitions": 3,
+    "publicDefaultAdmission": 503,
+    "launchAvailable": false,
+    "stablePrivateAddress": false,
+    "activeReleasePromotion": false,
+    "restoredRuntimeNeedsFreshSessionAfterVaultRestart": true,
+    "restoredLogicalIdentityAndData": true,
+    "crossRestartExactlyOnce": false,
+    "realUarpRequests": 0,
+    "otpRequests": 0,
+    "llmRequests": 0,
+    "credentialsProofsOrTicketsWritten": false,
+    "allOwnedProcessesStopped": true,
+    "temporaryRootConfigsRemaining": 0
+  },
+  "next": [
+    "Stable private address and readiness-before-active-release CAS",
+    "Studio launch/recover/update flow and durable release routing",
+    "Migration/rollback/test-data-copy policy, operational quotas and backups"
+  ],
+  "completion": {
+    "onlyDocumentationAndEvidenceChangedInEngineRepository": true,
+    "verifiedAtUtc": "2026-11-08T21:07:24.409861+00:00"
+  }
+}

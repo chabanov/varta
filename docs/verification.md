@@ -1,12 +1,197 @@
 # Scoped development verification
 
-Develop coherent batches of related behavior. Run focused checks while implementing
-and fixing them, cover their callers when a feature is ready, then run the full
-gate once on the completed code batch before committing. A full pass does not need
-to be repeated after a documentation-only edit. New code/build inputs invalidate
-any previous check whose scope includes those inputs.
+Develop coherent batches of related behavior. Run focused checks while
+implementing and fixing them, cover their callers when a feature is ready, then
+run the full gate once on the completed code batch before committing. A full
+pass does not need to be repeated after a documentation-only edit. New
+code/build inputs invalidate any previous check whose scope includes those
+inputs.
 
-## Current verification evidence — 2026-11-07
+## Current verification evidence — 2026-11-08
+
+**Accepted — startup readiness, active promotion and private entries.**
+The additive [contract](application-readiness.md) passes project readiness/dev tests, CLI browser routing and application smoke, boundary tests, strict affected Clippy, dev-client tests and actual Chrome path-input/rebuild/source+host denial probes. Native readiness rejects unopened candidates and fresh native-parent loss, bounds observations by the live client lease and fixed lifetime, and exposes a per-incarnation identity.
+
+Actual automated Chrome uses the Varta Studio UI and a synthetic SDK HTTP boundary: real capability consent, OTP forms, protected native sessions, candidate writes denied before promotion, distinct real releases, stable entry and fresh execution, old-session401 after full service restart, retained data45/revision5 and confirmed durable stop. All six phases and all four distinct native execution paths pass; all owned services/Chrome processes close. Cloud's 396 source files, 76 final artifacts/logs and 61 archived partial outcomes independently match. The 75 groups/18 scoped targets, headless semantic-link regression and append-only affected default-server check pass.
+
+One completed-package full gate passes 14/14 commands, 4735 Rust tests (26 ignored), 196 Node tests and all three compatibility baselines (core 246/248 plus two known unsupported cases; v39 3/3; v40 4/4). Raw source before/after is byte-identical. See the [package receipt](evidence/2026-11-08-application-readiness-verification.json) and [full report](evidence/2026-11-08-application-readiness-full-report.json). The frozen [Cloud receipt](evidence/2026-11-08-cloud-active-deployments.json) remains labelled full-pending at its capture time; the Root package receipt and append-only [Cloud full closure](evidence/2026-11-08-cloud-deployment-engine-full.json) record the subsequent final full result. The [default-check closure](evidence/2026-11-08-cloud-deployment-check-closure.json) preserves earlier evidence rather than rewriting it. Only documentary annotations follow the full gate.
+
+Candidate/promote controls are API-only. This proves local startup and private entry, not business health, permanent runtime URLs, production hosting, live provider behavior or browser heap restoration. Earlier receipts below remain historical for their exact pinned code.
+
+**Coordinated Cloud recovery — targeted acceptance on unchanged accepted engine.**
+The [Cloud receipt](evidence/2026-11-08-cloud-application-run-recovery.json) and
+[Root independent verification](evidence/2026-11-08-application-recovery-verification.json)
+record 15 scoped targets/62 groups (8 lifecycle groups), full API/host/worker
+restart, normal Chrome 41→42→fresh-session43, unchanged logical/resource/release
+IDs, old-cookie 401, actual parent B 403/parent A 200 ticket checks, confirmed stop and
+fresh read-only 43/revision 3. All 357 source bytes, aggregate digest and 38 logs
+independently match. Read-only review found ticket parent affinity missing;
+Cloud now compares current/stored parent generation before effects and after
+await, with focused and actual HTTP regressions. No Root code/test/full run was
+added; code fingerprint 73dfce54c25dd6e800419fa1da4cb9be9c52d5ef453fe5c4215a4d6311d3e37c,
+accepted executable pair, wire and prior report hashes are unchanged.
+
+**Application-host — local/native/normal-Chrome acceptance and one full gate passed.**
+The [contract](application-host.md) and [package receipt](evidence/2026-11-08-application-host-verification.json)
+cover explicit source policy, canonical artifacts, per-run protected data,
+one-use activation, applied-frame readiness and native parent cancellation.
+Owned Chrome tests real vault/KV read/write, another valid HttpOnly cookie,
+ambient localhost cookies, duplicate own-cookie rejection, cross-run/traversal/
+ordinary-fetch/secret-env denial, read-only writes, ticket replay, parent loss
+before/after activation and cancellation of pending native I/O. Old preview
+Chrome remains passing. Candidate1 normal-profile failure is retained as
+superseded evidence; accepted candidate2 fixes application mode only.
+
+The [Cloud checkpoint](evidence/2026-11-08-cloud-application-host-adapter.json)
+passes 13 targets/50 groups plus actual compiler/worker/artifact/native admission,
+normal Chrome 41→42, fresh ready guest, confirmed app/native stop and observed
+Worker close. A fresh read-only process reopens 42/revision 2 after all owned
+servers stop. All 333 source hashes, aggregate digest and 58 logs independently
+matched at 19:20:33UTC. Default production grants/compiler pin stay unchanged.
+Large artifact upload runs in a separate worker; HTTP admission has no upload
+fallback and no production budget increase.
+
+The single [full report](evidence/2026-11-08-application-host-full-report.json)
+passes 14/14 commands: 4731 Rust tests (26 ignored), 195 Node; core 246/248 with two
+known unsupported, v39 3/3 and v40 4/4. Raw before/after source hashes match and
+the code fingerprint stays 73dfce54c25dd6e800419fa1da4cb9be9c52d5ef453fe5c4215a4d6311d3e37c.
+Only documentation/evidence annotations follow. Native-only and other older
+reports below remain immutable historical checkpoints. Public/stable hosting,
+active promotion remain future work. Cloud recovery is accepted separately above.
+
+**Native delegation — native/Cloud scoped acceptance and one final full gate passed.**
+The [native v1 contract](native-delegation.md) is implemented. Five focused vault
+cases, three common policy/path/host-only admission cases and an actual
+single-worker issue/lookup/relay/revoke/logout/restart case pass. Nine previous
+protected-session cases pass. A separate retained-executable Web Response probe
+also passes with one worker. Rebuilt intrinsics, KV codec, view engine and
+session-policy Wasm are byte-identical to the preceding accepted artifacts;
+source fingerprint metadata alone changes.
+
+The [Cloud checkpoint](evidence/2026-11-08-cloud-native-data-adapter.json) passes
+26 scoped groups and actual synthetic SDK plus native HTTP/KV/CAS/revoke/logout/
+restart acceptance on the retained executable. All 299 source hashes and 19 log
+hashes were independently matched at the checkpoint; later Cloud work is separate.
+The preceding [retention/lifecycle receipt](evidence/2026-11-08-cloud-data-channel-lifecycle.json)
+is preserved as history, not relabelled as a fresh check of its former live tree.
+
+The single [full report](evidence/2026-11-08-native-delegation-full-report.json)
+passes 14/14 commands: 4725 Rust tests (26 ignored), 195 Node, core 246/248 with
+two known unsupported cases, v39 3/3 and v40 4/4. Before/after raw source hashes
+match. The [package receipt](evidence/2026-11-08-native-delegation-verification.json)
+pins native CLI, code fingerprint, wire and independent Cloud evidence. Only
+documentary result annotations follow; code/build/test inputs stay frozen.
+That preceding native-only checkpoint did not include browser activation or
+explicit app builds. The local package above adds them; public private-launch
+promotion remains outside it. Historical reports are unchanged.
+
+**Previous native execution — scoped acceptance passed, one final full gate passed.**
+Five new library tests cover exact ceilings/requests, immutable native admission
+without main, queued cancellation, replay/tombstones and stop-until-reap semantics.
+Two native CLI scenarios exercise binary import/seal, service readiness/replies,
+per-request trap isolation, startup trap, natural exit, stop/replay, TTL and parent
+loss. All 112 project library cases, 14 related CLI cases, dependency boundaries
+and strict affected Clippy pass. The existing real Chrome preview probe also passes after extraction of shared
+control transport.
+
+```bash
+cargo test -p varta-project --lib --locked
+cargo test -p varta --test smoke execution_cli --locked
+cargo test -p varta --test smoke _cli_ --locked -- --test-threads=4
+cargo test -p varta-project --test boundaries --locked
+cargo clippy -p varta-project -p varta --all-targets --locked -- -D warnings
+node scripts/test-preview-host.mjs target/debug/varta target/execution-browser-regression
+```
+
+The [single full report](evidence/2026-11-08-execution-host-full-report.json)
+passes all 14 commands: 4716 Rust tests (26 ignored), 195 Node, core 246/248
+with two known unsupported, v39 3/3 and v40 4/4. Sources are identical
+before/after; code fingerprint remains unchanged after documentary result
+annotations. The [package
+receipt](evidence/2026-11-08-execution-host-verification.json) records the
+accepted standalone CLI and exact scope. No additional full gate was needed. The
+earlier failed preview full and its scoped completion remain immutable history.
+No Cloud native adapter, browser resource channel or production deployment is
+claimed by these native tests.
+
+**Previous preview/browser launch — native/Chrome acceptance and targeted completion after one failed full attempt.**
+The [current receipt](evidence/2026-11-08-preview-host-verification.json) tracks
+this package independently of the earlier toolchain gate. Seven new unit tests
+cover ceilings, canonical bytes, hashes, replay, bounded receipts, one-use tickets,
+unique claims, stop and fixed expiry. Two real native CLI cases exercise staged
+binary upload/seal, poisoned-JS denial, auth, activation and cancellation/shutdown.
+All 107 project library tests and strict affected Clippy pass.
+
+```bash
+cargo test -p varta-project --lib --locked
+cargo test -p varta --test smoke preview_cli --locked
+cargo test -p varta --test smoke toolchain_cli --locked
+cargo test -p varta-project --test boundaries --locked
+cargo clippy -p varta -p varta-project --all-targets --locked -- -D warnings
+node scripts/test-preview-host.mjs target/debug/varta target/preview-browser
+```
+
+The Chrome driver owns its temporary profile and native host, removes fragment
+authority before I/O and records no tickets/cookies. It checks real TSX
+rendering and click updates, HttpOnly and Studio-cookie isolation, denied fetch
+with zero protected requests, Worker shutdown and runtime trap reporting. It
+makes no live OTP/provider requests. The sole full attempt passed the first nine
+commands and failed on four outer 20-second CLI host-readiness waits. Its
+[original report](evidence/2026-11-08-preview-host-full-attempt.json) remains
+failed with unchanged sources. Only the two test readiness helpers were adjusted
+to 60 seconds; validation/run/CPU/memory budgets and product code were
+unchanged. Twelve CLI scenarios pass together with four test threads. The seven
+remaining CLI Tailwind cases and [tail
+continuation](evidence/2026-11-08-preview-host-tail-report.json) pass: 4295
+non-CLI Rust tests, 195 Node tests and all three inventories, on unchanged
+completion sources. Combined unique coverage is 4709 Rust tests (26 ignored),
+core 246/248 with two known unsupported, v39 3/3 and v40 4/4. Repeated CLI cases
+are excluded from this aggregate. This is scoped completion, not a final full
+PASS. See the [completion
+receipt](evidence/2026-11-08-preview-host-scoped-closure.json). Native
+OS/service launching and production HTTPS are outside scope.
+
+**Previous toolchain host — local/Cloud acceptance and one final full gate passed.**
+The supplied-file loader and compiler/browser pipeline are checked without source
+execution. Library tests cover source/config/path/byte limits, Unicode diagnostics,
+explicit ceilings, canonical file-order identity and bounded idempotency receipts.
+Real CLI tests cover authentication/Origin refusal, pinned identity, build/check,
+downloaded per-file and artifact digests, official artifact validation, source
+config/profile denial, lost202 recovery, queued/running hard cancellation, worker
+recovery, wall deadlines and graceful shutdown/reaping/private-copy removal.
+
+```bash
+cargo test -p varta-project --lib toolchain --locked
+cargo test -p varta --test smoke toolchain_cli --locked
+cargo test -p varta-runtime --lib kv:: --locked
+cargo clippy -p varta -p varta-project -p varta-runtime --all-targets --locked -- -D warnings
+```
+
+Five library tests and three CLI tests pass locally. Native KV identity now uses
+the concrete SQLite connection through paired pinned vendor patches; 40 KV/HTTP
+cases pass (3 ignored helpers), including 400 parallel repeated opens with zero
+identity errors. Legitimate writer contention remains an explicit failure, never
+an integrity-check retry. Strict workspace/all-target Clippy passes. The native
+startup probe verifies allocation refusal above the virtual-growth budget; no
+total-RSS or OS-sandbox claim is implied. Cloud headless native TSX through real
+HTTP/API/KV/separate worker plus six direct native cases pass, including
+cancellation and account isolation. No new Chrome/HTTPS/live-provider acceptance
+or Cloud artifact byte ingest/hash is claimed.
+
+One final immutable run passes **14/14 commands, 4700 Rust tests (26 ignored),
+195 Node tests**, core 246/248 with two known unsupported cases, v39 3/3 and
+v40 4/4. Before/after source SHA-256 is
+`353b79876184ba1b1c2c51c3f9e817717adb32b0275033aa52cb85c9a672e71d`.
+The [raw report](evidence/2026-11-08-toolchain-host-full-report.json) is copied
+unchanged from `target/verification/20261108-000010-z6lmpgud/report.json`.
+Only documentary result annotations/evidence copies follow. Independently hashed
+code inputs (2644 files) remain unchanged. The accepted CLI is retained separately
+under `target/toolchain-host-20261107/varta-accepted` with SHA-256
+`2097c42d17d31514cc5e7148f147c3a483aafe33d222c2b0d8286397feeb244f`;
+the workspace binary after the full build has a different feature context and
+is not relabeled as the Cloud-accepted executable. See the
+[package receipt](evidence/2026-11-07-toolchain-host-verification.json) and
+[immutable Cloud receipt](evidence/2026-11-07-cloud-toolchain-adapter-checkpoint.json).
 
 **Studio stabilization — one final full pass.** Two project TLS
 regressions check real certificate verification, TLS 1.3/HTTP/1.1, HTTPS origin

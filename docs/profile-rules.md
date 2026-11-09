@@ -3569,13 +3569,17 @@ Normative contract: [architecture](architecture.md#kv-storage-kv).
   `permission::Broker::database` before any effect; denials are recoverable.
   Never infer write access from a read grant or from the file's permissions.
 - Pinning: `kv::store::open` is the only way to a database. Keep its order
-  (pinned no-follow walk and file, canonical root path verified against the
-  root descriptor, path identity, `SQLITE_OPEN_NOFOLLOW` without
-  `SQLITE_OPEN_CREATE`, schema check, descriptor check, lock probe). Never
-  open or close a descriptor of the database file outside SQLite: closing any
-  descriptor of a file drops the process's POSIX locks on it, so the
-  descriptor check reads `/dev/fd` with `stat` only and an abandoned database
-  keeps its pinned descriptor.
+  (pinned no-follow walk/file, canonical root checked against its descriptor,
+  path identity, `SQLITE_OPEN_NOFOLLOW` without `SQLITE_OPEN_CREATE`, concrete
+  connection identity, schema check, verified probe identity, lock probe).
+  The paired pinned rusqlite/libsqlite3-sys patches expose safe read-only
+  `main_file_identity`: built-in Unix VFS only, actual fstat device/inode from
+  that connection, including SQLite's cached descriptors. See their vendor patch
+  records. Keep FFI in that layer. No descriptor is duplicated/opened/closed for
+  verification. Unsupported VFSes fail closed. Never replace this with process
+  fd deltas, mutable size/timestamps, path-only checks or integrity-error retry.
+  An abandoned database keeps its pinned descriptor because closing a file's
+  descriptor drops the process's POSIX locks on it.
 - The schema check runs before anything can write; a new database is only an
   empty file created by a writable open.
 - Values: the static type chooses the encoding in the compiler (`lower::kv`):
@@ -5944,3 +5948,102 @@ Contract: [class/function increment](architecture.md#classfunction-prerequisite-
 - Verify capability denial, source-free artifacts, exact origin/ceiling refusal,
   cross-request rotation, rejected/invalid heads, streaming sealing, cancellation,
   Rust/Wasm browser policy and a real HTTPS browser flow before the final gate.
+
+
+## Trusted source tooling host (no guest ABI extension)
+
+- Keep compiler operations in project tooling; runtime/launcher must never depend
+  on compiler or spawn source-selected commands. Reuse checked compiler and
+  browser validation without executing initialization or main.
+- The first bundle policy admits only supplied UTF-8 files, explicit relative
+  .ts/.tsx code imports and confined text imports. Reject source-owned host/config
+  authority and dependency downloads; do not silently substitute CLI filesystem
+  resolution or Tailwind preprocessing.
+- Require the explicit host ceiling and runtime-only token before source admission.
+  Pin/copy/hash the trusted executable before listening. Keep CPU, virtual-growth,
+  deadline, connection, source/result and retained-cache limits; fail closed when
+  native resource enforcement is unavailable. Never claim a total-RSS sandbox
+  from an address-space limit.
+- Replay the same idempotency key/request before busy rejection. Conflict on changed
+  input, retain cancelled/terminal/forgotten receipts until expiry and fence late
+  publication. Hard-cancel/reap workers; shutdown closes connections and workers.
+- Domain jobs/ownership and durable artifact storage remain in applications. Build
+  output has no implicit execution authority or host capability grants. Keep the
+  independent protocol version separate from old language profiles and imports.
+
+
+## Isolated preview tooling (no guest ABI extension)
+
+- Keep owner/job/queue/CAS logic in applications. Preview is a separate explicit
+  execution boundary; a compiler artifact alone is not a grant.
+- Independently verify file/catalog hashes and full Wasm admission. Require exact
+  canonical official browser files; never serve submitted scripts/HTML just
+  because their hashes match. Regenerate runtime with the operator deny-all ceiling.
+- Isolate public hostname from every protected hostname; different ports do not
+  isolate cookies. Reject control Origin/Cookie, public service tokens and
+  arbitrary source-owned configuration.
+- Keep activation one-use/short-lived and fragment-only, then remove it before
+  I/O. No ticket in durable status/replay/logs. Scope cookie to one run and keep
+  the page lease private; only one Worker claim per run.
+- Preserve replay-before-busy/missing-bundle, cancel-by-key tombstones, bounded
+  receipts, fixed TTL and shutdown reaping. Server revocation is immediate;
+  browser scheduling does not provide synchronous remote process termination.
+- No new profile or engine budgets are raised. Verify real Chrome first frame,
+  interaction, cookie isolation, denial, trap and stop as well as native protocol
+  tests before the once-per-completed-package full gate.
+
+
+## Bounded native HTTP execution (no guest ABI extension)
+
+- Validate immutable Wasm/manifest hashes and full runtime admission before running
+  source initialization. The first policy requires v40 HTTP v2 and exactly one
+  ephemeral loopback net.listen request; no source-owned runtime policy.
+- Use a fresh pinned process with no inherited service environment, existing
+  CPU/address-space guards, parent-lifetime input and explicit guest ceilings.
+  Keep validation, startup, fixed lifetime, IPC and retained state bounded.
+- Keep typed lifecycle IPC separate from guest output. Listening is startup
+  readiness, not semantic health. Preserve isolated per-request guest instances.
+- Mark stopping immediately, fence late readiness, kill and wait before terminal
+  stopped/expired. Unconfirmed reaping must retain its slot, fail new admissions
+  closed and report shutdown failure. Never silently restart a terminated run.
+- Preserve replay-before-missing/busy, immutable compiler-provenance correlation,
+  bounded cancel-by-key tombstones and domain authorization outside the engine.
+- Cover real HTTP replies, request/startup traps, stop, natural exit, TTL, parent
+  loss, queued cancellation and existing preview callers before the final gate.
+
+## Native delegation (host-only, no guest ABI change)
+
+- Follow [the native contract](native-delegation.md). Require explicit host policy
+  and existing protected v40 sessions before listening; no package authority.
+- Establish native proof and parent/scope cancellation before guest initialization.
+  Reject caller proof headers. A nonce is only a key for authenticated lookup.
+- Retain immutable delegated provenance separately from nullable live context;
+  never downgrade on revoke/expiry/rotation or scope collection. Keep credentials
+  in request RAM; opaque context and KV contain no parent credential/reference.
+- Controls bypass worker admission to permit self-lookup with one worker, but
+  preserve connection, body, timeout and capacity bounds. No CORS/cookies.
+- Preserve old artifacts, browser deny-all and native unconfigured behavior.
+  Cover synthetic self-lookup/relay/revoke/restart, proof lifetime and autonomous
+  cancellation before the completed-package full gate.
+
+## Explicit application source and browser authority (existing v40)
+
+- Follow [application-host](application-host.md). Admit only operator-listed
+  origins and exact env.get/net.session requests; old local-only remains empty.
+- Reconstruct official bundles and compare canonical bytes before admission.
+  Keep distribution loader/Worker bytes unchanged; runtime inputs only narrow
+  requested authority to the exact run and access methods.
+- Verify native scope at activation, resources, lease, control status and relay.
+  Cookies do not widen source ceilings; authenticate them before upstream probes.
+- Bound relay body/time/headers; keep its connection driver owned by the request
+  future so stop drops I/O. Never downgrade to ordinary parent transport.
+- Cover real Chrome read/write, a second valid cookie, cross-run/path denials,
+  read-only denial, replayed ticket, parent loss and pending-I/O cancellation;
+  regress old preview before the single completed-package full gate.
+
+### Fresh startup and public entry inputs
+
+- Follow [application-readiness](application-readiness.md). Never promote from cached run status or idempotent start replay; fresh native authorization precedes a locked live-client readiness snapshot.
+- Keep host incarnation separate from executable identity; evidence expires within the current lease and fixed lifetime. Readiness establishes startup, not semantic health.
+- Shell routes are explicit operator opt-in. Only a public pathname reaches the existing env input; source and ceiling env.get grants remain required. Distribution loaders and Worker bytes remain unchanged.
+- Cloud alone owns active generation, candidate write denial, owner checks, address resolution and final CAS. Do not add release/domain routes to engine crates.

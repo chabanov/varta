@@ -1,0 +1,296 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-07",
+  "package": "bounded immutable source toolchain host",
+  "baseCommit": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+  "status": "passed: implemented local toolchain, headless native TSX/API/worker Cloud acceptance and one immutable full gate",
+  "contract": "docs/toolchain-host.md",
+  "protocol": {
+    "version": 1,
+    "target": "browser",
+    "dependencyPolicy": "local-only-v1",
+    "guestAbiChanged": false,
+    "artifactCapabilityGrants": [],
+    "sourceExecution": false,
+    "runtimeCompilerDependency": false,
+    "idempotency": "mandatory correlation key, canonical request, replay before busy; terminal/forgotten receipt retained until expiry",
+    "cache": "ephemeral bounded operation/artifact memory; no durable artifact ingest"
+  },
+  "focused": {
+    "projectToolchainTests": 5,
+    "cliToolchainTests": 3,
+    "architectureBoundaryTests": 2,
+    "strictAffectedClippy": "passed; final full gate also passes strict workspace/all-target Clippy",
+    "nativeResourceProbe": "passed; kernel refused reservation above worker virtual-growth budget",
+    "realCliScopes": [
+      "runtime-only authentication, Origin refusal and compiler pin",
+      "build/check and Unicode/source diagnostics",
+      "canonical artifact/per-file hashes and official artifact validation",
+      "source configuration/profile denial",
+      "lost acceptance response idempotency recovery",
+      "queued/running hard cancellation and worker recovery",
+      "wall deadline and graceful shutdown/reap/private snapshot cleanup",
+      "compiler worker stops on parent lifetime channel closure",
+      "constant-time credential-hash comparison"
+    ],
+    "nativeKv": {
+      "passed": 40,
+      "ignoredHelperProcesses": 3,
+      "finalIdentityFollowupPassed": 1,
+      "parallelRequests": 400,
+      "parallelism": 4,
+      "completed": 299,
+      "explicitWriterBusy": 101,
+      "identityErrors": 0,
+      "otherErrors": 0,
+      "retryIntegrityErrors": false,
+      "connectionIdentity": "safe read-only built-in Unix VFS fstat on concrete connection; cached descriptors supported",
+      "vendorPatches": [
+        "vendor/rusqlite/VARTA-PATCH.md",
+        "vendor/libsqlite3-sys/VARTA-PATCH.md"
+      ],
+      "guestAbiChanged": false,
+      "vfsOutputContract": "SQLite dispatcher checks concrete builtin Unix xFileControl before private opcode forwarding"
+    }
+  },
+  "cloud": {
+    "status": "passed: headless native TSX through real HTTP/API/KV/separate worker/compiler; six direct native cases",
+    "liveProviderRequests": 0,
+    "priorCandidateCli": {
+      "sha256": "92f8a27262a317111e9f290bd569326824b3d7b70e506bd61a6bd4b2d96a6d81",
+      "note": "historical prior candidate for earlier native/UI/stress acceptance; superseded by final concrete-VFS guard CLI",
+      "originalBuildPath": "target/debug/varta"
+    },
+    "acceptedCli": {
+      "path": "target/toolchain-host-20261107/varta-accepted",
+      "sha256": "2097c42d17d31514cc5e7148f147c3a483aafe33d222c2b0d8286397feeb244f",
+      "note": "immutable local copy of the exact Cloud-accepted executable"
+    },
+    "sourcePin": {
+      "sha256": "1d4b1fb151ab33c46ac297273f0abbe6b37a5892ab1b7badd967a45b4a35c83f",
+      "files": 178,
+      "algorithm": "sorted path + NUL + bytes + NUL; Markdown excluded",
+      "independentlyVerifiedFiles": 178
+    },
+    "compilerRequestSha256": "63f6f347e4c576b4435d959300caa347a7c63cce7fa436fbe52a6f3f8c6e7bd4",
+    "plainArtifactCatalogSha256": "ff19e93ad4ebde007130bbb594bf273d77345d52667df3613b51d8c024d7b0b1",
+    "viewArtifactCatalogSha256": "28ea94abbc049e1d6c77661c39a5c6a0576cf024488f69ec7c9aa151c83273eb",
+    "artifactPinScope": "trusted-host metadata and per-file pins; Cloud does not claim independent artifact byte download/hash",
+    "offlineGroupsPassed": 29,
+    "nativeCasesPassed": [
+      "check",
+      "build",
+      "type error",
+      "lost acceptance reply",
+      "cancel",
+      "TSX/View bundle without executing main"
+    ],
+    "configuredStudioPassed": [
+      "main completion marker",
+      "check",
+      "build",
+      "real type diagnostic",
+      "cancel",
+      "anonymous 401",
+      "foreign project 404"
+    ],
+    "cleanup": {
+      "allOwnedChildrenStopped": true,
+      "temporaryRootConfigs": 0,
+      "otherProcessesTouched": false
+    },
+    "parallelKvPriorCandidate": {
+      "cliSha256": "92f8a27262a317111e9f290bd569326824b3d7b70e506bd61a6bd4b2d96a6d81",
+      "requests": 400,
+      "parallelism": 4,
+      "completed": 260,
+      "explicitWriterBusy": 140,
+      "identityErrors": 0,
+      "otherErrors": 0,
+      "deviceInodeUnchanged": true
+    },
+    "handoffReadyAtUtc": "2026-11-08T05:00:09.890024+00:00",
+    "receipt": {
+      "path": "docs/evidence/2026-11-07-cloud-toolchain-adapter-checkpoint.json",
+      "originalPath": "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/cloud-toolchain-adapter-checkpoint.json",
+      "sha256": "3739b74d83c989584427052192889915552fc28615ac0cc67915c0bb05630ace"
+    },
+    "uiScope": "headless native TSX; no new Chrome/HTTPS/live-account acceptance",
+    "finalParallelKv": {
+      "cliSha256": "2097c42d17d31514cc5e7148f147c3a483aafe33d222c2b0d8286397feeb244f",
+      "requests": 400,
+      "parallelism": 4,
+      "completed": 306,
+      "explicitWriterBusy": 94,
+      "identityErrors": 0,
+      "otherErrors": 0
+    },
+    "finalExternalReceiptImmutable": true,
+    "historicalFoundationReceipt": {
+      "path": "/Users/snaga/Developer/Laboratory/cloud/docs/evidence/cloud-jobs-foundation.json",
+      "sha256": "d28c65f9982d9029f2a91152ab042c42c02e7d384ee919e4c718a3205828ca28"
+    }
+  },
+  "fullGate": {
+    "status": "passed",
+    "runs": 1,
+    "commandsPassed": 14,
+    "commandsTotal": 14,
+    "rustPassed": 4700,
+    "rustIgnored": 26,
+    "nodePassed": 195,
+    "report": {
+      "path": "docs/evidence/2026-11-08-toolchain-host-full-report.json",
+      "originalPath": "target/verification/20261108-000010-z6lmpgud/report.json",
+      "sha256": "62586085163a99aa7844374a1235ad539d3f087a6273479f78cca8f0263ffcb0"
+    },
+    "before": {
+      "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+      "sourceSha256": "353b79876184ba1b1c2c51c3f9e817717adb32b0275033aa52cb85c9a672e71d"
+    },
+    "after": {
+      "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+      "sourceSha256": "353b79876184ba1b1c2c51c3f9e817717adb32b0275033aa52cb85c9a672e71d"
+    },
+    "sourceUnchanged": true,
+    "skippedCommands": 0,
+    "knownGapCommands": 0,
+    "postGateChanges": "documentation-only result annotations and immutable evidence copies",
+    "conformance": {
+      "checked-core-v1": {
+        "counts": {
+          "total": 248,
+          "passed": 246,
+          "knownUnsupported": 2,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "inventorySha256": "c2db383669e97f141f44b3da6f3adcd08601989ecdd136b384ed540c4917b17a",
+        "baselineMatches": true
+      },
+      "checked-snapshots-v39": {
+        "counts": {
+          "total": 3,
+          "passed": 3,
+          "knownUnsupported": 0,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "inventorySha256": "e931b6b37e4c42a5efed4ac21e36cabc2f0bffb2bf042f90442df0f203a9af31",
+        "baselineMatches": true
+      },
+      "protected-sessions-v40": {
+        "counts": {
+          "total": 4,
+          "passed": 4,
+          "knownUnsupported": 0,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "inventorySha256": "45e45cd40072bd5a8f42b8cee0529dd9360fdc06f94854ee4c5157b8696c24aa",
+        "baselineMatches": true
+      }
+    }
+  },
+  "limits": [
+    "local-only explicit source/text imports; no package download or source config",
+    "no Tailwind preprocessing in this first compiler policy",
+    "no execution, preview, deployment or durable artifact storage",
+    "virtual-growth/CPU process limits are not a total RSS or OS sandbox guarantee",
+    "macOS local acceptance only; Linux CI and broader platforms not claimed",
+    "Cloud UI acceptance is headless native TSX through actual HTTP; no new browser/HTTPS/live-provider acceptance"
+  ],
+  "logs": {
+    "toolchain-tests3.log": {
+      "path": "target/toolchain-tests3.log",
+      "sha256": "baa5a572f83e1d611413e65f611a83231d244490c5fda3b2b661bdd2be4c2b03"
+    },
+    "toolchain-cli-final.log": {
+      "path": "target/toolchain-cli-final.log",
+      "sha256": "8facfb5d2128cca3b6713575107f315a40f9592a6600790f8d2f94579841fca6"
+    },
+    "toolchain-package-clippy.log": {
+      "path": "target/toolchain-package-clippy.log",
+      "sha256": "e223aaccbc4b9b12f5d4a9b8a0df617be3f92f66bd656cf19659ca2d6d2e5fbd"
+    },
+    "toolchain-kv-final-tests.log": {
+      "path": "target/toolchain-kv-final-tests.log",
+      "sha256": "7262ba9ea2f5b45865f0451fe1999bf353257b16dcb71f0ecbbcda41bef73693"
+    },
+    "toolchain-kv-identity-final.log": {
+      "path": "target/toolchain-kv-identity-final.log",
+      "sha256": "f612ece2e8a21625f6bba2e6ab640b21aff5ccbee58c7d1816a40f805d669b34"
+    },
+    "toolchain-cloud-build.log": {
+      "path": "target/toolchain-cloud-build.log",
+      "sha256": "068300b94fbe47ddab26852854426cf6a9fee0fe8b9f90912de71636786e2132"
+    },
+    "toolchain-boundaries-final.log": {
+      "path": "target/toolchain-boundaries-final.log",
+      "sha256": "3232873f7c7b43f3f9836c1598b041bad2e6bccc23d1098767985b02dbda59a7"
+    },
+    "toolchain-vendor-provenance.json": {
+      "path": "target/toolchain-vendor-provenance.json",
+      "sha256": "5525257bc560e81b30bd08ac1f56c4a3d4d0d7bae42088193ef9ce89203813c0"
+    },
+    "toolchain-kv-pinned-final.log": {
+      "path": "target/toolchain-kv-pinned-final.log",
+      "sha256": "031af3a94af693d7cbaf30ccc582e6ded4695ee8f893fb5cd62bd04b819d8465"
+    },
+    "toolchain-cloud-final-build.log": {
+      "path": "target/toolchain-cloud-final-build.log",
+      "sha256": "059b428174a1ce1a52054c2daef38e3db592a67f7cbe2875ad121266dcd7e48a"
+    },
+    "full.log": {
+      "path": "target/toolchain-host-20261107/full.log",
+      "sha256": "29a9c353f4a6fcdb5be7ad629d11f23e534a6d203a185ddc58e42dd00fe02842"
+    },
+    "cloud-source-verification.json": {
+      "path": "target/toolchain-host-20261107/cloud-source-verification.json",
+      "sha256": "5bd7c4daf3450c66eaa6bd58e6ce0dc26fe809a9cd5b784c56f376d86ebe751e"
+    }
+  },
+  "hostDependencies": "Reuse locked getrandom0.3.4, rustix1.1.5 safe Unix process/param APIs, subtle2.6.1 constant-time comparison, and Tokio process/I/O features; test-only SHA256 is already locked. No new package versions.",
+  "completedAtUtc": "2026-11-08T05:37:28.527237+00:00",
+  "codeInputs": {
+    "unchanged": true,
+    "before": {
+      "sha256": "2f616686a831d6ba651afd54ccda393a2de3d100333aab6a7d5b3025060427d8",
+      "files": 2644,
+      "excludes": [
+        "docs/",
+        "README.md",
+        ".claude/",
+        "examples/"
+      ]
+    },
+    "after": {
+      "sha256": "2f616686a831d6ba651afd54ccda393a2de3d100333aab6a7d5b3025060427d8",
+      "files": 2644,
+      "excludes": [
+        "docs/",
+        "README.md",
+        ".claude/",
+        "examples/"
+      ]
+    },
+    "afterDocumentationAnnotations": {
+      "sha256": "2f616686a831d6ba651afd54ccda393a2de3d100333aab6a7d5b3025060427d8",
+      "files": 2644,
+      "excludes": [
+        "docs/",
+        "README.md",
+        ".claude/",
+        "examples/"
+      ]
+    }
+  },
+  "workspaceCliAfterFull": {
+    "path": "target/debug/varta",
+    "sha256": "a9093809ac9374cfd76b24dc6f8fa70e731d677115306df9316e6467a5e0eb53",
+    "scope": "workspace verification feature context; distinct from the immutable Cloud-accepted CLI"
+  }
+}

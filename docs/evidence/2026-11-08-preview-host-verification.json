@@ -1,0 +1,207 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-08",
+  "package": "local isolated preview/browser launch",
+  "baseCommit": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+  "status": "implemented and Root/Cloud native+Chrome accepted; single full failed on test startup waits, followed by successful targeted correction and all remaining verification",
+  "contract": "docs/preview-host.md",
+  "protocol": {
+    "version": 1,
+    "target": "browser",
+    "bundlePolicy": "official-browser-v1",
+    "policyId": "deny-all-v1",
+    "guestAbiChanged": false,
+    "sourceExecutionInHost": false,
+    "runtimeCompilerDependency": false,
+    "publicOriginPolicy": "different loopback hostname from control and every protected origin",
+    "activation": "one-use fragment ticket, per-run HttpOnly SameSite Strict cookie, unique page claim",
+    "lifecycle": "fixed TTL, cancel-by-key tombstones, bounded ephemeral receipts, short page leases; immediate server revocation and scheduled browser Worker close"
+  },
+  "acceptedCli": {
+    "path": "target/preview-host-20261108/varta-accepted",
+    "sha256": "1c4db92b501f33ed44aef53e776f95cbea368b92342a82c1b8e3deef51668d15",
+    "note": "exact candidate accepted by Root Chrome, copied independently from same Cloud-pinned bytes; workspace feature builds may differ"
+  },
+  "focused": {
+    "previewUnitTests": 7,
+    "allProjectLibraryTests": 107,
+    "previewCliTests": 2,
+    "toolchainCliRegressions": 3,
+    "dependencyBoundaries": 2,
+    "strictAffectedClippy": "passed; single full also passed strict workspace/all-target Clippy before test-only readiness-timeout correction",
+    "chrome": {
+      "passed": true,
+      "hostSha256": "1c4db92b501f33ed44aef53e776f95cbea368b92342a82c1b8e3deef51668d15",
+      "sourceExecutionInHost": false,
+      "scopes": [
+        "real TSX first frame",
+        "trusted click updates state",
+        "hostname/HttpOnly/Studio-cookie isolation",
+        "no privileged fetch",
+        "one-use fragment removed",
+        "stop closes Worker",
+        "guest trap reported"
+      ],
+      "privilegedRequests": 0,
+      "ownedChromeCleanup": true
+    },
+    "chromeScreenshot": {
+      "path": "target/preview-browser/preview.png",
+      "sha256": "de0166792db33dd3df514b7674b2d2b747a149e5ad4133ee67de105709aec105"
+    },
+    "logs": [
+      "target/preview-unit4.log",
+      "target/preview-project.log",
+      "target/preview-cli3.log",
+      "target/preview-toolchain-regression.log",
+      "target/preview-boundaries.log",
+      "target/preview-clippy.log",
+      "target/preview-browser.log"
+    ]
+  },
+  "cloudArtifactsHistorical": {
+    "receipt": "docs/evidence/2026-11-08-cloud-artifacts-checkpoint.json",
+    "sha256": "506621faea5911b3a73ea65713fb7d9439f1a4613153b41c245a984ee7f7bfd4",
+    "sourceDigest": "f34a39b2efdb86f639b19c826ce66fba8a00519ee53632faa6f651abb5cf7cc3",
+    "status": "separate prior durable-byte checkpoint, not a current preview full gate"
+  },
+  "cloudPreview": {
+    "status": "final immutable Cloud receipt accepted and all 233 source hashes independently verified",
+    "hostSha256": "1c4db92b501f33ed44aef53e776f95cbea368b92342a82c1b8e3deef51668d15",
+    "compilerSha256": "2097c42d17d31514cc5e7148f147c3a483aafe33d222c2b0d8286397feeb244f",
+    "artifactSha256": "5263371e670e38885ad78757ea5ffc63b5df150ac6694522f24a6d1619dac9e8",
+    "nativeScopes": [
+      "retained compiler builds async TSX with denied network probe",
+      "durable KV file/catalog digests",
+      "over200 sequential chunk uploads within unchanged8 network slots",
+      "canonical seal and ready without activation",
+      "private ticket, stop/cancel-by-key, terminal ticket denial",
+      "owned process cleanup"
+    ],
+    "liveProviderRequests": 0,
+    "browserScopes": [
+      "KV artifact to native canonical seal/start",
+      "one-use activation via RAM-only303 redirect",
+      "actual Chrome AX firstframe and trustedclick counter0 to1",
+      "fragment removed, isolated IPv6 origin, denied network0 backend probes",
+      "Cloud stop terminal and prior page reports lease ended",
+      "owned process and transient configuration cleanup"
+    ],
+    "receipt": "docs/evidence/2026-11-08-cloud-previews-checkpoint.json",
+    "receiptSha256": "dae3efd26f99f153c77652feed08c9f97d9f602a5111e6fa4333e33b6dc8adc4",
+    "sourceDigest": "dd2312c4e8f34590147e90463d475f14d0fcdd8174b8857fefad2383a68a61bf",
+    "sourceFiles": 233,
+    "independentSourceVerification": true,
+    "offlineGroups": 44,
+    "headlessStudioCases": 2,
+    "headlessStudioScope": {
+      "readyLinks": 1,
+      "readyUniqueIds": 28,
+      "afterClickLinks": 0,
+      "afterClickUniqueIds": 27,
+      "syntheticOpenedUrls": 1
+    },
+    "note": "actual Chrome preview via Varta-only synthetic identity bridge; not a new complete Chrome Studio authentication flow",
+    "limits": [
+      "short-lived browser preview only, no persistent private release/resource_id/data service",
+      "no production HTTPS/domain/deployment acceptance",
+      "no native OS/service launch",
+      "no agent/GitHub/publication/catalog",
+      "guest readiness/trap details are not yet shown in Studio; ready/activated is not guest health",
+      "history uses20-record key pagination/manual more, no global newest-first index or retention quota",
+      "no ZIP/browser file-save UX"
+    ]
+  },
+  "full": {
+    "attempts": 1,
+    "passed": false,
+    "report": "docs/evidence/2026-11-08-preview-host-full-attempt.json",
+    "sha256": "3c19593e263abf6877b9a3c225291711ce8709421755793532cb0a181e6381c5",
+    "completedCommands": 10,
+    "passingCommands": 9,
+    "failedCommand": "cargo test --workspace --locked",
+    "sourceUnchanged": true,
+    "sourceSha256": "ee4e53824cac2839d7d2a85cfb177f5bc408abcf16c97048f2caa824a16348d1",
+    "failure": "four outer20-second test-host readiness waits; CLI smoke374passed/4failed, modules29passed; later targets not run in original attempt",
+    "notClaimed": "No full PASS of the final snapshot; original FAIL is immutable"
+  },
+  "limitsAndExclusions": [
+    "local loopback browser only, no production HTTPS or native OS/service launch",
+    "deny-all source authority; no package install or Tailwind preprocessing",
+    "no new live OTP/UARP/LLM requests",
+    "not total RSS/OS sandbox or synchronous remote browser process kill",
+    "earlier toolchain and HTTPS receipts remain immutable history"
+  ],
+  "codeFingerprintBeforeFull": {
+    "sha256": "52010dc2250fa278ecb979a5647cad36cbcb340cc15f26463df8d0317571bcfb",
+    "files": 2657,
+    "excludes": [
+      "docs/",
+      "README.md",
+      ".claude/",
+      "examples/"
+    ]
+  },
+  "scopedCompletion": {
+    "status": "passed",
+    "receipt": "docs/evidence/2026-11-08-preview-host-scoped-closure.json",
+    "sha256": "5142b1ab31446985e330e1a31b303176f8ac43f5cc8dd59651abcf41e1e348f4",
+    "tailReport": "docs/evidence/2026-11-08-preview-host-tail-report.json",
+    "tailReportSha256": "9c553d5a6512e98557ea1b27282ea263e35c122ea5d385d92e51b410707f1c0a",
+    "tailSourceUnchanged": true,
+    "tailSourceSha256": "a4e899b09b332b281a436fc1694656fbadd24e61576caa7510f6c094d4982f07",
+    "uniqueRustPassed": 4709,
+    "ignored": 26,
+    "nodePassed": 195,
+    "conformance": {
+      "checked-core-v1": {
+        "counts": {
+          "total": 248,
+          "passed": 246,
+          "knownUnsupported": 2,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "baselineMatches": true,
+        "logSha256": "912190be2e3ec666c59edf14fb719a1ed3f6adf4c9e52ea57556c511d0d80328"
+      },
+      "checked-snapshots-v39": {
+        "counts": {
+          "total": 3,
+          "passed": 3,
+          "knownUnsupported": 0,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "baselineMatches": true,
+        "logSha256": "289bf6ad46cc22dc591ab2f9e03ab7d345aa2774b89646015d446288935e6dc5"
+      },
+      "protected-sessions-v40": {
+        "counts": {
+          "total": 4,
+          "passed": 4,
+          "knownUnsupported": 0,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "baselineMatches": true,
+        "logSha256": "f4c307c782cb84a9fb1ead141692edf03d915ac2772aa2ba4697e4f7337dd0f4"
+      }
+    },
+    "finalCodeFingerprint": {
+      "sha256": "42f457f89b3664fd37bf84c79fa4111aca77b3c966434784f545e8830120ec61",
+      "files": 2657,
+      "excludes": [
+        "docs/",
+        "README.md",
+        ".claude/",
+        "examples/"
+      ]
+    },
+    "note": "After completed checks, only documentary result annotations and evidence copies follow; code unchanged."
+  },
+  "completion": "Implementation, agreed local-browser contract, native/Chrome acceptance, targeted correction, remaining verification and synchronized documentation complete. No commit or push in this package."
+}

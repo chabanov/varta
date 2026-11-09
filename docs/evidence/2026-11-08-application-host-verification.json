@@ -1,0 +1,2594 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-08",
+  "package": "Local app-scoped browser host, explicit app-data-v1 source policy and coordinated Cloud adapter",
+  "baseCommit": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+  "status": "targeted-native-and-normal-chrome-acceptance-and-one-full-pass",
+  "contract": "docs/application-host.md",
+  "wireSha256": "c981529cfc9177a7f7374cf40923dd427092b805a2cf4c31c1620f0af9e4881f",
+  "acceptedCli": {
+    "path": "target/application-host-20261108/accepted/varta",
+    "sha256": "4e2ecbef800010da2345370de7aea825e3901d69a1f357b15c3c7d0c90a6e541"
+  },
+  "executionOnlyCompanion": {
+    "path": "target/application-host-20261108/accepted/varta-runtime",
+    "sha256": "a46e98f58e6c9a5cfc2a1151929ac34603c22deedfbe251a4f3789d12e570171"
+  },
+  "actualAcceptanceCandidate": "target/application-host-20261108/candidate-2",
+  "supersededCandidate": "candidate-1 retained: ambient localhost cookies blocked ordinary-profile activation; corrected only application policy, old preview preserved",
+  "codeFingerprint": {
+    "sha256": "73dfce54c25dd6e800419fa1da4cb9be9c52d5ef453fe5c4215a4d6311d3e37c",
+    "files": 2678,
+    "excludes": [
+      "docs/",
+      "README.md",
+      ".claude/",
+      "examples/"
+    ]
+  },
+  "focused": {
+    "projectUnitsBeforeCookieFix": 116,
+    "cookiePolicyRegression": 1,
+    "previewUnitsIncludingCookieRegression": 8,
+    "cliPrivateControlSmoke": 1,
+    "nativeScopeVaultRegression": 5,
+    "strictClippy": [
+      "project all-targets",
+      "CLI all-targets",
+      "runtime all-targets"
+    ],
+    "browser": {
+      "status": "pass",
+      "cliSha256": "4e2ecbef800010da2345370de7aea825e3901d69a1f357b15c3c7d0c90a6e541",
+      "browser": "owned Chrome",
+      "realNativeVault": true,
+      "realKv": true,
+      "sourcePolicy": "app-data-v1",
+      "ambientLocalhostCookieAllowed": true,
+      "duplicateOwnCookieDenied": true,
+      "crossRunAndTraversalDenied": true,
+      "forbiddenOrdinaryFetchAndSecretEnvDenied": true,
+      "otherCookiePresentAndAuthorized": true,
+      "actualReadWrite": true,
+      "readOnlyRejectsWrite": true,
+      "oneUseTicket": true,
+      "parentLossBeforeActivationDenied": true,
+      "parentClearClosesWorker": true,
+      "stopCancelsNativeIo": true,
+      "previewPolicy": "deny-all-v1 unchanged",
+      "realProviderCalls": 0
+    },
+    "legacyPreview": {
+      "passed": true,
+      "hostSha256": "4e2ecbef800010da2345370de7aea825e3901d69a1f357b15c3c7d0c90a6e541",
+      "sourceExecutionInHost": false,
+      "scopes": [
+        "real TSX first frame",
+        "trusted click updates state",
+        "hostname/HttpOnly/Studio-cookie isolation",
+        "no privileged fetch",
+        "one-use fragment removed",
+        "stop closes Worker",
+        "guest trap reported"
+      ],
+      "privilegedRequests": 0,
+      "ownedChromeCleanup": true
+    }
+  },
+  "cloud": {
+    "receipt": "docs/evidence/2026-11-08-cloud-application-host-adapter.json",
+    "sha256": "fb396c334934c004256d673754630db6d9d81782fce58414dba9412884772bb1",
+    "independentVerification": {
+      "receiptSha256": "fb396c334934c004256d673754630db6d9d81782fce58414dba9412884772bb1",
+      "sourceDigest": "1c10ae77a607c3a8c8d57768595665e861c4695e7827804e44189ce2100fd975",
+      "expectedSourceDigest": "1c10ae77a607c3a8c8d57768595665e861c4695e7827804e44189ce2100fd975",
+      "matchedFiles": 333,
+      "matchedLogs": 58,
+      "verifiedAtUtc": "2026-11-08T19:20:33.408478+00:00",
+      "mismatches": [],
+      "pass": true
+    },
+    "offlineTargets": 13,
+    "offlineGroups": 50,
+    "native": {
+      "status": "passed",
+      "cliSha256": "4e2ecbef800010da2345370de7aea825e3901d69a1f357b15c3c7d0c90a6e541",
+      "realUarpRequests": 0,
+      "credentialsOrTicketsRecorded": false,
+      "nativeAdmitted": true,
+      "final": {
+        "state": "stopped",
+        "guest": "pending",
+        "value": 41,
+        "revision": 1
+      },
+      "nativeCancellationConfirmed": true,
+      "publicLaunchPromoted": false,
+      "allOwnedProcessesStopped": true
+    },
+    "normalChrome": {
+      "status": "passed",
+      "cliSha256": "4e2ecbef800010da2345370de7aea825e3901d69a1f357b15c3c7d0c90a6e541",
+      "realUarpRequests": 0,
+      "credentialsOrTicketsRecorded": false,
+      "nativeAdmitted": true,
+      "browserReadWrite42": true,
+      "final": {
+        "state": "stopped",
+        "guest": "ready",
+        "value": 42,
+        "revision": 2
+      },
+      "nativeCancellationConfirmed": true,
+      "publicLaunchPromoted": false,
+      "allOwnedProcessesStopped": true
+    },
+    "freshReadOnlyReopen": {
+      "passed": true,
+      "value": 42,
+      "revision": 2,
+      "kvReadOnly": true,
+      "envOrNetGrants": false,
+      "allNativeChildrenStoppedBeforeReopen": true
+    },
+    "priorRequestBoundControl": {
+      "path": "docs/evidence/2026-11-08-cloud-data-channel-control.json",
+      "sha256": "c52fb32fbac0e1204502bce4f23271268a94660b4e89a97be5a7beb6ee8a08e8",
+      "note": "307-file historical checkpoint independently verified at18:06UTC, before application adapter333; not relabelled as current source."
+    }
+  },
+  "full": {
+    "attemptsForThisPackage": 1,
+    "path": "docs/evidence/2026-11-08-application-host-full-report.json",
+    "sha256": "aeb738b391e8dfd23ad7a4635dbb1a93462e4502ee646866796c016ba17d93b8",
+    "rawReport": "target/verification/20261108-141943-6969gpbb/report.json",
+    "commandsPassed": 14,
+    "rustPassed": 4731,
+    "rustIgnored": 26,
+    "nodePassed": 195,
+    "sourceUnchanged": true,
+    "before": {
+      "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+      "sourceSha256": "3d7a9061bfb0f4490cca145a5ad65d6165ac8402ced5b84eb7b8862717554052"
+    },
+    "after": {
+      "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+      "sourceSha256": "3d7a9061bfb0f4490cca145a5ad65d6165ac8402ced5b84eb7b8862717554052"
+    },
+    "conformance": {
+      "core": {
+        "schemaVersion": 1,
+        "suite": "checked-core-v1",
+        "edition": "ECMAScript 2025",
+        "sourceModel": "checked-ts-main-v1",
+        "profile": "checked-f64-utf16-v38",
+        "inventorySha256": "c2db383669e97f141f44b3da6f3adcd08601989ecdd136b384ed540c4917b17a",
+        "dependencyLockSha256": "1e022adca36bd7816b9fc220a2649c3cd6b8b0bded1659e5555035cb79337629",
+        "workerTimeoutMs": 15000,
+        "runtimeBudgets": {
+          "fuel": 1000000,
+          "memoryBytes": 8388608,
+          "hostCalls": 1024,
+          "outputBytes": 1048576,
+          "deadlineSeconds": 5
+        },
+        "packageVersion": "0.1.0",
+        "os": "macos",
+        "arch": "aarch64",
+        "counts": {
+          "total": 248,
+          "passed": 246,
+          "knownUnsupported": 2,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "baselineMatches": true,
+        "untestedFeatures": [
+          "script-realms",
+          "runtime-lifecycle",
+          "platform-distribution",
+          "performance-security"
+        ],
+        "features": [
+          {
+            "feature": "binary64",
+            "title": "Binary64 Number edges",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-data-types-and-values.html#sec-ecmascript-language-types-number-type",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "primitive-conversions",
+            "title": "Primitive String and Number conversions",
+            "reference": "https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-type-conversion",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01"
+            ],
+            "counts": {
+              "total": 12,
+              "passed": 12,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "numeric-prefix-parsers",
+            "title": "Prefix numeric parsers",
+            "reference": "https://tc39.es/ecma262/2025/multipage/global-object.html#sec-parseint-string-radix",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "number-formatting",
+            "title": "Decimal precision formatting",
+            "reference": "https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-number.prototype.tofixed",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "utf16",
+            "title": "UTF-16 code-unit strings",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.charcodeat",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "truth-logical",
+            "title": "ToBoolean and operand-valued logical operators",
+            "reference": "https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-toboolean",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "strict-equality",
+            "title": "Strict equality",
+            "reference": "https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-isstrictlyequal",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "record-properties",
+            "title": "Closed record presence and key ordering",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ordinary-and-exotic-objects-behaviours.html#sec-ordinaryownpropertykeys",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 9,
+              "passed": 9,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "array-sparse-search",
+            "title": "Sparse array search and predicate traversal",
+            "reference": "https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-findviapredicate",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "array-reverse-fold",
+            "title": "Reverse seeded and unseeded folds",
+            "reference": "https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.reduceright",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "array-reverse",
+            "title": "Sparse reverse identity",
+            "reference": "https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.reverse",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "closures",
+            "title": "Lexical captured bindings",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-runtime-semantics-instantiateordinaryfunctionobject",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "finally-completion",
+            "title": "Finally completion replacement",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-try-statement-runtime-semantics-evaluation",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03",
+              "CORE-04"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "native-errors",
+            "title": "Recoverable standard error classes",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.repeat",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-04"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "math",
+            "title": "Checked Math algorithms",
+            "reference": "https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-math.min",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "json-stringify",
+            "title": "Checked JSON serialization",
+            "reference": "https://tc39.es/ecma262/2025/multipage/structured-data.html#sec-json.stringify",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-10"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "typed-json",
+            "title": "Strict typed JSON contract",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-10",
+              "CORE-13"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "capability-denials",
+            "title": "Empty-grant host denial and retained system status",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-11",
+              "CORE-13"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "bigint",
+            "title": "BigInt primitive arithmetic",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-data-types-and-values.html#sec-ecmascript-language-types-bigint-type",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01"
+            ],
+            "counts": {
+              "total": 16,
+              "passed": 16,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "symbol",
+            "title": "Symbol primitives",
+            "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-symbol-constructor",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01"
+            ],
+            "counts": {
+              "total": 4,
+              "passed": 4,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "classes",
+            "title": "Class construction and properties",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-class-definitions",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 6,
+              "passed": 6,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "property-descriptors",
+            "title": "Dynamic property descriptors",
+            "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-object.defineproperty",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 0,
+              "knownUnsupported": 1,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "map",
+            "title": "Map collection",
+            "reference": "https://tc39.es/ecma262/2025/multipage/keyed-collections.html#sec-map-objects",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-05"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "set",
+            "title": "Set collection",
+            "reference": "https://tc39.es/ecma262/2025/multipage/keyed-collections.html#sec-set-objects",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-05"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "typed-arrays",
+            "title": "Typed arrays and binary buffers",
+            "reference": "https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-typedarray-objects",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-05"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "promise-construction",
+            "title": "Promise construction",
+            "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-promise-objects",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-08"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "async-await",
+            "title": "Async functions and await",
+            "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-async-function-objects",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-09"
+            ],
+            "counts": {
+              "total": 4,
+              "passed": 4,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "date",
+            "title": "Date objects",
+            "reference": "https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-date-objects",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "regexp",
+            "title": "Regular expressions",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-regexp-regular-expression-objects",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "regexp-backtracking",
+            "title": "RegExp backreferences and lookaround (backtracking matcher)",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-backreference-matcher",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "regexp-named-groups-modifiers",
+            "title": "RegExp duplicate named groups and pattern modifiers",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-compileatom",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "regexp-unicode-sets",
+            "title": "RegExp Unicode property escapes and the v flag",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-compiletocharset",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "regexp-match-indices",
+            "title": "RegExp match indices (d flag)",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-makematchindicesindexpairarray",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "generators",
+            "title": "Generator iteration",
+            "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-generatorfunction-objects",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 4,
+              "passed": 4,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "async-generators",
+            "title": "Async generators and for await",
+            "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-asyncgeneratorfunction-objects",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03",
+              "CORE-09"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "unknown-type",
+            "title": "The unknown type with guard narrowing and caught values",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-01",
+              "CORE-04"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "checked-assertions",
+            "title": "Runtime-checked type and non-null assertions",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-01",
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "script-realms",
+            "title": "Standalone scripts, realms and Test262 harness",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-scripts-and-modules.html#sec-scripts",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03",
+              "CORE-15"
+            ],
+            "counts": {
+              "total": 0,
+              "passed": 0,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "module-initialization",
+            "title": "General module initialization and linking",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-scripts-and-modules.html#sec-modules",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-12"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "promise-jobs",
+            "title": "Promise jobs and microtask ordering",
+            "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-promise-jobs",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-08"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "weak-reference-lifecycle",
+            "title": "Weak references and finalization lifecycle",
+            "reference": "https://tc39.es/ecma262/2025/multipage/managing-memory.html#sec-weak-ref-objects",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-07"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "runtime-lifecycle",
+            "title": "Sustained GC, cancellation and owned shutdown acceptance",
+            "reference": "docs/development-plan.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-07",
+              "CORE-16"
+            ],
+            "counts": {
+              "total": 0,
+              "passed": 0,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "platform-distribution",
+            "title": "Cross-platform release and artifact acceptance",
+            "reference": "docs/development-plan.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-14"
+            ],
+            "counts": {
+              "total": 0,
+              "passed": 0,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "performance-security",
+            "title": "Performance measurements, fuzzing and independent review",
+            "reference": "docs/development-plan.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-16"
+            ],
+            "counts": {
+              "total": 0,
+              "passed": 0,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "array-union-inference",
+            "title": "Uncontextual array union inference",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-array-initializer",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01",
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 5,
+              "passed": 5,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "same-value",
+            "title": "SameValue and Object.is",
+            "reference": "https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-samevalue",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01",
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "object-assign",
+            "title": "Ordered own-property assignment",
+            "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-object.assign",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "named-types",
+            "title": "Named interface and type alias annotations",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-01",
+              "CORE-12"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "module-constants",
+            "title": "Module-scope constant declarations",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-let-and-const-declarations",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02",
+              "CORE-12"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "literal-types",
+            "title": "String, number and boolean literal types",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-01"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "module-reexports",
+            "title": "Explicit and star re-exports",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-scripts-and-modules.html#sec-resolveexport",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-12"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "template-literals",
+            "title": "Untagged template literals",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-template-literals",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "default-exports",
+            "title": "Default exports and default imports",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-scripts-and-modules.html#sec-exports",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-12"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "interface-extends",
+            "title": "Interface inheritance and declaration merging",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-01",
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "generics",
+            "title": "Generic types and functions by monomorphization",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-01",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "error-subclasses",
+            "title": "Classes extending the native Error families",
+            "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-error-objects",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02",
+              "CORE-04"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "index-signatures",
+            "title": "String index signatures and Record<string, T> dictionaries",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "recursive-types",
+            "title": "Recursive type aliases and interfaces",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-01",
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "wide-records",
+            "title": "Closed records wider than 32 fields",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "mixed-index-records",
+            "title": "Mixed index records, for...in and dictionary updates",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "unknown-json",
+            "title": "JSON.parse to unknown and object narrowing",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-01",
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "web-headers",
+            "title": "Engine-provided Fetch Headers",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-10"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "abort-signals",
+            "title": "AbortController and AbortSignal without timers",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-09"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "function-fields",
+            "title": "Function values in fields, elements, unions and optional parameters",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-function-calls",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "optional-chains",
+            "title": "Optional chaining of member reads and calls",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-optional-chains",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "timers",
+            "title": "Event-loop timers (setTimeout, setInterval, timer-driven promises)",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-09"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "temporal-dead-zone",
+            "title": "Closure captures before initialization (temporal dead zone)",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-let-and-const-declarations",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 4,
+              "passed": 4,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "definite-assignment",
+            "title": "Deferred let initialization with definite assignment",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "switch-statement",
+            "title": "switch selection by strict equality over strings and typeof",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-switch-statement",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "property-narrowing",
+            "title": "Property-path narrowing with write and call invalidation",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "dense-element-types",
+            "title": "Element-typed for...of and indexed reads with checked holes",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "void-function-assignability",
+            "title": "Value-returning functions as void-result function types",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "record-unions",
+            "title": "Unions of record shapes with discriminant narrowing and never",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "module-variables",
+            "title": "Module-level let bindings and function-valued module constants",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-12"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "tuples",
+            "title": "Tuple types, literals and destructuring",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-01",
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "string-builtins",
+            "title": "String padding, splitting, case mapping and Array.prototype.join",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.split",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "url",
+            "title": "WHATWG URL and URLSearchParams subset",
+            "reference": "docs/architecture.md",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-11"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "web-bytes",
+            "title": "Web byte bodies: Blob, ArrayBuffer and Response bytes",
+            "reference": "docs/architecture.md#web-bytes-web_bytes",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-05",
+              "CORE-10"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "typed-global-this",
+            "title": "Typed globalThis and typeof of engine globals",
+            "reference": "docs/architecture.md#web-bytes-web_bytes",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-10",
+              "CORE-12"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "strict-members",
+            "title": "Strict members over wide discriminated unions",
+            "reference": "docs/architecture.md#strict-members-and-wide-unions-strict_members",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "structural-subtyping",
+            "title": "Structural record views and callable signatures",
+            "reference": "docs/architecture.md#structural-subtyping-structural_subtyping",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-02",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "fetch",
+            "title": "fetch, Request and Response with injected and denied transports",
+            "reference": "docs/architecture.md#network-requests-net_request",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-10",
+              "CORE-11"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "kv-storage",
+            "title": "Deno-compatible KV storage behind exact kv grants",
+            "reference": "docs/architecture.md#kv-storage-kv",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-11",
+              "CORE-13"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "sdk-paths",
+            "title": "Error option causes and collection instanceof",
+            "reference": "docs/architecture.md#sdk-paths-sdk_paths",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-04",
+              "CORE-05"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "iteration-protocol",
+            "title": "Iterable objects, array spread, Array.from and yield* delegation",
+            "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-iteration",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "array-copying-methods",
+            "title": "Array sort order, copying, splicing and flattening methods",
+            "reference": "https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.sort",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "iterator-helpers",
+            "title": "Iterator helpers over generators and built-in iterators",
+            "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-iterator.prototype.map",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "set-methods",
+            "title": "Set union, intersection, difference and relations",
+            "reference": "https://tc39.es/ecma262/2025/multipage/keyed-collections.html#sec-set.prototype.union",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-05"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "grouping",
+            "title": "Object.groupBy, Map.groupBy and Object.fromEntries",
+            "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-object.groupby",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02",
+              "CORE-05"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "aggregate-error",
+            "title": "AggregateError objects",
+            "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-aggregate-error-objects",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-04"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "expression-operators",
+            "title": "Comma, void, delete, in, instanceof, optional chains, logical and exponent assignment, labelled blocks, switch fallthrough and new.target comparisons",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-comma-operator",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "await-operands",
+            "title": "Await in every operand position of an async function",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-await",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03",
+              "CORE-09"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "tagged-templates",
+            "title": "Tagged templates with per-site template objects and String.raw",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-tagged-templates",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "spread-arguments",
+            "title": "Spread arguments into fixed parameters, constructors and Math.max/min",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-argument-lists",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "function-receivers",
+            "title": "Explicit this parameters and contextually typed class-field arrows",
+            "reference": "docs/architecture.md#expression-forms-expression_forms",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "object-literal-methods",
+            "title": "Object-literal methods with a dynamic this",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-method-definitions",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "object-literal-accessors",
+            "title": "Object-literal getters and setters (accessor properties)",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-runtime-semantics-methoddefinitionevaluation",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "computed-property-keys",
+            "title": "Constant computed keys of object literals",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-object-initializer",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "destructuring-patterns",
+            "title": "Destructuring of parameters, nested patterns, defaults, rest, assignment patterns and iterables",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-destructuring-assignment",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "iterator-objects",
+            "title": "Hand-written iterator objects behind [Symbol.iterator]()",
+            "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-iterator-interface",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "using-declarations",
+            "title": "using and await using declarations with Symbol.dispose and Symbol.asyncDispose",
+            "reference": "docs/architecture.md#expression-forms-expression_forms",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-03",
+              "CORE-04"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "promise-thenables",
+            "title": "Structural thenables resolved by await and Promise.resolve",
+            "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-promise-resolve-functions",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-08"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "top-level-await",
+            "title": "Top-level await in module initializers",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-scripts-and-modules.html#sec-innermoduleevaluation",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "ts-conditional-types",
+            "title": "Conditional types, distribution, infer and recursive aliases",
+            "reference": "https://www.typescriptlang.org/docs/handbook/2/conditional-types.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-15"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "ts-mapped-types",
+            "title": "Mapped types with as remapping and +/- modifiers",
+            "reference": "https://www.typescriptlang.org/docs/handbook/2/mapped-types.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-02",
+              "CORE-15"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "ts-template-literal-types",
+            "title": "Template literal types and intrinsic string types",
+            "reference": "https://www.typescriptlang.org/docs/handbook/2/template-literal-types.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-01",
+              "CORE-15"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "ts-utility-types",
+            "title": "Built-in utility types",
+            "reference": "https://www.typescriptlang.org/docs/handbook/utility-types.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-15"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "ts-type-operators",
+            "title": "keyof, indexed access, typeof queries and intersections",
+            "reference": "https://www.typescriptlang.org/docs/handbook/2/indexed-access-types.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-02",
+              "CORE-15"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "ts-narrowing-predicates",
+            "title": "Type predicates, assertion functions, satisfies and never exhaustiveness",
+            "reference": "https://www.typescriptlang.org/docs/handbook/2/narrowing.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-03",
+              "CORE-15"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "ts-signatures",
+            "title": "Call and construct signatures, constructor types and polymorphic this",
+            "reference": "https://www.typescriptlang.org/docs/handbook/2/functions.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-03",
+              "CORE-15"
+            ],
+            "counts": {
+              "total": 5,
+              "passed": 5,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "ts-tuple-types",
+            "title": "Named, optional, rest and variadic tuple elements",
+            "reference": "https://www.typescriptlang.org/docs/handbook/2/objects.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-05",
+              "CORE-15"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "ts-literal-inference",
+            "title": "Literal types, literal inference and widening",
+            "reference": "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-01",
+              "CORE-15"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "ts-class-subtyping",
+            "title": "Class subtyping in arrays, tuples, records, collections and unions",
+            "reference": "https://www.typescriptlang.org/docs/handbook/2/classes.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-02",
+              "CORE-15"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "enums",
+            "title": "Numeric, string, heterogeneous and const enums with reverse mapping",
+            "reference": "https://www.typescriptlang.org/docs/handbook/enums.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-01",
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 4,
+              "passed": 4,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "namespaces",
+            "title": "Namespaces and declaration merging",
+            "reference": "https://www.typescriptlang.org/docs/handbook/namespaces.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-02",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "abstract-classes",
+            "title": "Abstract classes and abstract members",
+            "reference": "https://www.typescriptlang.org/docs/handbook/2/classes.html#abstract-classes-and-members",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "overloads",
+            "title": "Function, method and constructor overloads",
+            "reference": "https://www.typescriptlang.org/docs/handbook/2/functions.html#function-overloads",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "class-accessors",
+            "title": "Class setters, getter/setter pairs and auto-accessors",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-method-definitions",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "static-class-members",
+            "title": "Static fields, static blocks and this in static methods",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-class-definitions",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 5,
+              "passed": 5,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "class-expressions",
+            "title": "Class expressions bound by const declarations",
+            "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-class-definitions-runtime-semantics-evaluation",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-02",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "decorators",
+            "title": "Standard class decorators",
+            "reference": "https://www.typescriptlang.org/docs/handbook/decorators.html",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-02",
+              "CORE-03"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 0,
+              "knownUnsupported": 1,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "class-index-signatures",
+            "title": "Class index signatures",
+            "reference": "https://www.typescriptlang.org/docs/handbook/2/classes.html#index-signatures",
+            "origin": "typescript_handbook",
+            "core": [
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "integrity-levels",
+            "title": "Object integrity levels",
+            "reference": "https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-setintegritylevel",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-01"
+            ],
+            "counts": {
+              "total": 2,
+              "passed": 2,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "regexp-runtime-patterns",
+            "title": "RegExp constructor with run-time patterns and RegExp.escape",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-regexp-pattern-flags",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "regexp-match-arrays",
+            "title": "RegExp match arrays are arrays",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-regexpbuiltinexec",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "regexp-string-iterator",
+            "title": "matchAll RegExp String Iterator",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-%regexpstringiteratorprototype%.next",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "regexp-split-replace",
+            "title": "RegExp split captures, replacer arguments and lastIndex",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-regexp.prototype-%symbol.split%",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "regexp-symbol-protocols",
+            "title": "RegExp symbol protocols and custom matchers",
+            "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-regexp.prototype-%symbol.replace%",
+            "origin": "ecmascript2025",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "console-notation",
+            "title": "Console formatter: Node util.format and util.inspect notation",
+            "reference": "docs/architecture.md#console-notation-node_console",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "suppressed-error",
+            "title": "SuppressedError (ES2026 explicit resource management)",
+            "reference": "docs/architecture.md#console-notation-node_console",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          },
+          {
+            "feature": "console-methods",
+            "title": "Console methods: standard error, groups, counters, table, assert, dir",
+            "reference": "docs/architecture.md#console-methods-console_methods",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-06"
+            ],
+            "counts": {
+              "total": 1,
+              "passed": 1,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          }
+        ]
+      },
+      "snapshotV39": {
+        "schemaVersion": 1,
+        "suite": "checked-snapshots-v39",
+        "edition": "ECMAScript 2025",
+        "sourceModel": "checked-ts-main-v1",
+        "profile": "checked-f64-utf16-v39",
+        "inventorySha256": "e931b6b37e4c42a5efed4ac21e36cabc2f0bffb2bf042f90442df0f203a9af31",
+        "dependencyLockSha256": "1e022adca36bd7816b9fc220a2649c3cd6b8b0bded1659e5555035cb79337629",
+        "workerTimeoutMs": 15000,
+        "runtimeBudgets": {
+          "fuel": 1000000,
+          "memoryBytes": 8388608,
+          "hostCalls": 1024,
+          "outputBytes": 1048576,
+          "deadlineSeconds": 5
+        },
+        "packageVersion": "0.1.0",
+        "os": "macos",
+        "arch": "aarch64",
+        "counts": {
+          "total": 3,
+          "passed": 3,
+          "knownUnsupported": 0,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "baselineMatches": true,
+        "untestedFeatures": [],
+        "features": [
+          {
+            "feature": "checked-snapshots",
+            "title": "Isolated checked structural JSON snapshots retaining extras",
+            "reference": "docs/architecture.md#checked-structural-snapshots-v39",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-01",
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 3,
+              "passed": 3,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          }
+        ]
+      },
+      "sessionV40": {
+        "schemaVersion": 1,
+        "suite": "protected-sessions-v40",
+        "edition": "ECMAScript 2025",
+        "sourceModel": "checked-ts-main-v1",
+        "profile": "checked-f64-utf16-v40",
+        "inventorySha256": "45e45cd40072bd5a8f42b8cee0529dd9360fdc06f94854ee4c5157b8696c24aa",
+        "dependencyLockSha256": "1e022adca36bd7816b9fc220a2649c3cd6b8b0bded1659e5555035cb79337629",
+        "workerTimeoutMs": 15000,
+        "runtimeBudgets": {
+          "fuel": 1000000,
+          "memoryBytes": 8388608,
+          "hostCalls": 1024,
+          "outputBytes": 1048576,
+          "deadlineSeconds": 5
+        },
+        "packageVersion": "0.1.0",
+        "os": "macos",
+        "arch": "aarch64",
+        "counts": {
+          "total": 4,
+          "passed": 4,
+          "knownUnsupported": 0,
+          "unexpectedSupport": 0,
+          "regressions": 0,
+          "infrastructureFailures": 0
+        },
+        "baselineMatches": true,
+        "untestedFeatures": [],
+        "features": [
+          {
+            "feature": "protected-sessions",
+            "title": "Explicit protected channels and host-owned server sessions",
+            "reference": "docs/architecture.md#protected-sessions-protected_sessions",
+            "origin": "varta_contract",
+            "core": [
+              "CORE-01",
+              "CORE-02"
+            ],
+            "counts": {
+              "total": 4,
+              "passed": 4,
+              "knownUnsupported": 0,
+              "unexpectedSupport": 0,
+              "regressions": 0,
+              "infrastructureFailures": 0
+            }
+          }
+        ]
+      }
+    }
+  },
+  "unchangedBrowserAssetPins": {
+    "crates/varta-compiler/src/link/intrinsics.wasm": "f4392ba25c7d7364b8a1871995c5347b57a6ad37fe9fd85928d86b1cca86baf0",
+    "crates/varta-project/src/browser/kv-codec.wasm": "dc03d7c008b3b6018fd5fa781218c88b7c31f46eb73e54bc14c04e30c20432f3",
+    "crates/varta-project/src/browser/view-engine.wasm": "5a90abef0fa0b573a93350bad52c99fa3b92f6494a36ce966ab6477be0f739f0",
+    "crates/varta-project/src/browser/session-policy.wasm": "a7cb5683b5a41e773b373895a4fbab9c31d40142ce3464863636e9ed41797f62",
+    "crates/varta-project/src/browser/loader.js": "6e4831dfedabdd875894f58e8ef6ea8c9bdfaaf58bb7bd0046c4fb3592792b9f",
+    "crates/varta-project/src/browser/worker.js": "e2e7cf4acabe4afa053207bca7d2d2c3b4f7d07889768c891b2ab85557a75113"
+  },
+  "limitations": [
+    "First application policy is HTTP localhost loopback; no public TLS hosting or stable private address.",
+    "Cloud public issuance/launch and active release promotion remain disabled; default root grants/compiler pin unchanged.",
+    "Durable application run intent, scheduling/reconcile/restart recovery and Studio launch/update remain future work.",
+    "No guest import/ABI/profile or production budget increase; no credential/proof/native-parent custody in browser/KV.",
+    "One superseded refused synthetic ticket briefly appeared in native tool AX before expiry; retained Cloud receipt records this exception without raw ticket. Final normal-profile flow exposed no ticket in tool output.",
+    "No real provider/OTP/LLM requests in this package; all owned test processes stopped."
+  ],
+  "completion": {
+    "codeFingerprintMatchesAfterFull": true,
+    "onlyDocumentationAndEvidenceAnnotationsFollow": true,
+    "verifiedAtUtc": "2026-11-08T19:58:21.971136+00:00"
+  }
+}

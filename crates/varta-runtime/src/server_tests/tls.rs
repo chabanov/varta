@@ -50,6 +50,7 @@ impl Certificate {
     }
     fn policy(&self) -> HttpPolicy {
         HttpPolicy {
+            delegation: None,
             limits: None,
             session: None,
             tls: Some(TlsFiles {

@@ -3,8 +3,12 @@
 mod artifact;
 pub mod browser;
 mod config;
+pub mod execution;
+mod host_control;
 mod invoke;
 mod launcher;
+pub mod preview;
+pub mod toolchain;
 pub use launcher::companion as runtime_launcher;
 mod modules;
 mod policy;
@@ -31,6 +35,12 @@ pub use varta_runtime::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
+    #[error(transparent)]
+    Execution(#[from] execution::ExecutionError),
+    #[error(transparent)]
+    Preview(#[from] preview::PreviewError),
+    #[error(transparent)]
+    Toolchain(#[from] toolchain::ToolchainError),
     #[error(transparent)]
     Invocation(#[from] varta_common::ToolInvocationError),
     #[error(transparent)]
@@ -747,3 +757,5 @@ mod tests {
         );
     }
 }
+
+pub mod application;

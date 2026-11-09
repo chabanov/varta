@@ -1,6 +1,96 @@
 # Varta functional overview
 
-Current implementation package: Studio stabilization with official local HTTPS
+Current accepted local package: [fresh startup readiness and private entry paths](application-readiness.md), with Cloud generation-fenced promotion. Pending candidates can initialize with reads, while writes require the active generation. Actual Studio authentication/opening, two real app builds, six Chrome phases, four distinct native executions and retained data45/revision5 after full service restart pass. One completed-package full gate passes 14/14 commands, 4735 Rust tests (26 ignored), 196 Node tests and all three compatibility baselines (core 246/248 plus two known unsupported cases; v39 3/3; v40 4/4). See the [package receipt](evidence/2026-11-08-application-readiness-verification.json) and [full report](evidence/2026-11-08-application-readiness-full-report.json). Deployment commands are API-only; Studio supplies the authenticated stable entry. Production/public TLS and editor deployment controls remain separate work.
+
+Previous coordinated application functionality: [durable run recovery](evidence/2026-11-08-application-recovery-verification.json)
+in Cloud, over the unchanged accepted engine. KV retains desired state and
+fenced attempts; workers stage/reconcile/cancel without holding native parent
+credentials. After API/vault/host restart, a new owner session creates a new
+scope/attempt while logical run/application/resource/release IDs and data remain.
+Normal Chrome 41→42→restart→fresh session→43 and a fresh read-only 43/revision 3
+pass, together with old-session rejection and same-owner/different-parent ticket
+denial. All 357 source files and 38 logs match; 15 targets/62 groups pass. This is a
+Cloud targeted package, not a new engine/full test run or restored browser heap.
+
+Previous accepted local package: [app-scoped browser host](application-host.md)
+with explicit source requests, canonical artifacts, per-run authority, one-use
+activation, applied-frame readiness and native parent cancellation. Normal
+Chrome accepts unrelated localhost cookies without treating them as authority;
+duplicate own cookies and cross-run/path/method expansion fail. Native and
+coordinated Cloud Chrome read 41/click 42, confirmed stop and fresh read-only
+reopen 42/revision 2 pass. At that preceding checkpoint all 333 Cloud source files and 58 logs matched;
+13 offline targets pass 50 groups.
+
+One full gate passes 14/14 commands, 4731 Rust tests (26 ignored), 195 Node and all
+three compatibility inventories on unchanged code. See the [package receipt](evidence/2026-11-08-application-host-verification.json).
+Legacy preview remains deny-all. First hosting is HTTP localhost. Cloud durable
+run reconciliation is accepted above; stable private addresses, active release
+promotion and Studio launch/update remain separate. Production admission stays off.
+
+Previous accepted package: [native protected-session delegation](native-delegation.md)
+and the Cloud async lookup adapter, accepted as a host-only building block.
+Explicit host policy enables native issue/lookup/revoke and method/path-scoped
+relay, with immutable request provenance, bounded proof/scope lifetime and
+cancellation on parent loss. No guest import, ABI or language profile changes.
+Actual one-worker buffered/streaming native HTTP and coordinated Cloud synthetic
+SDK plus real HTTP/KV/CAS/revoke/logout/restart acceptance pass. The checkpoint's
+299 source files and 19 logs were independently matched.
+
+One final full gate passes 14/14 commands, 4725 Rust tests (26 ignored), 195 Node
+tests and all three compatibility inventories, with unchanged sources. See the
+[package receipt](evidence/2026-11-08-native-delegation-verification.json).
+That native-only checkpoint did not establish browser launch. The current local
+application-host package above supplies its explicit build/transport boundary;
+public stable launch and active promotion remain separate.
+
+Previous package: [bounded native HTTP execution](execution-host.md). A separate
+artifact-only host stages and independently validates a checked Wasm/manifest
+pair, then runs a loopback-only service in a bounded child with explicit
+authority. Listening readiness follows startup; stop/expiry revoke the endpoint
+and become terminal only after the child is reaped. Replay, cancellation
+tombstones and parent-loss termination are covered. Five new unit and two native
+CLI cases pass; one full gate passes 14 commands, 4716 Rust tests (26 ignored)
+and 195 Node tests. This is not native GUI, persistent private deployment or a
+browser resource session.
+
+Previous implementation: [local preview/browser launch](preview-host.md), with
+Cloud durable artifact custody and preview orchestration kept in application
+code. The separate native host validates immutable official browser bytes
+without executing them, then grants one isolated browser run with deny-all
+permissions, one-use activation, HttpOnly per-run custody and a short client
+lease. Stop, expiry and lost leases revoke server authority; the trusted browser
+bridge closes the Worker when its callbacks run. Real Chrome TSX
+first-frame/click, protected cookie isolation, denied network access, stop and
+guest-trap acceptance pass. One full attempt failed on four outer test-host
+readiness waits. Test-only corrections and all remaining checks pass: 4709
+unique Rust tests, 26 ignored, 195 Node, core 246/248 with two known
+unsupported, v39 3/3 and v40 4/4. The original full remains failed; this is
+targeted completion. See the [current
+receipt](evidence/2026-11-08-preview-host-verification.json). Studio exposes prepare/open/confirmed stop; detailed guest health, durable
+history quotas/indexing and archive-download UX remain application follow-up.
+No new live OTP,
+production HTTPS, native OS launch or native service deployment is claimed.
+Earlier dated verification remains historical below.
+
+Previous verified package: the [local trusted toolchain host](toolchain-host.md)
+checks/builds immutable supplied-file bundles through the existing compiler and
+browser artifact validator. It pins the compiler executable, authenticates the
+server client, bounds workers/data/time, recovers lost acceptance replies and
+cancels/reaps compiler processes without running submitted code. Runtime and
+launcher remain execution-only. Cloud headless native TSX Studio through real
+HTTP/API/KV/separate worker and six direct native scenarios pass on the pinned
+final CLI. This is no new Chrome/HTTPS/live-account acceptance or durable artifact
+byte ingest/preview.
+
+Native KV identity now checks the actual SQLite connection, including cached
+descriptor reuse, through paired small read-only pinned vendor patches. Forty
+KV/HTTP tests pass; 400 parallel requests have zero identity errors. One final
+full gate passes **14 commands, 4700 Rust tests (26 ignored), 195 Node tests**;
+core 246/248 has two known unsupported cases, v39 passes 3/3 and v40 4/4.
+Source fingerprints match; only documentary result annotations follow. See the
+[package evidence](evidence/2026-11-07-toolchain-host-verification.json).
+
+Previous accepted implementation package: Studio stabilization with official local HTTPS
 delivery, autonomous session expiry during suspended I/O, and repeated
 reset/cancellation/resource checks. Independent Cloud acceptance exercises the
 actual Studio UI over trusted local HTTPS, including real OTP, save/reload,
@@ -89,7 +179,7 @@ defaults maintained in this overview.
 | Persistent data | Native Deno-KV-compatible files; browser OPFS backend with the shared Rust value codec; typed reads, lists and atomic updates | Async storage completion, watch/queues and complete Deno KV compatibility |
 | UI | TSX with reactive `data-*` attributes, shared Rust stylesheet/cascade engine and CSS error recovery, checked tree/style/event batches, native layout/paint/input and official browser view sessions | Complete native L0/HTML/CSS/IME/accessibility and cross-renderer acceptance |
 | GPU UI | Optional wgpu/Vello backend, shared bounded display scenes, CPU recovery and direct mixed-border color fields | Direct GPU opacity groups, other devices and full presentation/performance acceptance |
-| Distribution | Portable Wasm/manifest, source-free native launcher, packaged native shell and browser bundles with checked resources | Complete OS/CPU packaging matrix, artifact authenticity and release acceptance |
+| Distribution | Portable Wasm/manifest, source-free native launcher, packaged native shell, browser bundles and isolated local preview lifecycle | Complete OS/CPU packaging matrix, artifact authenticity and release acceptance |
 | Tool contracts | Explicit publication, offline catalog/schema inspection and checked JSON invocation of primitive tool signatures | Shared transactional application/tool state, identities, general Application Contracts, MCP and LLM integration |
 
 ## Execution, async and memory

@@ -1,0 +1,56 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1026,6 +1026,53 @@
+     #[inline]
+     pub fn get_interrupt_handle(&self) -> InterruptHandle {
+         self.db.borrow().get_interrupt_handle()
++    }
++
++    /// Return the actual device/inode of the main Unix database connection.
++    ///
++    /// This read-only Varta extension requires the matching bundled SQLite
++    /// patch. Unsupported VFSes, in-memory databases and unpatched SQLite
++    /// return an error. No descriptor is opened, duplicated or closed.
++    #[cfg(unix)]
++    pub fn main_file_identity(&self) -> Result<(u64, u64)> {
++        // Private file-control opcode shared only with the pinned SQLite patch.
++        const VARTA_SQLITE_FCNTL_FILE_IDENTITY: std::ffi::c_int = 100_001;
++        let mut identity = [0u64; 2];
++        let db = self.db.borrow();
++        let mut vfs: *mut ffi::sqlite3_vfs = std::ptr::null_mut();
++        // SAFETY: SQLITE_FCNTL_VFS_POINTER writes one sqlite3_vfs pointer.
++        // Reject other VFSes before sending a private opcode whose output
++        // contract only the patched built-in Unix implementation provides.
++        let code = unsafe {
++            ffi::sqlite3_file_control(
++                db.db(),
++                c"main".as_ptr(),
++                ffi::SQLITE_FCNTL_VFS_POINTER,
++                (&mut vfs as *mut *mut ffi::sqlite3_vfs).cast(),
++            )
++        };
++        db.decode_result(code)?;
++        // SAFETY: static, terminated VFS name; this only looks up the VFS.
++        let unix = unsafe { ffi::sqlite3_vfs_find(c"unix".as_ptr()) };
++        if vfs.is_null() || vfs != unix {
++            return Err(Error::SqliteFailure(
++                ffi::Error::new(ffi::SQLITE_NOTFOUND),
++                None,
++            ));
++        }
++        // SAFETY: db remains borrowed/live for the call; "main" is a static
++        // C string. This private opcode writes exactly two native u64 values
++        // into the initialized, correctly aligned, exclusive output buffer.
++        let code = unsafe {
++            ffi::sqlite3_file_control(
++                db.db(),
++                c"main".as_ptr(),
++                VARTA_SQLITE_FCNTL_FILE_IDENTITY,
++                identity.as_mut_ptr().cast(),
++            )
++        };
++        db.decode_result(code)?;
++        Ok((identity[0], identity[1]))
+     }
+ 
+     #[inline]

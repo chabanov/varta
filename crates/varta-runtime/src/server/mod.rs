@@ -1,5 +1,6 @@
 //! Host-driven HTTP lifetime. Every request gets a fresh bounded guest store.
 mod connection;
+mod delegation;
 mod engine;
 mod handler;
 mod io;
@@ -299,6 +300,24 @@ fn run_owned(
             )
             .into());
         }
+    }
+    if let Some(delegation) = policy.and_then(|p| p.delegation.clone()) {
+        let vault = sessions.as_ref().ok_or_else(|| {
+            HttpError::Policy("delegation requires protected native sessions".into())
+        })?;
+        if limits.connections <= workers {
+            return Err(HttpError::Policy(
+                "delegation requires connection headroom for native control lookups".into(),
+            )
+            .into());
+        }
+        if delegation.max_request_proofs < workers {
+            return Err(HttpError::Policy(
+                "delegation proof ceiling is below the worker count".into(),
+            )
+            .into());
+        }
+        vault.enable_delegation(delegation)?;
     }
     let linked = linker.instantiate_pre(module.module())?;
     let _ticker = engine::Ticker::start(engine.clone()).map_err(HttpError::Io)?;

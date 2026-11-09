@@ -49,6 +49,7 @@ fn start(limits: Option<HostLimits>) -> Server {
         RunOptions {
             requested: vec![timers()],
             http: limits.map(|limits| HttpPolicy {
+                delegation: None,
                 limits: Some(limits),
                 tls: None,
                 session: None,
@@ -173,6 +174,7 @@ fn admission_follows_the_memory_ceiling() {
         RunOptions {
             requested: vec![grant(endpoint)],
             http: Some(HttpPolicy {
+                delegation: None,
                 limits: Some(HostLimits {
                     memory_bytes: Some(request - 1),
                     ..HostLimits::default()

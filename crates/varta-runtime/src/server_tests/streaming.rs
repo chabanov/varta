@@ -271,6 +271,7 @@ fn a_request_that_finds_no_worker_in_time_gets_503_with_retry_after() {
         RunOptions {
             requested: vec![timers()],
             http: Some(varta_common::http::HttpPolicy {
+                delegation: None,
                 limits: Some(varta_common::http::HostLimits {
                     workers: Some(SLOTS),
                     worker_wait_ms: Some(wait.as_millis() as u64),

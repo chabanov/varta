@@ -51,6 +51,71 @@ async function handler(request:VartaHttpRequest):Promise<VartaHttpResponse>{
 }
 varta.http.serve({hostname:'127.0.0.1',port:0},handler);
 "#;
+
+#[test]
+fn parallel_http_requests_can_reopen_the_same_kv_file() {
+    let directory = Directory::new();
+    let source = r#"
+export function main():void {}
+async function handler(request:VartaHttpRequest):Promise<VartaHttpResponse>{
+ try {
+  for(let i=0;i<2;i++){
+   const kv=await varta.kv.open('/data/state.kv');
+   try {await kv.get<number>(['record']);} finally {kv.close();}
+  }
+ } catch(error) {
+  if(error instanceof Error && error.message.includes('is locked by another writer')){
+   return {status:503,body:'busy',headers:[]};
+  }
+  throw error;
+ }
+ return {status:200,body:'ok',headers:[]};
+}
+varta.http.serve({hostname:'127.0.0.1',port:0},handler);
+"#;
+    let bytes = varta_compiler::compile_typescript_with_profile(
+        source,
+        LanguageProfile::CheckedF64Utf16V40,
+    )
+    .unwrap();
+    let server = Server::start_options(bytes, directory.options());
+    assert_eq!(server.request("GET", "/", b"").0, 200);
+    let completed = std::sync::atomic::AtomicUsize::new(0);
+    let busy = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let server = &server;
+        let completed = &completed;
+        let busy = &busy;
+        for _ in 0..4 {
+            scope.spawn(move || {
+                for _ in 0..100 {
+                    let response = server.request("GET", "/", b"");
+                    let diagnostics = server.diagnostics.lock().unwrap().clone();
+                    assert!(
+                        matches!(response.0, 200 | 503),
+                        "{response:?}; {diagnostics:?}"
+                    );
+                    if response.0 == 200 {
+                        assert_eq!(response.2, "ok");
+                        completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    } else {
+                        assert_eq!(response.2, "busy");
+                        busy.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            });
+        }
+    });
+    let completed = completed.into_inner();
+    let busy = busy.into_inner();
+    assert!(completed > 0);
+    assert_eq!(completed + busy, 400);
+    assert!(server.diagnostics.lock().unwrap().is_empty());
+    eprintln!(
+        "KV parallel reopen: {completed} completed, {busy} explicit writer-busy, zero identity errors"
+    );
+    server.finish();
+}
 #[test]
 fn async_http_kv_record_reads_across_requests_and_server_restart() {
     for profile in [
@@ -205,6 +270,7 @@ fn async_http_kv_callbacks_fit_a_single_worker_pool() {
     .unwrap();
     let mut options = directory.options();
     options.http = Some(varta_common::http::HttpPolicy {
+        delegation: None,
         limits: Some(varta_common::http::HostLimits {
             workers: Some(1),
             ..Default::default()

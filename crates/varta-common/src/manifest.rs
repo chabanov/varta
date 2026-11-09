@@ -260,6 +260,19 @@ impl Manifest {
             }
             binding.validate()?;
         }
+        if let Some(delegation) = self.http.as_ref().and_then(|p| p.delegation.as_ref()) {
+            delegation.validate()?;
+            if self
+                .http
+                .as_ref()
+                .and_then(|p| p.session.as_ref())
+                .is_none()
+            {
+                return Err(VartaError::InvalidManifest(
+                    "delegation requires protected native sessions".into(),
+                ));
+            }
+        }
         if let Some(session) = self.http.as_ref().and_then(|p| p.session.as_ref()) {
             if self.abi_version < crate::abi::PROTECTED_SESSION_VERSION {
                 return Err(VartaError::InvalidManifest(

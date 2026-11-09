@@ -54,6 +54,79 @@ fn get(address: SocketAddr, path: &str) -> String {
 }
 
 #[tokio::test]
+async fn browser_dev_entry_routes_are_explicit_public_inputs_with_immutable_assets() {
+    let project = Project::new();
+    let server = BrowserDevServer::bind(
+        &project.config(),
+        None,
+        None,
+        BrowserDevOptions {
+            entry_prefix: Some("/apps".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let address = server.address();
+    let prefix = server.delivery.read().unwrap().latest().prefix();
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let task =
+        tokio::spawn(server.serve_until(async { stopped.await.map_err(std::io::Error::other) }));
+    let html = request(address, get(address, "/apps/opaque-id_123")).await;
+    assert!(html.starts_with("HTTP/1.1 200"));
+    assert!(html.contains(&format!("src=\"{prefix}varta-host.js\"")));
+    let loader = request(address, get(address, &format!("{prefix}varta-host.js"))).await;
+    assert!(loader.contains("\"entryPathInput\":\"VARTA_ENTRY_PATH\""));
+    assert!(loader.contains("location.pathname"));
+    assert!(
+        !loader.contains("\"env.get\":{\"patterns\":[\"VARTA_ENTRY_PATH\"]}"),
+        "the option must not grant access"
+    );
+    for path in [
+        "/apps",
+        "/apps/",
+        "/apps/a/b",
+        "/apps/%61",
+        "/apps/a?ticket=ignored",
+        "/other/id",
+        "/apps/../secret.txt",
+    ] {
+        assert!(
+            request(address, get(address, path))
+                .await
+                .starts_with("HTTP/1.1 404"),
+            "{path}"
+        );
+    }
+    stop.send(()).unwrap();
+    task.await.unwrap().unwrap();
+    let default =
+        BrowserDevServer::bind(&project.config(), None, None, BrowserDevOptions::default())
+            .unwrap();
+    assert!(
+        default
+            .delivery
+            .read()
+            .unwrap()
+            .file("/apps/opaque-id_123")
+            .is_none()
+    );
+    for prefix in ["/", "/__varta", "/a/b"] {
+        assert!(
+            BrowserDevServer::bind(
+                &project.config(),
+                None,
+                None,
+                BrowserDevOptions {
+                    entry_prefix: Some(prefix.into()),
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
+    }
+}
+
+#[tokio::test]
 async fn browser_dev_serves_only_an_immutable_bundle_with_security_headers() {
     let project = Project::new();
     let server =

@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "capturedAtUtc": "2026-11-08T23:50:38.769518+00:00",
+  "status": "accepted-local-cloud-deployments-and-single-engine-full-complete",
+  "scope": "Append-only completion of frozen Cloud deployment readiness/private entry checkpoint with Varta Development single14/14 engine gate. Documentary closure only; no new runtime/source/grant/SDK changes or second full run.",
+  "cloudCheckpoint": {
+    "path": "docs/evidence/cloud-deployments.json",
+    "sha256": "1b372d84690971940fe37ec5044b77b65a35c732c48c2c3842155aa329691557",
+    "sourceDigest": "6e3de535cb86aa4eb5ee6c52b62155c2a376fff2c4201d785e29869a7253f391",
+    "sourceFiles": 396,
+    "offlineGroups": 75,
+    "offlineTargets": 18,
+    "all76FinalArtifactsAnd61PartialArtifactsVerifiedUnchanged": true,
+    "actualChromePhases": 6,
+    "freshReadonly45Revision5": true
+  },
+  "defaultCheckClosure": {
+    "path": "docs/evidence/cloud-deployment-check-closure.json",
+    "sha256": "5c3a2c9b6418fb2c5e2752e05c06353d103d019265e9e17dfcb8abeeda2d7f10",
+    "passed": true
+  },
+  "engineOwner": "Varta Development",
+  "engine": {
+    "codeFingerprint": {
+      "sha256": "fde1e8856e7f3a9bb1fffb100aacba2c1f6efd728bb315b288f0c78f09b7d6fe",
+      "files": 2681,
+      "excludes": [
+        "docs/",
+        "README.md",
+        ".claude/",
+        "examples/"
+      ]
+    },
+    "acceptedBinaries": {
+      "varta": {
+        "path": "target/application-readiness-20261108/accepted/varta",
+        "sha256": "aa1485c6bc09b63aede0e54d05acdb8dbef51fc8c6665ac5cd2eafb4005af768",
+        "testedCandidatePath": "/Users/snaga/Developer/Laboratory/varta/target/application-readiness-20261108/candidate-1/varta"
+      },
+      "varta-runtime": {
+        "path": "target/application-readiness-20261108/accepted/varta-runtime",
+        "sha256": "b55377d890167a433c117b531377843ef8650a0220f0703b2922127e598efccc",
+        "testedCandidatePath": "/Users/snaga/Developer/Laboratory/varta/target/application-readiness-20261108/candidate-1/varta-runtime"
+      }
+    },
+    "full": {
+      "runs": 1,
+      "commands": 14,
+      "report": {
+        "path": "docs/evidence/2026-11-08-application-readiness-full-report.json",
+        "sha256": "70fca08f7c8adc47ff85c775fb6a4ac74e159d6df2420fe3bd885f36b6530d3c"
+      },
+      "sourceUnchanged": true,
+      "before": {
+        "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+        "sourceSha256": "a9ff0f2f32ae0dea0314d9a1dce84f6f7eb7acc2a6b7e078bfa95158c83ac4d6"
+      },
+      "after": {
+        "head": "b2c6e885ec4f7330d0ee20d503576a0e35440585",
+        "sourceSha256": "a9ff0f2f32ae0dea0314d9a1dce84f6f7eb7acc2a6b7e078bfa95158c83ac4d6"
+      },
+      "rustPassed": 4735,
+      "rustIgnored": 26,
+      "nodePassed": 196,
+      "inventories": [
+        {
+          "suite": "checked-core-v1",
+          "counts": {
+            "total": 248,
+            "passed": 246,
+            "knownUnsupported": 2,
+            "unexpectedSupport": 0,
+            "regressions": 0,
+            "infrastructureFailures": 0
+          },
+          "baselineMatches": true
+        },
+        {
+          "suite": "checked-snapshots-v39",
+          "counts": {
+            "total": 3,
+            "passed": 3,
+            "knownUnsupported": 0,
+            "unexpectedSupport": 0,
+            "regressions": 0,
+            "infrastructureFailures": 0
+          },
+          "baselineMatches": true
+        },
+        {
+          "suite": "protected-sessions-v40",
+          "counts": {
+            "total": 4,
+            "passed": 4,
+            "knownUnsupported": 0,
+            "unexpectedSupport": 0,
+            "regressions": 0,
+            "infrastructureFailures": 0
+          },
+          "baselineMatches": true
+        }
+      ]
+    },
+    "rawReport": {
+      "path": "docs/evidence/cloud-deployment-engine-full-report.json",
+      "sha256": "70fca08f7c8adc47ff85c775fb6a4ac74e159d6df2420fe3bd885f36b6530d3c"
+    },
+    "ownerVerification": {
+      "path": "docs/evidence/cloud-deployment-engine-verification.json",
+      "sha256": "da28a887f72a2a3e858c1b43df96d857d106157058788bc3619be6a9c15331af"
+    }
+  },
+  "boundaries": {
+    "guestAbiChanged": false,
+    "oldProfilesReinterpreted": false,
+    "productionBudgetsRaised": false,
+    "productionDefaultsChanged": false,
+    "publicHostingOrTlsAccepted": false,
+    "liveUarpOtpOrLlmRequests": 0,
+    "readinessIsBusinessHealth": false,
+    "stableEntryIsPersistentRuntimeUrl": false,
+    "candidatePromotionControls": "API-only",
+    "studioScope": "private entry/auth/prepare/open",
+    "browserHeapOrSavedCredentialsRestored": false
+  },
+  "remainingWork": [
+    "Editor deployment/update/rollback controls",
+    "Schema migrations, test-data copy, backups and production operational acceptance"
+  ]
+}

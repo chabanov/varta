@@ -1,0 +1,42 @@
+--- a/sqlite3/sqlite3.c
++++ b/sqlite3/sqlite3.c
+@@ -44325,9 +44325,23 @@
+ /*
+ ** Information and control of an open file handle.
+ */
++/* Varta read-only extension, paired with rusqlite::Connection::main_file_identity.
++** Inspect the concrete connection's fd, including SQLite's unused-fd reuse.
++** No open/dup/close, path lookup, lock change or database write occurs here.
++** Private opcode: output is exactly two sqlite3_uint64 values (device, inode).
++*/
++#define VARTA_SQLITE_FCNTL_FILE_IDENTITY 100001
+ static int unixFileControl(sqlite3_file *id, int op, void *pArg){
+   unixFile *pFile = (unixFile*)id;
+   switch( op ){
++    case VARTA_SQLITE_FCNTL_FILE_IDENTITY: {
++      struct stat info;
++      sqlite3_uint64 *identity = (sqlite3_uint64*)pArg;
++      if( osFstat(pFile->h, &info) ) return SQLITE_IOERR_FSTAT;
++      identity[0] = (sqlite3_uint64)info.st_dev;
++      identity[1] = (sqlite3_uint64)info.st_ino;
++      return SQLITE_OK;
++    }
+ #if defined(__linux__) && defined(SQLITE_ENABLE_BATCH_ATOMIC_WRITE)
+     case SQLITE_FCNTL_BEGIN_ATOMIC_WRITE: {
+       int rc = osIoctl(pFile->h, F2FS_IOC_START_ATOMIC_WRITE);
+@@ -191387,6 +191401,15 @@
+     }else if( op==SQLITE_FCNTL_RESET_CACHE ){
+       sqlite3BtreeClearCache(pBtree);
+       rc = SQLITE_OK;
++#if SQLITE_OS_UNIX
++    }else if( op==VARTA_SQLITE_FCNTL_FILE_IDENTITY ){
++      /* A VFS name alone cannot establish the private output contract:
++      ** never forward this opcode to a third-party VFS with a colliding
++      ** opcode/name. Only our concrete Unix implementation may write it.
++      */
++      rc = fd->pMethods && fd->pMethods->xFileControl==unixFileControl
++           ? unixFileControl(fd, op, pArg) : SQLITE_NOTFOUND;
++#endif
+     }else{
+       int nSave = db->busyHandler.nBusy;
+       rc = sqlite3OsFileControl(fd, op, pArg);
