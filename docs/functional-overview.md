@@ -433,11 +433,10 @@ pilot/browser/hardware observation.
 
 ## Verification and completion boundary
 
-The class/function and complete-receiver increments pass one uninterrupted full
-run: **4589 Rust tests and 189 browser Node tests**, with 26 Rust tests ignored
-and unchanged inputs. This includes the preceding tuple-adapter arity correction;
-no production change followed the gate. See
-[current verification evidence](verification.md#current-verification-evidence--2026-11-07).
+The startup-readiness package passes one uninterrupted full run: **4735 Rust
+tests and 196 browser Node tests**, with 26 Rust tests ignored and byte-identical
+sources before and after; no production change followed the gate. See
+[current verification evidence](verification.md#current-verification-evidence--2026-11-08).
 
 The recovery batch combines the K9 A type-level steps, B declarations and
 classes, C expressions and accessors, D1 console and standard-library additions,
